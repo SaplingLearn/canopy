@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpHandler } from "agents/mcp";
 import { z } from "zod";
 import type { Env } from "./env";
+import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
 import { append_feed, propose_doc_update } from "./tools/writes";
 
@@ -18,7 +19,7 @@ async function runTool(fn: () => Promise<unknown>) {
   }
 }
 
-export function handleMcp(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
   // Fresh McpServer per request — MCP SDK 1.26+ guards against reused instances,
   // so it must NOT be constructed in global scope.
   const server = new McpServer({ name: "sapling-context", version: "1.0.0" });
@@ -48,8 +49,9 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext): Pr
   server.tool(
     "append_feed",
     "Append an entry to the append-only feed (working memory).",
-    { author: z.string(), summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional() },
-    async ({ author, summary, body, tags }) => runTool(async () => ({ id: await append_feed(env.DB, { author, summary, body, tags }) }))
+    { summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional() },
+    async ({ summary, body, tags }) =>
+      runTool(async () => ({ id: await append_feed(env.DB, { author: principal.login, summary, body, tags }) }))
   );
 
   server.tool(
@@ -62,9 +64,8 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext): Pr
       body: z.string(),
       change_summary: z.string(),
       confidence: z.enum(["high", "low"]),
-      author: z.string(),
     },
-    async ({ author, ...proposal }) => runTool(() => propose_doc_update(env.DB, proposal, author))
+    async (proposal) => runTool(() => propose_doc_update(env.DB, proposal, principal.login))
   );
 
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
