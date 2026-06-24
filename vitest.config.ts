@@ -3,6 +3,11 @@ import { defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@shared": path.join(import.meta.dirname, "shared"),
+    },
+  },
   plugins: [
     cloudflareTest(async () => ({
       wrangler: { configPath: "./wrangler.toml" },
