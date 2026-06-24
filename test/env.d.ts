@@ -8,6 +8,7 @@ declare global {
   namespace Cloudflare {
     interface Env {
       DB: D1Database;
+      ASSETS: Fetcher;
       TEST_MIGRATIONS: D1Migration[];
       COOKIE_SECRET: string;
       GITHUB_CLIENT_ID: string;
