@@ -1,0 +1,20 @@
+name = "sapling-context"
+main = "src/index.ts"
+compatibility_date = "2025-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Static Assets: served before the Worker fetch handler. Matched files (e.g. "/")
+# are returned directly; unmatched paths (/ingest, /feed, /mcp) fall through to src/index.ts.
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"
+
+# D1. For local dev and tests the id is a placeholder (Miniflare uses a local sqlite).
+# Run `npm run db:create` to provision the real database and paste its id here before deploy.
+[[d1_databases]]
+binding = "DB"
+database_name = "sapling-context"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[observability]
+enabled = true
