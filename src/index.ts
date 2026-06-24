@@ -1,7 +1,15 @@
-// Interim stub so the Workers test pool can resolve `main` in wrangler.toml.
-// Replaced with the real routing (Hono + MCP) in Task 10.
+import { app } from "./routes";
+import { handleMcp } from "./mcp";
+import type { Env } from "./env";
+
 export default {
-  async fetch(): Promise<Response> {
-    return new Response("sapling-context: not wired yet", { status: 200 });
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    // Static assets are served by the assets binding before this handler runs.
+    // Only non-asset requests reach here.
+    if (url.pathname === "/mcp") {
+      return handleMcp(request, env, ctx);
+    }
+    return app.fetch(request, env, ctx);
   },
-};
+} satisfies ExportedHandler<Env>;
