@@ -18,7 +18,7 @@ describe("vocabulary gate", () => {
       ],
     });
 
-    const result = await consume(env.DB, payload);
+    const result = await consume(env.DB, payload, { login: "andres" });
     expect(result.feed).toBe(1);
     expect(result.triaged).toBe(1);
 
@@ -46,7 +46,7 @@ describe("vocabulary gate", () => {
       needs_triage: [{ raw: "raw blob", reason: "ambiguous section" }],
     });
 
-    const result = await consume(env.DB, payload);
+    const result = await consume(env.DB, payload, { login: "andres" });
     expect(result.docs).toBe(1);
     expect(result.adrs).toBe(1);
     // bad-section + low-conf doc + weak adr + explicit triage item = 4

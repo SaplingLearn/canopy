@@ -2,6 +2,7 @@ import type { IngestPayload } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB } from "./db";
 import { append_feed, propose_doc_update, stage_adr, route_triage } from "./tools/writes";
+import type { Principal } from "./auth/principal";
 
 export interface IngestResult {
   feed: number;
@@ -15,8 +16,8 @@ export interface IngestResult {
  * The Worker verifies structure; this gate verifies vocabulary and confidence.
  * Nothing out-of-vocab or low-confidence is guessed — it goes to needs_triage.
  */
-export async function consume(db: DB, payload: IngestPayload): Promise<IngestResult> {
-  const author = payload.session.author;
+export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
+  const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
   const result: IngestResult = { feed: 0, docs: 0, adrs: 0, triaged: 0 };
 
   // Feed: append-only, but any out-of-vocab tag routes the WHOLE entry to triage.
