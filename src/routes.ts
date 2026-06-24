@@ -1,10 +1,19 @@
 import { Hono } from "hono";
 import { IngestPayload } from "@shared/contract";
-import type { Env } from "./env";
+import type { AppEnv } from "./auth/principal";
+import { sessionGate } from "./auth/principal";
+import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
 
-export const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<AppEnv>();
+
+// Gate first: everything except /auth/login and /auth/callback requires a session.
+// Fails closed with 401 (no data in the body).
+app.use("*", sessionGate);
+
+// Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
+app.route("/auth", authApp);
 
 app.post("/ingest", async (c) => {
   const json = await c.req.json().catch(() => null);
@@ -12,15 +21,13 @@ app.post("/ingest", async (c) => {
   if (!parsed.success) {
     return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   }
-  // SEAM: today we call the consumer directly. A Cloudflare Queue producer.send(parsed.data)
-  // would slot in here later with no change to consume()'s signature.
-  const result = await consume(c.env.DB, parsed.data);
+  // SEAM: a Cloudflare Queue producer.send({ payload, principal }) would slot in here.
+  const result = await consume(c.env.DB, parsed.data, c.get("principal"));
   return c.json({ ok: true, result });
 });
 
 app.get("/docs", async (c) => {
-  const section = c.req.query("section");
-  const docs = await list_docs(c.env.DB, section);
+  const docs = await list_docs(c.env.DB, c.req.query("section"));
   return c.json({ docs });
 });
 
