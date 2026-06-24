@@ -17,6 +17,9 @@ export default defineConfig({
           TEST_MIGRATIONS: await readD1Migrations(
             path.join(import.meta.dirname, "migrations")
           ),
+          COOKIE_SECRET: "test-cookie-secret",
+          GITHUB_CLIENT_ID: "test-client-id",
+          GITHUB_CLIENT_SECRET: "test-client-secret",
         },
       },
     })),

@@ -59,3 +59,25 @@ export interface NeedsTriageRow {
   resolved: number;
   created_at: string;
 }
+
+export interface UserRow {
+  github_login: string;
+  name: string | null;
+  created_at: string;
+}
+
+export interface SessionRow {
+  id: string;
+  user: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface McpTokenRow {
+  id: number;
+  user: string;
+  token_hash: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: number;
+}
