@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const Session = z.object({
-  author: z.string(),
+  author: z.string(),   // advisory only — overwritten server-side from the authenticated principal
   ended_at: z.string(),            // ISO8601
   skill_version: z.string(),
 });
