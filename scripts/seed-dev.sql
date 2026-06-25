@@ -20,12 +20,12 @@ INSERT INTO sessions (id, user, created_at, expires_at) VALUES
 -- Docs across all three browsable sections. mcp-server has a newer STAGED version (v3 > current 2)
 -- so the Triage "Proposals" queue + the promote-doc DoD demo have real data.
 INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by) VALUES
-  ('mcp-server','reference','MCP Server','The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract.',2,'2026-06-23T00:00:00Z','meilin'),
+  ('mcp-server','reference','MCP Server','The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract. Every request carries a bearer token, compared in constant time, then matched against the store.',2,'2026-06-23T00:00:00Z','meilin'),
   ('product-overview','context','Product Overview','Canopy is the shared source of truth and working memory for Sapling, a four-person software team.',1,'2026-06-10T00:00:00Z','sanaok'),
   ('postgres-store','decisions','ADR-001 · Postgres for the store','Use a single Postgres instance as the store. Sections, versions, feed entries, and decisions are all rows.',1,'2026-06-02T00:00:00Z','sanaok');
 INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES
   ('mcp-server',1,'v1 body — initial page.','Initial page','promoted','high','2026-04-01T00:00:00Z','devraj'),
-  ('mcp-server',2,'The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract.','Documented the typed contract','promoted','high','2026-06-23T00:00:00Z','meilin'),
+  ('mcp-server',2,'The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract. Every request carries a bearer token, compared in constant time, then matched against the store.','Documented the typed contract','promoted','high','2026-06-23T00:00:00Z','meilin'),
   ('mcp-server',3,'The MCP server is the only write path. Tokens are compared in constant time. Rotation: revoke and re-mint from Settings.','Clarify token rotation and add constant-time note','staged','high','2026-06-24T00:00:00Z','meilin'),
   ('product-overview',1,'Canopy is the shared source of truth and working memory for Sapling, a four-person software team.','Initial page','promoted','high','2026-06-10T00:00:00Z','sanaok'),
   ('postgres-store',1,'Use a single Postgres instance as the store. Sections, versions, feed entries, and decisions are all rows.','Initial ADR','promoted','high','2026-06-02T00:00:00Z','sanaok');
