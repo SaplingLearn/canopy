@@ -14,7 +14,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "canopy"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "80386dc4-deef-461d-932a-0670d22ddf83"
 
 [vars]
 GITHUB_REPO = "SaplingLearn/canopy"
