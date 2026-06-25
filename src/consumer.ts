@@ -1,13 +1,14 @@
-import type { IngestPayload, FeedEntry, DocProposal, AdrDraft } from "@shared/contract";
+import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB } from "./db";
-import { append_feed, propose_doc_update, stage_adr, route_triage } from "./tools/writes";
+import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal } from "./tools/writes";
 import type { Principal } from "./auth/principal";
 
 export interface IngestResult {
   feed: number;
   docs: number;
   adrs: number;
+  milestones: number;
   triaged: number;
 }
 
@@ -20,6 +21,9 @@ export type DocIngestResult =
   | { outcome: "written"; slug: string; version: number; status: "staged" }
   | { outcome: "triaged"; reason: string };
 export type AdrIngestResult =
+  | { outcome: "written"; id: number }
+  | { outcome: "triaged"; reason: string };
+export type MilestoneIngestResult =
   | { outcome: "written"; id: number }
   | { outcome: "triaged"; reason: string };
 
@@ -75,6 +79,26 @@ export async function ingestAdrDraft(db: DB, draft: AdrDraft, author: string): P
   return { outcome: "written", id };
 }
 
+/** Milestones: 'done' (completion is a human action) and low confidence route to triage; otherwise staged for human promotion. */
+export async function ingestMilestoneProposal(
+  db: DB,
+  proposal: MilestoneProposal,
+  author: string
+): Promise<MilestoneIngestResult> {
+  if (proposal.status === "done") {
+    const reason = "milestone completion is a human action";
+    await route_triage(db, { raw: proposal, reason, source_author: author });
+    return { outcome: "triaged", reason };
+  }
+  if (proposal.confidence === "low") {
+    const reason = "low confidence milestone proposal";
+    await route_triage(db, { raw: proposal, reason, source_author: author });
+    return { outcome: "triaged", reason };
+  }
+  const id = await stage_milestone_proposal(db, proposal, author);
+  return { outcome: "written", id };
+}
+
 /**
  * Validate-and-write the (already structurally-validated) /ingest payload.
  * The Worker verifies structure; the gate functions above verify vocabulary and
@@ -82,7 +106,7 @@ export async function ingestAdrDraft(db: DB, draft: AdrDraft, author: string): P
  */
 export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
   const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
-  const result: IngestResult = { feed: 0, docs: 0, adrs: 0, triaged: 0 };
+  const result: IngestResult = { feed: 0, docs: 0, adrs: 0, milestones: 0, triaged: 0 };
 
   for (const entry of payload.feed_entries) {
     const r = await ingestFeedEntry(db, entry, author);
@@ -99,6 +123,12 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
   for (const draft of payload.adr_drafts) {
     const r = await ingestAdrDraft(db, draft, author);
     if (r.outcome === "written") result.adrs++;
+    else result.triaged++;
+  }
+
+  for (const proposal of payload.milestone_proposals) {
+    const r = await ingestMilestoneProposal(db, proposal, author);
+    if (r.outcome === "written") result.milestones++;
     else result.triaged++;
   }
 

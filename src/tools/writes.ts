@@ -157,6 +157,29 @@ export async function promote_doc(
   return { slug, version, status: "promoted" };
 }
 
+/** Stage an agent-proposed milestone create/update for human review (mirrors doc_versions). */
+export async function stage_milestone_proposal(
+  db: DB,
+  proposal: { title: string; target_date: string; status: string; github_ref?: number | number[]; change_summary: string; confidence: "high" | "low" },
+  author: string
+): Promise<number> {
+  const github_ref = proposal.github_ref === undefined ? null : JSON.stringify(proposal.github_ref);
+  const res = await run(
+    db,
+    `INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'staged', ?, ?)`,
+    proposal.title,
+    proposal.target_date,
+    proposal.status,
+    github_ref,
+    proposal.change_summary,
+    proposal.confidence,
+    nowIso(),
+    author
+  );
+  return res.meta.last_row_id as number;
+}
+
 /** Human confirmation: ratify an ADR draft. Rejects if missing or already ratified. */
 export async function ratify_adr(db: DB, id: number): Promise<{ id: number; status: "ratified" }> {
   const adr = await first<AdrRow>(db, `SELECT * FROM adrs WHERE id = ?`, id);
