@@ -10,6 +10,21 @@ import { SAPLING_ORG } from "./github";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
 
+/**
+ * The OAuth callback URL for this request. GitHub requires an https callback for public
+ * hosts (http is only valid for localhost), so we force https for everything except local
+ * dev. Without this, a request that reached the Worker over http (e.g. before an edge
+ * http->https upgrade, or a bare-hostname browser navigation) would emit an http
+ * redirect_uri that GitHub rejects with "redirect_uri is not associated with this application".
+ * The same value is used for the authorize redirect and the token exchange, so they always match.
+ */
+export function callbackUrl(reqUrl: string): string {
+  const u = new URL(reqUrl);
+  const isLocal = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  const scheme = isLocal ? u.protocol.replace(/:$/, "") : "https";
+  return `${scheme}://${u.host}/auth/callback`;
+}
+
 export const authApp = new Hono<AppEnv>();
 
 // PUBLIC: start the OAuth dance.
@@ -18,9 +33,8 @@ authApp.get("/login", async (c) => {
   const { verifier, challenge } = await pkce();
   const sealed = await hmacSeal(`${state}.${verifier}`, c.env.COOKIE_SECRET);
   setCookie(c, OAUTH_TX_COOKIE, sealed, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 600 });
-  const origin = new URL(c.req.url).origin;
   return c.redirect(
-    buildAuthorizeUrl({ clientId: c.env.GITHUB_CLIENT_ID, redirectUri: `${origin}/auth/callback`, state, challenge }),
+    buildAuthorizeUrl({ clientId: c.env.GITHUB_CLIENT_ID, redirectUri: callbackUrl(c.req.url), state, challenge }),
     302
   );
 });
@@ -38,8 +52,7 @@ authApp.get("/callback", async (c) => {
   const [txState, verifier] = tx.split(".");
   if (txState !== state) return c.json({ error: "state_mismatch" }, 403);
 
-  const origin = new URL(c.req.url).origin;
-  const token = await exchangeCode({ env: c.env, code, redirectUri: `${origin}/auth/callback`, verifier });
+  const token = await exchangeCode({ env: c.env, code, redirectUri: callbackUrl(c.req.url), verifier });
   if (!token) return c.json({ error: "exchange_failed" }, 401);
 
   const ghUser = await getUser(token);
