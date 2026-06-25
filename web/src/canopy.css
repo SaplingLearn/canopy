@@ -1,0 +1,78 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Canopy design system — ported VERBATIM from Canopy.dc.html (the <style> block
+   in <helmet>). The file is the spec; do not retune these values.
+
+   Below the verbatim block is a small hover/focus utility layer that reproduces
+   the dc-runtime's `style-hover` / `style-active` / `style-focus` pseudo-props
+   as real CSS (the canvas runtime applied those inline; plain CSS needs rules).
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── verbatim from Canopy.dc.html ──────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, select { font-family: inherit; }
+::selection { background: var(--accent, #2BFF88); color: var(--accent-fg, #000); }
+.cnpy-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.cnpy-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+.cnpy-scroll::-webkit-scrollbar-track { background: transparent; }
+@keyframes cnpy-spin { to { transform: rotate(360deg); } }
+@keyframes cnpy-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes cnpy-pop { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+
+[data-cnpy-theme="dark"] { --bg:#000000; --fg:#ffffff; --fg-70:rgba(255,255,255,0.70); --fg-55:rgba(255,255,255,0.55); --fg-40:rgba(255,255,255,0.40); --border:rgba(255,255,255,0.11); --border-strong:rgba(255,255,255,0.20); --hover:rgba(255,255,255,0.055); --accent:#2BFF88; --accent-fg:#00130a; --accent-soft:rgba(43,255,136,0.13); --green:#2BFF88; --amber:#FFB454; --blue:#74A9FF; --red:#FF6B6B; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
+[data-cnpy-theme="light"] { --bg:#ffffff; --fg:#0a0a0a; --fg-70:rgba(0,0,0,0.70); --fg-55:rgba(0,0,0,0.55); --fg-40:rgba(0,0,0,0.45); --border:rgba(0,0,0,0.11); --border-strong:rgba(0,0,0,0.17); --hover:rgba(0,0,0,0.04); --accent:#00A859; --accent-fg:#ffffff; --accent-soft:rgba(0,168,89,0.11); --green:#00A859; --amber:#9A6400; --blue:#1E6FE0; --red:#D23B3B; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
+
+.cnpy-aside { width:248px; flex:none; display:flex; flex-direction:column; border-right:1px solid var(--border); background:var(--bg); transition:width .18s ease; }
+[data-collapsed="1"] .cnpy-aside { width:64px; }
+.cnpy-nav { display:flex; align-items:center; gap:11px; width:100%; padding:9px 11px; border-radius:8px; font-size:13.5px; font-weight:500; position:relative; color:var(--fg-55); text-align:left; }
+.cnpy-nav:hover { color:var(--fg-70); background:var(--hover); }
+[data-collapsed="1"] .cnpy-nav { justify-content:center; padding:9px 0; }
+[data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="triage"] .cnpy-nav.n-triage, [data-screen="search"] .cnpy-nav.n-search { background:var(--accent-soft); color:var(--accent); }
+.cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:9px; }
+.cnpy-chip:hover { background:var(--hover); }
+[data-collapsed="1"] .cnpy-chip { justify-content:center; padding:6px 0; }
+[data-screen="settings"] .cnpy-chip { background:var(--hover); }
+.cnpy-achip { padding:5px 11px; border-radius:7px; font-size:12.5px; font-weight:500; border:1px solid var(--border); color:var(--fg-55); background:transparent; transition:border-color .12s ease; white-space:nowrap; }
+.cnpy-achip:hover { border-color:var(--border-strong); }
+[data-author="all"] .cnpy-achip.a-all, [data-author="jose-a"] .cnpy-achip.a-jose-a, [data-author="meilin"] .cnpy-achip.a-meilin, [data-author="dev-raj"] .cnpy-achip.a-dev-raj, [data-author="sanaok"] .cnpy-achip.a-sanaok { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+.cnpy-qtab { display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:7px; font-size:12.5px; font-weight:500; color:var(--fg-55); background:transparent; }
+.cnpy-qtab:hover { color:var(--fg-70); }
+[data-tq="proposals"] .cnpy-qtab.q-proposals, [data-tq="decisions"] .cnpy-qtab.q-decisions, [data-tq="triage"] .cnpy-qtab.q-triage { color:var(--fg); background:var(--hover); }
+.cnpy-qcount { font-size:10.5px; font-family:var(--mono); font-weight:600; min-width:16px; height:16px; padding:0 4px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:transparent; color:var(--fg-40); border:1px solid var(--border); }
+[data-tq="proposals"] .cnpy-qtab.q-proposals .cnpy-qcount, [data-tq="decisions"] .cnpy-qtab.q-decisions .cnpy-qcount, [data-tq="triage"] .cnpy-qtab.q-triage .cnpy-qcount { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+.cnpy-titem { display:block; width:100%; text-align:left; padding:13px 15px; border-radius:11px; border:1px solid var(--border); background:transparent; margin-bottom:8px; position:relative; transition:all .12s ease; cursor:pointer; }
+.cnpy-titem:hover { border-color:var(--border-strong); }
+.cnpy-selbar { position:absolute; inset:0; border-radius:inherit; border:1px solid var(--border-strong); background:var(--hover); box-shadow:inset 2px 0 0 var(--accent); pointer-events:none; }
+.cnpy-tree { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:6px 10px; border-radius:7px; font-size:13px; font-weight:400; color:var(--fg-55); background:transparent; position:relative; transition:all .12s ease; }
+.cnpy-tree:hover { background:var(--hover); color:var(--fg-70); }
+
+/* ── hover / focus utility layer (reproduces dc-runtime style-* pseudo-props) ─ */
+.cnpy-select { appearance:none; -webkit-appearance:none; padding:5px 28px 5px 11px; border-radius:7px; font-size:12.5px; font-weight:500; border:1px solid var(--border); color:var(--fg-70); cursor:pointer; background:var(--bg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23888' stroke-width='2'><path d='M2 4l4 4 4-4'/></svg>") no-repeat right 9px center; }
+.cnpy-card { transition:border-color .14s ease; }
+.cnpy-card:hover { border-color:var(--border-strong); }
+.cnpy-accentbtn { transition:filter .12s ease, transform .12s ease; }
+.cnpy-accentbtn:hover { filter:brightness(1.06); }
+.cnpy-accentbtn:active { transform:translateY(1px); }
+.cnpy-outlinebtn { transition:all .12s ease; }
+.cnpy-outlinebtn:hover { background:var(--hover); color:var(--fg); }
+.cnpy-ghostbtn { transition:all .12s ease; }
+.cnpy-ghostbtn:hover { border-color:var(--border-strong); color:var(--fg); }
+.cnpy-iconbtn { transition:background .12s ease, color .12s ease; }
+.cnpy-iconbtn:hover { background:var(--hover); color:var(--fg-70); }
+.cnpy-link:hover { text-decoration:underline; }
+.cnpy-assignbtn { transition:all .12s ease; }
+.cnpy-assignbtn:hover { border-color:var(--accent); color:var(--accent); }
+.cnpy-issuechip { transition:border-color .12s ease, color .12s ease; }
+.cnpy-issuechip:hover { border-color:var(--border-strong); color:var(--fg); }
+.cnpy-revoke { transition:all .12s ease; }
+.cnpy-revoke:hover { border-color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent); }
+.cnpy-discard:hover { color:var(--red); }
+.cnpy-xbtn:hover { background:color-mix(in srgb, var(--accent) 22%, transparent); }
+.cnpy-input:focus { border-color:var(--accent); }
+.cnpy-themecard { transition:all .12s ease; }
+.cnpy-mintbtn { transition:filter .12s ease; }
+.cnpy-mintbtn:hover { filter:brightness(1.05); }
+.cnpy-signout { transition:all .12s ease; }
+.cnpy-signout:hover { border-color:var(--red); color:var(--red); }
+.cnpy-mutelink:hover { color:var(--fg-70); }
