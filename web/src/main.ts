@@ -5,7 +5,7 @@
 
 import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
-import { getFeed, listDocs, getDoc, Unauthorized, NotFound } from "./api";
+import { getFeed, listDocs, getDoc, search, Unauthorized, NotFound } from "./api";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -121,6 +121,28 @@ function loadDocsIfNeeded(): void {
   else rerender();
 }
 
+let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+function loadSearch(): void {
+  state.searchResults = { status: "loading", data: state.searchResults.data };
+  rerender();
+  search(state.searchQuery)
+    .then((results) => {
+      state.searchResults = { status: "ok", data: results };
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.searchResults = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function loadSearchIfNeeded(): void {
+  if (state.searchResults.status === "idle") loadSearch();
+  else rerender();
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -139,7 +161,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
     case "goRoadmap": state.screen = "roadmap"; break;
     case "goTriage": state.screen = "triage"; break;
-    case "goSearch": state.screen = "search"; break;
+    case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
 
     // chrome: theme + sidebar
@@ -189,9 +211,14 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "gotoTriage": state.screen = "triage"; state.triageQueue = "proposals"; break;
 
     // search
-    case "setSearch": state.searchQuery = value ?? ""; break;
+    case "setSearch":
+      state.searchQuery = value ?? "";
+      if (searchDebounce !== null) clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(() => { searchDebounce = null; loadSearch(); }, 250);
+      rerender();
+      return;
     case "setSearchType":
-      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision") state.searchType = arg;
+      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "adr") state.searchType = arg;
       break;
 
     // settings — display name echoes live; everything else is Phase 2

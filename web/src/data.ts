@@ -178,28 +178,8 @@ export const initTokens: Token[] = [
 // deleted in Phase-2 Task 2 — the Docs screen now renders real DocRow/DocVersionRow
 // shapes from @shared/rows via web/src/api.ts.
 
-export type SearchType = "doc" | "feed" | "decision";
-export interface SearchSource {
-  type: SearchType;
-  typeLabel: string;
-  section: string;
-  title: string;
-  who: PersonKey;
-  tags: string[];
-  snippet: string;
-  mark: string;
-  /** Phase-1 nav target: the screen/doc this result jumps to. */
-  go: { kind: "feed" } | { kind: "doc"; id: string };
-}
-
-export const searchSources: SearchSource[] = [
-  { type: "doc", typeLabel: "Doc", section: "Reference", title: "MCP Server", who: "mei", tags: ["mcp-server", "security"], snippet: "Each request carries a bearer token in the Authorization header. Tokens are compared in constant time, then matched against the store.", mark: "token", go: { kind: "doc", id: "mcp" } },
-  { type: "feed", typeLabel: "Feed", section: "Feed", title: "Switched MCP token comparison to constant-time", who: "jose", tags: ["mcp-server", "security"], snippet: "Replaces the early-return string compare flagged in #138. Adds a timing test that fails on the old implementation.", mark: "token", go: { kind: "feed" } },
-  { type: "doc", typeLabel: "Doc", section: "Reference", title: "Auth", who: "dev", tags: ["auth"], snippet: "After the OAuth exchange, Canopy checks org membership before issuing a session token to the client.", mark: "token", go: { kind: "doc", id: "auth" } },
-  { type: "feed", typeLabel: "Feed", section: "Feed", title: "Added last-used tracking to MCP access tokens", who: "dev", tags: ["mcp-server", "settings"], snippet: "Every token now records a last-used timestamp, surfaced in the Settings token manager.", mark: "token", go: { kind: "feed" } },
-  { type: "decision", typeLabel: "Decision", section: "Decisions", title: "ADR-003 · Agent write contract", who: "dev", tags: ["decisions"], snippet: "Every write carries a change summary and a confidence flag, and lands as staged — never directly promoted.", mark: "token", go: { kind: "doc", id: "adr3" } },
-  { type: "doc", typeLabel: "Doc", section: "Context", title: "Glossary", who: "sana", tags: ["docs"], snippet: "token — a minted MCP credential that authorizes an agent to write to the store. Shown once at creation.", mark: "token", go: { kind: "doc", id: "glossary" } },
-];
+// SearchType, SearchSource, and searchSources deleted in Phase-2 Task 3 — the Search
+// screen now renders real SearchResult shapes from ./api via loadSearch() in main.ts.
 
 /** Pinned "now" so overdue / next-up are deterministic (design used 2026-06-24). */
 export const TODAY_ISO = "2026-06-24";
