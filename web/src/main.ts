@@ -9,6 +9,7 @@ import {
   getFeed, listDocs, getDoc, search, getRoadmap,
   listStagedProposals, listAdrs, listNeedsTriage,
   promoteDoc, ratifyAdr, completeMilestone,
+  getMe, logout, mintMcpToken,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 
@@ -244,13 +245,18 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
     // auth state navigation (how the screens become reachable)
     case "signIn":
-      state.authStep = "verifying";
-      rerender();
-      window.setTimeout(() => { state.view = "app"; state.authStep = "login"; loadFeed(); }, 1000);
+      window.location.href = "/auth/login";
       return;
     case "previewNonMember": state.authStep = "nonmember"; break;
-    case "backToLogin": state.authStep = "login"; break;
-    case "signOut": state.view = "auth"; state.authStep = "login"; break;
+    case "backToLogin":
+      state.authStep = "login";
+      history.replaceState({}, "", "/");
+      break;
+    case "signOut":
+      logout()
+        .then(() => { state.me = null; state.view = "auth"; state.authStep = "login"; rerender(); })
+        .catch(() => { state.view = "auth"; state.authStep = "login"; rerender(); });
+      return;
 
     // primary navigation
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
@@ -372,12 +378,19 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "assignItem":
     case "discardItem":
       return; // inert — keep rendered, do nothing
-    // ── Settings Phase 2 (inert until Task 6) ────────────────────────────────
+    // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
-    case "dismissReveal":
-    case "revokeToken":
-    case "saveProfile":
-      return; // render nothing new
+      mintMcpToken()
+        .then(({ token }) => { state.revealedToken = token; rerender(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not mint token");
+        });
+      return;
+    case "dismissReveal": state.revealedToken = null; break;
+    // INERT — no backend route for saving display name or revoking tokens
+    case "saveProfile": return;
+    case "revokeToken": return;
 
     default:
       return;
@@ -410,4 +423,28 @@ mount.addEventListener("input", (e) => {
   }
 });
 
-rerender();
+// ── boot: detect session via /auth/me ────────────────────────────────────────
+if (new URLSearchParams(location.search).get("denied") === "1") {
+  // Non-member: /auth/callback redirected here after org check failed
+  state.view = "auth";
+  state.authStep = "nonmember";
+  rerender();
+} else {
+  // Show "verifying" while we check if a session cookie exists
+  state.view = "auth";
+  state.authStep = "verifying";
+  rerender();
+  getMe()
+    .then((me) => {
+      state.me = me;
+      state.displayName = me.name ?? me.login;
+      state.view = "app";
+      loadFeed();
+    })
+    .catch(() => {
+      // Unauthorized or any error → show login
+      state.view = "auth";
+      state.authStep = "login";
+      rerender();
+    });
+}

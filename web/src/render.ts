@@ -3,10 +3,7 @@
 // `.map().join('')`, `sc-if` to ternaries, and `onClick="{{ fn }}"` to
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
-import {
-  people, initTokens,
-  type PersonKey, type Token,
-} from "./data";
+import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow } from "@shared/rows";
@@ -24,6 +21,7 @@ export interface Loadable<T> {
 export interface AppState {
   view: "auth" | "app";
   authStep: "login" | "verifying" | "nonmember";
+  me: Me | null;
   screen: Screen;
   theme: "dark" | "light" | "system";
   systemDark: boolean;
@@ -52,12 +50,12 @@ export interface AppState {
   proposals: Loadable<StagedProposal[]>;
   decisions: Loadable<AdrRow[]>;
   triageItems: Loadable<NeedsTriageRow[]>;
-  tokens: Token[];
 }
 
 export function initialState(): AppState {
   return {
     view: "auth", authStep: "login",
+    me: null,
     screen: "feed",
     theme: "dark", systemDark: true,
     collapsed: false,
@@ -73,26 +71,19 @@ export function initialState(): AppState {
     showHistory: false,
     searchQuery: "token", searchType: "all",
     searchResults: { status: "idle", data: [] },
-    displayName: "Jose",
+    displayName: "",
     revealedToken: null,
     confirmedMilestones: {},
     toast: null,
     proposals: { status: "idle", data: [] },
     decisions: { status: "idle", data: [] },
     triageItems: { status: "idle", data: [] },
-    tokens: initTokens.map((t) => ({ ...t })),
   };
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function resolved(s: AppState): "dark" | "light" {
   return s.theme === "system" ? (s.systemDark ? "dark" : "light") : s.theme;
-}
-function nameOf(s: AppState, who: PersonKey): string {
-  return who === "jose" ? s.displayName : people[who].display;
-}
-function initials(who: PersonKey): string {
-  return people[who].initials;
 }
 function attr(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -243,8 +234,8 @@ function sidebar(s: AppState): string {
 
     <div style="padding:10px;border-top:1px solid var(--border)">
       <button data-act="goSettings" title="Settings" class="cnpy-chip">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none">${initials("jose")}</div>
-        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.displayName}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${people.jose.login}</div></div>
+        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none">${initialsOf(s.me?.login ?? "?")}</div>
+        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.displayName || (s.me?.login ?? "")}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.me?.login ?? ""}</div></div>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>` : ""}
       </button>
     </div>
@@ -840,24 +831,22 @@ function settingsView(s: AppState): string {
       </div>
     </div>` : "";
 
-  const tokens = s.tokens.map((t) => `<div style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border)">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="8" cy="15" r="4"></circle><path d="m10.8 12.2 7-7M16 8l2 2M19 5l2 2"></path></svg>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13.5px;font-weight:500;font-family:var(--mono)">${t.name}</div>
-        <div style="font-size:11.5px;color:var(--fg-40);margin-top:2px">Created ${t.created} · Last used ${t.lastUsed}</div>
-      </div>
-      <button data-act="revokeToken" data-arg="${t.id}" class="cnpy-revoke" style="flex:none;padding:6px 12px;border-radius:7px;border:1px solid var(--border);font-size:12px;font-weight:500;color:var(--red)">Revoke</button>
-    </div>`).join("");
+  // No GET route for existing tokens — list is empty with a note.
+  const tokenListBody = `<div style="padding:14px 18px;font-size:12.5px;color:var(--fg-40)">Existing tokens aren't listed here.</div>`;
+
+  const meLogin = s.me?.login ?? "";
+  const meName = s.me?.name ?? meLogin;
+  const meOrg = s.me?.org ?? "";
 
   return `<div style="max-width:680px;margin:0 auto;padding:32px 24px 100px">
     <section style="margin-bottom:14px">
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Profile</div>
       <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
-          <div style="width:56px;height:56px;border-radius:50%;${AVATAR};font-size:18px;font-weight:600;flex:none">${initials("jose")}</div>
+          <div style="width:56px;height:56px;border-radius:50%;${AVATAR};font-size:18px;font-weight:600;flex:none">${initialsOf(meLogin || "?")}</div>
           <div>
-            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">${people.jose.full}</span><span style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">GITHUB</span></div>
-            <div style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono);margin-top:3px">${people.jose.login}</div>
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">${meName}</span><span style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">GITHUB</span></div>
+            <div style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono);margin-top:3px">${meLogin}</div>
             <div style="font-size:11.5px;color:var(--fg-40);margin-top:5px">Avatar is imported from GitHub and can't be changed here.</div>
           </div>
         </div>
@@ -884,7 +873,7 @@ function settingsView(s: AppState): string {
         <button data-act="mintToken" class="cnpy-mintbtn" style="display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Mint new token</button>
       </div>
       ${reveal}
-      <div style="border:1px solid var(--border);border-radius:13px;overflow:hidden">${tokens}</div>
+      <div style="border:1px solid var(--border);border-radius:13px;overflow:hidden">${tokenListBody}</div>
       <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">Tokens authorize agents to write to Canopy over MCP. Revoking takes effect immediately.</div>
     </section>
 
@@ -892,10 +881,10 @@ function settingsView(s: AppState): string {
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Account</div>
       <div style="border:1px solid var(--border);border-radius:13px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:13px">
-          <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none">${initials("jose")}</div>
+          <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none">${initialsOf(meLogin || "?")}</div>
           <div>
-            <div style="font-size:13.5px;font-weight:500">${people.jose.login}</div>
-            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Member of sapling-dev</div>
+            <div style="font-size:13.5px;font-weight:500">${meLogin}</div>
+            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Member of <b>${meOrg}</b></div>
           </div>
         </div>
         <button data-act="signOut" class="cnpy-signout" style="padding:9px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13px;font-weight:500">Sign out</button>
