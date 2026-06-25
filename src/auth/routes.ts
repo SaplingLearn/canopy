@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./principal";
-import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
+import { pkce, randomToken, hmacSeal, hmacUnseal, encryptSecret } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, isActiveOrgMember } from "./github";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
@@ -45,10 +45,11 @@ authApp.get("/callback", async (c) => {
   if (!ghUser) return c.json({ error: "identity_failed" }, 401);
   if (!(await isActiveOrgMember(token))) return c.json({ error: "forbidden" }, 403);
 
+  const sealedToken = await encryptSecret(token, c.env.COOKIE_SECRET);
   await run(c.env.DB,
-    `INSERT INTO users (github_login, name, created_at) VALUES (?, ?, ?)
-     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name`,
-    ghUser.login, ghUser.name, nowIso());
+    `INSERT INTO users (github_login, name, github_token, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name, github_token = excluded.github_token`,
+    ghUser.login, ghUser.name, sealedToken, nowIso());
 
   const { id } = await createSession(c.env.DB, ghUser.login);
   await setSessionCookie(c, id, c.env.COOKIE_SECRET);
