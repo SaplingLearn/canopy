@@ -84,83 +84,9 @@ export const initTriage: TriageItem[] = [
     raw: "Onboarding: 1) get added to sapling-dev org, 2) sign in to Canopy, 3) mint an MCP token in Settings, 4) point your agent at the MCP URL, 5) read Reference / Data Model first." },
 ];
 
-export interface RoadmapPhase {
-  h: string;
-  p: string;
-}
-
-export interface RoadmapDoc {
-  section: string;
-  title: string;
-  updatedBy: PersonKey;
-  at: string;
-  staged: boolean;
-  ver: string;
-  lede: string;
-  phases: RoadmapPhase[];
-}
-
-export const roadmapDoc: RoadmapDoc = {
-  section: "Context", title: "Where Sapling is going", updatedBy: "sana", at: "3 days ago", staged: true, ver: "v5",
-  lede: "Canopy is the high view over everything the team grows in Sapling. The plan below is our shared direction for the next two quarters — the load-bearing bets, in roughly the order we expect to make them. It is written by agents and promoted through Triage, so it stays honest about what is actually in flight.",
-  phases: [
-    { h: "Now — harden the write path", p: "The MCP contract and the Triage console are live, so every agent write is staged and reviewed. The work that remains is making that path boring: constant-time tokens, an audit trail, and a docs handbook complete enough that a new agent can onboard from Reference alone." },
-    { h: "Next — make the store answer questions", p: "Once the handbook is whole, the leverage moves to retrieval. Semantic ranking over feed and docs turns Canopy from a place you browse into a place you ask. The Roadmap view itself — reading milestone progress straight from GitHub — is the first feature built entirely on observed, not stored, data." },
-    { h: "Later — many agents, one memory", p: "As more agents run in parallel, attribution and conflict become the hard problem. The bet is that a single immutable feed plus per-session identity scales further than per-agent stores, and that self-hosting the whole thing keeps a small team in control of its own working memory." },
-  ],
-};
-
-export type MilestoneStatus = "done" | "in-progress" | "upcoming";
-export interface MilestoneIssue {
-  n: number;
-  closed: boolean;
-  title: string;
-}
-export interface Milestone {
-  id: string;
-  title: string;
-  desc: string;
-  target: string;
-  status: MilestoneStatus;
-  about: string;
-  gh: string;
-  issues: MilestoneIssue[];
-}
-
-export const milestones: Milestone[] = [
-  { id: "m1", title: "MCP write contract — GA", desc: "Typed, staged-only writes for every agent over MCP.", target: "2026-04-30", status: "done",
-    about: "The foundation everything else stands on: a single, typed path for agents to write into the store. Each write names a known section, carries a change summary and confidence flag, and lands as STAGED — so no agent output reaches readers without passing through Triage.",
-    gh: "milestone/1",
-    issues: [{ n: 101, closed: true, title: "Define the write_section schema" }, { n: 104, closed: true, title: "Reject writes to unknown section keys" }, { n: 108, closed: true, title: "Stage-only enforcement at the boundary" }, { n: 112, closed: true, title: "Confidence flag on every write" }, { n: 115, closed: true, title: "Route unplaceable writes to Triage" }, { n: 119, closed: true, title: "append_feed contract" }, { n: 122, closed: true, title: "propose_decision contract" }, { n: 127, closed: true, title: "Contract conformance test suite" }] },
-  { id: "m2", title: "Triage review console v1", desc: "Proposals, decisions, and unplaced items in one queue.", target: "2026-05-22", status: "done",
-    about: "The human gate made usable. Three switchable queues — proposals, drafted decisions, and unplaced items — each with a fast diff and a one-gesture decision, so the review discipline holds without becoming a chore.",
-    gh: "milestone/2",
-    issues: [{ n: 130, closed: true, title: "Side-by-side proposal diff" }, { n: 131, closed: true, title: "Promote action + optimistic update" }, { n: 133, closed: true, title: "Decision ratify flow" }, { n: 136, closed: true, title: "Unplaced-item assign / discard" }, { n: 140, closed: true, title: "Pending counts per queue" }, { n: 143, closed: true, title: "Keyboard navigation" }, { n: 146, closed: true, title: "Confidence flag surfacing" }, { n: 149, closed: true, title: "Empty + loading states" }, { n: 151, closed: true, title: "Author identity on every item" }, { n: 154, closed: true, title: "Diff add/del line counts" }, { n: 158, closed: true, title: "Queue switch perf" }] },
-  { id: "m3", title: "Token rotation & audit log", desc: "Constant-time comparison, revoke, and a read trail.", target: "2026-06-10", status: "in-progress",
-    about: "Hardening the credential path. Tokens compare in constant time, can be revoked instantly, and every read is written to an append-only audit trail. The last open issue is the retention policy for that trail.",
-    gh: "milestone/3",
-    issues: [{ n: 160, closed: true, title: "Constant-time token comparison" }, { n: 162, closed: true, title: "Revoke endpoint + immediate effect" }, { n: 165, closed: true, title: "last-used timestamp tracking" }, { n: 168, closed: true, title: "Append-only read audit log" }, { n: 171, closed: true, title: "Audit log query API" }, { n: 175, closed: false, title: "Audit retention + compaction policy" }] },
-  { id: "m4", title: "Docs handbook + diagram rendering", desc: "A browsable chapter per system part, Mermaid/D2 inline.", target: "2026-06-28", status: "in-progress",
-    about: "Turning the reference into a real handbook. A page per part of the system, grouped into Reference / Context / Decisions, with Mermaid and D2 fenced blocks rendered as actual diagrams. All linked issues are closed — it is ready to promote to done.",
-    gh: "milestone/4",
-    issues: [{ n: 178, closed: true, title: "Section nav tree (3 fixed groups)" }, { n: 180, closed: true, title: "Markdown reader styling" }, { n: 182, closed: true, title: "Mermaid client-side render" }, { n: 184, closed: true, title: "D2 client-side render" }, { n: 186, closed: true, title: "Diagram source fallback on parse fail" }, { n: 188, closed: true, title: "Version-history control" }, { n: 190, closed: true, title: "Staged-proposal banner" }, { n: 193, closed: true, title: "Decision Context/Decision/Rationale layout" }, { n: 196, closed: true, title: "Per-part page scaffolding" }] },
-  { id: "m5", title: "Semantic search ranking", desc: "Mixed feed/doc results ordered by meaning, not match.", target: "2026-07-18", status: "in-progress",
-    about: "Making the store answer questions. Embeddings over feed entries and docs let results rank by meaning rather than literal match, while the existing result layout stays put so the upgrade is invisible to readers.",
-    gh: "milestone/5",
-    issues: [{ n: 200, closed: true, title: "Embedding pipeline for sections" }, { n: 203, closed: true, title: "Vector index + nightly refresh" }, { n: 206, closed: true, title: "Hybrid lexical + semantic scoring" }, { n: 209, closed: false, title: "Query-time re-ranker" }, { n: 212, closed: false, title: "Snippet selection around match" }, { n: 215, closed: false, title: "Type / section / author filters" }, { n: 218, closed: false, title: "Relevance eval harness" }, { n: 221, closed: false, title: "Latency budget < 150ms" }] },
-  { id: "m6", title: "Roadmap + live GitHub progress", desc: "Milestones read straight from GitHub at view time.", target: "2026-08-05", status: "upcoming",
-    about: "This very view. Milestones are coarse goals whose progress is observed from GitHub at read time — never stored — so the roadmap can never drift from reality. Completion stays a deliberate human confirm.",
-    gh: "milestone/6",
-    issues: [{ n: 224, closed: true, title: "GitHub milestone + issue read API" }, { n: 227, closed: false, title: "Progress bar from closed/total" }, { n: 230, closed: false, title: "Overdue + next-up detection" }, { n: 233, closed: false, title: "Ready-to-complete confirm gesture" }, { n: 236, closed: false, title: "Narrative / Timeline split" }, { n: 239, closed: false, title: "Cache + rate-limit handling" }] },
-  { id: "m7", title: "Multi-agent session attribution", desc: "Per-session identity across parallel agent runs.", target: "2026-08-28", status: "upcoming",
-    about: "As more agents run at once, every write needs to say which agent and which session produced it. The bet is that one immutable feed plus per-session identity scales further than a store per agent.",
-    gh: "milestone/7",
-    issues: [{ n: 242, closed: false, title: "Session token issuance for agents" }, { n: 245, closed: false, title: "Per-session author chips" }, { n: 248, closed: false, title: "Concurrent-write conflict detection" }, { n: 251, closed: false, title: "Session timeline in Feed" }, { n: 254, closed: false, title: "Attribution in diff view" }, { n: 257, closed: false, title: "Agent registry" }, { n: 260, closed: false, title: "Session-scoped rate limits" }] },
-  { id: "m8", title: "Self-host & deploy guide", desc: "Run the whole store on your own infrastructure.", target: "2026-09-20", status: "upcoming",
-    about: "Keeping a small team in control of its own working memory. A documented path to run Canopy and its MCP server on your own infrastructure, with backups and upgrades that a four-person team can actually operate.",
-    gh: "milestone/8",
-    issues: [{ n: 263, closed: false, title: "Single-container deploy image" }, { n: 266, closed: false, title: "Postgres backup + restore guide" }, { n: 269, closed: false, title: "Env + secrets reference" }, { n: 272, closed: false, title: "Zero-downtime upgrade path" }, { n: 275, closed: false, title: "Self-host quickstart doc" }] },
-];
+// Roadmap mocks (roadmapDoc, milestones, RoadmapPhase, RoadmapDoc, MilestoneStatus,
+// MilestoneIssue, Milestone) deleted in Phase-2 Task 4 — the Roadmap screen now renders
+// real MilestoneWithProgress shapes from @shared/rows via web/src/api.ts.
 
 export interface Token {
   id: string;
@@ -181,5 +107,4 @@ export const initTokens: Token[] = [
 // SearchType, SearchSource, and searchSources deleted in Phase-2 Task 3 — the Search
 // screen now renders real SearchResult shapes from ./api via loadSearch() in main.ts.
 
-/** Pinned "now" so overdue / next-up are deterministic (design used 2026-06-24). */
-export const TODAY_ISO = "2026-06-24";
+// TODAY_ISO deleted in Phase-2 Task 4 — roadmapEnriched now uses real Date.now().

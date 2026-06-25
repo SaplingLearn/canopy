@@ -4,14 +4,12 @@
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
 import {
-  people, initProposals, initDecisions, initTriage, roadmapDoc,
-  milestones as milestonesData, initTokens,
-  TODAY_ISO,
+  people, initProposals, initDecisions, initTriage, initTokens,
   type PersonKey, type Proposal, type Decision, type TriageItem, type Token,
   type DiffKind,
 } from "./data";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { SearchResult } from "./api";
+import type { SearchResult, MilestoneWithProgress } from "./api";
 import { TAGS } from "@shared/vocabulary";
 
 export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings";
@@ -39,7 +37,7 @@ export interface AppState {
   docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
   docSlug: string | null;
   triageQueue: "proposals" | "decisions" | "triage";
-  roadmapTab: "narrative" | "timeline";
+  roadmap: Loadable<MilestoneWithProgress[]>;
   selProposal: string | null;
   selDecision: string | null;
   selTriage: string | null;
@@ -70,7 +68,7 @@ export function initialState(): AppState {
     docDetail: { status: "idle", data: null },
     docSlug: null,
     triageQueue: "proposals",
-    roadmapTab: "narrative",
+    roadmap: { status: "idle", data: [] },
     selProposal: "p1", selDecision: "d1", selTriage: "t1",
     showHistory: false,
     searchQuery: "token", searchType: "all",
@@ -293,13 +291,6 @@ function header(s: AppState): string {
       <button data-act="queueTriage" class="cnpy-qtab q-triage">Triage<span class="cnpy-qcount">${s.triageItems.length}</span></button>
     </div>` : "";
 
-  const overdueCount = roadmapEnriched(s).overdueCount;
-  const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
-  const roadmapControls = s.screen === "roadmap" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
-      <button data-act="roadmapNarrative" style="${rmTabStyle("narrative")}">Narrative</button>
-      <button data-act="roadmapTimeline" style="${rmTabStyle("timeline")}">Timeline${overdueCount ? `<span style="width:6px;height:6px;border-radius:50%;background:var(--red);margin-left:1px"></span>` : ""}</button>
-    </div>` : "";
-
   const themeBtn = `<button data-act="cycleTheme" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
       ${dark
         ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
@@ -312,7 +303,7 @@ function header(s: AppState): string {
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${triageControls}${roadmapControls}${themeBtn}
+      ${feedControls}${triageControls}${themeBtn}
     </div>
   </header>`;
 }
@@ -575,47 +566,43 @@ function queueEmpty(): string {
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
 interface EnrichedMilestone {
-  id: string; title: string; desc: string; about: string;
-  closed: number; total: number; done: boolean; ready: boolean; overdue: boolean;
+  id: number; title: string; about: string;
+  closed: number | null; total: number | null; done: boolean; ready: boolean; overdue: boolean;
   pct: number; tgt: number; badge: { label: string; color: string; soft?: boolean };
   dateLabel: string; isNext: boolean;
-  issues: { n: number; closed: boolean; href: string }[];
-  gh: string;
 }
 
-function roadmapEnriched(s: AppState): { list: EnrichedMilestone[]; doneCount: number; overdueCount: number } {
-  const today = new Date(TODAY_ISO + "T12:00:00").getTime();
+function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestones: Record<string, boolean>): { list: EnrichedMilestone[]; doneCount: number; overdueCount: number } {
+  const now = Date.now();
   const fmt = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const badgeFor = (st: string): { label: string; color: string; soft?: boolean } => {
     if (st === "done") return { label: "Done", color: "var(--green)", soft: true };
-    if (st === "in-progress") return { label: "In progress", color: "var(--amber)" };
+    if (st === "in_progress") return { label: "In progress", color: "var(--amber)" };
     return { label: "Upcoming", color: "var(--blue)" };
   };
 
-  const enriched = milestonesData.map((m) => {
-    const total = m.issues.length;
-    const closed = m.issues.filter((i) => i.closed).length;
-    const confirmed = !!s.confirmedMilestones[m.id];
+  const enriched = milestones.map((m) => {
+    const confirmed = !!confirmedMilestones[String(m.id)];
     const done = m.status === "done" || confirmed;
-    const allClosed = total > 0 && closed >= total;
-    const ready = !done && allClosed;
-    const tgt = new Date(m.target + "T12:00:00").getTime();
-    const overdue = !done && !ready && tgt < today;
-    const pct = total > 0 ? Math.round((100 * closed) / total) : 0;
-    const eff = done ? "done" : m.status === "done" ? "in-progress" : m.status;
+    const closed = m.progress ? m.progress.closed : null;
+    const total = m.progress ? m.progress.total : null;
+    const allClosed = total !== null && total > 0 && closed !== null && closed >= total;
+    const ready = !done && m.progress !== null && allClosed;
+    const tgt = new Date(m.target_date + "T12:00:00").getTime();
+    const overdue = !done && tgt < now;
+    const pct = total !== null && total > 0 && closed !== null ? Math.round((100 * closed) / total) : 0;
     return {
-      id: m.id, title: m.title, desc: m.desc, about: m.about,
+      id: m.id, title: m.title, about: m.description ?? "",
       closed, total, done, ready, overdue, pct, tgt,
-      badge: badgeFor(eff), dateLabel: fmt(m.target),
-      issues: m.issues.map((i) => ({ n: i.n, closed: i.closed, href: `https://github.com/sapling-dev/canopy/issues/${i.n}` })),
-      gh: m.gh, isNext: false,
+      badge: badgeFor(done ? "done" : m.status), dateLabel: fmt(m.target_date),
+      isNext: false,
     };
   });
 
-  let nextId: string | null = null;
+  let nextId: number | null = null;
   let nextTime = Infinity;
   enriched.forEach((m) => {
-    if (!m.done && !m.overdue && m.tgt >= today && m.tgt < nextTime) { nextTime = m.tgt; nextId = m.id; }
+    if (!m.done && !m.overdue && m.tgt >= now && m.tgt < nextTime) { nextTime = m.tgt; nextId = m.id; }
   });
   enriched.forEach((m) => { m.isNext = m.id === nextId; });
 
@@ -627,52 +614,36 @@ function roadmapEnriched(s: AppState): { list: EnrichedMilestone[]; doneCount: n
 }
 
 function roadmapView(s: AppState): string {
-  if (s.roadmapTab === "narrative") return roadmapNarrative(s);
+  if (s.roadmap.status === "loading" && s.roadmap.data.length === 0) {
+    return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Loading roadmap&hellip;")}</div>`;
+  }
+  if (s.roadmap.status === "error") {
+    return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Couldn't load the roadmap.")}</div>`;
+  }
   return roadmapTimeline(s);
 }
 
-function roadmapNarrative(s: AppState): string {
-  const rd = roadmapDoc;
-  const staged = rd.staged ? `<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--amber);border-radius:9px;margin-bottom:26px">
-      <span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);border-radius:6px;padding:2px 8px;flex:none">STAGED</span>
-      <span style="font-size:13px;color:var(--fg-70);flex:1">You're viewing the <strong style="color:var(--fg);font-weight:600">promoted</strong> plan. A newer proposal is awaiting review.</span>
-      <button data-act="gotoTriage" class="cnpy-link" style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--accent);white-space:nowrap">Review in Triage →</button>
-    </div>` : "";
-
-  const phases = rd.phases.map((ph) => `<div style="margin-top:26px">
-      <h2 style="font-size:16px;font-weight:600;letter-spacing:-0.01em;margin:0 0 9px;display:flex;align-items:center;gap:10px"><span style="width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none"></span>${ph.h}</h2>
-      <p style="font-size:14.5px;line-height:1.75;color:var(--fg-70);margin:0;padding-left:16px">${ph.p}</p>
-    </div>`).join("");
-
-  return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
-    ${staged}
-    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px">${rd.section} · Narrative</div>
-    <h1 style="font-size:30px;font-weight:600;letter-spacing:-0.025em;margin:0 0 14px">${rd.title}</h1>
-    <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55);padding-bottom:22px;border-bottom:1px solid var(--border)">
-      <span style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg-70)">${initials(rd.updatedBy)}</span>
-      <span>Updated by <span style="color:var(--fg-70);font-weight:500">${nameOf(s, rd.updatedBy)}</span> · ${rd.at}</span>
-    </div>
-    <p style="font-size:16px;line-height:1.7;color:var(--fg-70);margin:24px 0 8px">${rd.lede}</p>
-    ${phases}
-  </div>`;
-}
-
 function roadmapTimeline(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s);
+  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
   const total = list.length;
 
   const rows = list.map((m) => {
     const accent = m.overdue ? "var(--red)" : m.isNext ? "var(--accent)" : "var(--border)";
     const bg = m.overdue ? "color-mix(in srgb,var(--red) 6%,transparent)" : m.isNext ? "var(--accent-soft)" : "transparent";
     const barColor = m.done ? "var(--green)" : m.overdue ? "var(--red)" : "var(--accent)";
-    const open = m.total - m.closed;
-    const issues = m.issues.map((i) => {
-      const chip = `display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-family:var(--mono);text-decoration:none;padding:3px 9px 3px 7px;border-radius:6px;border:1px solid var(--border);color:${i.closed ? "var(--fg-40)" : "var(--fg-70)"};background:transparent;white-space:nowrap`;
-      const dot = `width:8px;height:8px;border-radius:50%;flex:none;background:${i.closed ? "var(--green)" : "transparent"};border:${i.closed ? "none" : "1.5px solid var(--fg-40)"}`;
-      return `<a href="${i.href}" target="_blank" class="cnpy-issuechip" style="${chip}"><span style="${dot}"></span>#${i.n}</a>`;
-    }).join("");
 
     const badge = `display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:6px;color:${m.badge.color};border:1px solid color-mix(in srgb,${m.badge.color} 45%,transparent);background:${m.badge.soft ? `color-mix(in srgb,${m.badge.color} 12%,transparent)` : "transparent"}`;
+
+    // Progress bar: when progress is null, render empty track only
+    const progressBar = m.total !== null && m.closed !== null
+      ? `<div style="display:flex;align-items:center;gap:12px;margin-top:16px">
+          <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
+          <span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${m.closed} of ${m.total} issues closed</span>
+        </div>`
+      : `<div style="display:flex;align-items:center;gap:12px;margin-top:16px">
+          <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"></div>
+          <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;flex:none">progress unavailable</span>
+        </div>`;
 
     const ready = m.ready ? `<div style="display:flex;align-items:center;gap:12px;margin-top:15px;padding-top:14px;border-top:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--accent);flex:1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"></path></svg><span style="color:var(--fg-70)">All linked issues are closed — <strong style="color:var(--fg);font-weight:600">ready to complete</strong>.</span></div>
@@ -687,31 +658,19 @@ function roadmapTimeline(s: AppState): string {
             ${m.isNext ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px">NEXT</span>` : ""}
             ${m.overdue ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px">OVERDUE</span>` : ""}
           </div>
-          ${m.desc ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.5">${m.desc}</div>` : ""}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:none">
           <span style="${badge}">${m.badge.label}</span>
           <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono)">${m.dateLabel}</span>
         </div>
       </div>
-      <p style="font-size:13.5px;line-height:1.65;color:var(--fg-70);margin:13px 0 0">${m.about}</p>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:16px">
-        <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
-        <span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${m.closed} of ${m.total} issues closed</span>
-      </div>
-      <div style="margin-top:15px;padding-top:14px;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 .5C5.4.5 0 5.8 0 12.3c0 5.2 3.4 9.6 8.2 11.2.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.6 4.7 18.6 5 18.6 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 24 12.3C24 5.8 18.6.5 12 .5z" fill="currentColor" stroke="none"></path></svg>
-            Linked issues
-          </div>
-          ${open > 0 ? `<span style="font-size:11px;color:var(--fg-40);font-family:var(--mono)">${open} open</span>` : ""}
-        </div>
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px">${issues}</div>
-      </div>
+      ${m.about ? `<p style="font-size:13.5px;line-height:1.65;color:var(--fg-70);margin:13px 0 0">${m.about}</p>` : ""}
+      ${progressBar}
       ${ready}
     </div>`;
   }).join("");
+
+  const empty = s.roadmap.status === "ok" && total === 0 ? notice("No milestones yet.") : "";
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 6px">
@@ -725,7 +684,7 @@ function roadmapTimeline(s: AppState): string {
       </div>
     </div>
     <div style="font-size:12px;color:var(--fg-40);margin-bottom:20px">Progress is read live from GitHub at view time — not stored here.</div>
-    ${rows}
+    ${rows}${empty}
     <div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Milestones are coarse goals — the altitude above GitHub issues.</div>
   </div>`;
 }

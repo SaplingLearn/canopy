@@ -5,7 +5,7 @@
 
 import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
-import { getFeed, listDocs, getDoc, search, Unauthorized, NotFound } from "./api";
+import { getFeed, listDocs, getDoc, search, getRoadmap, Unauthorized, NotFound } from "./api";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -143,6 +143,26 @@ function loadSearchIfNeeded(): void {
   else rerender();
 }
 
+function loadRoadmap(): void {
+  state.roadmap = { status: "loading", data: state.roadmap.data };
+  rerender();
+  getRoadmap()
+    .then((milestones) => {
+      state.roadmap = { status: "ok", data: milestones };
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.roadmap = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function loadRoadmapIfNeeded(): void {
+  if (state.roadmap.status === "idle") loadRoadmap();
+  else rerender();
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -159,7 +179,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // primary navigation
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
-    case "goRoadmap": state.screen = "roadmap"; break;
+    case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); return;
     case "goTriage": state.screen = "triage"; break;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
@@ -223,10 +243,6 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
 
     // settings — display name echoes live; everything else is Phase 2
     case "setDisplayName": state.displayName = value ?? ""; break;
-
-    // roadmap tabs
-    case "roadmapNarrative": state.screen = "roadmap"; state.roadmapTab = "narrative"; break;
-    case "roadmapTimeline": state.screen = "roadmap"; state.roadmapTab = "timeline"; break;
 
     // ── Phase 2 (intentionally inert in Phase 1 — static affordances only) ──
     case "promote":
