@@ -120,6 +120,12 @@ describe("fetchMilestoneProgress", () => {
     const p = await fetchMilestoneProgress({ token: "stale", repo: "o/r", ref: "[1]", fetchImpl });
     expect(p).toBeNull();
   });
+
+  it("skips a missing issue (404) but keeps counting the resolvable ones", async () => {
+    const fetchImpl = stubFetch({ "/issues/1": { state: "closed" }, "/issues/3": { state: "open" } }); // issue 2 → 404
+    const p = await fetchMilestoneProgress({ token: "t", repo: "o/r", ref: "[1,2,3]", fetchImpl });
+    expect(p).toEqual({ closed: 1, total: 2 });
+  });
 });
 
 describe("promote_milestone_proposal + complete_milestone", () => {

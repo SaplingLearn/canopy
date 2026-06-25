@@ -195,6 +195,15 @@ export async function promote_milestone_proposal(db: DB, id: number, author: str
   if (!p) throw new Error(`no such milestone proposal: ${id}`);
   if (p.staged_status === "promoted") throw new Error(`milestone proposal already promoted: ${id}`);
 
+  // Atomically claim the proposal: the conditional UPDATE is the gate, so two
+  // concurrent promotes cannot both pass and create duplicate live milestones.
+  const claim = await run(
+    db,
+    `UPDATE milestone_proposals SET staged_status = 'promoted' WHERE id = ? AND staged_status = 'staged'`,
+    id
+  );
+  if ((claim.meta.changes ?? 0) === 0) throw new Error(`milestone proposal already promoted: ${id}`);
+
   const now = nowIso();
   const res = await run(
     db,
@@ -202,13 +211,12 @@ export async function promote_milestone_proposal(db: DB, id: number, author: str
      VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`,
     p.title,
     p.target_date,
-    p.status,        // gate guaranteed this is never 'done'
+    p.status,        // the gate guarantees this is never 'done'
     p.github_ref,
     now,
     author,
     now
   );
-  await run(db, `UPDATE milestone_proposals SET staged_status = 'promoted' WHERE id = ?`, id);
   const milestoneId = res.meta.last_row_id as number;
   return (await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, milestoneId))!;
 }

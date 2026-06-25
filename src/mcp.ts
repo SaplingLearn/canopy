@@ -86,7 +86,7 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
 
   server.tool(
     "propose_milestone",
-    "Propose a roadmap milestone (create/update) through the gate; staged for human promotion. A 'done' status or low confidence routes to needs_triage.",
+    "Propose a NEW roadmap milestone through the gate; staged for a human to promote into a live milestone. A 'done' status or low confidence routes to needs_triage.",
     {
       title: z.string(),
       target_date: z.string(),

@@ -30,13 +30,20 @@ export async function fetchMilestoneProgress(opts: {
   try {
     if (Array.isArray(parsed)) {
       let closed = 0;
+      let total = 0;
       for (const n of parsed) {
         const res = await doFetch(`https://api.github.com/repos/${opts.repo}/issues/${n}`, { headers });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          // Token/auth-level failure → the whole milestone's progress is unknown.
+          if (res.status === 401 || res.status === 403) return null;
+          // A single missing/inaccessible issue (e.g. 404) → skip it; keep counting the rest.
+          continue;
+        }
         const data = (await res.json()) as { state?: string };
         if (data.state === "closed") closed++;
+        total++;
       }
-      return { closed, total: parsed.length };
+      return { closed, total };
     }
     if (typeof parsed === "number") {
       const res = await doFetch(`https://api.github.com/repos/${opts.repo}/milestones/${parsed}`, { headers });
