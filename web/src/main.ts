@@ -1,11 +1,11 @@
-// Phase 1 entry: holds the single in-memory state, mounts the static UI, and
-// dispatches DOM events to state changes. Mirrors the dc-runtime component's
-// state model. NO fetches, NO routes, NO @shared — navigation + visual state
-// only; consequential write actions (promote/ratify/mint/…) are intentionally
-// inert (Phase 2 wires them to the real backend).
+// App entry: holds the single in-memory state, mounts the UI, dispatches DOM
+// events to state changes, and loads real data per screen from the cookie-gated
+// routes via ./api. Wiring proceeds screen by screen (Phase 2); unwired screens
+// still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
+import { getFeed, Unauthorized } from "./api";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -56,6 +56,30 @@ function persist(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
 }
 
+// ── per-screen data loaders ──────────────────────────────────────────────────
+function loadFeed(): void {
+  state.feed = { status: "loading", data: state.feed.data };
+  rerender();
+  const author = state.feedAuthor !== "all" ? state.feedAuthor : undefined;
+  const tags = state.feedTag !== "all" ? [state.feedTag] : undefined;
+  getFeed({ author, tags })
+    .then((rows) => {
+      state.feed = { status: "ok", data: rows };
+      // Capture the author chip set only from the unfiltered view, so filtering doesn't shrink it.
+      if (!author && !tags) state.feedAuthors = [...new Set(rows.map((r) => r.author))];
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.feed = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadFeedIfNeeded(): void {
+  if (state.feed.status === "idle") loadFeed();
+  else rerender();
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -63,14 +87,14 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "signIn":
       state.authStep = "verifying";
       rerender();
-      window.setTimeout(() => { state.view = "app"; state.authStep = "login"; rerender(); }, 1000);
+      window.setTimeout(() => { state.view = "app"; state.authStep = "login"; loadFeed(); }, 1000);
       return;
     case "previewNonMember": state.authStep = "nonmember"; break;
     case "backToLogin": state.authStep = "login"; break;
     case "signOut": state.view = "auth"; state.authStep = "login"; break;
 
     // primary navigation
-    case "goFeed": state.screen = "feed"; break;
+    case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; break;
     case "goRoadmap": state.screen = "roadmap"; break;
     case "goTriage": state.screen = "triage"; break;
@@ -96,9 +120,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       break;
 
     // feed filters
-    case "setAuthor": state.feedAuthor = arg ?? "all"; break;
-    case "clearAuthor": state.feedAuthor = "all"; break;
-    case "setTag": state.feedTag = value ?? "all"; break;
+    case "setAuthor": state.feedAuthor = arg ?? "all"; loadFeed(); return;
+    case "clearAuthor": state.feedAuthor = "all"; loadFeed(); return;
+    case "setTag": state.feedTag = value ?? "all"; loadFeed(); return;
     case "setRange": state.feedRange = value ?? "all"; break;
 
     // triage navigation (browse the queues — no writes)

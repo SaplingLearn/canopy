@@ -19,32 +19,8 @@ export const people: Record<PersonKey, Person> = {
   sana: { login: "sanaok", full: "Sana Okonkwo", display: "Sana", initials: "SO" },
 };
 
-export interface Artifact {
-  kind: string;
-  label: string;
-  href: string;
-}
-
-export interface FeedEntry {
-  id: string;
-  who: PersonKey;
-  summary: string;
-  body: string;
-  tags: string[];
-  time: string;
-  artifacts: Artifact[];
-}
-
-export const feed: FeedEntry[] = [
-  { id: "f1", who: "mei", summary: "Implemented Mermaid + D2 rendering in the Docs reader", body: "Fenced ```mermaid and ```d2 blocks now render to inline SVG on the client, with the source code block as a fallback when parsing fails.", tags: ["frontend", "docs"], time: "32m ago", artifacts: [{ kind: "PR", label: "#145", href: "https://github.com/sapling-dev/canopy/pull/145" }, { kind: "commit", label: "7b1e004", href: "https://github.com/sapling-dev/canopy/commit/7b1e004" }] },
-  { id: "f2", who: "jose", summary: "Switched MCP token comparison to constant-time", body: "Replaces the early-return string compare flagged in #138. Adds a timing test that fails on the old implementation.", tags: ["mcp-server", "security"], time: "1h ago", artifacts: [{ kind: "PR", label: "#142", href: "https://github.com/sapling-dev/canopy/pull/142" }, { kind: "commit", label: "a3f9c21", href: "https://github.com/sapling-dev/canopy/commit/a3f9c21" }, { kind: "issue", label: "#138", href: "https://github.com/sapling-dev/canopy/issues/138" }] },
-  { id: "f3", who: "sana", summary: "Drafted ADR: append-only feed as the system of record", body: "", tags: ["decisions", "architecture"], time: "3h ago", artifacts: [{ kind: "issue", label: "#150", href: "https://github.com/sapling-dev/canopy/issues/150" }] },
-  { id: "f4", who: "dev", summary: "Promoted Reference / Auth after review", body: "", tags: ["docs", "auth"], time: "5h ago", artifacts: [] },
-  { id: "f5", who: "mei", summary: "Indexed 1,204 store sections for search", body: "", tags: ["search", "infra"], time: "Yesterday", artifacts: [{ kind: "commit", label: "4c0aa11", href: "https://github.com/sapling-dev/canopy/commit/4c0aa11" }] },
-  { id: "f6", who: "jose", summary: "Wired GitHub org-membership check into sign-in", body: "Non-members now hit the locked dead-end instead of a blank app shell.", tags: ["auth", "security"], time: "Yesterday", artifacts: [{ kind: "PR", label: "#139", href: "https://github.com/sapling-dev/canopy/pull/139" }, { kind: "commit", label: "9de0b2f", href: "https://github.com/sapling-dev/canopy/commit/9de0b2f" }] },
-  { id: "f7", who: "dev", summary: "Added last-used tracking to MCP access tokens", body: "", tags: ["mcp-server", "settings"], time: "2d ago", artifacts: [{ kind: "PR", label: "#141", href: "https://github.com/sapling-dev/canopy/pull/141" }] },
-  { id: "f8", who: "sana", summary: "Promoted Context / Glossary v3", body: "", tags: ["docs"], time: "2d ago", artifacts: [] },
-];
+// Feed mock + FeedEntry/Artifact types deleted in Phase-2 Task 1 — the Feed screen
+// now renders the real FeedRow shape from @shared/rows via web/src/api.ts.
 
 export type DiffKind = "ctx" | "add" | "del";
 export interface DiffLine {

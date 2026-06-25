@@ -4,14 +4,23 @@
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
 import {
-  people, feed, initProposals, initDecisions, initTriage, roadmapDoc,
+  people, initProposals, initDecisions, initTriage, roadmapDoc,
   milestones as milestonesData, initTokens, docTree, docMeta, docVersions,
   searchSources, TODAY_ISO,
   type PersonKey, type Proposal, type Decision, type TriageItem, type Token,
   type SearchType, type DiffKind, type DocMeta,
 } from "./data";
+import type { FeedRow } from "@shared/rows";
+import { TAGS } from "@shared/vocabulary";
 
 export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings";
+
+/** Async data slice: a screen's fetched payload plus its load status. */
+export interface Loadable<T> {
+  status: "idle" | "loading" | "ok" | "error" | "unauth";
+  data: T;
+  error?: string;
+}
 
 export interface AppState {
   view: "auth" | "app";
@@ -23,6 +32,8 @@ export interface AppState {
   feedAuthor: string;
   feedTag: string;
   feedRange: string;
+  feed: Loadable<FeedRow[]>;
+  feedAuthors: string[];
   triageQueue: "proposals" | "decisions" | "triage";
   roadmapTab: "narrative" | "timeline";
   selProposal: string | null;
@@ -49,6 +60,8 @@ export function initialState(): AppState {
     theme: "dark", systemDark: true,
     collapsed: false,
     feedAuthor: "all", feedTag: "all", feedRange: "all",
+    feed: { status: "idle", data: [] },
+    feedAuthors: [],
     triageQueue: "proposals",
     roadmapTab: "narrative",
     selProposal: "p1", selDecision: "d1", selTriage: "t1",
@@ -86,6 +99,43 @@ function logo(size: number): string {
 
 function confColor(c: string): string {
   return c === "High" ? "var(--green)" : c === "Medium" ? "var(--amber)" : "var(--red)";
+}
+
+// ── real-data helpers (authors are github logins; no curated display map) ─────
+const REPO_URL = "https://github.com/SaplingLearn/canopy";
+/** Two-letter avatar initials from a github login, e.g. "jose-a" → "JO". */
+function initialsOf(login: string): string {
+  const letters = login.replace(/[^a-zA-Z]/g, "");
+  return (letters.slice(0, 2) || login.slice(0, 2) || "?").toUpperCase();
+}
+/** Relative time from an ISO timestamp, e.g. "32m ago" / "2d ago". */
+function relTime(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+/** Parse the feed row's artifacts JSON ({prs,commits,issues}) into render-ready chips. */
+function feedArtifacts(json: string | null): { kind: string; label: string; href: string }[] {
+  if (!json) return [];
+  let a: { prs?: string[]; commits?: string[]; issues?: number[] };
+  try { a = JSON.parse(json); } catch { return []; }
+  const out: { kind: string; label: string; href: string }[] = [];
+  for (const pr of a.prs ?? []) out.push({ kind: "PR", label: `#${pr}`, href: `${REPO_URL}/pull/${pr}` });
+  for (const c of a.commits ?? []) out.push({ kind: "commit", label: c, href: `${REPO_URL}/commit/${c}` });
+  for (const i of a.issues ?? []) out.push({ kind: "issue", label: `#${i}`, href: `${REPO_URL}/issues/${i}` });
+  return out;
+}
+/** Centered muted notice reused for loading / error states (no layout change). */
+function notice(text: string): string {
+  return `<div style="text-align:center;padding:60px;color:var(--fg-40);font-size:13px">${text}</div>`;
 }
 
 // ── auth states ──────────────────────────────────────────────────────────────
@@ -200,22 +250,29 @@ function header(s: AppState): string {
   const dark = resolved(s) === "dark";
 
   const authorFiltered = s.feedAuthor !== "all";
-  const authorKey = (Object.keys(people) as PersonKey[]).find((k) => people[k].login === s.feedAuthor);
-  const authorFilterLabel = authorKey ? `${nameOf(s, authorKey)}'s activity` : "";
+  const authorFilterLabel = authorFiltered ? `${s.feedAuthor}'s activity` : "";
 
   const filterChip = s.screen === "feed" && authorFiltered
     ? `<div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 10px;border:1px solid var(--accent);color:var(--accent);border-radius:999px;font-size:12px;font-weight:500;background:var(--accent-soft)">${authorFilterLabel}<button data-act="clearAuthor" class="cnpy-xbtn" style="width:16px;height:16px;display:grid;place-items:center;border-radius:50%;color:var(--accent)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></div>`
     : "";
 
-  const authorChips = [["all", "All"], ["jose-a", "Jose"], ["meilin", "Mei"], ["dev-raj", "Dev"], ["sanaok", "Sana"]]
-    .map(([k, label]) => `<button data-act="setAuthor" data-arg="${k}" class="cnpy-achip a-${k}">${label}</button>`).join("");
+  // Author chips are derived from the authors actually present in the feed (captured on
+  // the unfiltered load), not a hardcoded people list. Active chip is styled inline
+  // because the login set is dynamic (the old `[data-author=…] .a-<login>` CSS can't match).
+  const achip = (key: string, label: string): string => {
+    const active = s.feedAuthor === key;
+    const activeStyle = active ? "border-color:var(--accent);color:var(--accent);background:var(--accent-soft)" : "";
+    return `<button data-act="setAuthor" data-arg="${attr(key)}" class="cnpy-achip" style="${activeStyle}">${label}</button>`;
+  };
+  const authorChips = [achip("all", "All"), ...s.feedAuthors.map((a) => achip(a, a))].join("");
 
   const feedControls = s.screen === "feed" ? `<div style="display:flex;align-items:center;gap:6px">
       <span style="font-size:11px;color:var(--fg-40);text-transform:uppercase;letter-spacing:.08em;margin-right:2px">Author</span>
       ${authorChips}
       <div style="width:1px;height:20px;background:var(--border);margin:0 4px"></div>
       <select data-act="setTag" class="cnpy-select">
-        ${["all:All tags", "mcp-server:mcp-server", "docs:docs", "security:security", "auth:auth", "search:search", "decisions:decisions"].map((o) => { const [v, l] = o.split(":"); return `<option value="${v}"${s.feedTag === v ? " selected" : ""}>${l}</option>`; }).join("")}
+        <option value="all"${s.feedTag === "all" ? " selected" : ""}>All tags</option>
+        ${TAGS.map((t) => `<option value="${t}"${s.feedTag === t ? " selected" : ""}>${t}</option>`).join("")}
       </select>
       <select data-act="setRange" class="cnpy-select">
         ${["all:All time", "24h:Last 24h", "7d:Last 7 days"].map((o) => { const [v, l] = o.split(":"); return `<option value="${v}"${s.feedRange === v ? " selected" : ""}>${l}</option>`; }).join("")}
@@ -253,44 +310,45 @@ function header(s: AppState): string {
 }
 
 // ── feed ─────────────────────────────────────────────────────────────────────
-function feedView(s: AppState): string {
-  let entries = feed;
-  if (s.feedAuthor !== "all") entries = entries.filter((e) => people[e.who].login === s.feedAuthor);
-  if (s.feedTag !== "all") entries = entries.filter((e) => e.tags.includes(s.feedTag));
+function wrapFeed(inner: string): string {
+  return `<div style="max-width:760px;margin:0 auto;padding:24px 24px 80px">
+    ${inner}
+    <div style="text-align:center;padding:18px 0;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">&mdash; start of recorded history &mdash;</div>
+  </div>`;
+}
 
-  const cards = entries.map((e) => {
-    const tags = e.tags.map((t) => `<span style="font-size:11px;color:var(--fg-55);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-family:var(--mono);white-space:nowrap">${t}</span>`).join("");
-    const artifacts = e.artifacts.length
+function feedView(s: AppState): string {
+  if (s.feed.status === "loading" && s.feed.data.length === 0) return wrapFeed(notice("Loading feed&hellip;"));
+  if (s.feed.status === "error") return wrapFeed(notice("Couldn't load the feed."));
+
+  const cards = s.feed.data.map((e) => {
+    const artifacts = feedArtifacts(e.artifacts);
+    const artifactRow = artifacts.length
       ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border)">
-          ${e.artifacts.map((ar) => `<a href="${ar.href}" target="_blank" class="cnpy-issuechip" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${ar.kind}</span><span style="font-family:var(--mono);font-weight:500">${ar.label}</span></a>`).join("")}
+          ${artifacts.map((ar) => `<a href="${ar.href}" target="_blank" class="cnpy-issuechip" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${ar.kind}</span><span style="font-family:var(--mono);font-weight:500">${ar.label}</span></a>`).join("")}
         </div>`
       : "";
     return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px">
       <div style="display:flex;align-items:flex-start;gap:12px">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${initials(e.who)}</div>
+        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${initialsOf(e.author)}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${e.summary}</div>
           ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${e.body}</div>` : ""}
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px">
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${nameOf(s, e.who)}</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${e.author}</span></div>
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 5px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M12 8V4M8 13h.01M16 13h.01"></path></svg>agent</span>
             <span style="font-size:12px;color:var(--fg-40)">&middot;</span>
-            <span style="font-size:12px;color:var(--fg-40)">${e.time}</span>
+            <span style="font-size:12px;color:var(--fg-40)">${relTime(e.created_at)}</span>
             <div style="flex:1"></div>
-            ${tags}
           </div>
-          ${artifacts}
+          ${artifactRow}
         </div>
       </div>
     </div>`;
   }).join("");
 
-  const empty = entries.length === 0 ? `<div style="text-align:center;padding:60px;color:var(--fg-40);font-size:13px">No entries match this filter.</div>` : "";
-
-  return `<div style="max-width:760px;margin:0 auto;padding:24px 24px 80px">
-    ${cards}${empty}
-    <div style="text-align:center;padding:18px 0;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">&mdash; start of recorded history &mdash;</div>
-  </div>`;
+  const empty = s.feed.status === "ok" && s.feed.data.length === 0 ? notice("No entries match this filter.") : "";
+  return wrapFeed(`${cards}${empty}`);
 }
 
 // ── docs ─────────────────────────────────────────────────────────────────────
