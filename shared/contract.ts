@@ -39,12 +39,22 @@ export const TriageItem = z.object({
   reason: z.string(),
 });
 
+export const MilestoneProposal = z.object({
+  title: z.string(),
+  target_date: z.string(),
+  status: z.enum(["upcoming", "in_progress", "done"]),
+  github_ref: z.union([z.number(), z.array(z.number())]).optional(),
+  change_summary: z.string(),
+  confidence: z.enum(["high", "low"]),
+});
+
 export const IngestPayload = z.object({
   session: Session,
   feed_entries: z.array(FeedEntry).default([]),
   doc_proposals: z.array(DocProposal).default([]),
   adr_drafts: z.array(AdrDraft).default([]),
   needs_triage: z.array(TriageItem).default([]),
+  milestone_proposals: z.array(MilestoneProposal).default([]),
 });
 
 export type Session = z.infer<typeof Session>;
@@ -52,4 +62,5 @@ export type FeedEntry = z.infer<typeof FeedEntry>;
 export type DocProposal = z.infer<typeof DocProposal>;
 export type AdrDraft = z.infer<typeof AdrDraft>;
 export type TriageItem = z.infer<typeof TriageItem>;
+export type MilestoneProposal = z.infer<typeof MilestoneProposal>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
