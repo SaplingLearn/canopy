@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, AdrRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "../db";
 
 const humanizeSlug = (slug: string): string =>
@@ -187,4 +187,38 @@ export async function ratify_adr(db: DB, id: number): Promise<{ id: number; stat
   if (adr.status === "ratified") throw new Error(`adr already ratified: ${id}`);
   await run(db, `UPDATE adrs SET status = 'ratified' WHERE id = ?`, id);
   return { id, status: "ratified" };
+}
+
+/** Human confirmation: turn a staged milestone proposal into a live roadmap milestone. */
+export async function promote_milestone_proposal(db: DB, id: number, author: string): Promise<MilestoneRow> {
+  const p = await first<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
+  if (!p) throw new Error(`no such milestone proposal: ${id}`);
+  if (p.staged_status === "promoted") throw new Error(`milestone proposal already promoted: ${id}`);
+
+  const now = nowIso();
+  const res = await run(
+    db,
+    `INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at)
+     VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`,
+    p.title,
+    p.target_date,
+    p.status,        // gate guaranteed this is never 'done'
+    p.github_ref,
+    now,
+    author,
+    now
+  );
+  await run(db, `UPDATE milestone_proposals SET staged_status = 'promoted' WHERE id = ?`, id);
+  const milestoneId = res.meta.last_row_id as number;
+  return (await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, milestoneId))!;
+}
+
+/** Human confirmation: flip a live milestone to 'done'. Rejects if missing or already done. */
+export async function complete_milestone(db: DB, id: number): Promise<MilestoneRow> {
+  const m = await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, id);
+  if (!m) throw new Error(`no such milestone: ${id}`);
+  if (m.status === "done") throw new Error(`milestone already done: ${id}`);
+  const updated_at = nowIso();
+  await run(db, `UPDATE milestones SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
+  return { ...m, status: "done", updated_at };
 }
