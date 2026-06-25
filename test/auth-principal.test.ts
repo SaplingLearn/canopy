@@ -22,7 +22,7 @@ describe("resolveBearerPrincipal", () => {
   });
 
   it("returns null for an unknown token", async () => {
-    expect(await resolveBearerPrincipal(req("Bearer sapling_mcp_unknown"), env)).toBeNull();
+    expect(await resolveBearerPrincipal(req("Bearer canopy_mcp_unknown"), env)).toBeNull();
   });
 
   it("returns null for a revoked token", async () => {

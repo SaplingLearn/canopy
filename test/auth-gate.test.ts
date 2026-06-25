@@ -23,7 +23,7 @@ describe("auth gate (fails closed)", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: "Bearer sapling_mcp_bad",
+        authorization: "Bearer canopy_mcp_bad",
         accept: "application/json, text/event-stream",
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),

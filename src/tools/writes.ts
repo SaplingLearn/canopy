@@ -1,4 +1,4 @@
-import type { DocRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "../db";
 
 const humanizeSlug = (slug: string): string =>
@@ -122,4 +122,111 @@ export async function route_triage(
     created_at
   );
   return res.meta.last_row_id as number;
+}
+
+/**
+ * Human confirmation: promote a staged doc version into the live doc.
+ * Non-destructive — prior versions remain. Rejects if the version is missing or not staged.
+ */
+export async function promote_doc(
+  db: DB,
+  slug: string,
+  version: number,
+  author: string
+): Promise<{ slug: string; version: number; status: "promoted" }> {
+  const ver = await first<DocVersionRow>(
+    db,
+    `SELECT * FROM doc_versions WHERE slug = ? AND version = ?`,
+    slug,
+    version
+  );
+  if (!ver) throw new Error(`no such doc version: ${slug} v${version}`);
+  if (ver.status !== "staged") throw new Error(`doc version not staged: ${slug} v${version} is ${ver.status}`);
+
+  const updated_at = nowIso();
+  await run(db, `UPDATE doc_versions SET status = 'promoted' WHERE slug = ? AND version = ?`, slug, version);
+  await run(
+    db,
+    `UPDATE docs SET body = ?, current_version = ?, updated_at = ?, updated_by = ? WHERE slug = ?`,
+    ver.body,
+    version,
+    updated_at,
+    author,
+    slug
+  );
+  return { slug, version, status: "promoted" };
+}
+
+/** Stage an agent-proposed milestone create/update for human review (mirrors doc_versions). */
+export async function stage_milestone_proposal(
+  db: DB,
+  proposal: { title: string; target_date: string; status: string; github_ref?: number | number[]; change_summary: string; confidence: "high" | "low" },
+  author: string
+): Promise<number> {
+  const github_ref = proposal.github_ref === undefined ? null : JSON.stringify(proposal.github_ref);
+  const res = await run(
+    db,
+    `INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'staged', ?, ?)`,
+    proposal.title,
+    proposal.target_date,
+    proposal.status,
+    github_ref,
+    proposal.change_summary,
+    proposal.confidence,
+    nowIso(),
+    author
+  );
+  return res.meta.last_row_id as number;
+}
+
+/** Human confirmation: ratify an ADR draft. Rejects if missing or already ratified. */
+export async function ratify_adr(db: DB, id: number): Promise<{ id: number; status: "ratified" }> {
+  const adr = await first<AdrRow>(db, `SELECT * FROM adrs WHERE id = ?`, id);
+  if (!adr) throw new Error(`no such adr: ${id}`);
+  if (adr.status === "ratified") throw new Error(`adr already ratified: ${id}`);
+  await run(db, `UPDATE adrs SET status = 'ratified' WHERE id = ?`, id);
+  return { id, status: "ratified" };
+}
+
+/** Human confirmation: turn a staged milestone proposal into a live roadmap milestone. */
+export async function promote_milestone_proposal(db: DB, id: number, author: string): Promise<MilestoneRow> {
+  const p = await first<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
+  if (!p) throw new Error(`no such milestone proposal: ${id}`);
+  if (p.staged_status === "promoted") throw new Error(`milestone proposal already promoted: ${id}`);
+
+  // Atomically claim the proposal: the conditional UPDATE is the gate, so two
+  // concurrent promotes cannot both pass and create duplicate live milestones.
+  const claim = await run(
+    db,
+    `UPDATE milestone_proposals SET staged_status = 'promoted' WHERE id = ? AND staged_status = 'staged'`,
+    id
+  );
+  if ((claim.meta.changes ?? 0) === 0) throw new Error(`milestone proposal already promoted: ${id}`);
+
+  const now = nowIso();
+  const res = await run(
+    db,
+    `INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at)
+     VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`,
+    p.title,
+    p.target_date,
+    p.status,        // the gate guarantees this is never 'done'
+    p.github_ref,
+    now,
+    author,
+    now
+  );
+  const milestoneId = res.meta.last_row_id as number;
+  return (await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, milestoneId))!;
+}
+
+/** Human confirmation: flip a live milestone to 'done'. Rejects if missing or already done. */
+export async function complete_milestone(db: DB, id: number): Promise<MilestoneRow> {
+  const m = await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, id);
+  if (!m) throw new Error(`no such milestone: ${id}`);
+  if (m.status === "done") throw new Error(`milestone already done: ${id}`);
+  const updated_at = nowIso();
+  await run(db, `UPDATE milestones SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
+  return { ...m, status: "done", updated_at };
 }

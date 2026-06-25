@@ -12,7 +12,7 @@ describe("mcp tokens", () => {
   it("mints a prefixed token, stores only its hash, and resolves it to the owner (bumping last_used_at)", async () => {
     await seedUser("real-user");
     const { raw } = await mintToken(env.DB, "real-user");
-    expect(raw.startsWith("sapling_mcp_")).toBe(true);
+    expect(raw.startsWith("canopy_mcp_")).toBe(true);
 
     expect(await resolveToken(env.DB, raw)).toEqual({ login: "real-user" });
 
@@ -23,7 +23,7 @@ describe("mcp tokens", () => {
   });
 
   it("rejects an unknown token", async () => {
-    expect(await resolveToken(env.DB, "sapling_mcp_unknown")).toBeNull();
+    expect(await resolveToken(env.DB, "canopy_mcp_unknown")).toBeNull();
   });
 
   it("rejects a revoked token", async () => {

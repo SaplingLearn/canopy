@@ -1,4 +1,4 @@
-# Sapling Context Store — Backend (v1) Design
+# Canopy — Backend (v1) Design
 
 **Date:** 2026-06-24
 **Status:** Approved (brainstorming) — ready for implementation plan
@@ -6,7 +6,7 @@
 
 ## 1. Purpose
 
-The Sapling context store is the shared source of truth that Claude Code sessions
+The Canopy context store is the shared source of truth that Claude Code sessions
 read from and write to at the end of a session. The only interface between a coding
 session and the cloud is one JSON payload (the contract). The session does all
 curation and sends clean, structured data. The Worker **validates and writes; it
@@ -47,7 +47,7 @@ by both sides, so a schema change can never drift between the API and the UI.
 ## 4. Repo & module layout
 
 ```
-sapling-context/
+canopy/
   package.json          one package, npm
   tsconfig.json         base + @shared/* path alias
   wrangler.toml         d1 binding (DB), assets binding (-> web/dist), routes

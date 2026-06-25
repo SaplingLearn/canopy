@@ -63,6 +63,7 @@ export interface NeedsTriageRow {
 export interface UserRow {
   github_login: string;
   name: string | null;
+  github_token: string | null;   // AES-GCM sealed GitHub OAuth token, or null
   created_at: string;
 }
 
@@ -80,4 +81,29 @@ export interface McpTokenRow {
   created_at: string;
   last_used_at: string | null;
   revoked: number;
+}
+
+export interface MilestoneRow {
+  id: number;
+  title: string;
+  description: string | null;
+  target_date: string;
+  status: "upcoming" | "in_progress" | "done";
+  github_ref: string | null;   // JSON: number (milestone) | number[] (issues)
+  created_at: string;
+  created_by: string;
+  updated_at: string | null;
+}
+
+export interface MilestoneProposalRow {
+  id: number;
+  title: string;
+  target_date: string;
+  status: string;
+  github_ref: string | null;
+  change_summary: string;
+  confidence: string;
+  staged_status: "staged" | "promoted";
+  created_at: string;
+  created_by: string;
 }

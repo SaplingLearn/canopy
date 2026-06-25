@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./principal";
-import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
+import { pkce, randomToken, hmacSeal, hmacUnseal, encryptSecret } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, isActiveOrgMember } from "./github";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
-import { run, nowIso } from "../db";
+import { first, run, nowIso } from "../db";
+import { SAPLING_ORG } from "./github";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
 
@@ -43,16 +44,24 @@ authApp.get("/callback", async (c) => {
 
   const ghUser = await getUser(token);
   if (!ghUser) return c.json({ error: "identity_failed" }, 401);
-  if (!(await isActiveOrgMember(token))) return c.json({ error: "forbidden" }, 403);
+  if (!(await isActiveOrgMember(token))) return c.redirect("/?denied=1", 302);
 
+  const sealedToken = await encryptSecret(token, c.env.COOKIE_SECRET);
   await run(c.env.DB,
-    `INSERT INTO users (github_login, name, created_at) VALUES (?, ?, ?)
-     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name`,
-    ghUser.login, ghUser.name, nowIso());
+    `INSERT INTO users (github_login, name, github_token, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name, github_token = excluded.github_token`,
+    ghUser.login, ghUser.name, sealedToken, nowIso());
 
   const { id } = await createSession(c.env.DB, ghUser.login);
   await setSessionCookie(c, id, c.env.COOKIE_SECRET);
   return c.redirect("/", 302);
+});
+
+// GATED (by sessionGate in src/routes.ts): return the principal's profile.
+authApp.get("/me", async (c) => {
+  const login = c.get("principal").login;
+  const row = await first<{ name: string | null }>(c.env.DB, `SELECT name FROM users WHERE github_login = ?`, login);
+  return c.json({ login, name: row?.name ?? null, org: SAPLING_ORG });
 });
 
 // GATED (by sessionGate in src/routes.ts): revoke this session.

@@ -1,4 +1,4 @@
-# Sapling Context Store — Auth Layer (v2) Design
+# Canopy — Auth Layer (v2) Design
 
 **Date:** 2026-06-24
 **Status:** Approved (brainstorming) — ready for implementation plan
@@ -92,9 +92,9 @@ All GitHub `fetch` calls send a `User-Agent` header (GitHub requires it) and `Ac
 
 ## 7. MCP token (bearer; not a full OAuth provider)
 
-- `POST /auth/mcp-token` (session-gated): generate `sapling_mcp_<base64url(32 random bytes)>`;
+- `POST /auth/mcp-token` (session-gated): generate `canopy_mcp_<base64url(32 random bytes)>`;
   store only `sha256hex(raw)` in `mcp_tokens` tied to the principal; return the raw token **once**
-  as JSON `{ "token": "sapling_mcp_..." }`. The raw token is never stored.
+  as JSON `{ "token": "canopy_mcp_..." }`. The raw token is never stored.
 - Claude Code sends it as `Authorization: Bearer <token>` (via `--header`). `resolveBearerPrincipal`
   hashes the presented token, looks up `token_hash WHERE revoked = 0`, resolves the owner as the
   principal, and updates `last_used_at`. Missing/unknown/revoked → null → bare 401.

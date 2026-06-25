@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import { type DB, first, all } from "../db";
 
 export async function get_doc(
@@ -123,4 +123,18 @@ export async function search_context(
   }
 
   return results;
+}
+
+export async function list_needs_triage(db: DB): Promise<NeedsTriageRow[]> {
+  return all<NeedsTriageRow>(db, `SELECT * FROM needs_triage WHERE resolved = 0 ORDER BY created_at DESC, id DESC`);
+}
+
+export async function list_adrs(db: DB, status?: string): Promise<AdrRow[]> {
+  return status
+    ? all<AdrRow>(db, `SELECT * FROM adrs WHERE status = ? ORDER BY created_at DESC, id DESC`, status)
+    : all<AdrRow>(db, `SELECT * FROM adrs ORDER BY created_at DESC, id DESC`);
+}
+
+export async function list_milestone_proposals(db: DB): Promise<MilestoneProposalRow[]> {
+  return all<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE staged_status = 'staged' ORDER BY created_at DESC, id DESC`);
 }
