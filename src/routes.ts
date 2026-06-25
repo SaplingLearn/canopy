@@ -4,7 +4,7 @@ import type { AppEnv } from "./auth/principal";
 import { sessionGate } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
-import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
+import { get_doc, list_docs, get_feed, search_context, list_needs_triage, list_adrs, list_milestone_proposals } from "./tools/reads";
 import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone } from "./tools/writes";
 import { list_roadmap } from "./tools/roadmap";
 import { getStoredToken } from "./auth/github";
@@ -60,6 +60,12 @@ app.get("/search", async (c) => {
   });
   return c.json({ results });
 });
+
+app.get("/needs-triage", async (c) => c.json({ items: await list_needs_triage(c.env.DB) }));
+
+app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.query("status")) }));
+
+app.get("/milestone-proposals", async (c) => c.json({ proposals: await list_milestone_proposals(c.env.DB) }));
 
 // Human confirmation (session-gated): promote a staged doc version into the live doc.
 app.post("/doc/:slug/promote", async (c) => {
