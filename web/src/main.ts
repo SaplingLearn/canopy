@@ -222,11 +222,15 @@ function loadTriageItems(): void {
     });
 }
 
+// Load all three queues on entering Triage so the tab counts + sidebar badge are
+// accurate immediately (not just for the active queue). Each loader re-renders as it
+// resolves; tab switches afterward find their queue already loaded.
 function loadCurrentTriageQueue(): void {
-  if (state.triageQueue === "proposals" && state.proposals.status === "idle") loadProposals();
-  else if (state.triageQueue === "decisions" && state.decisions.status === "idle") loadDecisions();
-  else if (state.triageQueue === "triage" && state.triageItems.status === "idle") loadTriageItems();
-  else rerender();
+  let started = false;
+  if (state.proposals.status === "idle") { loadProposals(); started = true; }
+  if (state.decisions.status === "idle") { loadDecisions(); started = true; }
+  if (state.triageItems.status === "idle") { loadTriageItems(); started = true; }
+  if (!started) rerender();
 }
 
 function flash(msg: string): void {
