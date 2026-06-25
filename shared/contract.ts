@@ -13,6 +13,7 @@ export const FeedEntry = z.object({
   artifacts: z.object({
     prs: z.array(z.string()).default([]),
     commits: z.array(z.string()).default([]),
+    issues: z.array(z.number()).default([]),
   }),
 });
 

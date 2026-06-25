@@ -13,8 +13,8 @@ describe("vocabulary gate", () => {
     const payload = IngestPayload.parse({
       session,
       feed_entries: [
-        { summary: "known", body: "good", tags: ["auth"], artifacts: { prs: [], commits: [] } },
-        { summary: "unknown", body: "bad", tags: ["not-a-real-tag"], artifacts: { prs: [], commits: [] } },
+        { summary: "known", body: "good", tags: ["auth"], artifacts: { prs: [], commits: [], issues: [] } },
+        { summary: "unknown", body: "bad", tags: ["not-a-real-tag"], artifacts: { prs: [], commits: [], issues: [] } },
       ],
     });
 

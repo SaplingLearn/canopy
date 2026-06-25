@@ -14,7 +14,7 @@ describe("MCP write tools route through the vocabulary gate", () => {
   it("append_feed: an in-vocab tag is written to the feed, nothing triaged", async () => {
     const r = await ingestFeedEntry(
       env.DB,
-      { summary: "ok", body: "b", tags: ["auth"], artifacts: { prs: [], commits: [] } },
+      { summary: "ok", body: "b", tags: ["auth"], artifacts: { prs: [], commits: [], issues: [] } },
       AUTHOR
     );
     expect(r.outcome).toBe("written");
@@ -30,7 +30,7 @@ describe("MCP write tools route through the vocabulary gate", () => {
   it("append_feed: an out-of-vocab tag routes the whole entry to needs_triage and writes no feed row", async () => {
     const r = await ingestFeedEntry(
       env.DB,
-      { summary: "bad", body: "b", tags: ["not-a-real-tag"], artifacts: { prs: [], commits: [] } },
+      { summary: "bad", body: "b", tags: ["not-a-real-tag"], artifacts: { prs: [], commits: [], issues: [] } },
       AUTHOR
     );
     expect(r.outcome).toBe("triaged");

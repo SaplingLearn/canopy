@@ -48,14 +48,14 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
 
   server.tool(
     "append_feed",
-    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage).",
-    { summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional() },
-    async ({ summary, body, tags }) =>
+    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage). Optional issues link GitHub issue numbers.",
+    { summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional(), issues: z.array(z.number()).optional() },
+    async ({ summary, body, tags, issues }) =>
       // Thin adapter: shape the args into a FeedEntry and let the gate decide write-vs-triage.
       runTool(() =>
         ingestFeedEntry(
           env.DB,
-          { summary, body: body ?? "", tags: tags ?? [], artifacts: { prs: [], commits: [] } },
+          { summary, body: body ?? "", tags: tags ?? [], artifacts: { prs: [], commits: [], issues: issues ?? [] } },
           principal.login
         )
       )
