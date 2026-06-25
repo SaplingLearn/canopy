@@ -5,12 +5,12 @@
 
 import {
   people, initProposals, initDecisions, initTriage, roadmapDoc,
-  milestones as milestonesData, initTokens, docTree, docMeta, docVersions,
+  milestones as milestonesData, initTokens,
   searchSources, TODAY_ISO,
   type PersonKey, type Proposal, type Decision, type TriageItem, type Token,
-  type SearchType, type DiffKind, type DocMeta,
+  type SearchType, type DiffKind,
 } from "./data";
-import type { FeedRow } from "@shared/rows";
+import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import { TAGS } from "@shared/vocabulary";
 
 export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings";
@@ -34,12 +34,14 @@ export interface AppState {
   feedRange: string;
   feed: Loadable<FeedRow[]>;
   feedAuthors: string[];
+  docsList: Loadable<DocRow[]>;
+  docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
+  docSlug: string | null;
   triageQueue: "proposals" | "decisions" | "triage";
   roadmapTab: "narrative" | "timeline";
   selProposal: string | null;
   selDecision: string | null;
   selTriage: string | null;
-  docId: string;
   showHistory: boolean;
   searchQuery: string;
   searchType: "all" | SearchType;
@@ -62,10 +64,13 @@ export function initialState(): AppState {
     feedAuthor: "all", feedTag: "all", feedRange: "all",
     feed: { status: "idle", data: [] },
     feedAuthors: [],
+    docsList: { status: "idle", data: [] },
+    docDetail: { status: "idle", data: null },
+    docSlug: null,
     triageQueue: "proposals",
     roadmapTab: "narrative",
     selProposal: "p1", selDecision: "d1", selTriage: "t1",
-    docId: "mcp", showHistory: false,
+    showHistory: false,
     searchQuery: "token", searchType: "all",
     displayName: "Jose",
     revealedToken: null,
@@ -352,144 +357,91 @@ function feedView(s: AppState): string {
 }
 
 // ── docs ─────────────────────────────────────────────────────────────────────
+const DOC_SECTION_ORDER = ["reference", "context", "decisions"];
+
 function docsView(s: AppState): string {
-  const tree = docTree.map((g) => `<div style="margin-bottom:18px">
-      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${g.section}</div>
+  // ── tree (left pane) ────────────────────────────────────────────────────────
+  let treeHtml: string;
+  if (s.docsList.status === "loading" && s.docsList.data.length === 0) {
+    treeHtml = notice("Loading…");
+  } else if (s.docsList.status === "error") {
+    treeHtml = notice("Couldn't load docs.");
+  } else if (s.docsList.status === "ok" && s.docsList.data.length === 0) {
+    treeHtml = notice("No docs yet.");
+  } else {
+    // Group by section in fixed order; any unknown section falls to the end.
+    const grouped = new Map<string, DocRow[]>();
+    for (const sec of DOC_SECTION_ORDER) grouped.set(sec, []);
+    for (const doc of s.docsList.data) {
+      const sec = doc.section.toLowerCase();
+      if (!grouped.has(sec)) grouped.set(sec, []);
+      grouped.get(sec)!.push(doc);
+    }
+    treeHtml = [...grouped.entries()]
+      .filter(([, pages]) => pages.length > 0)
+      .map(([sec, pages]) => `<div style="margin-bottom:18px">
+      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${sec.toUpperCase()}</div>
       <div style="display:flex;flex-direction:column;gap:1px">
-        ${g.pages.map((p) => {
-          const active = p.id === s.docId;
-          const badgeColor = p.badge === "DRAFT" ? "var(--blue)" : "var(--green)";
-          return `<button data-act="openDoc" data-arg="${p.id}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.title}</span>${p.badge ? `<span style="position:relative;width:6px;height:6px;border-radius:50%;background:${badgeColor};flex:none"></span>` : ""}</button>`;
+        ${pages.map((doc) => {
+          const active = doc.slug === s.docSlug;
+          return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${doc.title}</span></button>`;
         }).join("")}
       </div>
     </div>`).join("");
+  }
 
-  const dm = docMeta[s.docId] || docMeta.mcp;
-  const isDecision = dm.kind === "decision";
-  const isRef = dm.kind === "ref";
-  const isMcp = s.docId === "mcp";
-  const badgeColor = dm.badge === "RATIFIED" ? "var(--green)" : "var(--blue)";
+  // ── reader (right pane) ─────────────────────────────────────────────────────
+  let readerHtml: string;
+  const dd = s.docDetail;
 
-  const stagedBanner = dm.staged ? `<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--amber);border-radius:9px;margin-bottom:26px">
+  if (dd.status === "loading" || (dd.status === "idle" && s.docSlug !== null)) {
+    readerHtml = notice("Loading…");
+  } else if (dd.status === "error") {
+    readerHtml = notice("Couldn't load this doc.");
+  } else if (dd.data === null) {
+    readerHtml = notice("Doc not found.");
+  } else if (dd.status === "ok" && dd.data !== null) {
+    const { doc, versions } = dd.data;
+    const hasStaged = versions.some((v) => v.status === "staged" && v.version > doc.current_version);
+
+    const stagedBanner = hasStaged ? `<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--amber);border-radius:9px;margin-bottom:26px">
       <span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:3px 7px;flex:none">STAGED</span>
       <div style="flex:1;font-size:12.5px;color:var(--fg-70);line-height:1.45">You're viewing the <strong style="font-weight:600;color:var(--fg)">promoted</strong> version. A newer proposal is awaiting review.</div>
       <button data-act="gotoTriage" class="cnpy-link" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--accent);white-space:nowrap;flex:none">Review in Triage<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
     </div>` : "";
 
-  const history = s.showHistory ? `<div style="border:1px solid var(--border);border-radius:10px;padding:6px;margin-top:18px">
-      ${docVersions.map((v) => `<div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:7px">
-        <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:26px">${v.label}</span>
-        <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${v.note}</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">${nameOf(s, v.who)} · ${v.at}</span>
-        ${v.current ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
+    const history = s.showHistory ? `<div style="border:1px solid var(--border);border-radius:10px;padding:6px;margin-top:18px">
+      ${versions.map((v) => `<div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:7px">
+        <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:26px">v${v.version}</span>
+        <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${v.summary ?? ""}</span>
+        <span style="font-size:11.5px;color:var(--fg-40)">${v.created_by} · ${relTime(v.created_at)}</span>
+        ${v.version === doc.current_version ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
       </div>`).join("")}
     </div>` : "";
 
-  const body = isRef ? docRefBody(dm, isMcp) : docDecisionBody(dm);
-
-  const reader = `<div style="max-width:740px;margin:0 auto;padding:26px 40px 100px">
+    readerHtml = `<div style="max-width:740px;margin:0 auto;padding:26px 40px 100px">
     ${stagedBanner}
-    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px"><span>${dm.section}</span></div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px"><span>${doc.section}</span></div>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h1 style="font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0;white-space:nowrap">${dm.title}</h1>
-      ${isDecision ? `<span style="font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:${badgeColor};border:1px solid color-mix(in srgb,${badgeColor} 45%,transparent);background:color-mix(in srgb,${badgeColor} 12%,transparent);border-radius:5px;padding:3px 8px">${dm.badge}</span>` : ""}
+      <h1 style="font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0;white-space:nowrap">${doc.title}</h1>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px;padding-bottom:18px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
-        <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${initials(dm.who)}</div>
-        <span>Updated by <span style="color:var(--fg-70);font-weight:500">${nameOf(s, dm.who)}</span> · ${dm.at}</span>
+        <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${initialsOf(doc.updated_by ?? "")}</div>
+        <span>Updated by <b style="color:var(--fg-70);font-weight:500">${doc.updated_by}</b> · ${relTime(doc.updated_at)}</span>
       </div>
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
     </div>
     ${history}
-    ${body}
+    <div style="margin-top:26px;font-size:15px;line-height:1.7;color:var(--fg-70);white-space:pre-wrap">${doc.body}</div>
   </div>`;
+  } else {
+    readerHtml = notice("Select a doc from the tree.");
+  }
 
   return `<div style="display:flex;height:100%">
-    <div class="cnpy-scroll" style="width:252px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 12px">${tree}</div>
-    <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">${reader}</div>
-  </div>`;
-}
-
-function docRefBody(dm: DocMeta, isMcp: boolean): string {
-  const mcp = isMcp ? `<h2 style="font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:30px 0 14px">Architecture</h2>
-      <p style="font-size:14px;line-height:1.75;color:var(--fg-70);margin:0 0 18px">Agents are the only writers. Every write lands in the store as a <strong style="color:var(--fg);font-weight:600">staged</strong> proposal and surfaces in Triage; a human <strong style="color:var(--fg);font-weight:600">promotes</strong> it before it becomes the version this page shows.</p>
-      <div style="border:1px solid var(--border);border-radius:12px;padding:22px;margin:0 0 22px;background:var(--bg)">
-        <svg viewBox="0 0 680 322" width="100%" style="display:block;font-family:var(--mono)">
-          <defs>
-            <marker id="cnpy-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"></path></marker>
-            <marker id="cnpy-ahg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"></path></marker>
-          </defs>
-          <g stroke="currentColor" stroke-width="1.4" opacity="0.55" fill="none">
-            <path d="M191 64 H256" marker-end="url(#cnpy-ah)"></path>
-            <path d="M460 64 H524" marker-end="url(#cnpy-ah)"></path>
-            <path d="M360 92 V142" marker-end="url(#cnpy-ah)"></path>
-            <path d="M592 92 V240" marker-end="url(#cnpy-ah)" stroke-dasharray="3 4"></path>
-          </g>
-          <path d="M360 202 V250" stroke="var(--accent)" stroke-width="1.6" fill="none" marker-end="url(#cnpy-ahg)"></path>
-          <path d="M460 276 H524" stroke="var(--accent)" stroke-width="1.6" fill="none" marker-end="url(#cnpy-ahg)"></path>
-          <g fill="currentColor" opacity="0.5" font-size="9.5"><text x="224" y="56" text-anchor="middle">write</text><text x="492" y="56" text-anchor="middle">persist</text><text x="368" y="120">staged</text><text x="368" y="230">promote ✓</text><text x="492" y="268" text-anchor="middle">read</text><text x="600" y="172">read</text></g>
-          <g>
-            <rect x="40" y="36" width="151" height="56" rx="9" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.85"></rect>
-            <text x="115" y="60" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="600">Coding Agent</text>
-            <text x="115" y="76" text-anchor="middle" fill="currentColor" font-size="9.5" opacity="0.5">Claude · MCP client</text>
-            <rect x="262" y="36" width="198" height="56" rx="9" fill="color-mix(in srgb,var(--accent) 9%,transparent)" stroke="var(--accent)" stroke-width="1.4"></rect>
-            <text x="361" y="60" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="600">Canopy MCP Server</text>
-            <text x="361" y="76" text-anchor="middle" fill="currentColor" font-size="9.5" opacity="0.55">typed write contract</text>
-            <rect x="524" y="36" width="120" height="56" rx="9" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.85"></rect>
-            <text x="584" y="60" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="600">Store</text>
-            <text x="584" y="76" text-anchor="middle" fill="currentColor" font-size="9.5" opacity="0.5">Postgres</text>
-            <rect x="262" y="146" width="198" height="56" rx="9" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.85"></rect>
-            <text x="361" y="170" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="600">Triage queue</text>
-            <text x="361" y="186" text-anchor="middle" fill="currentColor" font-size="9.5" opacity="0.5">human review</text>
-            <rect x="262" y="250" width="198" height="56" rx="9" fill="color-mix(in srgb,var(--accent) 9%,transparent)" stroke="var(--accent)" stroke-width="1.4"></rect>
-            <text x="361" y="274" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="600">Promoted section</text>
-            <text x="361" y="290" text-anchor="middle" fill="var(--accent)" font-size="9.5">live · canonical</text>
-            <rect x="524" y="250" width="120" height="56" rx="9" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.85"></rect>
-            <text x="584" y="274" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="600">Web app</text>
-            <text x="584" y="290" text-anchor="middle" fill="currentColor" font-size="9.5" opacity="0.5">read-only</text>
-          </g>
-        </svg>
-      </div>
-      <h2 style="font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:30px 0 14px">Authentication</h2>
-      <p style="font-size:14px;line-height:1.75;color:var(--fg-70);margin:0 0 14px">Every MCP request carries a bearer token in the <code style="font-family:var(--mono);font-size:12.5px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:1px 5px">Authorization</code> header. Tokens are compared in constant time, then matched against the store.</p>
-      <div style="border:1px solid var(--border);border-radius:9px;overflow:hidden;margin:0 0 14px">
-        <div style="font-family:var(--mono);font-size:12.5px;line-height:1.7;color:var(--fg-70);padding:14px 16px;white-space:pre;overflow-x:auto">POST /mcp  ·  Authorization: Bearer cnpy_••••
-{
-  "section": "reference/mcp-server",
-  "summary": "Clarify token rotation",
-  "confidence": "high"
-}  →  201 staged</div>
-      </div>` : "";
-
-  const notMcp = !isMcp ? `<h2 style="font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:30px 0 14px">Overview</h2>
-      <p style="font-size:14px;line-height:1.75;color:var(--fg-70);margin:0 0 14px">This page is part of the Canopy handbook. Its body is written by agents through the MCP contract and promoted here after human review — there is no editor on this site.</p>
-      <ul style="font-size:14px;line-height:1.85;color:var(--fg-70);margin:0 0 14px;padding-left:20px">
-        <li>Sections are addressed by a stable <code style="font-family:var(--mono);font-size:12.5px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:1px 5px">section</code> key.</li>
-        <li>Exactly one <strong style="color:var(--fg);font-weight:600">promoted</strong> version is live at a time.</li>
-        <li>Prior versions stay readable through Version history.</li>
-      </ul>` : "";
-
-  return `<div style="margin-top:26px">
-    <p style="font-size:16px;line-height:1.65;color:var(--fg-70);margin:0 0 26px">${dm.lede ?? ""}</p>
-    ${mcp}${notMcp}
-  </div>`;
-}
-
-function docDecisionBody(dm: DocMeta): string {
-  return `<div style="margin-top:26px;display:flex;flex-direction:column;gap:24px">
-    <div>
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div>
-      <p style="font-size:15px;line-height:1.7;color:var(--fg-70);margin:0">${dm.context ?? ""}</p>
-    </div>
-    <div style="border-left:2px solid var(--accent);padding-left:18px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div>
-      <p style="font-size:15px;line-height:1.7;color:var(--fg);margin:0;font-weight:450">${dm.decision ?? ""}</p>
-    </div>
-    <div>
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div>
-      <p style="font-size:15px;line-height:1.7;color:var(--fg-70);margin:0">${dm.rationale ?? ""}</p>
-    </div>
+    <div class="cnpy-scroll" style="width:252px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 12px">${treeHtml}</div>
+    <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">${readerHtml}</div>
   </div>`;
 }
 
@@ -582,7 +534,7 @@ function triageDetail(s: AppState): string {
       <div style="min-width:0">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">${d.idLabel} · Decision</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:5px;padding:2px 6px">DRAFT</span></div>
         <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${d.title}</h1>
-        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initials(d.who)}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${nameOf(s, d.who)} · ${docMeta.adr3.at}</span></div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initials(d.who)}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${nameOf(s, d.who)}</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
         <button data-act="dismissDecision" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>

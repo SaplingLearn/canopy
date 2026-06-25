@@ -174,67 +174,9 @@ export const initTokens: Token[] = [
   { id: "k2", name: "ci-runner", created: "Jan 18, 2026", lastUsed: "5d ago" },
 ];
 
-export interface DocTreePage {
-  id: string;
-  title: string;
-  badge?: string;
-}
-export interface DocTreeGroup {
-  section: string;
-  pages: DocTreePage[];
-}
-
-export const docTree: DocTreeGroup[] = [
-  { section: "Reference", pages: [{ id: "auth", title: "Auth" }, { id: "mcp", title: "MCP Server" }, { id: "feed", title: "Feed" }, { id: "docs", title: "Docs" }, { id: "triage", title: "Triage" }, { id: "search", title: "Search" }, { id: "datamodel", title: "Data Model" }] },
-  { section: "Context", pages: [{ id: "overview", title: "Product Overview" }, { id: "team", title: "Team & Roles" }, { id: "glossary", title: "Glossary" }] },
-  { section: "Decisions", pages: [{ id: "adr1", title: "ADR-001 · Postgres for the store", badge: "RATIFIED" }, { id: "adr2", title: "ADR-002 · Single-accent system", badge: "RATIFIED" }, { id: "adr3", title: "ADR-003 · Agent write contract", badge: "DRAFT" }] },
-];
-
-export interface DocMeta {
-  section: string;
-  title: string;
-  who: PersonKey;
-  at: string;
-  kind: "ref" | "decision";
-  staged: boolean;
-  lede?: string;
-  idLabel?: string;
-  badge?: string;
-  context?: string;
-  decision?: string;
-  rationale?: string;
-}
-
-export const docMeta: Record<string, DocMeta> = {
-  mcp: { section: "Reference", title: "MCP Server", who: "mei", at: "2 days ago", kind: "ref", staged: true, lede: "The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract; nothing else can mutate the store." },
-  auth: { section: "Reference", title: "Auth", who: "dev", at: "5 hours ago", kind: "ref", staged: false, lede: "Sign-in is delegated to GitHub OAuth and gated on membership of the sapling-dev organization. Non-members reach a locked dead-end with no app behind it." },
-  feed: { section: "Reference", title: "Feed", who: "mei", at: "4 days ago", kind: "ref", staged: false, lede: "The Feed is the append-only log of everything the team has done. Entries are immutable; corrections are new entries that reference the original." },
-  docs: { section: "Reference", title: "Docs", who: "sana", at: "6 days ago", kind: "ref", staged: false, lede: "Docs is the reading surface for promoted sections, grouped into Reference, Context, and Decisions. There is no editor — pages are written by agents and promoted through Triage." },
-  triage: { section: "Reference", title: "Triage", who: "jose", at: "1 week ago", kind: "ref", staged: false, lede: "Triage is the human review console where staged agent output becomes accepted truth. Promote, ratify, or place — every change passes through a person here." },
-  search: { section: "Reference", title: "Search", who: "mei", at: "1 day ago", kind: "ref", staged: false, lede: "Search spans feed entries and docs in one ranked list. The result shape is fixed so semantic ranking can be added later without changing the surface." },
-  datamodel: { section: "Reference", title: "Data Model", who: "dev", at: "2 weeks ago", kind: "ref", staged: false, lede: "Three first-class objects: sections, feed entries, and decisions. Every section has exactly one promoted version and zero or more staged proposals awaiting review." },
-  overview: { section: "Context", title: "Product Overview", who: "sana", at: "2 weeks ago", kind: "ref", staged: false, lede: "Canopy is the shared source of truth and working memory for Sapling, a four-person software team. It is read by humans and written almost entirely by their coding agents." },
-  team: { section: "Context", title: "Team & Roles", who: "jose", at: "3 weeks ago", kind: "ref", staged: false, lede: "Sapling is Jose, Mei, Dev, and Sana. Authorship in Canopy follows the GitHub identity of whoever ran the session that produced a change." },
-  glossary: { section: "Context", title: "Glossary", who: "sana", at: "2 days ago", kind: "ref", staged: false, lede: "Shared vocabulary for the store. The promoted/staged and ratified/draft distinctions are the whole architecture in two words each." },
-  adr1: { section: "Decisions", title: "Postgres for the store", idLabel: "ADR-001", who: "sana", at: "3 weeks ago", kind: "decision", badge: "RATIFIED", staged: false, context: "Canopy needs durable, queryable storage for sections, an append-only feed, and version history. The team is small and wants minimal operational surface.", decision: "Use a single Postgres instance as the store. Sections, versions, feed entries, and decisions are all rows; full-text search runs on Postgres until volume justifies a dedicated index.", rationale: "Postgres gives transactional non-destructive writes, JSONB for flexible agent payloads, and built-in full-text search — one dependency the whole team already knows, with a clear path to scale out later." },
-  adr2: { section: "Decisions", title: "Single-accent color system", idLabel: "ADR-002", who: "dev", at: "2 weeks ago", kind: "decision", badge: "RATIFIED", staged: false, context: "Early mocks used several accent colors and gray surfaces; state badges blurred together and the tool felt generic.", decision: "One electric-green accent with two tuned values (bright on black, deepened on white). No gray surfaces — separate everything with hairline borders. State is carried by a fixed four-color badge set.", rationale: "A single accent keeps the live and active state unambiguous and the interface stark and fast to scan, which suits a reference tool the team checks constantly." },
-  adr3: { section: "Decisions", title: "Agent write contract", idLabel: "ADR-003", who: "dev", at: "4 hours ago", kind: "decision", badge: "DRAFT", staged: false, context: "Agents post to Canopy at the end of a session over MCP. Without a fixed contract, writes arrived in inconsistent shapes and some could not be placed.", decision: "Agents write through a typed contract: every write targets a known section key, carries a change summary and confidence flag, and lands as STAGED — never promoted directly. Unplaceable writes go to Triage.", rationale: "Keeping every agent write non-destructive and staged preserves the human review gate the system depends on, while the confidence flag lets reviewers move fast." },
-};
-
-export interface DocVersion {
-  label: string;
-  who: PersonKey;
-  at: string;
-  note: string;
-  current?: boolean;
-}
-
-export const docVersions: DocVersion[] = [
-  { label: "v4", who: "mei", at: "2 days ago", note: "Constant-time comparison note", current: true },
-  { label: "v3", who: "jose", at: "2 weeks ago", note: "Added the rotation section" },
-  { label: "v2", who: "mei", at: "1 month ago", note: "Documented the typed contract" },
-  { label: "v1", who: "dev", at: "2 months ago", note: "Initial page" },
-];
+// Doc mocks (docTree, docMeta, docVersions, DocMeta, DocVersion, DocTreePage, DocTreeGroup)
+// deleted in Phase-2 Task 2 — the Docs screen now renders real DocRow/DocVersionRow
+// shapes from @shared/rows via web/src/api.ts.
 
 export type SearchType = "doc" | "feed" | "decision";
 export interface SearchSource {
