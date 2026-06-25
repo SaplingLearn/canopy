@@ -85,17 +85,19 @@ export function initialState(): AppState {
 function resolved(s: AppState): "dark" | "light" {
   return s.theme === "system" ? (s.systemDark ? "dark" : "light") : s.theme;
 }
+/** Escape text content for safe insertion into innerHTML. */
+function esc(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+/** Escape a value for use inside an HTML attribute (delegates to esc for full safety). */
 function attr(v: string): string {
-  return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return esc(v);
 }
 const AVATAR = "border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center";
 
 function logo(size: number): string {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" style="flex:none"><rect x="2" y="4.5" width="20" height="3.4" rx="1.7" fill="var(--accent)"></rect><rect x="5" y="10.3" width="14" height="3.4" rx="1.7" fill="currentColor"></rect><rect x="8" y="16.1" width="8" height="3.4" rx="1.7" fill="currentColor" opacity="0.5"></rect></svg>`;
-}
-
-function confColor(c: string): string {
-  return c === "High" ? "var(--green)" : c === "Medium" ? "var(--amber)" : "var(--red)";
 }
 
 // ── real-data helpers (authors are github logins; no curated display map) ─────
@@ -234,8 +236,8 @@ function sidebar(s: AppState): string {
 
     <div style="padding:10px;border-top:1px solid var(--border)">
       <button data-act="goSettings" title="Settings" class="cnpy-chip">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none">${initialsOf(s.me?.login ?? "?")}</div>
-        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.displayName || (s.me?.login ?? "")}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.me?.login ?? ""}</div></div>
+        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none">${esc(initialsOf(s.me?.login ?? "?"))}</div>
+        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.login ?? ""))}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.me?.login ?? "")}</div></div>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>` : ""}
       </button>
     </div>
@@ -315,17 +317,17 @@ function feedView(s: AppState): string {
     const artifacts = feedArtifacts(e.artifacts);
     const artifactRow = artifacts.length
       ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border)">
-          ${artifacts.map((ar) => `<a href="${ar.href}" target="_blank" class="cnpy-issuechip" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${ar.kind}</span><span style="font-family:var(--mono);font-weight:500">${ar.label}</span></a>`).join("")}
+          ${artifacts.map((ar) => `<a href="${ar.href}" target="_blank" class="cnpy-issuechip" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(ar.kind)}</span><span style="font-family:var(--mono);font-weight:500">${esc(ar.label)}</span></a>`).join("")}
         </div>`
       : "";
     return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px">
       <div style="display:flex;align-items:flex-start;gap:12px">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${initialsOf(e.author)}</div>
+        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${esc(initialsOf(e.author))}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${e.summary}</div>
-          ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${e.body}</div>` : ""}
+          <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${esc(e.summary)}</div>
+          ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${esc(e.body)}</div>` : ""}
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px">
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${e.author}</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${esc(e.author)}</span></div>
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 5px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M12 8V4M8 13h.01M16 13h.01"></path></svg>agent</span>
             <span style="font-size:12px;color:var(--fg-40)">&middot;</span>
             <span style="font-size:12px;color:var(--fg-40)">${relTime(e.created_at)}</span>
@@ -365,11 +367,11 @@ function docsView(s: AppState): string {
     treeHtml = [...grouped.entries()]
       .filter(([, pages]) => pages.length > 0)
       .map(([sec, pages]) => `<div style="margin-bottom:18px">
-      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${sec.toUpperCase()}</div>
+      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${esc(sec.toUpperCase())}</div>
       <div style="display:flex;flex-direction:column;gap:1px">
         ${pages.map((doc) => {
           const active = doc.slug === s.docSlug;
-          return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${doc.title}</span></button>`;
+          return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
         }).join("")}
       </div>
     </div>`).join("");
@@ -398,27 +400,27 @@ function docsView(s: AppState): string {
     const history = s.showHistory ? `<div style="border:1px solid var(--border);border-radius:10px;padding:6px;margin-top:18px">
       ${versions.map((v) => `<div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:7px">
         <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:26px">v${v.version}</span>
-        <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${v.summary ?? ""}</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">${v.created_by} · ${relTime(v.created_at)}</span>
+        <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${esc(v.summary ?? "")}</span>
+        <span style="font-size:11.5px;color:var(--fg-40)">${esc(v.created_by)} · ${relTime(v.created_at)}</span>
         ${v.version === doc.current_version ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
       </div>`).join("")}
     </div>` : "";
 
     readerHtml = `<div style="max-width:740px;margin:0 auto;padding:26px 40px 100px">
     ${stagedBanner}
-    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px"><span>${doc.section}</span></div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px"><span>${esc(doc.section)}</span></div>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h1 style="font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0;white-space:nowrap">${doc.title}</h1>
+      <h1 style="font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0;white-space:nowrap">${esc(doc.title)}</h1>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px;padding-bottom:18px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
-        <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${initialsOf(doc.updated_by ?? "")}</div>
-        <span>Updated by <b style="color:var(--fg-70);font-weight:500">${doc.updated_by}</b> · ${relTime(doc.updated_at)}</span>
+        <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(doc.updated_by ?? ""))}</div>
+        <span>Updated by <b style="color:var(--fg-70);font-weight:500">${esc(doc.updated_by ?? "")}</b> · ${relTime(doc.updated_at)}</span>
       </div>
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
     </div>
     ${history}
-    <div style="margin-top:26px;font-size:15px;line-height:1.7;color:var(--fg-70);white-space:pre-wrap">${doc.body}</div>
+    <div style="margin-top:26px;font-size:15px;line-height:1.7;color:var(--fg-70);white-space:pre-wrap">${esc(doc.body)}</div>
   </div>`;
   } else {
     readerHtml = notice("Select a doc from the tree.");
@@ -478,12 +480,12 @@ function triageView(s: AppState): string {
         ${it.selected ? `<span class="cnpy-selbar"></span>` : ""}
         <div style="position:relative">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">
-            <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${it.eyebrow}</span>
-            <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${it.badgeColor};border:1px solid color-mix(in srgb,${it.badgeColor} 45%,transparent);background:color-mix(in srgb,${it.badgeColor} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${it.badgeText}</span>
+            <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</span>
+            <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${it.badgeColor};border:1px solid color-mix(in srgb,${it.badgeColor} 45%,transparent);background:color-mix(in srgb,${it.badgeColor} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${esc(it.badgeText)}</span>
           </div>
-          <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${it.title}</div>
-          <div style="font-size:12.5px;color:var(--fg-55);line-height:1.5;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${it.summary}</div>
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${initialsOf(it.author)}</div><span style="font-size:12px;color:var(--fg-55)">${it.author}</span></div>
+          <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${esc(it.title)}</div>
+          <div style="font-size:12.5px;color:var(--fg-55);line-height:1.5;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(it.author))}</div><span style="font-size:12px;color:var(--fg-55)">${esc(it.author)}</span></div>
         </div>
       </button>`).join("");
   }
@@ -541,16 +543,16 @@ function triageDetail(s: AppState): string {
     const del = diff.filter((l) => l.t === "del").length;
     const lines = diff.map((l) => {
       const sign = l.t === "add" ? "+" : l.t === "del" ? "−" : " ";
-      return `<div style="${diffLineStyle(l.t)}"><span style="${signStyle(l.t)}">${sign}</span>${l.text || " "}</div>`;
+      return `<div style="${diffLineStyle(l.t)}"><span style="${signStyle(l.t)}">${sign}</span>${esc(l.text) || " "}</div>`;
     }).join("");
     return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
       <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Proposal · ${p.section}</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span></div>
-        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${p.title}</h1>
-        <p style="font-size:14px;color:var(--fg-70);line-height:1.6;margin:0 0 12px;max-width:540px">${p.summary ?? ""}</p>
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Proposal · ${esc(p.section)}</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span></div>
+        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${esc(p.title)}</h1>
+        <p style="font-size:14px;color:var(--fg-70);line-height:1.6;margin:0 0 12px;max-width:540px">${esc(p.summary ?? "")}</p>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initialsOf(p.author)}</div><span style="font-size:12.5px;color:var(--fg-55)">${p.author}</span></div>
-          ${confLbl ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${confLbl}</span></div>` : ""}
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(p.author))}</div><span style="font-size:12.5px;color:var(--fg-55)">${esc(p.author)}</span></div>
+          ${confLbl ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${esc(confLbl)}</span></div>` : ""}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
@@ -573,8 +575,8 @@ function triageDetail(s: AppState): string {
     return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
       <div style="min-width:0">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">ADR · Decision</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:5px;padding:2px 6px">DRAFT</span></div>
-        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${d.title}</h1>
-        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initialsOf(d.created_by)}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${d.created_by}</span></div>
+        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${esc(d.title)}</h1>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(d.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${esc(d.created_by)}</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
         <button data-act="dismiss" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
@@ -582,9 +584,9 @@ function triageDetail(s: AppState): string {
       </div>
     </div>
     <div style="margin-top:26px;display:flex;flex-direction:column;gap:22px">
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${d.context ?? ""}</p></div>
-      <div style="border-left:2px solid var(--accent);padding-left:18px"><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg);margin:0">${d.decision ?? ""}</p></div>
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${d.rationale ?? ""}</p></div>
+      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(d.context ?? "")}</p></div>
+      <div style="border-left:2px solid var(--accent);padding-left:18px"><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg);margin:0">${esc(d.decision ?? "")}</p></div>
+      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(d.rationale ?? "")}</p></div>
     </div>`;
   }
 
@@ -592,11 +594,11 @@ function triageDetail(s: AppState): string {
   if (!t) return queueEmpty();
   const tFirstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
   return `<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Unplaced item</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);background:color-mix(in srgb,var(--red) 12%,transparent);border-radius:5px;padding:2px 6px">NEEDS-TRIAGE</span></div>
-    <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${tFirstLine}</h1>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initialsOf(t.source_author ?? "unknown")}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${t.source_author ?? "unknown"}'s session</span></div>
-    <div style="display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--red);border-radius:9px;margin-bottom:20px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg><div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:4px">Why it couldn't be placed</div><div style="font-size:13px;color:var(--fg-70);line-height:1.55">${t.reason}</div></div></div>
+    <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${esc(tFirstLine)}</h1>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(t.source_author ?? "unknown"))}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${esc(t.source_author ?? "unknown")}'s session</span></div>
+    <div style="display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--red);border-radius:9px;margin-bottom:20px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg><div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:4px">Why it couldn't be placed</div><div style="font-size:13px;color:var(--fg-70);line-height:1.55">${esc(t.reason)}</div></div></div>
     <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Raw content</div>
-    <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap">${t.raw}</div>
+    <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap">${esc(t.raw)}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-top:18px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--fg-55);margin-right:2px">Assign to</span><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Reference</button><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Context</button><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Decisions</button></div>
       <button data-act="discardItem" data-arg="${t.id}" class="cnpy-discard" style="font-size:12.5px;font-weight:500;color:var(--fg-40)">Discard</button>
@@ -636,7 +638,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
     const allClosed = total !== null && total > 0 && closed !== null && closed >= total;
     const ready = !done && m.progress !== null && allClosed;
     const tgt = new Date(m.target_date + "T12:00:00").getTime();
-    const overdue = !done && tgt < now;
+    const overdue = !done && !ready && tgt < now;
     const pct = total !== null && total > 0 && closed !== null ? Math.round((100 * closed) / total) : 0;
     return {
       id: m.id, title: m.title, about: m.description ?? "",
@@ -701,7 +703,7 @@ function roadmapTimeline(s: AppState): string {
       <div style="display:flex;align-items:flex-start;gap:14px">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:5px">
-            <span style="font-size:15.5px;font-weight:600;letter-spacing:-0.01em">${m.title}</span>
+            <span style="font-size:15.5px;font-weight:600;letter-spacing:-0.01em">${esc(m.title)}</span>
             ${m.isNext ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px">NEXT</span>` : ""}
             ${m.overdue ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px">OVERDUE</span>` : ""}
           </div>
@@ -711,7 +713,7 @@ function roadmapTimeline(s: AppState): string {
           <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono)">${m.dateLabel}</span>
         </div>
       </div>
-      ${m.about ? `<p style="font-size:13.5px;line-height:1.65;color:var(--fg-70);margin:13px 0 0">${m.about}</p>` : ""}
+      ${m.about ? `<p style="font-size:13.5px;line-height:1.65;color:var(--fg-70);margin:13px 0 0">${esc(m.about)}</p>` : ""}
       ${progressBar}
       ${ready}
     </div>`;
@@ -772,8 +774,8 @@ function searchView(s: AppState): string {
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
             <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${badgeColor};border:1px solid ${badgeBorder}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>
           </div>
-          <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${r.title}</div>
-          <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${pre}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${mid}</span>` : ""}${post}</div>
+          <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
+          <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${esc(pre)}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>` : ""}${esc(post)}</div>
         </div>`;
       }
       const act = r.type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(r.id)}"`;
@@ -781,8 +783,8 @@ function searchView(s: AppState): string {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
           <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${badgeColor};border:1px solid ${badgeBorder}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>
         </div>
-        <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${r.title}</div>
-        <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${pre}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${mid}</span>` : ""}${post}</div>
+        <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
+        <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${esc(pre)}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>` : ""}${esc(post)}</div>
       </button>`;
     }).join("");
 
@@ -826,7 +828,7 @@ function settingsView(s: AppState): string {
   const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:11px;padding:16px;margin-bottom:14px;background:var(--accent-soft)">
       <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:10px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this now — it won't be shown again</div>
       <div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border-strong);border-radius:8px;padding:11px 13px">
-        <code style="flex:1;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${s.revealedToken}</code>
+        <code style="flex:1;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
         <button data-act="dismissReveal" class="cnpy-outlinebtn" style="flex:none;padding:6px 12px;border-radius:7px;border:1px solid var(--border-strong);font-size:12px;font-weight:500">Done</button>
       </div>
     </div>` : "";
@@ -843,10 +845,10 @@ function settingsView(s: AppState): string {
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Profile</div>
       <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
-          <div style="width:56px;height:56px;border-radius:50%;${AVATAR};font-size:18px;font-weight:600;flex:none">${initialsOf(meLogin || "?")}</div>
+          <div style="width:56px;height:56px;border-radius:50%;${AVATAR};font-size:18px;font-weight:600;flex:none">${esc(initialsOf(meLogin || "?"))}</div>
           <div>
-            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">${meName}</span><span style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">GITHUB</span></div>
-            <div style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono);margin-top:3px">${meLogin}</div>
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">${esc(meName)}</span><span style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">GITHUB</span></div>
+            <div style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono);margin-top:3px">${esc(meLogin)}</div>
             <div style="font-size:11.5px;color:var(--fg-40);margin-top:5px">Avatar is imported from GitHub and can't be changed here.</div>
           </div>
         </div>
@@ -881,10 +883,10 @@ function settingsView(s: AppState): string {
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Account</div>
       <div style="border:1px solid var(--border);border-radius:13px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:13px">
-          <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none">${initialsOf(meLogin || "?")}</div>
+          <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none">${esc(initialsOf(meLogin || "?"))}</div>
           <div>
-            <div style="font-size:13.5px;font-weight:500">${meLogin}</div>
-            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Member of <b>${meOrg}</b></div>
+            <div style="font-size:13.5px;font-weight:500">${esc(meLogin)}</div>
+            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Member of <b>${esc(meOrg)}</b></div>
           </div>
         </div>
         <button data-act="signOut" class="cnpy-signout" style="padding:9px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13px;font-weight:500">Sign out</button>
