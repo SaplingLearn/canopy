@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
-import { append_feed, propose_doc_update } from "./tools/writes";
+import { ingestFeedEntry, ingestDocProposal } from "./consumer";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -48,15 +48,22 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
 
   server.tool(
     "append_feed",
-    "Append an entry to the append-only feed (working memory).",
+    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage).",
     { summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional() },
     async ({ summary, body, tags }) =>
-      runTool(async () => ({ id: await append_feed(env.DB, { author: principal.login, summary, body, tags }) }))
+      // Thin adapter: shape the args into a FeedEntry and let the gate decide write-vs-triage.
+      runTool(() =>
+        ingestFeedEntry(
+          env.DB,
+          { summary, body: body ?? "", tags: tags ?? [], artifacts: { prs: [], commits: [] } },
+          principal.login
+        )
+      )
   );
 
   server.tool(
     "propose_doc_update",
-    "Stage a new doc version (non-destructive; current_version is untouched).",
+    "Propose a doc version through the gate (out-of-vocab section or low confidence routes to needs_triage; otherwise staged non-destructively — current_version is untouched).",
     {
       slug: z.string(),
       section: z.string(),
@@ -65,7 +72,7 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       change_summary: z.string(),
       confidence: z.enum(["high", "low"]),
     },
-    async (proposal) => runTool(() => propose_doc_update(env.DB, proposal, principal.login))
+    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login))
   );
 
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
