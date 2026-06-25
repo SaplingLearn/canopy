@@ -5,7 +5,9 @@ import { sessionGate } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
-import { promote_doc, ratify_adr } from "./tools/writes";
+import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone } from "./tools/writes";
+import { list_roadmap } from "./tools/roadmap";
+import { getStoredToken } from "./auth/github";
 
 export const app = new Hono<AppEnv>();
 
@@ -79,6 +81,37 @@ app.post("/adr/:id/ratify", async (c) => {
   try {
     const res = await ratify_adr(c.env.DB, id);
     return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Roadmap read (session-gated): milestones in target-date order with live GitHub progress.
+app.get("/roadmap", async (c) => {
+  const token = await getStoredToken(c.env.DB, c.get("principal").login, c.env.COOKIE_SECRET);
+  const milestones = await list_roadmap(c.env.DB, { token, repo: c.env.GITHUB_REPO });
+  return c.json({ milestones });
+});
+
+// Human confirmation (session-gated): promote a staged milestone proposal into a live milestone.
+app.post("/milestone-proposals/:id/promote", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  try {
+    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").login);
+    return c.json({ ok: true, milestone });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Human confirmation (session-gated): flip a live milestone to 'done'.
+app.post("/milestones/:id/complete", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  try {
+    const milestone = await complete_milestone(c.env.DB, id);
+    return c.json({ ok: true, milestone });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

@@ -8,6 +8,9 @@ import { ingestMilestoneProposal, consume } from "../src/consumer";
 import type { MilestoneProposalRow, MilestoneRow, NeedsTriageRow } from "@shared/rows";
 import { list_roadmap, fetchMilestoneProgress } from "../src/tools/roadmap";
 import { promote_milestone_proposal, complete_milestone, stage_milestone_proposal } from "../src/tools/writes";
+import { app } from "../src/routes";
+import { createSession } from "../src/auth/session";
+import { hmacSeal } from "../src/auth/crypto";
 
 const SECRET = "test-cookie-secret";
 
@@ -182,5 +185,45 @@ describe("list_roadmap", () => {
     const roadmap = await list_roadmap(env.DB, { token: null, repo: "o/r" });
     expect(roadmap).toHaveLength(1);
     expect(roadmap[0].progress).toBeNull();
+  });
+});
+
+async function cookieFor(login: string): Promise<string> {
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
+  ).bind(login, login, "2026-01-01T00:00:00Z").run();
+  const { id } = await createSession(env.DB, login);
+  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
+}
+
+describe("roadmap HTTP routes (session-gated)", () => {
+  it("GET /roadmap returns milestones (no token in test env → progress null) and 401 without a session", async () => {
+    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: [1], change_summary: "s", confidence: "high" }, "andres");
+    await promote_milestone_proposal(env.DB, pid, "andres");
+
+    const unauth = await app.request("/roadmap", {}, env);
+    expect(unauth.status).toBe(401);
+
+    const res = await app.request("/roadmap", { headers: { cookie: await cookieFor("andres") } }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { milestones: { title: string; progress: unknown }[] };
+    expect(body.milestones).toHaveLength(1);
+    expect(body.milestones[0].progress).toBeNull(); // no stored github_token for this user → fallback
+  });
+
+  it("POST /milestones/:id/complete flips status for an authenticated principal", async () => {
+    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "in_progress", change_summary: "s", confidence: "high" }, "andres");
+    const m = await promote_milestone_proposal(env.DB, pid, "andres");
+    const res = await app.request(`/milestones/${m.id}/complete`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
+    expect(res.status).toBe(200);
+    const row = await first<MilestoneRow>(env.DB, `SELECT * FROM milestones WHERE id = ?`, m.id);
+    expect(row?.status).toBe("done");
+  });
+
+  it("POST /milestone-proposals/:id/promote materializes a live milestone", async () => {
+    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" }, "andres");
+    const res = await app.request(`/milestone-proposals/${pid}/promote`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
+    expect(res.status).toBe(200);
+    expect(await all<MilestoneRow>(env.DB, `SELECT * FROM milestones`)).toHaveLength(1);
   });
 });

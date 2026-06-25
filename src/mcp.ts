@@ -4,7 +4,9 @@ import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
-import { ingestFeedEntry, ingestDocProposal } from "./consumer";
+import { list_roadmap } from "./tools/roadmap";
+import { getStoredToken } from "./auth/github";
+import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal } from "./consumer";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -73,6 +75,27 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       confidence: z.enum(["high", "low"]),
     },
     async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login))
+  );
+
+  server.tool("get_roadmap", "Read the roadmap: milestones in target-date order with live GitHub progress.", {}, async () =>
+    runTool(async () => {
+      const token = await getStoredToken(env.DB, principal.login, env.COOKIE_SECRET);
+      return list_roadmap(env.DB, { token, repo: env.GITHUB_REPO });
+    })
+  );
+
+  server.tool(
+    "propose_milestone",
+    "Propose a roadmap milestone (create/update) through the gate; staged for human promotion. A 'done' status or low confidence routes to needs_triage.",
+    {
+      title: z.string(),
+      target_date: z.string(),
+      status: z.enum(["upcoming", "in_progress", "done"]),
+      github_ref: z.union([z.number(), z.array(z.number())]).optional(),
+      change_summary: z.string(),
+      confidence: z.enum(["high", "low"]),
+    },
+    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login))
   );
 
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
