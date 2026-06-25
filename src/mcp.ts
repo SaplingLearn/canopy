@@ -22,7 +22,7 @@ async function runTool(fn: () => Promise<unknown>) {
 export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
   // Fresh McpServer per request — MCP SDK 1.26+ guards against reused instances,
   // so it must NOT be constructed in global scope.
-  const server = new McpServer({ name: "sapling-context", version: "1.0.0" });
+  const server = new McpServer({ name: "canopy", version: "1.0.0" });
 
   server.tool("get_doc", "Get a doc and all its versions by slug.", { slug: z.string() }, async ({ slug }) =>
     runTool(() => get_doc(env.DB, slug))

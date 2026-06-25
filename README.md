@@ -1,4 +1,4 @@
-# Sapling Context Store
+# Canopy
 
 Shared context store backend. One Cloudflare Worker on one origin serves the API,
 the MCP endpoint, and the static web build (via the assets binding).
@@ -27,5 +27,5 @@ Local dev: copy `.dev.vars.example` to `.dev.vars` (git-ignored) and fill it in.
 The `database_id` in `wrangler.toml` is still a local placeholder — replace it with a real id
 (`npm run db:create`) before any remote deploy.
 
-Mint an MCP token from a logged-in session: `POST /auth/mcp-token` → `{ "token": "sapling_mcp_..." }`
-(shown once). Connect Claude Code with `--header "Authorization: Bearer sapling_mcp_..."`.
+Mint an MCP token from a logged-in session: `POST /auth/mcp-token` → `{ "token": "canopy_mcp_..." }`
+(shown once). Connect Claude Code with `--header "Authorization: Bearer canopy_mcp_..."`.

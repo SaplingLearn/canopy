@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extend the Canopy/Sapling-Context Worker with feed-issue links (STEP 1), the human-confirm half of the staged-write model — doc promotion + ADR ratification (STEP 2) — and a milestone/roadmap layer with live GitHub progress (STEP 3), without rescaffolding the existing architecture.
+**Goal:** Extend the Canopy Worker with feed-issue links (STEP 1), the human-confirm half of the staged-write model — doc promotion + ADR ratification (STEP 2) — and a milestone/roadmap layer with live GitHub progress (STEP 3), without rescaffolding the existing architecture.
 
 **Architecture:** One Cloudflare Worker. Hono app (`src/routes.ts`) for HTTP behind a session gate; a stateless `createMcpHandler` at `/mcp` (`src/mcp.ts`) behind a bearer gate. `shared/` is the only shared layer (contract + row types + vocabulary). D1 is the store (`src/db.ts` helpers). Every write funnels through the per-entry **gate** functions in `src/consumer.ts` (`ingestFeedEntry` / `ingestDocProposal` / `ingestAdrDraft`, and new `ingestMilestoneProposal`); MCP tools and `/ingest` are thin adapters over those. Human confirmations (promote / ratify / promote-milestone / complete-milestone) are authenticated **HTTP-only** routes — never MCP tools. The author on every write is the authenticated principal.
 
@@ -1095,7 +1095,7 @@ import type { MilestoneRow } from "@shared/rows";
 import { type DB, all } from "../db";
 
 const GH_API = "application/vnd.github+json";
-const USER_AGENT = "sapling-context";
+const USER_AGENT = "canopy";
 
 /**
  * Live progress for a milestone's github_ref, computed from GitHub at read time.
@@ -1304,7 +1304,7 @@ In `test/env.d.ts`, add to the `Cloudflare.Env` interface:
 In `wrangler.toml`, add a vars block (production config; the example repo can be edited at deploy):
 ```toml
 [vars]
-GITHUB_REPO = "SaplingLearn/context"
+GITHUB_REPO = "SaplingLearn/canopy"
 ```
 (Note: tests never make a real GitHub call — `getStoredToken` returns null for test users, so `list_roadmap` short-circuits to the no-progress path before any fetch, regardless of `GITHUB_REPO`.)
 

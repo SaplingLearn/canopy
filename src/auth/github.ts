@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 
 export const SAPLING_ORG = "SaplingLearn";
-const USER_AGENT = "sapling-context";
+const USER_AGENT = "canopy";
 const GH_API = "application/vnd.github+json";
 
 export function buildAuthorizeUrl(opts: {

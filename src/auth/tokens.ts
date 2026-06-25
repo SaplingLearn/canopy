@@ -1,7 +1,7 @@
 import { type DB, first, run, nowIso } from "../db";
 import { randomToken, sha256Hex } from "./crypto";
 
-const TOKEN_PREFIX = "sapling_mcp_";
+const TOKEN_PREFIX = "canopy_mcp_";
 
 /** Mint a token: returns the raw token ONCE; stores only its SHA-256 hash. */
 export async function mintToken(db: DB, login: string): Promise<{ raw: string }> {

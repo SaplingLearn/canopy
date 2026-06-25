@@ -1,5 +1,5 @@
 {
-  "name": "sapling-context",
+  "name": "canopy",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,9 +9,9 @@
     "pretest": "mkdir -p web/dist",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json",
-    "db:create": "wrangler d1 create sapling-context",
-    "db:migrate:local": "wrangler d1 migrations apply sapling-context --local",
-    "db:migrate:remote": "wrangler d1 migrations apply sapling-context --remote"
+    "db:create": "wrangler d1 create canopy",
+    "db:migrate:local": "wrangler d1 migrations apply canopy --local",
+    "db:migrate:remote": "wrangler d1 migrations apply canopy --remote"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

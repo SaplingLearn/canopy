@@ -1,4 +1,4 @@
-name = "sapling-context"
+name = "canopy"
 main = "src/index.ts"
 compatibility_date = "2025-11-01"
 compatibility_flags = ["nodejs_compat"]
@@ -13,7 +13,7 @@ binding = "ASSETS"
 # Run `npm run db:create` to provision the real database and paste its id here before deploy.
 [[d1_databases]]
 binding = "DB"
-database_name = "sapling-context"
+database_name = "canopy"
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [observability]
