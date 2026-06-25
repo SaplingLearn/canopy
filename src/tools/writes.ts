@@ -1,4 +1,4 @@
-import type { DocRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "../db";
 
 const humanizeSlug = (slug: string): string =>
@@ -122,4 +122,46 @@ export async function route_triage(
     created_at
   );
   return res.meta.last_row_id as number;
+}
+
+/**
+ * Human confirmation: promote a staged doc version into the live doc.
+ * Non-destructive — prior versions remain. Rejects if the version is missing or not staged.
+ */
+export async function promote_doc(
+  db: DB,
+  slug: string,
+  version: number,
+  author: string
+): Promise<{ slug: string; version: number; status: "promoted" }> {
+  const ver = await first<DocVersionRow>(
+    db,
+    `SELECT * FROM doc_versions WHERE slug = ? AND version = ?`,
+    slug,
+    version
+  );
+  if (!ver) throw new Error(`no such doc version: ${slug} v${version}`);
+  if (ver.status !== "staged") throw new Error(`doc version not staged: ${slug} v${version} is ${ver.status}`);
+
+  const updated_at = nowIso();
+  await run(db, `UPDATE doc_versions SET status = 'promoted' WHERE slug = ? AND version = ?`, slug, version);
+  await run(
+    db,
+    `UPDATE docs SET body = ?, current_version = ?, updated_at = ?, updated_by = ? WHERE slug = ?`,
+    ver.body,
+    version,
+    updated_at,
+    author,
+    slug
+  );
+  return { slug, version, status: "promoted" };
+}
+
+/** Human confirmation: ratify an ADR draft. Rejects if missing or already ratified. */
+export async function ratify_adr(db: DB, id: number): Promise<{ id: number; status: "ratified" }> {
+  const adr = await first<AdrRow>(db, `SELECT * FROM adrs WHERE id = ?`, id);
+  if (!adr) throw new Error(`no such adr: ${id}`);
+  if (adr.status === "ratified") throw new Error(`adr already ratified: ${id}`);
+  await run(db, `UPDATE adrs SET status = 'ratified' WHERE id = ?`, id);
+  return { id, status: "ratified" };
 }
