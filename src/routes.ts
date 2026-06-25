@@ -5,6 +5,7 @@ import { sessionGate } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
+import { promote_doc, ratify_adr } from "./tools/writes";
 
 export const app = new Hono<AppEnv>();
 
@@ -56,4 +57,29 @@ app.get("/search", async (c) => {
     limit: limit ? Number(limit) : undefined,
   });
   return c.json({ results });
+});
+
+// Human confirmation (session-gated): promote a staged doc version into the live doc.
+app.post("/doc/:slug/promote", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const version = Number(body?.version);
+  if (!Number.isInteger(version)) return c.json({ error: "version (integer) required" }, 400);
+  try {
+    const res = await promote_doc(c.env.DB, c.req.param("slug"), version, c.get("principal").login);
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Human confirmation (session-gated): ratify an ADR draft.
+app.post("/adr/:id/ratify", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  try {
+    const res = await ratify_adr(c.env.DB, id);
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
 });
