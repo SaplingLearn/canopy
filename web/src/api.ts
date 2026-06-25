@@ -88,6 +88,38 @@ export function getMe(): Promise<Me> {
   return getJson<Me>("/auth/me");
 }
 
+// The Triage "Proposals" queue = staged doc versions newer than the live doc. There is no
+// single route for this (G9), so aggregate it from /docs + /doc/:slug (N+1 over docs). Each
+// proposal carries both bodies so the detail pane can diff staged vs promoted.
+export interface StagedProposal {
+  slug: string;
+  version: number;
+  title: string;
+  section: string;
+  summary: string | null;
+  author: string;
+  confidence: string | null;
+  stagedBody: string;
+  promotedBody: string;
+}
+export async function listStagedProposals(): Promise<StagedProposal[]> {
+  const docs = await listDocs();
+  const out: StagedProposal[] = [];
+  for (const d of docs) {
+    const { doc, versions } = await getDoc(d.slug);
+    for (const v of versions) {
+      if (v.status === "staged" && v.version > doc.current_version) {
+        out.push({
+          slug: doc.slug, version: v.version, title: doc.title, section: doc.section,
+          summary: v.summary, author: v.created_by, confidence: v.confidence,
+          stagedBody: v.body, promotedBody: doc.body,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // ── confirms (cookie-authed) ─────────────────────────────────────────────────
 export function promoteDoc(slug: string, version: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/doc/${encodeURIComponent(slug)}/promote`, { version });

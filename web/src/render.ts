@@ -4,12 +4,12 @@
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
 import {
-  people, initProposals, initDecisions, initTriage, initTokens,
-  type PersonKey, type Proposal, type Decision, type TriageItem, type Token,
-  type DiffKind,
+  people, initTokens,
+  type PersonKey, type Token,
 } from "./data";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { SearchResult, MilestoneWithProgress } from "./api";
+import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api";
+import type { AdrRow, NeedsTriageRow } from "@shared/rows";
 import { TAGS } from "@shared/vocabulary";
 
 export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings";
@@ -39,8 +39,8 @@ export interface AppState {
   triageQueue: "proposals" | "decisions" | "triage";
   roadmap: Loadable<MilestoneWithProgress[]>;
   selProposal: string | null;
-  selDecision: string | null;
-  selTriage: string | null;
+  selDecision: number | null;
+  selTriage: number | null;
   showHistory: boolean;
   searchQuery: string;
   searchType: "all" | "doc" | "feed" | "adr";
@@ -49,9 +49,9 @@ export interface AppState {
   revealedToken: string | null;
   confirmedMilestones: Record<string, boolean>;
   toast: string | null;
-  proposals: Proposal[];
-  decisions: Decision[];
-  triageItems: TriageItem[];
+  proposals: Loadable<StagedProposal[]>;
+  decisions: Loadable<AdrRow[]>;
+  triageItems: Loadable<NeedsTriageRow[]>;
   tokens: Token[];
 }
 
@@ -69,7 +69,7 @@ export function initialState(): AppState {
     docSlug: null,
     triageQueue: "proposals",
     roadmap: { status: "idle", data: [] },
-    selProposal: "p1", selDecision: "d1", selTriage: "t1",
+    selProposal: null, selDecision: null, selTriage: null,
     showHistory: false,
     searchQuery: "token", searchType: "all",
     searchResults: { status: "idle", data: [] },
@@ -77,9 +77,9 @@ export function initialState(): AppState {
     revealedToken: null,
     confirmedMilestones: {},
     toast: null,
-    proposals: initProposals.map((p) => ({ ...p })),
-    decisions: initDecisions.map((d) => ({ ...d })),
-    triageItems: initTriage.map((t) => ({ ...t })),
+    proposals: { status: "idle", data: [] },
+    decisions: { status: "idle", data: [] },
+    triageItems: { status: "idle", data: [] },
     tokens: initTokens.map((t) => ({ ...t })),
   };
 }
@@ -211,7 +211,7 @@ function sidebar(s: AppState): string {
   const navItem = (act: string, cls: string, title: string, svg: string, extra = ""): string =>
     `<button data-act="${act}" title="${title}" class="cnpy-nav ${cls}">${svg}${expanded ? `<span style="white-space:nowrap;flex:1;text-align:left">${title}</span>` : ""}${extra}</button>`;
 
-  const counts = s.proposals.length + s.decisions.length + s.triageItems.length;
+  const counts = s.proposals.data.length + s.decisions.data.length + s.triageItems.data.length;
   const triageExtra = expanded
     ? `<span style="font-size:11px;font-weight:600;font-family:var(--mono);min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--accent);color:var(--accent-fg);display:inline-flex;align-items:center;justify-content:center;flex:none">${counts}</span>`
     : `<span style="position:absolute;top:7px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--accent)"></span>`;
@@ -286,9 +286,9 @@ function header(s: AppState): string {
     </div>` : "";
 
   const triageControls = s.screen === "triage" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
-      <button data-act="queueProposals" class="cnpy-qtab q-proposals">Proposals<span class="cnpy-qcount">${s.proposals.length}</span></button>
-      <button data-act="queueDecisions" class="cnpy-qtab q-decisions">Decisions<span class="cnpy-qcount">${s.decisions.length}</span></button>
-      <button data-act="queueTriage" class="cnpy-qtab q-triage">Triage<span class="cnpy-qcount">${s.triageItems.length}</span></button>
+      <button data-act="queueProposals" class="cnpy-qtab q-proposals">Proposals<span class="cnpy-qcount">${s.proposals.data.length}</span></button>
+      <button data-act="queueDecisions" class="cnpy-qtab q-decisions">Decisions<span class="cnpy-qcount">${s.decisions.data.length}</span></button>
+      <button data-act="queueTriage" class="cnpy-qtab q-triage">Triage<span class="cnpy-qcount">${s.triageItems.data.length}</span></button>
     </div>` : "";
 
   const themeBtn = `<button data-act="cycleTheme" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
@@ -442,38 +442,70 @@ function docsView(s: AppState): string {
 // ── triage ───────────────────────────────────────────────────────────────────
 function triageView(s: AppState): string {
   const q = s.triageQueue;
-  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; who: PersonKey; badgeText: string; badgeColor: string };
-  let list: ListItem[] = [];
-  if (q === "proposals") list = s.proposals.map((p) => ({ id: p.id, selected: p.id === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary, who: p.who, badgeText: p.confidence, badgeColor: confColor(p.confidence) }));
-  else if (q === "decisions") list = s.decisions.map((d) => ({ id: d.id, selected: d.id === s.selDecision, eyebrow: d.idLabel, title: d.title, summary: d.context, who: d.who, badgeText: d.badge, badgeColor: "var(--blue)" }));
-  else list = s.triageItems.map((t) => ({ id: t.id, selected: t.id === s.selTriage, eyebrow: "Unplaced", title: t.title, summary: t.reason, who: t.who, badgeText: "NEEDS-TRIAGE", badgeColor: "var(--red)" }));
 
-  const empty = list.length === 0 ? `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:70px 20px;text-align:center">
+  // Determine list pane contents + loading state per queue
+  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; author: string; badgeText: string; badgeColor: string };
+  let listItems: ListItem[] = [];
+  let listStatus: "idle" | "loading" | "ok" | "error" | "unauth" = "idle";
+
+  if (q === "proposals") {
+    listStatus = s.proposals.status;
+    listItems = s.proposals.data.map((p) => {
+      const key = `${p.slug}@${p.version}`;
+      const confColor = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
+      const confLabel = p.confidence ? p.confidence.toUpperCase() : "?";
+      return { id: key, selected: key === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary ?? "", author: p.author, badgeText: confLabel, badgeColor: confColor };
+    });
+  } else if (q === "decisions") {
+    listStatus = s.decisions.status;
+    listItems = s.decisions.data.map((d) => ({
+      id: String(d.id), selected: d.id === s.selDecision,
+      eyebrow: "ADR", title: d.title, summary: d.context ?? "",
+      author: d.created_by, badgeText: "DRAFT", badgeColor: "var(--blue)",
+    }));
+  } else {
+    listStatus = s.triageItems.status;
+    listItems = s.triageItems.data.map((t) => {
+      const firstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
+      return { id: String(t.id), selected: t.id === s.selTriage, eyebrow: "Unplaced", title: firstLine, summary: t.reason, author: t.source_author ?? "unknown", badgeText: "NEEDS-TRIAGE", badgeColor: "var(--red)" };
+    });
+  }
+
+  let listHtml: string;
+  if (listStatus === "loading" && listItems.length === 0) {
+    listHtml = notice("Loading&hellip;");
+  } else if (listStatus === "error") {
+    listHtml = notice("Couldn't load queue.");
+  } else if (listItems.length === 0) {
+    listHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:70px 20px;text-align:center">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7"><path d="M20 6 9 17l-5-5"></path></svg>
       <div style="font-size:13.5px;font-weight:500">Queue clear</div>
       <div style="font-size:12.5px;color:var(--fg-40)">Nothing waiting for review here.</div>
-    </div>` : "";
-
-  const items = list.map((it) => `<button data-act="selectItem" data-arg="${it.id}" class="cnpy-titem">
-      ${it.selected ? `<span class="cnpy-selbar"></span>` : ""}
-      <div style="position:relative">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">
-          <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${it.eyebrow}</span>
-          <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${it.badgeColor};border:1px solid color-mix(in srgb,${it.badgeColor} 45%,transparent);background:color-mix(in srgb,${it.badgeColor} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${it.badgeText}</span>
+    </div>`;
+  } else {
+    listHtml = listItems.map((it) => `<button data-act="selectItem" data-arg="${it.id}" class="cnpy-titem">
+        ${it.selected ? `<span class="cnpy-selbar"></span>` : ""}
+        <div style="position:relative">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">
+            <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${it.eyebrow}</span>
+            <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${it.badgeColor};border:1px solid color-mix(in srgb,${it.badgeColor} 45%,transparent);background:color-mix(in srgb,${it.badgeColor} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${it.badgeText}</span>
+          </div>
+          <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${it.title}</div>
+          <div style="font-size:12.5px;color:var(--fg-55);line-height:1.5;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${it.summary}</div>
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${initialsOf(it.author)}</div><span style="font-size:12px;color:var(--fg-55)">${it.author}</span></div>
         </div>
-        <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${it.title}</div>
-        <div style="font-size:12.5px;color:var(--fg-55);line-height:1.5;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${it.summary}</div>
-        <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${initials(it.who)}</div><span style="font-size:12px;color:var(--fg-55)">${nameOf(s, it.who)}</span></div>
-      </div>
-    </button>`).join("");
+      </button>`).join("");
+  }
 
   return `<div style="display:flex;height:100%">
-    <div class="cnpy-scroll" style="width:392px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 16px">${empty}${items}</div>
+    <div class="cnpy-scroll" style="width:392px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 16px">${listHtml}</div>
     <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">
       <div style="max-width:720px;margin:0 auto;padding:24px 36px 100px">${triageDetail(s)}</div>
     </div>
   </div>`;
 }
+
+type DiffKind = "ctx" | "add" | "del";
 
 function diffLineStyle(t: DiffKind): string {
   const border = t === "add" ? "var(--green)" : t === "del" ? "var(--red)" : "transparent";
@@ -486,14 +518,37 @@ function signStyle(t: DiffKind): string {
   return `color:${color};margin-right:10px;user-select:none;font-weight:600`;
 }
 
+type DiffRow = { t: DiffKind; text: string };
+function lineDiff(oldText: string, newText: string): DiffRow[] {
+  const a = oldText.split("\n"), b = newText.split("\n");
+  const n = a.length, m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out: DiffRow[] = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({ t: "ctx", text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "del", text: a[i] }); i++; }
+    else { out.push({ t: "add", text: b[j] }); j++; }
+  }
+  while (i < n) out.push({ t: "del", text: a[i++] });
+  while (j < m) out.push({ t: "add", text: b[j++] });
+  return out;
+}
+
 function triageDetail(s: AppState): string {
   const q = s.triageQueue;
   if (q === "proposals") {
-    const p = s.proposals.find((x) => x.id === s.selProposal);
+    const p = s.proposals.data.find((x) => `${x.slug}@${x.version}` === s.selProposal);
     if (!p) return queueEmpty();
-    const add = p.diff.filter((l) => l.t === "add").length;
-    const del = p.diff.filter((l) => l.t === "del").length;
-    const lines = p.diff.map((l) => {
+    const key = `${p.slug}@${p.version}`;
+    const confClr = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
+    const confLbl = p.confidence ? `${p.confidence} confidence` : "";
+    const diff = lineDiff(p.promotedBody, p.stagedBody);
+    const add = diff.filter((l) => l.t === "add").length;
+    const del = diff.filter((l) => l.t === "del").length;
+    const lines = diff.map((l) => {
       const sign = l.t === "add" ? "+" : l.t === "del" ? "−" : " ";
       return `<div style="${diffLineStyle(l.t)}"><span style="${signStyle(l.t)}">${sign}</span>${l.text || " "}</div>`;
     }).join("");
@@ -501,15 +556,15 @@ function triageDetail(s: AppState): string {
       <div style="min-width:0">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Proposal · ${p.section}</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span></div>
         <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${p.title}</h1>
-        <p style="font-size:14px;color:var(--fg-70);line-height:1.6;margin:0 0 12px;max-width:540px">${p.summary}</p>
+        <p style="font-size:14px;color:var(--fg-70);line-height:1.6;margin:0 0 12px;max-width:540px">${p.summary ?? ""}</p>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initials(p.who)}</div><span style="font-size:12.5px;color:var(--fg-55)">${nameOf(s, p.who)}</span></div>
-          <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confColor(p.confidence)}"></span><span style="font-size:12.5px;color:var(--fg-55)">${p.confidence} confidence</span></div>
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initialsOf(p.author)}</div><span style="font-size:12.5px;color:var(--fg-55)">${p.author}</span></div>
+          ${confLbl ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${confLbl}</span></div>` : ""}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismissProposal" data-arg="${p.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
-        <button data-act="promote" data-arg="${p.id}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
+        <button data-act="dismiss" data-arg="${key}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
+        <button data-act="promote" data-arg="${key}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:12px;margin:24px 0 0;padding:11px 14px;border:1px solid var(--border);border-bottom:none;border-radius:11px 11px 0 0;background:var(--bg)">
@@ -522,34 +577,35 @@ function triageDetail(s: AppState): string {
   }
 
   if (q === "decisions") {
-    const d = s.decisions.find((x) => x.id === s.selDecision);
+    const d = s.decisions.data.find((x) => x.id === s.selDecision);
     if (!d) return queueEmpty();
     return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
       <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">${d.idLabel} · Decision</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:5px;padding:2px 6px">DRAFT</span></div>
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">ADR · Decision</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:5px;padding:2px 6px">DRAFT</span></div>
         <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${d.title}</h1>
-        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initials(d.who)}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${nameOf(s, d.who)}</span></div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initialsOf(d.created_by)}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${d.created_by}</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismissDecision" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
-        <button data-act="ratify" data-arg="${d.id}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Ratify</button>
+        <button data-act="dismiss" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
+        <button data-act="ratify" data-arg="${String(d.id)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Ratify</button>
       </div>
     </div>
     <div style="margin-top:26px;display:flex;flex-direction:column;gap:22px">
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${d.context}</p></div>
-      <div style="border-left:2px solid var(--accent);padding-left:18px"><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg);margin:0">${d.decision}</p></div>
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${d.rationale}</p></div>
+      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${d.context ?? ""}</p></div>
+      <div style="border-left:2px solid var(--accent);padding-left:18px"><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg);margin:0">${d.decision ?? ""}</p></div>
+      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${d.rationale ?? ""}</p></div>
     </div>`;
   }
 
-  const t = s.triageItems.find((x) => x.id === s.selTriage);
+  const t = s.triageItems.data.find((x) => x.id === s.selTriage);
   if (!t) return queueEmpty();
+  const tFirstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
   return `<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Unplaced item</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);background:color-mix(in srgb,var(--red) 12%,transparent);border-radius:5px;padding:2px 6px">NEEDS-TRIAGE</span></div>
-    <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${t.title}</h1>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initials(t.who)}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${nameOf(s, t.who)}'s session</span></div>
+    <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${tFirstLine}</h1>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${initialsOf(t.source_author ?? "unknown")}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${t.source_author ?? "unknown"}'s session</span></div>
     <div style="display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--red);border-radius:9px;margin-bottom:20px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg><div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:4px">Why it couldn't be placed</div><div style="font-size:13px;color:var(--fg-70);line-height:1.55">${t.reason}</div></div></div>
     <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Raw content</div>
-    <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70)">${t.raw}</div>
+    <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap">${t.raw}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-top:18px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--fg-55);margin-right:2px">Assign to</span><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Reference</button><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Context</button><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Decisions</button></div>
       <button data-act="discardItem" data-arg="${t.id}" class="cnpy-discard" style="font-size:12.5px;font-weight:500;color:var(--fg-40)">Discard</button>

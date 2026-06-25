@@ -5,7 +5,12 @@
 
 import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
-import { getFeed, listDocs, getDoc, search, getRoadmap, Unauthorized, NotFound } from "./api";
+import {
+  getFeed, listDocs, getDoc, search, getRoadmap,
+  listStagedProposals, listAdrs, listNeedsTriage,
+  promoteDoc, ratifyAdr, completeMilestone,
+  Unauthorized, NotFound, ApiError,
+} from "./api";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -163,6 +168,73 @@ function loadRoadmapIfNeeded(): void {
   else rerender();
 }
 
+function loadProposals(): void {
+  state.proposals = { status: "loading", data: state.proposals.data };
+  rerender();
+  listStagedProposals()
+    .then((rows) => {
+      state.proposals = { status: "ok", data: rows };
+      if (state.triageQueue === "proposals" && (state.selProposal === null || !rows.some((r) => `${r.slug}@${r.version}` === state.selProposal))) {
+        state.selProposal = rows.length > 0 ? `${rows[0].slug}@${rows[0].version}` : null;
+      }
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.proposals = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function loadDecisions(): void {
+  state.decisions = { status: "loading", data: state.decisions.data };
+  rerender();
+  listAdrs("draft")
+    .then((rows) => {
+      state.decisions = { status: "ok", data: rows };
+      if (state.triageQueue === "decisions" && (state.selDecision === null || !rows.some((r) => r.id === state.selDecision))) {
+        state.selDecision = rows.length > 0 ? rows[0].id : null;
+      }
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.decisions = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function loadTriageItems(): void {
+  state.triageItems = { status: "loading", data: state.triageItems.data };
+  rerender();
+  listNeedsTriage()
+    .then((rows) => {
+      state.triageItems = { status: "ok", data: rows };
+      if (state.triageQueue === "triage" && (state.selTriage === null || !rows.some((r) => r.id === state.selTriage))) {
+        state.selTriage = rows.length > 0 ? rows[0].id : null;
+      }
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.triageItems = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function loadCurrentTriageQueue(): void {
+  if (state.triageQueue === "proposals" && state.proposals.status === "idle") loadProposals();
+  else if (state.triageQueue === "decisions" && state.decisions.status === "idle") loadDecisions();
+  else if (state.triageQueue === "triage" && state.triageItems.status === "idle") loadTriageItems();
+  else rerender();
+}
+
+function flash(msg: string): void {
+  state.toast = msg;
+  rerender();
+  setTimeout(() => { state.toast = null; rerender(); }, 2200);
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -180,7 +252,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
     case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); return;
-    case "goTriage": state.screen = "triage"; break;
+    case "goTriage": state.screen = "triage"; loadCurrentTriageQueue(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
 
@@ -209,14 +281,23 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "setRange": state.feedRange = value ?? "all"; break;
 
     // triage navigation (browse the queues — no writes)
-    case "queueProposals": state.triageQueue = "proposals"; break;
-    case "queueDecisions": state.triageQueue = "decisions"; break;
-    case "queueTriage": state.triageQueue = "triage"; break;
+    case "queueProposals":
+      state.triageQueue = "proposals";
+      if (state.proposals.status === "idle") { loadProposals(); return; }
+      break;
+    case "queueDecisions":
+      state.triageQueue = "decisions";
+      if (state.decisions.status === "idle") { loadDecisions(); return; }
+      break;
+    case "queueTriage":
+      state.triageQueue = "triage";
+      if (state.triageItems.status === "idle") { loadTriageItems(); return; }
+      break;
     case "selectItem":
       if (arg) {
         if (state.triageQueue === "proposals") state.selProposal = arg;
-        else if (state.triageQueue === "decisions") state.selDecision = arg;
-        else state.selTriage = arg;
+        else if (state.triageQueue === "decisions") state.selDecision = Number(arg);
+        else state.selTriage = Number(arg);
       }
       break;
 
@@ -244,14 +325,50 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // settings — display name echoes live; everything else is Phase 2
     case "setDisplayName": state.displayName = value ?? ""; break;
 
-    // ── Phase 2 (intentionally inert in Phase 1 — static affordances only) ──
-    case "promote":
-    case "dismissProposal":
-    case "dismissDecision":
-    case "ratify":
+    // ── Phase 2 confirm actions (cookie-authed) ──────────────────────────────
+    case "promote": {
+      if (!arg) return;
+      const atIdx = arg.indexOf("@");
+      if (atIdx < 0) return;
+      const slug = arg.slice(0, atIdx);
+      const version = Number(arg.slice(atIdx + 1));
+      promoteDoc(slug, version)
+        .then(() => { flash("Promoted — now the live version"); loadProposals(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Promote failed");
+        });
+      return;
+    }
+    case "ratify": {
+      if (!arg) return;
+      ratifyAdr(Number(arg))
+        .then(() => { flash("Decision ratified"); loadDecisions(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Ratify failed");
+        });
+      return;
+    }
+    case "confirmMilestone": {
+      if (!arg) return;
+      completeMilestone(Number(arg))
+        .then(() => { flash("Milestone marked done"); loadRoadmap(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not complete milestone");
+        });
+      return;
+    }
+    // ── Inert (no backing route — rendered but do nothing) ───────────────────
+    // dismiss (proposals + decisions): no route exists
+    // assignItem (Reference/Context/Decisions): no route exists
+    // discardItem: no route exists
+    case "dismiss":
     case "assignItem":
     case "discardItem":
-    case "confirmMilestone":
+      return; // inert — keep rendered, do nothing
+    // ── Settings Phase 2 (inert until Task 6) ────────────────────────────────
     case "mintToken":
     case "dismissReveal":
     case "revokeToken":
