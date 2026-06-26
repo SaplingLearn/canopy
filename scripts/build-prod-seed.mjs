@@ -171,19 +171,22 @@ Rationale: a single accent keeps live and active state unambiguous and the inter
 // ── Sapling product docs (sapling space) — authored by subagents from the SaplingLearn/sapling repo.
 const SAPLING_DIR = new URL("./sapling-content/", import.meta.url);
 const read = (f) => readFileSync(new URL(f, SAPLING_DIR), "utf8").trim();
+// Real SaplingLearn/sapling team → GitHub logins, attributed by domain ownership
+// (Jose=frontend, Jack=AI, Luke=backend, Andres=fullstack/cross-cutting).
+const TEAM = { jose: "Jose-Gael-Cruz-Lopez", jack: "Darkest-Teddy", luke: "lpcooper-arch", andres: "AndresL230" };
 const saplingDocs = [
-  { file: "product-overview.md",             slug: "sapling-overview",             section: "context",   title: "Product Overview" },
-  { file: "architecture.md",                 slug: "sapling-architecture",         section: "reference", title: "Architecture" },
-  { file: "backend-and-ai.md",               slug: "sapling-backend-ai",           section: "reference", title: "Backend & AI Agents" },
-  { file: "knowledge-graph-and-learning.md", slug: "sapling-knowledge-graph",      section: "reference", title: "Knowledge Graph & Learning" },
-  { file: "document-pipeline.md",            slug: "sapling-document-pipeline",    section: "reference", title: "Document Pipeline (Upload, OCR & Streaming)" },
-  { file: "infrastructure.md",               slug: "sapling-infrastructure",       section: "reference", title: "Infrastructure — Data, Observability, Security & Deploy" },
-  { file: "adr-pydantic-ai.md",              slug: "sapling-adr-pydantic-ai",      section: "decisions", title: "ADR-0001 · Adopt Pydantic AI" },
-  { file: "adr-model-routing.md",            slug: "sapling-adr-model-routing",    section: "decisions", title: "ADR-0008 · Per-task model routing" },
-  { file: "adr-sse-protocol.md",             slug: "sapling-adr-sse-protocol",     section: "decisions", title: "ADR-0006 · SSE protocol choice" },
-  { file: "adr-durable-execution.md",        slug: "sapling-adr-durable-execution",section: "decisions", title: "ADR-0011 · Durable execution (DBOS)" },
-  { file: "adr-drop-orchestrator.md",        slug: "sapling-adr-drop-orchestrator",section: "decisions", title: "ADR-0007 · Drop the orchestrator agent" },
-].map((d) => ({ ...d, body: read(d.file), updated_at: NOW }));
+  { file: "product-overview.md",             slug: "sapling-overview",             section: "context",   title: "Product Overview", by: "andres" },
+  { file: "architecture.md",                 slug: "sapling-architecture",         section: "reference", title: "Architecture", by: "andres" },
+  { file: "backend-and-ai.md",               slug: "sapling-backend-ai",           section: "reference", title: "Backend & AI Agents", by: "jack" },
+  { file: "knowledge-graph-and-learning.md", slug: "sapling-knowledge-graph",      section: "reference", title: "Knowledge Graph & Learning", by: "jose" },
+  { file: "document-pipeline.md",            slug: "sapling-document-pipeline",    section: "reference", title: "Document Pipeline (Upload, OCR & Streaming)", by: "jack" },
+  { file: "infrastructure.md",               slug: "sapling-infrastructure",       section: "reference", title: "Infrastructure — Data, Observability, Security & Deploy", by: "luke" },
+  { file: "adr-pydantic-ai.md",              slug: "sapling-adr-pydantic-ai",      section: "decisions", title: "ADR-0001 · Adopt Pydantic AI", by: "jack" },
+  { file: "adr-model-routing.md",            slug: "sapling-adr-model-routing",    section: "decisions", title: "ADR-0008 · Per-task model routing", by: "jack" },
+  { file: "adr-sse-protocol.md",             slug: "sapling-adr-sse-protocol",     section: "decisions", title: "ADR-0006 · SSE protocol choice", by: "luke" },
+  { file: "adr-durable-execution.md",        slug: "sapling-adr-durable-execution",section: "decisions", title: "ADR-0011 · Durable execution (DBOS)", by: "luke" },
+  { file: "adr-drop-orchestrator.md",        slug: "sapling-adr-drop-orchestrator",section: "decisions", title: "ADR-0007 · Drop the orchestrator agent", by: "jack" },
+].map((d) => ({ ...d, body: read(d.file), updated_at: NOW, author: TEAM[d.by] }));
 
 // ── Roadmap / Feed / Triage — Sapling content, from sapling-meta.json (no canopy content here).
 const VALID_TAGS = new Set(["auth", "architecture", "infra", "api", "ui", "data"]);
@@ -192,12 +195,12 @@ const dayMs = 86400000;
 const baseDate = new Date("2026-06-25T18:00:00Z").getTime();
 const milestones = meta.milestones.map((m) => ({ title: m.title, description: m.description, target_date: m.target_date, status: m.status }));
 const feed = meta.feed.map((f) => ({
-  author: AUTHOR, summary: f.summary, body: f.body || "",
+  author: f.author || AUTHOR, summary: f.summary, body: f.body || "",
   tags: (f.tags || []).filter((t) => VALID_TAGS.has(t)),
   created_at: new Date(baseDate - (f.days_ago || 0) * dayMs).toISOString(),
 }));
-const adrs = meta.adr_drafts.map((a) => ({ title: a.title, context: a.context, decision: a.decision, rationale: a.rationale, author: AUTHOR, created_at: NOW }));
-const triage = meta.triage.map((t) => ({ raw: t.raw, reason: t.reason, source_author: AUTHOR, created_at: NOW }));
+const adrs = meta.adr_drafts.map((a) => ({ title: a.title, context: a.context, decision: a.decision, rationale: a.rationale, author: a.author || AUTHOR, created_at: NOW }));
+const triage = meta.triage.map((t) => ({ raw: t.raw, reason: t.reason, source_author: t.author || AUTHOR, created_at: NOW }));
 
 // ── Emit SQL ──────────────────────────────────────────────────────────────────
 const q = (v) => v === null || v === undefined ? "NULL" : `'${String(v).replace(/'/g, "''")}'`;
@@ -211,12 +214,12 @@ lines.push("DELETE FROM sqlite_sequence;");
 lines.push("");
 
 const allDocs = [
-  ...docs.map((d) => ({ ...d, space: "canopy" })),
+  ...docs.map((d) => ({ ...d, space: "canopy", author: AUTHOR })),
   ...saplingDocs.map((d) => ({ ...d, space: "sapling" })),
 ];
 for (const d of allDocs) {
-  lines.push(`INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES (${q(d.slug)}, ${q(d.section)}, ${q(d.title)}, ${q(d.body)}, 1, ${q(d.updated_at)}, ${q(AUTHOR)}, ${q(d.space)});`);
-  lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 1, ${q(d.body)}, ${q("Initial published version")}, 'promoted', 'high', ${q(d.updated_at)}, ${q(AUTHOR)});`);
+  lines.push(`INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES (${q(d.slug)}, ${q(d.section)}, ${q(d.title)}, ${q(d.body)}, 1, ${q(d.updated_at)}, ${q(d.author)}, ${q(d.space)});`);
+  lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 1, ${q(d.body)}, ${q("Initial published version")}, 'promoted', 'high', ${q(d.updated_at)}, ${q(d.author)});`);
   if (d.staged) {
     lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 2, ${q(d.staged.body)}, ${q(d.staged.summary)}, 'staged', 'high', ${q(NOW)}, ${q(AUTHOR)});`);
   }

@@ -25,84 +25,114 @@
       "status": "upcoming"
     },
     {
-      "title": "Observability live (cohort #115–#122)",
+      "title": "Observability live (cohort #115\u2013#122)",
       "description": "Ship backend usage tracking, request correlation IDs, and the observability dashboard UI so the team has operational visibility into LLM costs, pipeline latency, and user activity.",
       "target_date": "2026-08-31",
       "status": "upcoming"
     },
     {
       "title": "Stable beta with real students",
-      "description": "Reach production readiness — backups, monitoring, load testing, prompt-injection hardening, accessibility pass, and onboarding flow — and launch the beta to real students.",
+      "description": "Reach production readiness \u2014 backups, monitoring, load testing, prompt-injection hardening, accessibility pass, and onboarding flow \u2014 and launch the beta to real students.",
       "target_date": "2026-09-30",
       "status": "upcoming"
     }
   ],
   "feed": [
     {
-      "summary": "Shipped DB modular redesign across eight reviewed domain slices (migrations 0019–0028)",
+      "summary": "Shipped DB modular redesign across eight reviewed domain slices (migrations 0019\u20130028)",
       "body": "A full target-schema sweep on epic/db-modular-redesign split courses into courses/course_offerings/terms with enrollments, moved profile fields into user_profiles, added enrollment-keyed gradebook and offering-keyed analytics, and hardened knowledge-graph integrity with UNIQUE-backed upserts. Suite green and 14/14 service checks passed against live staging; awaiting epic-to-main cutover.",
-      "tags": ["architecture", "data"],
-      "days_ago": 1
+      "tags": [
+        "architecture",
+        "data"
+      ],
+      "days_ago": 1,
+      "author": "lpcooper-arch"
     },
     {
       "summary": "Shipped ordered migration runner with CLI on psycopg (#197)",
       "body": "Migrations moved into a versioned db/migrations/ directory with an apply/baseline runner; cosmetic FK constraints made idempotent (#196).",
-      "tags": ["infra", "data"],
-      "days_ago": 1
+      "tags": [
+        "infra",
+        "data"
+      ],
+      "days_ago": 1,
+      "author": "lpcooper-arch"
     },
     {
       "summary": "Stood up staging environment (#100) with separate Supabase project and sign-in allowlist",
       "body": "Staging frontend Worker env configured in wrangler.toml (Phase 4) with a configurable email-domain allowlist and its own ENCRYPTION_KEY; staging uses an isolated Supabase project to prevent data bleed from production.",
-      "tags": ["infra"],
-      "days_ago": 1
+      "tags": [
+        "infra"
+      ],
+      "days_ago": 1,
+      "author": "AndresL230"
     },
     {
       "summary": "Closed both P0 data-exposure bugs and shipped a wave of security hardening (backend audit #136)",
       "body": "P0 #123 (calendar export IDOR) and P0 #124 (realtime chat ciphertext) are closed; related hardening covered cross-user doc leak (#125), encryption boundaries (#126), fail-closed config validation (#174), OCR auth+rate-limit (#182), profile-route gating (#189/#190), and auth-gated issue-screenshot upload (#231).",
-      "tags": ["auth", "api"],
-      "days_ago": 1
+      "tags": [
+        "auth",
+        "api"
+      ],
+      "days_ago": 1,
+      "author": "lpcooper-arch"
     },
     {
       "summary": "Landed frontend design wave 2, a11y wave 2, and CI lint baseline",
-      "body": "Removed the Liquid Glass system for solid panel surfaces and consolidated brand green tokens (#102–#104/#106/#112); shipped WCAG AA contrast fixes, visible focus rings, and modal focus trap (#107/#108); added ruff lint ratchet and frontend eslint bulk-suppressions baseline so CI gates pass (#193/#194).",
-      "tags": ["ui"],
-      "days_ago": 1
+      "body": "Removed the Liquid Glass system for solid panel surfaces and consolidated brand green tokens (#102\u2013#104/#106/#112); shipped WCAG AA contrast fixes, visible focus rings, and modal focus trap (#107/#108); added ruff lint ratchet and frontend eslint bulk-suppressions baseline so CI gates pass (#193/#194).",
+      "tags": [
+        "ui"
+      ],
+      "days_ago": 1,
+      "author": "Jose-Gael-Cruz-Lopez"
     },
     {
-      "summary": "Applied production RLS lockdown — revoked anon DML on 38 of 40 Supabase tables",
+      "summary": "Applied production RLS lockdown \u2014 revoked anon DML on 38 of 40 Supabase tables",
       "body": "The Supabase anon role had full SELECT/INSERT/UPDATE/DELETE on 38 public tables via PostgREST, allowing anyone with the frontend-bundled anon key to read and write the entire database. ENABLE ROW LEVEL SECURITY and REVOKE were applied directly to prod on 2026-06-13; service_role bypasses RLS and continues to function normally.",
-      "tags": ["auth", "infra"],
-      "days_ago": 12
+      "tags": [
+        "auth",
+        "infra"
+      ],
+      "days_ago": 12,
+      "author": "lpcooper-arch"
     },
     {
-      "summary": "Fixed notetaker data-loss bug — debounced autosave now flushes on unmount (#133)",
+      "summary": "Fixed notetaker data-loss bug \u2014 debounced autosave now flushes on unmount (#133)",
       "body": "The notetaker page was dropping in-flight autosave writes when navigating away; the debounced save is now flushed rather than cancelled, preventing silent note loss.",
-      "tags": ["ui", "api"],
-      "days_ago": 1
+      "tags": [
+        "ui",
+        "api"
+      ],
+      "days_ago": 1,
+      "author": "Jose-Gael-Cruz-Lopez"
     }
   ],
   "adr_drafts": [
     {
       "title": "Two-phase async document upload to eliminate blocking OCR on the upload critical path",
-      "context": "extract_text_from_file currently runs synchronously inside the upload route. A 14-page scanned PDF blocks the SSE stream from opening for 3–5 s; bad scans can hold the connection for 20 s or more. A lightweight in-process async path shipped behind OCR_ASYNC_ENABLED but the full two-phase design (POST returns 202 + GET /upload/<id>/events) is deferred because it requires queue infrastructure, a processing_status state machine on documents, and a resumable SSE consumer. ADR 0010 and ADR 0011 (DBOS) are coupled — crash recovery for the background worker depends on which durable-execution path is activated.",
+      "context": "extract_text_from_file currently runs synchronously inside the upload route. A 14-page scanned PDF blocks the SSE stream from opening for 3\u20135 s; bad scans can hold the connection for 20 s or more. A lightweight in-process async path shipped behind OCR_ASYNC_ENABLED but the full two-phase design (POST returns 202 + GET /upload/<id>/events) is deferred because it requires queue infrastructure, a processing_status state machine on documents, and a resumable SSE consumer. ADR 0010 and ADR 0011 (DBOS) are coupled \u2014 crash recovery for the background worker depends on which durable-execution path is activated.",
       "decision": "Defer the full two-phase upload until p95 OCR latency from Logfire exceeds 5 s or browser timeouts appear in production; activate OCR_ASYNC_ENABLED in staging immediately to collect latency data. If the trigger fires, adopt Dramatiq as the queue (lowest-overhead option for FastAPI) and sequence after ADR 0011 is fully activated so durability and queueing ship as one surface.",
-      "rationale": "The in-process async flag delivers most of the user-visible benefit — no blank spinner before classification — without new infrastructure. Adding a queue before measuring whether OCR latency is actually a problem risks operational overhead for a theoretical gain; tying the decision to a concrete p95 threshold ensures the complexity is justified before it is incurred."
+      "rationale": "The in-process async flag delivers most of the user-visible benefit \u2014 no blank spinner before classification \u2014 without new infrastructure. Adding a queue before measuring whether OCR latency is actually a problem risks operational overhead for a theoretical gain; tying the decision to a concrete p95 threshold ensures the complexity is justified before it is incurred.",
+      "author": "Darkest-Teddy"
     },
     {
       "title": "Realtime room-chat JWT bridge to restore live updates under Row-Level Security",
       "context": "The production RLS lockdown (2026-06-13) revoked anon read on all tables including the realtime publication, so Supabase Realtime subscriptions from the frontend now receive no events. The interim fix (#230) makes the chat UI re-fetch room messages via the decrypting REST endpoint on each send, which is synchronous and misses messages from other participants in real time. Two options are documented: (a) mint a short-lived Supabase JWT at login and add a membership-scoped RLS policy so the anon subscription works under RLS, or (b) keep the REST-polling model and accept the latency. Option (a) has a known complexity: the session cookie lives 30 days but a Supabase JWT expires in ~1 h, requiring a refresh path that does not currently exist.",
       "decision": "This decision is open and must be made before the beta launch. Option (a) is preferred if the JWT refresh path can be kept in a single route (POST /api/auth/refresh-realtime-token) that the frontend calls on 401 from the Realtime socket; option (b) is acceptable as a temporary measure if the refresh complexity cannot be bounded in the current sprint.",
-      "rationale": "Real-time chat is a core tutoring-app feature; polling is a degraded experience that will surface in user feedback during beta. However, introducing a JWT refresh loop without careful design risks session-expiry edge cases that could lock users out of chat. The decision needs human sign-off because the tradeoffs span auth security, UX, and sprint scope."
+      "rationale": "Real-time chat is a core tutoring-app feature; polling is a degraded experience that will surface in user feedback during beta. However, introducing a JWT refresh loop without careful design risks session-expiry edge cases that could lock users out of chat. The decision needs human sign-off because the tradeoffs span auth security, UX, and sprint scope.",
+      "author": "lpcooper-arch"
     }
   ],
   "triage": [
     {
-      "raw": "sessions.summary_json and messages.content are listed as encrypted in CLAUDE.md but were stored plaintext and were anon-readable during the RLS exposure window (Feb–June 2026); encrypt them and correct the docs.",
-      "reason": "Unclear whether this requires a backfill migration on live data, a new encryption boundary in the service layer, or both — and whether any of the exposed content warrants user notification. A human must assess the data-exposure scope and decide on the remediation path before the ticket is filed as a straightforward engineering task."
+      "raw": "sessions.summary_json and messages.content are listed as encrypted in CLAUDE.md but were stored plaintext and were anon-readable during the RLS exposure window (Feb\u2013June 2026); encrypt them and correct the docs.",
+      "reason": "Unclear whether this requires a backfill migration on live data, a new encryption boundary in the service layer, or both \u2014 and whether any of the exposed content warrants user notification. A human must assess the data-exposure scope and decide on the remediation path before the ticket is filed as a straightforward engineering task.",
+      "author": "lpcooper-arch"
     },
     {
-      "raw": "storage hardening (#231): application_resumes bucket is still public-read (résumé PII) and issues-media-files is public and anon-writable — plan in docs/security/storage-hardening-plan.md but not yet merged or deployed.",
-      "reason": "The plan document exists but the remediation has not been applied; it is unclear whether the fix requires coordinating with active users who may have direct links to their résumé files, and whether the issues-media-files bucket can be locked without breaking the screenshot-upload flow that shipped in #231. A human must confirm scope before the fix is treated as a simple PR."
+      "raw": "storage hardening (#231): application_resumes bucket is still public-read (r\u00e9sum\u00e9 PII) and issues-media-files is public and anon-writable \u2014 plan in docs/security/storage-hardening-plan.md but not yet merged or deployed.",
+      "reason": "The plan document exists but the remediation has not been applied; it is unclear whether the fix requires coordinating with active users who may have direct links to their r\u00e9sum\u00e9 files, and whether the issues-media-files bucket can be locked without breaking the screenshot-upload flow that shipped in #231. A human must confirm scope before the fix is treated as a simple PR.",
+      "author": "AndresL230"
     }
   ]
 }
