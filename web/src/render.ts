@@ -8,6 +8,9 @@ import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow } from "@shared/rows";
 import { TAGS } from "@shared/vocabulary";
+import { renderMarkdown } from "./markdown";
+
+export type DocSpace = "canopy" | "sapling";
 
 export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings";
 
@@ -34,6 +37,7 @@ export interface AppState {
   docsList: Loadable<DocRow[]>;
   docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
   docSlug: string | null;
+  docSpace: DocSpace;
   triageQueue: "proposals" | "decisions" | "triage";
   roadmap: Loadable<MilestoneWithProgress[]>;
   selProposal: string | null;
@@ -65,6 +69,7 @@ export function initialState(): AppState {
     docsList: { status: "idle", data: [] },
     docDetail: { status: "idle", data: null },
     docSlug: null,
+    docSpace: "sapling",
     triageQueue: "proposals",
     roadmap: { status: "idle", data: [] },
     selProposal: null, selDecision: null, selTriage: null,
@@ -284,6 +289,10 @@ function header(s: AppState): string {
       <button data-act="queueTriage" class="cnpy-qtab q-triage">Triage<span class="cnpy-qcount">${s.triageItems.data.length}</span></button>
     </div>` : "";
 
+  const spaceTab = (k: DocSpace, label: string) =>
+    `<button data-act="setDocSpace" data-arg="${k}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${label}</button>`;
+  const docsControls = s.screen === "docs" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${spaceTab("sapling", "Sapling")}${spaceTab("canopy", "Canopy")}</div>` : "";
+
   const themeBtn = `<button data-act="cycleTheme" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
       ${dark
         ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
@@ -296,7 +305,7 @@ function header(s: AppState): string {
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${triageControls}${themeBtn}
+      ${feedControls}${triageControls}${docsControls}${themeBtn}
     </div>
   </header>`;
 }
@@ -353,28 +362,31 @@ function docsView(s: AppState): string {
     treeHtml = notice("Loading…");
   } else if (s.docsList.status === "error") {
     treeHtml = notice("Couldn't load docs.");
-  } else if (s.docsList.status === "ok" && s.docsList.data.length === 0) {
-    treeHtml = notice("No docs yet.");
   } else {
-    // Group by section in fixed order; any unknown section falls to the end.
-    const grouped = new Map<string, DocRow[]>();
-    for (const sec of DOC_SECTION_ORDER) grouped.set(sec, []);
-    for (const doc of s.docsList.data) {
-      const sec = doc.section.toLowerCase();
-      if (!grouped.has(sec)) grouped.set(sec, []);
-      grouped.get(sec)!.push(doc);
+    // Filter to the toggled space (Sapling | Canopy), then group by section.
+    const spaceDocs = s.docsList.data.filter((d) => d.space === s.docSpace);
+    if (spaceDocs.length === 0) {
+      treeHtml = notice(`No ${s.docSpace === "sapling" ? "Sapling" : "Canopy"} docs yet.`);
+    } else {
+      const grouped = new Map<string, DocRow[]>();
+      for (const sec of DOC_SECTION_ORDER) grouped.set(sec, []);
+      for (const doc of spaceDocs) {
+        const sec = doc.section.toLowerCase();
+        if (!grouped.has(sec)) grouped.set(sec, []);
+        grouped.get(sec)!.push(doc);
+      }
+      treeHtml = [...grouped.entries()]
+        .filter(([, pages]) => pages.length > 0)
+        .map(([sec, pages]) => `<div style="margin-bottom:18px">
+        <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${esc(sec.toUpperCase())}</div>
+        <div style="display:flex;flex-direction:column;gap:1px">
+          ${pages.map((doc) => {
+            const active = doc.slug === s.docSlug;
+            return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
+          }).join("")}
+        </div>
+      </div>`).join("");
     }
-    treeHtml = [...grouped.entries()]
-      .filter(([, pages]) => pages.length > 0)
-      .map(([sec, pages]) => `<div style="margin-bottom:18px">
-      <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${esc(sec.toUpperCase())}</div>
-      <div style="display:flex;flex-direction:column;gap:1px">
-        ${pages.map((doc) => {
-          const active = doc.slug === s.docSlug;
-          return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
-        }).join("")}
-      </div>
-    </div>`).join("");
   }
 
   // ── reader (right pane) ─────────────────────────────────────────────────────
@@ -386,7 +398,7 @@ function docsView(s: AppState): string {
   } else if (dd.status === "error") {
     readerHtml = notice("Couldn't load this doc.");
   } else if (dd.data === null) {
-    readerHtml = notice("Doc not found.");
+    readerHtml = notice(s.docSlug === null ? "Select a doc from the tree." : "Doc not found.");
   } else if (dd.status === "ok" && dd.data !== null) {
     const { doc, versions } = dd.data;
     const hasStaged = versions.some((v) => v.status === "staged" && v.version > doc.current_version);
@@ -420,7 +432,7 @@ function docsView(s: AppState): string {
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
     </div>
     ${history}
-    <div style="margin-top:26px;font-size:15px;line-height:1.7;color:var(--fg-70);white-space:pre-wrap">${esc(doc.body)}</div>
+    <div class="cnpy-md" style="margin-top:26px">${renderMarkdown(doc.body)}</div>
   </div>`;
   } else {
     readerHtml = notice("Select a doc from the tree.");

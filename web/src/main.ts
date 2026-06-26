@@ -92,6 +92,7 @@ function loadDoc(slug: string): void {
   getDoc(slug)
     .then((result) => {
       state.docDetail = { status: "ok", data: result };
+      state.docSpace = result.doc.space === "sapling" ? "sapling" : "canopy";
       rerender();
     })
     .catch((e) => {
@@ -108,9 +109,10 @@ function loadDocs(): void {
   listDocs()
     .then((docs) => {
       state.docsList = { status: "ok", data: docs };
-      if (state.docSlug === null && docs.length > 0) {
-        state.docSlug = docs[0].slug;
-        loadDoc(docs[0].slug);
+      const first = docs.find((d) => d.space === state.docSpace) ?? docs[0];
+      if (state.docSlug === null && first) {
+        state.docSlug = first.slug;
+        loadDoc(first.slug);
       } else {
         rerender();
       }
@@ -318,6 +320,15 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "openDocFrom":
       if (arg) { state.screen = "docs"; state.docSlug = arg; state.showHistory = false; loadDocsIfNeeded(); loadDoc(arg); }
       return;
+    case "setDocSpace": {
+      const sp = arg === "sapling" ? "sapling" : "canopy";
+      state.docSpace = sp;
+      state.showHistory = false;
+      const first = state.docsList.data.find((d) => d.space === sp);
+      if (first) { state.docSlug = first.slug; loadDoc(first.slug); }
+      else { state.docSlug = null; state.docDetail = { status: "ok", data: null }; rerender(); }
+      return;
+    }
     case "toggleHistory": state.showHistory = !state.showHistory; break;
     case "gotoTriage": state.screen = "triage"; state.triageQueue = "proposals"; break;
 

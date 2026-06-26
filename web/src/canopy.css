@@ -76,3 +76,29 @@ input, select { font-family: inherit; }
 .cnpy-signout { transition:all .12s ease; }
 .cnpy-signout:hover { border-color:var(--red); color:var(--red); }
 .cnpy-mutelink:hover { color:var(--fg-70); }
+
+/* ── rendered markdown (docs reader) ───────────────────────────────────────── */
+.cnpy-md { font-size:15px; line-height:1.72; color:var(--fg-70); }
+.cnpy-md > :first-child { margin-top:0; }
+.cnpy-md h1 { font-size:24px; font-weight:600; letter-spacing:-0.02em; color:var(--fg); margin:32px 0 14px; }
+.cnpy-md h2 { font-size:18px; font-weight:600; letter-spacing:-0.01em; color:var(--fg); margin:30px 0 12px; }
+.cnpy-md h3 { font-size:15px; font-weight:600; color:var(--fg); margin:22px 0 8px; }
+.cnpy-md h4 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--fg-55); margin:20px 0 8px; }
+.cnpy-md p { margin:0 0 14px; }
+.cnpy-md ul, .cnpy-md ol { margin:0 0 14px; padding-left:22px; }
+.cnpy-md li { margin:4px 0; }
+.cnpy-md li > ul, .cnpy-md li > ol { margin:4px 0; }
+.cnpy-md a { color:var(--accent); text-decoration:none; }
+.cnpy-md a:hover { text-decoration:underline; }
+.cnpy-md strong { color:var(--fg); font-weight:600; }
+.cnpy-md em { font-style:italic; }
+.cnpy-md code { font-family:var(--mono); font-size:12.5px; background:var(--hover); border:1px solid var(--border); border-radius:4px; padding:1px 5px; }
+.cnpy-md pre { background:var(--hover); border:1px solid var(--border); border-radius:9px; padding:14px 16px; overflow-x:auto; margin:0 0 16px; }
+.cnpy-md pre code { background:none; border:none; padding:0; font-size:12.5px; line-height:1.65; }
+.cnpy-md blockquote { border-left:2px solid var(--accent); padding:2px 0 2px 16px; margin:0 0 14px; color:var(--fg-70); }
+.cnpy-md hr { border:none; border-top:1px solid var(--border); margin:24px 0; }
+.cnpy-md img { max-width:100%; border-radius:9px; border:1px solid var(--border); }
+.cnpy-md table { border-collapse:collapse; width:100%; margin:0 0 16px; font-size:13.5px; }
+.cnpy-md th, .cnpy-md td { border:1px solid var(--border); padding:7px 11px; text-align:left; }
+.cnpy-md th { font-weight:600; color:var(--fg); background:var(--hover); }
+.cnpy-md h1:first-child, .cnpy-md h2:first-child { margin-top:0; }

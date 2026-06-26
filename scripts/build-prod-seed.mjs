@@ -210,7 +210,7 @@ lines.push("");
 
 for (const d of docs) {
   const currentVersion = d.staged ? 1 : 1; // promoted v1 is current; staged (if any) is v2
-  lines.push(`INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by) VALUES (${q(d.slug)}, ${q(d.section)}, ${q(d.title)}, ${q(d.body)}, 1, ${q(d.updated_at)}, ${q(AUTHOR)});`);
+  lines.push(`INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES (${q(d.slug)}, ${q(d.section)}, ${q(d.title)}, ${q(d.body)}, 1, ${q(d.updated_at)}, ${q(AUTHOR)}, 'canopy');`);
   lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 1, ${q(d.body)}, ${q("Initial published version")}, 'promoted', 'high', ${q(d.updated_at)}, ${q(AUTHOR)});`);
   if (d.staged) {
     lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 2, ${q(d.staged.body)}, ${q(d.staged.summary)}, 'staged', 'high', ${q(NOW)}, ${q(AUTHOR)});`);
