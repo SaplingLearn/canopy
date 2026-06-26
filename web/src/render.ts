@@ -429,7 +429,7 @@ function docsView(s: AppState): string {
       </div>`).join("")}
     </div>` : "";
 
-    readerHtml = `<div style="max-width:740px;margin:0 auto;padding:26px 40px 100px">
+    readerHtml = `<div style="max-width:none;margin:0;padding:28px 56px 100px">
     ${stagedBanner}
     <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px"><span>${esc(doc.section)}</span></div>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
