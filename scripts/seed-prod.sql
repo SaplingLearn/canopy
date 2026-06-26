@@ -184,28 +184,1742 @@ INSERT INTO doc_versions (slug, version, body, summary, status, confidence, crea
 Decision: one electric-green accent with two tuned values (bright on black, deepened on white), pure black/white backgrounds, and no gray surfaces — separation comes from hairline borders and opacity. State is carried by a fixed small badge palette.
 
 Rationale: a single accent keeps live and active state unambiguous and the interface stark and fast to scan, which suits a reference tool the team checks constantly.', 'Initial published version', 'promoted', 'high', '2026-05-28T09:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-overview', 'context', 'Product Overview', '## What Sapling Is
 
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('MCP write contract — GA', 'Typed, staged-only writes for every agent over MCP, all funneling through the gate.', '2026-04-30', 'done', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Triage review console', 'The human-confirm half: proposals, decisions, and unplaced items in one console with a real diff.', '2026-05-22', 'done', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('GitHub OAuth org gate', 'Sign-in delegated to GitHub, access gated to active SaplingLearn members; hashed MCP bearers.', '2026-05-30', 'done', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Frontend wired to real data', 'Every screen renders real @shared shapes from D1 over one origin; no mock data remains.', '2026-06-25', 'done', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Roadmap + live GitHub progress', 'Milestones read closed/total straight from GitHub at view time — stored nowhere. Needs repo-readable token.', '2026-07-10', 'in_progress', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Semantic search ranking', 'Embeddings over docs and feed so results rank by meaning, behind the existing fixed result shape.', '2026-08-01', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Multi-agent session attribution', 'Per-session identity across parallel agent runs, so every write says which agent and session produced it.', '2026-08-28', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
-INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Self-host & deploy guide', 'A documented path to run Canopy and its MCP server on your own infrastructure.', '2026-09-20', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+**Sapling** is an AI-powered study companion built for college students. Its central idea is simple: as you learn — through tutoring sessions, quizzes, and uploaded notes — a **live knowledge graph** grows and updates in real time, mapping what you know and where gaps remain. Every interaction feeds mastery scores back into that graph, so your study state is never a flat checklist but a living picture of understanding.
 
-INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Deployed Canopy to canopy.saplinglearn.com', 'First production deploy: one Worker, D1 bound, custom domain live, GitHub OAuth wired to the SaplingLearn org.', NULL, '2026-06-25T19:30:00Z');
-INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('infra', 'feed', '1');
-INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('auth', 'feed', '1');
-INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Wired the whole frontend to real routes (Phase 2)', 'Feed, Docs, Search, Roadmap, Triage, and Settings now render real D1 data; the mock layer is gone.', NULL, '2026-06-25T17:00:00Z');
-INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('ui', 'feed', '2');
-INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('api', 'feed', '2');
-INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Forced https in the OAuth redirect_uri', 'GitHub rejects http callbacks for public hosts; the Worker now always emits an https redirect_uri except on localhost.', NULL, '2026-06-25T18:30:00Z');
-INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('auth', 'feed', '3');
-INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Seeded the documentation library and roadmap', 'Bootstrapped the store with a detailed reference/context/decisions library and the milestone timeline.', NULL, '2026-06-25T20:00:00Z');
-INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('data', 'feed', '4');
+The primary audience is students enrolled in courses at a specific institution (sign-in is gated by email domain, defaulting to `bu.edu`). A role system with an admin panel supports instructors and staff alongside students.
 
-INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by) VALUES ('Add the repo scope for private-repo roadmap progress', 'The roadmap reads GitHub issues with read:org read:user, which cannot see a private repo''s issues, so progress is always unavailable for SaplingLearn/canopy.', 'Request the repo scope at OAuth time so the stored token can read the private repo''s issues and milestones, enabling live progress.', 'It is the smallest change that makes live progress work without making the repo public; the token is already sealed at rest.', 'draft', 'high', '2026-06-25T20:05:00Z', 'AndresL230');
-INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by) VALUES ('Rate-limit the MCP endpoint per token', 'Nothing currently bounds how fast an agent can write over /mcp.', 'Add a per-token rate limit (proposed: 60 writes/min burst, 600/hour sustained) enforced at the boundary.', 'Protects the store and the gate from a runaway agent without affecting normal session-end writes.', 'draft', 'high', '2026-06-25T20:06:00Z', 'AndresL230');
+---
 
-INSERT INTO needs_triage (raw, reason, source_author, resolved, created_at) VALUES ('Should agent feed entries support threading (replies that reference a prior entry), or stay a flat append-only log? Affects the data model and the feed UI.', 'Mixes a Reference description with an unmade Decision; needs a human to choose before it lands anywhere.', 'AndresL230', 0, '2026-06-25T20:10:00Z');
+## Core Idea: Learn → Live Knowledge Graph
+
+The knowledge graph is the spine of the product. Every concept you encounter — through a chat session, a quiz answer, an uploaded document, or a note — is extracted and merged into a per-user, per-course graph stored in Supabase. **Mastery scores update dynamically** after every session and quiz, and the graph drives:
+
+- What the adaptive quiz targets next (weakest nodes)
+- What the study guide pulls from when generating exam prep
+- How classmates'' progress compares to yours in study rooms
+- What concepts a note is linked to, enabling note-grounded quizzes and chat
+
+---
+
+## Feature Set
+
+### Knowledge Graph
+
+- **2D view** — rendered with D3.js (SVG), the default. Per-course color shading and mastery-based node opacity.
+- **3D view** — rendered via `react-force-graph-3d` (three.js / WebGL), lazy-loaded so it only enters the bundle when toggled on.
+- Recommendations endpoint surfaces next concepts to study based on graph state.
+
+### AI Tutor — Three Teaching Modes
+
+All three modes run through a single `chat_tutor_agent` (Pydantic AI, `gemini-2.5-pro` by default):
+
+| Mode | Behavior |
+|---|---|
+| **Socratic** | Guided reasoning — the tutor asks questions rather than explaining directly |
+| **Expository** | Direct explanation of concepts |
+| **TeachBack** | You explain; Sapling corrects misunderstandings |
+
+Chat supports **inline math** (KaTeX), **Mermaid diagrams**, function plots, and theorem callouts.
+
+### Adaptive Quizzes
+
+AI-generated quizzes target your **weakest concepts** from the knowledge graph. Difficulty scales with performance, and spaced-repetition scheduling resurfaces concepts you''ve previously missed. Quiz generation runs through a dedicated `quiz_agent` (`gemini-2.5-flash-lite`).
+
+### Flashcards
+
+Generate AI flashcards per course, or import from multiple sources: paste, file (CSV, Markdown, Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (**Easy / Hard / Forgot**). A multi-step import pipeline handles parse → cleanup → cloze conversion → commit.
+
+### Gradebook
+
+Track real-world grades per course. Supports:
+- Custom categories with weights
+- Per-assignment scores
+- Per-course letter-scale overrides
+- Current grade calculation
+
+Upload a syllabus and Sapling auto-extracts categories and assignments via the `syllabus_extraction` agent (`gemini-2.5-flash`).
+
+### Study Guide
+
+Generates a Gemini-powered exam study guide from uploaded course materials. Guides are **cached per exam** and can be regenerated on demand via `POST /api/study-guide/regenerate`.
+
+### Document Library
+
+Upload PDFs and notes (up to 100 MB each). The ingest pipeline is an agentic parallel fan-out:
+
+1. **Classifier agent** — determines document type
+2. **Summary, concept-extraction, and syllabus agents** — run in parallel via `asyncio.gather`
+3. Extracted concepts merge into the knowledge graph; summaries and concept notes are stored AES-256-GCM encrypted
+
+The streaming upload endpoint (`POST /api/documents/upload`) uses **Server-Sent Events** (sse-starlette) to emit live per-phase progress to the UI: `status:start → progress:classify → progress:classified → progress:extract → progress:extracted → progress:graph_update → result:finalize → status:done`. Uploads are **idempotent** on `X-Request-ID`.
+
+OCR uses **Docling** (layout-aware PDF → Markdown) with GOT-OCR 2.0 as a fallback for math and handwriting, and Tesseract retained as a legacy fallback.
+
+### Notetaker
+
+Write typed notes per course with debounced autosave and tags. Per note, four agent-backed actions are available:
+- **AI summarize** — `note_summary_agent`
+- **Extract concepts** — merges into the knowledge graph and links back to the note
+- **Note-grounded chat** — ask questions about the note''s content
+- **Generate quiz** — targets the note''s weakest linked concept
+
+### Calendar & Syllabus Tracking
+
+Paste a syllabus; Sapling extracts assignments, deadlines, and topics automatically. Upcoming assignments are accessible via `GET /api/calendar/upcoming/{user_id}`.
+
+### Class Intelligence
+
+Aggregates **anonymized class-wide patterns** to surface common misconceptions and weak areas, personalizing individual tutoring sessions.
+
+### Study Rooms & Chat
+
+- **Study Rooms** — invite classmates, compare knowledge graphs, and track relative mastery across the group. Includes an AI-generated group summary and a study-partner matching endpoint.
+- **Room Chat** — real-time text chat with avatars inside each room (currently REST-polled after the RLS lockdown; a realtime JWT bridge is planned).
+
+### Profiles, Achievements & Cosmetics
+
+- **Public profiles** — academic info, bio, featured achievements, equipped cosmetics
+- **Achievements** — unlocked by milestones (sessions, quizzes, streaks); admin-configurable with triggers
+- **Cosmetics** — avatar frames, name colors, title flairs; equipped per user; linked to roles or achievements
+
+### Roles & Admin Panel
+
+Role-based access control. The admin panel covers: user approval/unapproval, role assignment, achievement management (including manual grants), cosmetic management, and a paginated audit log. Analytics overview provides 30-day series and role counts.
+
+### Onboarding
+
+Multi-step flow after first Google OAuth sign-in. Collects school, major, year, and courses. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.
+
+### Newsletter & Feedback
+
+- **Newsletter** — beta-list email signup directly from the landing page (`POST /api/newsletter/subscribe`)
+- **Feedback** — session feedback and bug/issue reports submittable from within the app
+
+---
+
+## How It Fits Together
+
+```
+Next.js 16 frontend  ──REST──►  FastAPI backend  ──►  Supabase (PostgreSQL)
+(TypeScript, App Router)         (Python)               AES-256-GCM encrypted columns
+(Cloudflare Workers via          Pydantic AI agents
+ @opennextjs/cloudflare)         Google Gemini
+                                 (per-task model routing)
+```
+
+- **Frontend** — Next.js 16 (TypeScript, App Router), deployed on Cloudflare Workers via `@opennextjs/cloudflare`. The knowledge graph 2D layer uses D3.js; the 3D layer (`react-force-graph-3d`) is lazy-loaded.
+- **Backend** — FastAPI (Python) at `localhost:5000`. Agentic workloads use **Pydantic AI** with four parallel worker agents for document ingestion and dedicated agents for chat, quizzes, syllabus extraction, and the notetaker. Remaining LLM routes use a structured-prompt helper in `services/gemini_service.py` pending migration.
+- **AI** — **Google Gemini**, with per-task model routing via `SAPLING_MODEL_<TASK>` env vars. `gemini-2.5-pro` powers the chat tutor; `gemini-2.5-flash` handles concept extraction, syllabus parsing, and note chat; `gemini-2.5-flash-lite` covers classification, summarization, quiz generation, and note summarization.
+- **Database** — **Supabase** (PostgreSQL). Sensitive columns (user PII, document summaries, concept notes, OAuth tokens, chat messages, gradebook notes) are AES-256-GCM encrypted at the application layer via the `cryptography` library. Row-Level Security is enabled on all 40 public tables with the `anon` role''s DML revoked.
+- **Observability** — Logfire auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom scrubber (`backend/services/logfire_scrubber.py`) SHA-256-fingerprints prompt and output content before egress so raw user text never ships to the observability backend.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-overview', 1, '## What Sapling Is
+
+**Sapling** is an AI-powered study companion built for college students. Its central idea is simple: as you learn — through tutoring sessions, quizzes, and uploaded notes — a **live knowledge graph** grows and updates in real time, mapping what you know and where gaps remain. Every interaction feeds mastery scores back into that graph, so your study state is never a flat checklist but a living picture of understanding.
+
+The primary audience is students enrolled in courses at a specific institution (sign-in is gated by email domain, defaulting to `bu.edu`). A role system with an admin panel supports instructors and staff alongside students.
+
+---
+
+## Core Idea: Learn → Live Knowledge Graph
+
+The knowledge graph is the spine of the product. Every concept you encounter — through a chat session, a quiz answer, an uploaded document, or a note — is extracted and merged into a per-user, per-course graph stored in Supabase. **Mastery scores update dynamically** after every session and quiz, and the graph drives:
+
+- What the adaptive quiz targets next (weakest nodes)
+- What the study guide pulls from when generating exam prep
+- How classmates'' progress compares to yours in study rooms
+- What concepts a note is linked to, enabling note-grounded quizzes and chat
+
+---
+
+## Feature Set
+
+### Knowledge Graph
+
+- **2D view** — rendered with D3.js (SVG), the default. Per-course color shading and mastery-based node opacity.
+- **3D view** — rendered via `react-force-graph-3d` (three.js / WebGL), lazy-loaded so it only enters the bundle when toggled on.
+- Recommendations endpoint surfaces next concepts to study based on graph state.
+
+### AI Tutor — Three Teaching Modes
+
+All three modes run through a single `chat_tutor_agent` (Pydantic AI, `gemini-2.5-pro` by default):
+
+| Mode | Behavior |
+|---|---|
+| **Socratic** | Guided reasoning — the tutor asks questions rather than explaining directly |
+| **Expository** | Direct explanation of concepts |
+| **TeachBack** | You explain; Sapling corrects misunderstandings |
+
+Chat supports **inline math** (KaTeX), **Mermaid diagrams**, function plots, and theorem callouts.
+
+### Adaptive Quizzes
+
+AI-generated quizzes target your **weakest concepts** from the knowledge graph. Difficulty scales with performance, and spaced-repetition scheduling resurfaces concepts you''ve previously missed. Quiz generation runs through a dedicated `quiz_agent` (`gemini-2.5-flash-lite`).
+
+### Flashcards
+
+Generate AI flashcards per course, or import from multiple sources: paste, file (CSV, Markdown, Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (**Easy / Hard / Forgot**). A multi-step import pipeline handles parse → cleanup → cloze conversion → commit.
+
+### Gradebook
+
+Track real-world grades per course. Supports:
+- Custom categories with weights
+- Per-assignment scores
+- Per-course letter-scale overrides
+- Current grade calculation
+
+Upload a syllabus and Sapling auto-extracts categories and assignments via the `syllabus_extraction` agent (`gemini-2.5-flash`).
+
+### Study Guide
+
+Generates a Gemini-powered exam study guide from uploaded course materials. Guides are **cached per exam** and can be regenerated on demand via `POST /api/study-guide/regenerate`.
+
+### Document Library
+
+Upload PDFs and notes (up to 100 MB each). The ingest pipeline is an agentic parallel fan-out:
+
+1. **Classifier agent** — determines document type
+2. **Summary, concept-extraction, and syllabus agents** — run in parallel via `asyncio.gather`
+3. Extracted concepts merge into the knowledge graph; summaries and concept notes are stored AES-256-GCM encrypted
+
+The streaming upload endpoint (`POST /api/documents/upload`) uses **Server-Sent Events** (sse-starlette) to emit live per-phase progress to the UI: `status:start → progress:classify → progress:classified → progress:extract → progress:extracted → progress:graph_update → result:finalize → status:done`. Uploads are **idempotent** on `X-Request-ID`.
+
+OCR uses **Docling** (layout-aware PDF → Markdown) with GOT-OCR 2.0 as a fallback for math and handwriting, and Tesseract retained as a legacy fallback.
+
+### Notetaker
+
+Write typed notes per course with debounced autosave and tags. Per note, four agent-backed actions are available:
+- **AI summarize** — `note_summary_agent`
+- **Extract concepts** — merges into the knowledge graph and links back to the note
+- **Note-grounded chat** — ask questions about the note''s content
+- **Generate quiz** — targets the note''s weakest linked concept
+
+### Calendar & Syllabus Tracking
+
+Paste a syllabus; Sapling extracts assignments, deadlines, and topics automatically. Upcoming assignments are accessible via `GET /api/calendar/upcoming/{user_id}`.
+
+### Class Intelligence
+
+Aggregates **anonymized class-wide patterns** to surface common misconceptions and weak areas, personalizing individual tutoring sessions.
+
+### Study Rooms & Chat
+
+- **Study Rooms** — invite classmates, compare knowledge graphs, and track relative mastery across the group. Includes an AI-generated group summary and a study-partner matching endpoint.
+- **Room Chat** — real-time text chat with avatars inside each room (currently REST-polled after the RLS lockdown; a realtime JWT bridge is planned).
+
+### Profiles, Achievements & Cosmetics
+
+- **Public profiles** — academic info, bio, featured achievements, equipped cosmetics
+- **Achievements** — unlocked by milestones (sessions, quizzes, streaks); admin-configurable with triggers
+- **Cosmetics** — avatar frames, name colors, title flairs; equipped per user; linked to roles or achievements
+
+### Roles & Admin Panel
+
+Role-based access control. The admin panel covers: user approval/unapproval, role assignment, achievement management (including manual grants), cosmetic management, and a paginated audit log. Analytics overview provides 30-day series and role counts.
+
+### Onboarding
+
+Multi-step flow after first Google OAuth sign-in. Collects school, major, year, and courses. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.
+
+### Newsletter & Feedback
+
+- **Newsletter** — beta-list email signup directly from the landing page (`POST /api/newsletter/subscribe`)
+- **Feedback** — session feedback and bug/issue reports submittable from within the app
+
+---
+
+## How It Fits Together
+
+```
+Next.js 16 frontend  ──REST──►  FastAPI backend  ──►  Supabase (PostgreSQL)
+(TypeScript, App Router)         (Python)               AES-256-GCM encrypted columns
+(Cloudflare Workers via          Pydantic AI agents
+ @opennextjs/cloudflare)         Google Gemini
+                                 (per-task model routing)
+```
+
+- **Frontend** — Next.js 16 (TypeScript, App Router), deployed on Cloudflare Workers via `@opennextjs/cloudflare`. The knowledge graph 2D layer uses D3.js; the 3D layer (`react-force-graph-3d`) is lazy-loaded.
+- **Backend** — FastAPI (Python) at `localhost:5000`. Agentic workloads use **Pydantic AI** with four parallel worker agents for document ingestion and dedicated agents for chat, quizzes, syllabus extraction, and the notetaker. Remaining LLM routes use a structured-prompt helper in `services/gemini_service.py` pending migration.
+- **AI** — **Google Gemini**, with per-task model routing via `SAPLING_MODEL_<TASK>` env vars. `gemini-2.5-pro` powers the chat tutor; `gemini-2.5-flash` handles concept extraction, syllabus parsing, and note chat; `gemini-2.5-flash-lite` covers classification, summarization, quiz generation, and note summarization.
+- **Database** — **Supabase** (PostgreSQL). Sensitive columns (user PII, document summaries, concept notes, OAuth tokens, chat messages, gradebook notes) are AES-256-GCM encrypted at the application layer via the `cryptography` library. Row-Level Security is enabled on all 40 public tables with the `anon` role''s DML revoked.
+- **Observability** — Logfire auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom scrubber (`backend/services/logfire_scrubber.py`) SHA-256-fingerprints prompt and output content before egress so raw user text never ships to the observability backend.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-architecture', 'reference', 'Architecture', '## System overview
+
+Sapling is a two-process system: a **Next.js 16 frontend** (TypeScript, App Router) deployed to Cloudflare Workers via `@opennextjs/cloudflare`, and a **FastAPI backend** (Python) running on port 5000. The two communicate exclusively over REST + SSE — there is no GraphQL layer, no WebSocket, and no shared process. Supabase (PostgreSQL via PostgREST) is the sole datastore; Google Gemini is the sole LLM provider.
+
+```
+Browser
+  │  REST (JSON) + SSE (multipart POST)
+  ▼
+Next.js 16 (App Router, CF Workers)
+  │  NEXT_PUBLIC_API_URL → http(s)://backend:5000
+  ▼
+FastAPI  (/api/<router>)
+  ├── Supabase PostgREST  (all CRUD via db/connection.py::table())
+  ├── Google Gemini       (via services/gemini_service.py + agents/)
+  └── Supabase Storage    (avatar / cosmetic uploads)
+```
+
+## Frontend
+
+**Runtime:** Next.js 16, App Router, TypeScript. Deployed as a Cloudflare Worker (OpenNext adapter; `frontend/wrangler.toml`).
+
+**Route layout** (`frontend/src/app/`):
+
+| Route | Description |
+|---|---|
+| `/` | Landing page with newsletter + Google OAuth popup |
+| `/(shell)/` | Authenticated shell layout (sidebar, top nav) |
+| `/onboarding` | Multi-step profile + course selection |
+| `/flashcards` | Flashcard study + import |
+| `/about`, `/careers`, `/privacy`, `/terms` | Public static pages |
+
+All authenticated screens live inside the `(shell)` route group. Components are colocated under `frontend/src/components/`, with screen-level components in `components/screens/` (Dashboard, Calendar, Admin, Achievements, etc.).
+
+**API calls** go through a typed client in `frontend/src/lib/api.ts`, which prepends `NEXT_PUBLIC_API_URL`. Auth state is an HMAC session token stored in a cookie; `SESSION_SECRET` in both the frontend and backend must match for middleware token verification.
+
+**Knowledge graph rendering** is handled by a two-implementation wrapper at `components/KnowledgeGraph.tsx`:
+
+- **2D (default):** `KnowledgeGraph2D.tsx` — D3 force-directed graph drawn to an SVG. Nodes are colored by course and shaded by mastery score.
+- **3D (lazy):** `KnowledgeGraph3D.tsx` — `react-force-graph-3d` (three.js / WebGL). Imported via `next/dynamic` with `ssr: false` so the three.js bundle is excluded from the initial payload and only fetched when the user toggles to 3D mode. The chosen mode is persisted in `localStorage` under `sapling.kg.mode` and synchronized across mounted instances via a custom DOM event.
+
+**Chat rendering:** `MarkdownChat.tsx` renders assistant replies with KaTeX (inline math), Mermaid (diagrams), and `FunctionPlot.tsx` (function plots). Teaching-mode callouts (Socratic, Expository, TeachBack) are styled via the same component.
+
+**SSE consumer:** `frontend/src/lib/sse.ts` reads the backend''s streaming upload response from a `fetch` `ReadableStream` rather than the native `EventSource` API, because `EventSource` cannot send `multipart/form-data` POST bodies.
+
+## Backend
+
+**Entry point:** `backend/main.py` creates a single `FastAPI` app (`title="Sapling API"`, `version="1.0.0"`), configures Logfire instrumentation, CORS, a `RequestIDMiddleware` (correlation ID on every request), and optional `RecostMiddleware` (per-call LLM cost tracking). On startup the lifespan hook calls `validate_config()` (hard-fail on missing secrets) and `ensure_bucket_exists()` (idempotent Supabase Storage bootstrap).
+
+**Router layout** (`backend/routes/`):
+
+| Module | Prefix |
+|---|---|
+| `learn.py` | `/api/learn` |
+| `graph.py` | `/api/graph` |
+| `quiz.py` | `/api/quiz` |
+| `flashcards.py` | `/api/flashcards` |
+| `gradebook.py` | `/api/gradebook` |
+| `study_guide.py` | `/api/study-guide` |
+| `calendar.py` | `/api/calendar` |
+| `documents.py` | `/api/documents` |
+| `notes.py` | `/api/notes` |
+| `social.py` | `/api/social` |
+| `auth.py` | `/api/auth` |
+| `onboarding.py` | `/api/onboarding` |
+| `profile.py` | `/api/profile` |
+| `admin.py` | `/api/admin` |
+| `academics.py`, `extract.py`, `careers.py`, `feedback.py`, `newsletter.py` | `/api/<name>` |
+
+**Services layer** (`backend/services/`): `gemini_service.py` (legacy LLM helper), `graph_service.py` (`apply_graph_update`, `apply_concepts_to_graph`), `course_context_service.py` (aggregated class misconceptions + weak-area stats), `extraction_service.py` (Docling/GOT-OCR/Tesseract text extraction), `encryption.py` (AES-256-GCM column-level encryption for PII, messages, tokens, gradebook notes), `calendar_service.py`, `gradebook_service.py`, `notes_service.py`, `matching_service.py`, `profiles.py`, `academics.py`.
+
+**Data access:** All runtime reads and writes go through `backend/db/connection.py::table()`, which wraps Supabase PostgREST with `httpx`. There is no ORM. DDL is delivered as ordered SQL migrations (`backend/db/migrations/0001`–`0028`) applied by `backend/db/migrate.py` over a direct `psycopg` connection — the sole exception to the PostgREST-only rule.
+
+**Prompt templates** (`backend/prompts/`): `.txt` files for quiz generation, quiz context update, syllabus extraction, flashcard generation/cleanup/cloze, the three teaching-mode system prompts (`socratic.txt`, `expository.txt`, `teachback.txt`), and `shared_context.txt` / `preamble.txt`. Agents inline their own system prompts per ADR 0003; these `.txt` files serve the legacy `gemini_service` call sites and specialized routes.
+
+## Agentic document-ingestion pipeline
+
+`POST /api/documents/upload` is the most complex request path. It runs a **4-agent pipeline** defined in `backend/agents/document.py` and streams live progress back to the browser via SSE.
+
+**Concurrency model:**
+
+```
+upload_document (route)
+  │
+  ├─ extraction_service.extract_text_from_file()   ← OCR/Docling
+  │
+  └─ process_document()  @durable_workflow
+       │
+       ├─ _step_classify()   classifier_agent     ← runs first (gates syllabus branch)
+       │
+       └─ asyncio.gather(
+            _step_summary()   summary_agent,
+            _step_concepts()  concept_extraction_agent,
+            _step_syllabus()  syllabus_extraction_agent  ← only if is_syllabus=True
+          )
+       │
+       └─ apply_concepts_to_graph()  ← deterministic graph merge, no agent
+```
+
+All four workers are Pydantic AI agents (`pydantic-ai-slim[google]`) with typed Pydantic output models (`DocumentClassification`, `Summary`, `ConceptList`, `SyllabusAssignments`). Each `_step_*` function is decorated with `@durable_step` from `services/durable.py`; when `DBOS_ENABLED=true` and the optional `dbos` package is present, the workflow gains per-step crash-resume checkpointing. By default, the decorator is a no-op passthrough.
+
+**SSE event sequence** emitted to the client:
+
+```
+status:start → progress:classify → progress:classified
+  → progress:extract → progress:extracted
+  → progress:graph_update → progress:graph_updated
+  → result:finalize → status:done
+```
+
+On agent failure, the route catches the exception and falls back to `_legacy_upload_pipeline` (a single `call_gemini_json` call), emitting `error:fallback` before continuing. A terminal failure emits `error:failed`. Uploads are idempotent on `X-Request-ID`.
+
+**Model routing:** Each agent''s model is individually configurable via `SAPLING_MODEL_<TASK>` env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus, and note chat; `gemini-2.5-pro` for the chat tutor. Model slots are resolved in `agents/_providers.py`.
+
+## LLM migration state
+
+The codebase is mid-migration from a monolithic `gemini_service.py` helper toward discrete Pydantic AI agents. Agents already own: document ingestion (4 workers), quiz generation (`agents/quiz.py`, with `gemini_service` fallback), chat tutor (`agents/chat_tutor.py`), syllabus extraction (`agents/syllabus_extraction.py`), and all three notetaker actions (`agents/note_summary.py`, `agents/note_concepts.py`, `agents/note_chat.py`). Routes still on the legacy helper: study guide, flashcard generation, social matching, and parts of the document route that haven''t been cut over. The legacy helper exposes four entry points: `call_gemini` (plain text), `call_gemini_multiturn` (native chat history), `call_gemini_json` (JSON-mode with tolerant `_extract_json` fallback), and `extract_graph_update` (parses `<graph_update>` XML blocks out of tutor replies).', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-architecture', 1, '## System overview
+
+Sapling is a two-process system: a **Next.js 16 frontend** (TypeScript, App Router) deployed to Cloudflare Workers via `@opennextjs/cloudflare`, and a **FastAPI backend** (Python) running on port 5000. The two communicate exclusively over REST + SSE — there is no GraphQL layer, no WebSocket, and no shared process. Supabase (PostgreSQL via PostgREST) is the sole datastore; Google Gemini is the sole LLM provider.
+
+```
+Browser
+  │  REST (JSON) + SSE (multipart POST)
+  ▼
+Next.js 16 (App Router, CF Workers)
+  │  NEXT_PUBLIC_API_URL → http(s)://backend:5000
+  ▼
+FastAPI  (/api/<router>)
+  ├── Supabase PostgREST  (all CRUD via db/connection.py::table())
+  ├── Google Gemini       (via services/gemini_service.py + agents/)
+  └── Supabase Storage    (avatar / cosmetic uploads)
+```
+
+## Frontend
+
+**Runtime:** Next.js 16, App Router, TypeScript. Deployed as a Cloudflare Worker (OpenNext adapter; `frontend/wrangler.toml`).
+
+**Route layout** (`frontend/src/app/`):
+
+| Route | Description |
+|---|---|
+| `/` | Landing page with newsletter + Google OAuth popup |
+| `/(shell)/` | Authenticated shell layout (sidebar, top nav) |
+| `/onboarding` | Multi-step profile + course selection |
+| `/flashcards` | Flashcard study + import |
+| `/about`, `/careers`, `/privacy`, `/terms` | Public static pages |
+
+All authenticated screens live inside the `(shell)` route group. Components are colocated under `frontend/src/components/`, with screen-level components in `components/screens/` (Dashboard, Calendar, Admin, Achievements, etc.).
+
+**API calls** go through a typed client in `frontend/src/lib/api.ts`, which prepends `NEXT_PUBLIC_API_URL`. Auth state is an HMAC session token stored in a cookie; `SESSION_SECRET` in both the frontend and backend must match for middleware token verification.
+
+**Knowledge graph rendering** is handled by a two-implementation wrapper at `components/KnowledgeGraph.tsx`:
+
+- **2D (default):** `KnowledgeGraph2D.tsx` — D3 force-directed graph drawn to an SVG. Nodes are colored by course and shaded by mastery score.
+- **3D (lazy):** `KnowledgeGraph3D.tsx` — `react-force-graph-3d` (three.js / WebGL). Imported via `next/dynamic` with `ssr: false` so the three.js bundle is excluded from the initial payload and only fetched when the user toggles to 3D mode. The chosen mode is persisted in `localStorage` under `sapling.kg.mode` and synchronized across mounted instances via a custom DOM event.
+
+**Chat rendering:** `MarkdownChat.tsx` renders assistant replies with KaTeX (inline math), Mermaid (diagrams), and `FunctionPlot.tsx` (function plots). Teaching-mode callouts (Socratic, Expository, TeachBack) are styled via the same component.
+
+**SSE consumer:** `frontend/src/lib/sse.ts` reads the backend''s streaming upload response from a `fetch` `ReadableStream` rather than the native `EventSource` API, because `EventSource` cannot send `multipart/form-data` POST bodies.
+
+## Backend
+
+**Entry point:** `backend/main.py` creates a single `FastAPI` app (`title="Sapling API"`, `version="1.0.0"`), configures Logfire instrumentation, CORS, a `RequestIDMiddleware` (correlation ID on every request), and optional `RecostMiddleware` (per-call LLM cost tracking). On startup the lifespan hook calls `validate_config()` (hard-fail on missing secrets) and `ensure_bucket_exists()` (idempotent Supabase Storage bootstrap).
+
+**Router layout** (`backend/routes/`):
+
+| Module | Prefix |
+|---|---|
+| `learn.py` | `/api/learn` |
+| `graph.py` | `/api/graph` |
+| `quiz.py` | `/api/quiz` |
+| `flashcards.py` | `/api/flashcards` |
+| `gradebook.py` | `/api/gradebook` |
+| `study_guide.py` | `/api/study-guide` |
+| `calendar.py` | `/api/calendar` |
+| `documents.py` | `/api/documents` |
+| `notes.py` | `/api/notes` |
+| `social.py` | `/api/social` |
+| `auth.py` | `/api/auth` |
+| `onboarding.py` | `/api/onboarding` |
+| `profile.py` | `/api/profile` |
+| `admin.py` | `/api/admin` |
+| `academics.py`, `extract.py`, `careers.py`, `feedback.py`, `newsletter.py` | `/api/<name>` |
+
+**Services layer** (`backend/services/`): `gemini_service.py` (legacy LLM helper), `graph_service.py` (`apply_graph_update`, `apply_concepts_to_graph`), `course_context_service.py` (aggregated class misconceptions + weak-area stats), `extraction_service.py` (Docling/GOT-OCR/Tesseract text extraction), `encryption.py` (AES-256-GCM column-level encryption for PII, messages, tokens, gradebook notes), `calendar_service.py`, `gradebook_service.py`, `notes_service.py`, `matching_service.py`, `profiles.py`, `academics.py`.
+
+**Data access:** All runtime reads and writes go through `backend/db/connection.py::table()`, which wraps Supabase PostgREST with `httpx`. There is no ORM. DDL is delivered as ordered SQL migrations (`backend/db/migrations/0001`–`0028`) applied by `backend/db/migrate.py` over a direct `psycopg` connection — the sole exception to the PostgREST-only rule.
+
+**Prompt templates** (`backend/prompts/`): `.txt` files for quiz generation, quiz context update, syllabus extraction, flashcard generation/cleanup/cloze, the three teaching-mode system prompts (`socratic.txt`, `expository.txt`, `teachback.txt`), and `shared_context.txt` / `preamble.txt`. Agents inline their own system prompts per ADR 0003; these `.txt` files serve the legacy `gemini_service` call sites and specialized routes.
+
+## Agentic document-ingestion pipeline
+
+`POST /api/documents/upload` is the most complex request path. It runs a **4-agent pipeline** defined in `backend/agents/document.py` and streams live progress back to the browser via SSE.
+
+**Concurrency model:**
+
+```
+upload_document (route)
+  │
+  ├─ extraction_service.extract_text_from_file()   ← OCR/Docling
+  │
+  └─ process_document()  @durable_workflow
+       │
+       ├─ _step_classify()   classifier_agent     ← runs first (gates syllabus branch)
+       │
+       └─ asyncio.gather(
+            _step_summary()   summary_agent,
+            _step_concepts()  concept_extraction_agent,
+            _step_syllabus()  syllabus_extraction_agent  ← only if is_syllabus=True
+          )
+       │
+       └─ apply_concepts_to_graph()  ← deterministic graph merge, no agent
+```
+
+All four workers are Pydantic AI agents (`pydantic-ai-slim[google]`) with typed Pydantic output models (`DocumentClassification`, `Summary`, `ConceptList`, `SyllabusAssignments`). Each `_step_*` function is decorated with `@durable_step` from `services/durable.py`; when `DBOS_ENABLED=true` and the optional `dbos` package is present, the workflow gains per-step crash-resume checkpointing. By default, the decorator is a no-op passthrough.
+
+**SSE event sequence** emitted to the client:
+
+```
+status:start → progress:classify → progress:classified
+  → progress:extract → progress:extracted
+  → progress:graph_update → progress:graph_updated
+  → result:finalize → status:done
+```
+
+On agent failure, the route catches the exception and falls back to `_legacy_upload_pipeline` (a single `call_gemini_json` call), emitting `error:fallback` before continuing. A terminal failure emits `error:failed`. Uploads are idempotent on `X-Request-ID`.
+
+**Model routing:** Each agent''s model is individually configurable via `SAPLING_MODEL_<TASK>` env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus, and note chat; `gemini-2.5-pro` for the chat tutor. Model slots are resolved in `agents/_providers.py`.
+
+## LLM migration state
+
+The codebase is mid-migration from a monolithic `gemini_service.py` helper toward discrete Pydantic AI agents. Agents already own: document ingestion (4 workers), quiz generation (`agents/quiz.py`, with `gemini_service` fallback), chat tutor (`agents/chat_tutor.py`), syllabus extraction (`agents/syllabus_extraction.py`), and all three notetaker actions (`agents/note_summary.py`, `agents/note_concepts.py`, `agents/note_chat.py`). Routes still on the legacy helper: study guide, flashcard generation, social matching, and parts of the document route that haven''t been cut over. The legacy helper exposes four entry points: `call_gemini` (plain text), `call_gemini_multiturn` (native chat history), `call_gemini_json` (JSON-mode with tolerant `_extract_json` fallback), and `extract_graph_update` (parses `<graph_update>` XML blocks out of tutor replies).', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-backend-ai', 'reference', 'Backend & AI Agents', '## FastAPI Application
+
+The backend is a single FastAPI application (`backend/main.py`) run with Uvicorn on `PORT` (default 5000). Startup runs `validate_config()`, which fails loudly if `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, or `GEMINI_API_KEY` are absent, and if `SESSION_SECRET` is missing or shorter than 32 bytes outside of local dev. The lifespan also bootstraps the Supabase `avatars` storage bucket before the first request is served.
+
+**Middleware stack (outermost to innermost):**
+- `RequestIDMiddleware` — stamps every request with a UUID, tags every response with `X-Request-ID`, and emits one structured log line per request.
+- `CORSMiddleware` — allows `FRONTEND_URL`, `localhost:3000`, and `saplinglearn.com`; additional origins via `CORS_ORIGINS` env var.
+- `RecostMiddleware` (optional) — cost-tracking middleware; skipped if the `recost` package is not installed.
+
+**Route prefixes:**
+
+| Prefix | Module |
+|---|---|
+| `/api/auth` | `routes/auth.py` |
+| `/api/documents` | `routes/documents.py` |
+| `/api/learn` | `routes/learn.py` |
+| `/api/quiz` | `routes/quiz.py` |
+| `/api/graph` | `routes/graph.py` |
+| `/api/extract` | `routes/extract.py` |
+| `/api/notes` | `routes/notes.py` |
+| `/api/flashcards` | `routes/flashcards.py` |
+| `/api/study-guide` | `routes/study_guide.py` |
+| `/api/calendar` | `routes/calendar.py` |
+| `/api/gradebook` | `routes/gradebook.py` |
+| `/api/profile` | `routes/profile.py` |
+| `/api/admin` | `routes/admin.py` |
+| `/api/social` | `routes/social.py` |
+| `/api/careers` | `routes/careers.py` |
+| `/api/onboarding` | `routes/onboarding.py` |
+| `/api/newsletter` | `routes/newsletter.py` |
+| `/api/feedback` | `routes/feedback.py` |
+| `/api` (academics) | `routes/academics.py` |
+| `/api/health` | inline — returns `{"status": "ok"}` |
+| `/api/gemini-test` | inline — admin-only Gemini connectivity check |
+
+All error handlers (`HTTPException`, `RequestValidationError`, unhandled exceptions) attach the `request_id` to the JSON body and the `X-Request-ID` response header.
+
+**`backend/config.py`** centralises environment variables: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SESSION_SECRET`, `FRONTEND_URL`, `PORT`, `APP_ENV`, and `ALLOWED_EMAIL_DOMAINS` (default `bu.edu`). `validate_config()` checks required values at startup. A `get_mastery_tier(score)` helper maps float scores to `mastered / learning / struggling / unexplored`.
+
+Observability is via Logfire (`logfire.instrument_pydantic_ai()`). A custom `scrub_value` callback in `services/logfire_scrubber.py` redacts prompt text and model output before egress so user-uploaded document content never leaves the process in trace attributes.
+
+---
+
+## Pydantic AI Agent System
+
+Agents live in `backend/agents/` and use `pydantic-ai-slim[google]` (ADR 0001). Each agent is a typed `pydantic_ai.Agent` instance; inputs are plain strings or Pydantic models, outputs are validated Pydantic models. Shared runtime state is passed via `SaplingDeps` (defined in `agents/deps.py`):
+
+```python
+@dataclass
+class SaplingDeps:
+    user_id: str
+    course_id: str | None
+    supabase: Any        # Supabase client
+    request_id: str      # correlation ID for Logfire spans
+    session_id: str | None = None
+```
+
+### Worker agents
+
+| Agent module | Output type | Purpose |
+|---|---|---|
+| `agents/classifier.py` | `DocumentClassification` | 7-way document type classifier; sets `is_syllabus` flag |
+| `agents/summary.py` | `Summary` | Short prose summary of an uploaded document |
+| `agents/concept_extraction.py` | `ConceptList` | Extracts Title-Case concept names for the knowledge graph |
+| `agents/syllabus_extraction.py` | `SyllabusAssignments` | Parses assignments, due dates, grading weights from a syllabus |
+| `agents/quiz.py` | `Quiz` | Generates structured multiple-choice questions; uses tools to pull weak concepts and recent attempt history |
+| `agents/chat_tutor.py` | streaming text | Multi-turn pedagogical tutor in Socratic / Expository / TeachBack modes |
+| `agents/note_summary.py` | `NoteSummary` | 2–4 sentence summary of a single student note |
+| `agents/note_concepts.py` | `NoteConcepts` | Concept names extracted from a note for graph merge |
+| `agents/note_chat.py` | streaming text | Sidecar chat scoped to one open note in the notetaker |
+
+### Document ingestion pipeline (`agents/document.py`)
+
+`process_document(text, deps)` is the orchestration entry point for uploaded documents. It is not an agent itself — it is a `@durable_workflow` function that coordinates the workers deterministically:
+
+1. **Classify first** (`_step_classify`) — gates whether syllabus extraction runs.
+2. **Fan out in parallel** (`asyncio.gather`) — summary + concept extraction, plus syllabus extraction if `is_syllabus` is true.
+3. **Merge graph** — calls `apply_concepts_to_graph` directly (no orchestrator agent round-trip) with the already-extracted concept names.
+
+Each `_step_*` function is wrapped with `@durable_step`. When `DBOS_ENABLED` is set (see ADR 0011), DBOS checkpoints each completed step so a crash mid-pipeline resumes from the last completed worker rather than from scratch. With `DBOS_ENABLED` unset (the default), both decorators are no-ops.
+
+If `process_document` raises, `routes/documents.py` falls back to `_legacy_upload_pipeline` backed by `services/gemini_service.py`.
+
+### Agent tools
+
+Tools in `backend/agents/tools/` are shared across agents via Pydantic AI''s `Tool` registration:
+
+- `chat_context.py` — `read_session_history_tool`, `read_user_progress_tool`, `search_course_materials_tool`
+- `graph.py` — `apply_graph_update_tool`, `apply_concepts_to_graph`
+- `graph_read.py` — `read_concepts_for_user_tool`, `read_misconceptions_for_course_tool`
+- `quiz_history.py` — `read_recent_quiz_attempts_tool`
+- `note_context.py` — `read_active_note_tool`
+- `syllabus_adapter.py` — syllabus-to-calendar adapter helpers
+
+---
+
+## Per-task Model Routing
+
+Defined in `backend/agents/_providers.py` (ADR 0008). `model_for(task)` reads `SAPLING_MODEL_<TASK_UPPER>` from the environment first, falling back to the defaults below. Selection happens at module import (process start) — a restart is required for env-var changes to take effect.
+
+| Task key | Default model | Rationale |
+|---|---|---|
+| `classifier` | `gemini-2.5-flash-lite` | 7-way classification; lite is sufficient |
+| `summary` | `gemini-2.5-flash-lite` | Short-form prose; cost saving with no quality loss |
+| `quiz` | `gemini-2.5-flash-lite` | Single-shot structured call; value is in tool wiring, not model strength |
+| `note_summary` | `gemini-2.5-flash-lite` | Single-note summarisation |
+| `note_concepts` | `gemini-2.5-flash-lite` | Concept extraction from a note |
+| `concepts` | `gemini-2.5-flash` | Structured list output; benefits from full Flash |
+| `syllabus` | `gemini-2.5-flash` | Date parsing and schema constraints need full Flash |
+| `note_chat` | `gemini-2.5-flash` | Note-scoped sidecar chat |
+| `chat_tutor` | `gemini-2.5-pro` | Multi-turn pedagogical reasoning; Pro quality drives perceived UX |
+
+Override example: `SAPLING_MODEL_CLASSIFIER=gemini-2.5-pro`. The `google_model(name)` function is a back-compat shim for callers that need to bypass the selector and pin a specific model.
+
+---
+
+## Legacy Structured-Prompt Helper (`services/gemini_service.py`)
+
+Routes not yet migrated to Pydantic AI call `services/gemini_service.py` directly via bare `google-genai` calls. Key functions:
+
+- `call_gemini(prompt, retries, json_mode, model)` — single-turn call returning a string.
+- `call_gemini_multiturn(system_prompt, history, user_message, retries, model)` — multi-turn call.
+- `call_gemini_json(prompt, model)` — single-turn call with JSON extraction and backtick-fence stripping.
+- `generate_flashcards(...)` — flashcard generation helper.
+
+Defaults: `MODEL_DEFAULT = "gemini-2.5-flash"`, `MODEL_LITE = "gemini-2.5-flash-lite"`, `MODEL_SMART = "gemini-2.5-pro"`. This file remains as the fallback for `process_document` failures and as the implementation behind routes that predate the Pydantic AI migration (ADR 0001).
+
+---
+
+## Prompts (`backend/prompts/`)
+
+Text prompt files consumed by agents and legacy routes:
+
+| File | Used by |
+|---|---|
+| `preamble.txt` | Shared across tutor modes |
+| `socratic.txt` | Chat tutor — Socratic mode |
+| `expository.txt` | Chat tutor — Expository mode |
+| `teachback.txt` | Chat tutor — TeachBack mode |
+| `shared_context.txt` | Injected context block |
+| `quiz_generation.txt` | Quiz agent |
+| `quiz_context_update.txt` | Quiz context refresh |
+| `syllabus_extraction.txt` | Syllabus agent |
+| `study_match.txt` | Study-guide matching |
+| `flashcard_generation.txt` | Flashcard generation |
+| `flashcard_cleanup.txt` | Flashcard dedup/cleanup |
+| `flashcard_cloze.txt` | Cloze flashcard variant |
+| `flashcard_ocr_split.txt` | OCR flashcard splitting |
+
+The `refactor-3-chat-tutor/` and `refactor-4-syllabus-unification/` subdirectories hold prompt revisions that landed with those named refactors.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-backend-ai', 1, '## FastAPI Application
+
+The backend is a single FastAPI application (`backend/main.py`) run with Uvicorn on `PORT` (default 5000). Startup runs `validate_config()`, which fails loudly if `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, or `GEMINI_API_KEY` are absent, and if `SESSION_SECRET` is missing or shorter than 32 bytes outside of local dev. The lifespan also bootstraps the Supabase `avatars` storage bucket before the first request is served.
+
+**Middleware stack (outermost to innermost):**
+- `RequestIDMiddleware` — stamps every request with a UUID, tags every response with `X-Request-ID`, and emits one structured log line per request.
+- `CORSMiddleware` — allows `FRONTEND_URL`, `localhost:3000`, and `saplinglearn.com`; additional origins via `CORS_ORIGINS` env var.
+- `RecostMiddleware` (optional) — cost-tracking middleware; skipped if the `recost` package is not installed.
+
+**Route prefixes:**
+
+| Prefix | Module |
+|---|---|
+| `/api/auth` | `routes/auth.py` |
+| `/api/documents` | `routes/documents.py` |
+| `/api/learn` | `routes/learn.py` |
+| `/api/quiz` | `routes/quiz.py` |
+| `/api/graph` | `routes/graph.py` |
+| `/api/extract` | `routes/extract.py` |
+| `/api/notes` | `routes/notes.py` |
+| `/api/flashcards` | `routes/flashcards.py` |
+| `/api/study-guide` | `routes/study_guide.py` |
+| `/api/calendar` | `routes/calendar.py` |
+| `/api/gradebook` | `routes/gradebook.py` |
+| `/api/profile` | `routes/profile.py` |
+| `/api/admin` | `routes/admin.py` |
+| `/api/social` | `routes/social.py` |
+| `/api/careers` | `routes/careers.py` |
+| `/api/onboarding` | `routes/onboarding.py` |
+| `/api/newsletter` | `routes/newsletter.py` |
+| `/api/feedback` | `routes/feedback.py` |
+| `/api` (academics) | `routes/academics.py` |
+| `/api/health` | inline — returns `{"status": "ok"}` |
+| `/api/gemini-test` | inline — admin-only Gemini connectivity check |
+
+All error handlers (`HTTPException`, `RequestValidationError`, unhandled exceptions) attach the `request_id` to the JSON body and the `X-Request-ID` response header.
+
+**`backend/config.py`** centralises environment variables: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SESSION_SECRET`, `FRONTEND_URL`, `PORT`, `APP_ENV`, and `ALLOWED_EMAIL_DOMAINS` (default `bu.edu`). `validate_config()` checks required values at startup. A `get_mastery_tier(score)` helper maps float scores to `mastered / learning / struggling / unexplored`.
+
+Observability is via Logfire (`logfire.instrument_pydantic_ai()`). A custom `scrub_value` callback in `services/logfire_scrubber.py` redacts prompt text and model output before egress so user-uploaded document content never leaves the process in trace attributes.
+
+---
+
+## Pydantic AI Agent System
+
+Agents live in `backend/agents/` and use `pydantic-ai-slim[google]` (ADR 0001). Each agent is a typed `pydantic_ai.Agent` instance; inputs are plain strings or Pydantic models, outputs are validated Pydantic models. Shared runtime state is passed via `SaplingDeps` (defined in `agents/deps.py`):
+
+```python
+@dataclass
+class SaplingDeps:
+    user_id: str
+    course_id: str | None
+    supabase: Any        # Supabase client
+    request_id: str      # correlation ID for Logfire spans
+    session_id: str | None = None
+```
+
+### Worker agents
+
+| Agent module | Output type | Purpose |
+|---|---|---|
+| `agents/classifier.py` | `DocumentClassification` | 7-way document type classifier; sets `is_syllabus` flag |
+| `agents/summary.py` | `Summary` | Short prose summary of an uploaded document |
+| `agents/concept_extraction.py` | `ConceptList` | Extracts Title-Case concept names for the knowledge graph |
+| `agents/syllabus_extraction.py` | `SyllabusAssignments` | Parses assignments, due dates, grading weights from a syllabus |
+| `agents/quiz.py` | `Quiz` | Generates structured multiple-choice questions; uses tools to pull weak concepts and recent attempt history |
+| `agents/chat_tutor.py` | streaming text | Multi-turn pedagogical tutor in Socratic / Expository / TeachBack modes |
+| `agents/note_summary.py` | `NoteSummary` | 2–4 sentence summary of a single student note |
+| `agents/note_concepts.py` | `NoteConcepts` | Concept names extracted from a note for graph merge |
+| `agents/note_chat.py` | streaming text | Sidecar chat scoped to one open note in the notetaker |
+
+### Document ingestion pipeline (`agents/document.py`)
+
+`process_document(text, deps)` is the orchestration entry point for uploaded documents. It is not an agent itself — it is a `@durable_workflow` function that coordinates the workers deterministically:
+
+1. **Classify first** (`_step_classify`) — gates whether syllabus extraction runs.
+2. **Fan out in parallel** (`asyncio.gather`) — summary + concept extraction, plus syllabus extraction if `is_syllabus` is true.
+3. **Merge graph** — calls `apply_concepts_to_graph` directly (no orchestrator agent round-trip) with the already-extracted concept names.
+
+Each `_step_*` function is wrapped with `@durable_step`. When `DBOS_ENABLED` is set (see ADR 0011), DBOS checkpoints each completed step so a crash mid-pipeline resumes from the last completed worker rather than from scratch. With `DBOS_ENABLED` unset (the default), both decorators are no-ops.
+
+If `process_document` raises, `routes/documents.py` falls back to `_legacy_upload_pipeline` backed by `services/gemini_service.py`.
+
+### Agent tools
+
+Tools in `backend/agents/tools/` are shared across agents via Pydantic AI''s `Tool` registration:
+
+- `chat_context.py` — `read_session_history_tool`, `read_user_progress_tool`, `search_course_materials_tool`
+- `graph.py` — `apply_graph_update_tool`, `apply_concepts_to_graph`
+- `graph_read.py` — `read_concepts_for_user_tool`, `read_misconceptions_for_course_tool`
+- `quiz_history.py` — `read_recent_quiz_attempts_tool`
+- `note_context.py` — `read_active_note_tool`
+- `syllabus_adapter.py` — syllabus-to-calendar adapter helpers
+
+---
+
+## Per-task Model Routing
+
+Defined in `backend/agents/_providers.py` (ADR 0008). `model_for(task)` reads `SAPLING_MODEL_<TASK_UPPER>` from the environment first, falling back to the defaults below. Selection happens at module import (process start) — a restart is required for env-var changes to take effect.
+
+| Task key | Default model | Rationale |
+|---|---|---|
+| `classifier` | `gemini-2.5-flash-lite` | 7-way classification; lite is sufficient |
+| `summary` | `gemini-2.5-flash-lite` | Short-form prose; cost saving with no quality loss |
+| `quiz` | `gemini-2.5-flash-lite` | Single-shot structured call; value is in tool wiring, not model strength |
+| `note_summary` | `gemini-2.5-flash-lite` | Single-note summarisation |
+| `note_concepts` | `gemini-2.5-flash-lite` | Concept extraction from a note |
+| `concepts` | `gemini-2.5-flash` | Structured list output; benefits from full Flash |
+| `syllabus` | `gemini-2.5-flash` | Date parsing and schema constraints need full Flash |
+| `note_chat` | `gemini-2.5-flash` | Note-scoped sidecar chat |
+| `chat_tutor` | `gemini-2.5-pro` | Multi-turn pedagogical reasoning; Pro quality drives perceived UX |
+
+Override example: `SAPLING_MODEL_CLASSIFIER=gemini-2.5-pro`. The `google_model(name)` function is a back-compat shim for callers that need to bypass the selector and pin a specific model.
+
+---
+
+## Legacy Structured-Prompt Helper (`services/gemini_service.py`)
+
+Routes not yet migrated to Pydantic AI call `services/gemini_service.py` directly via bare `google-genai` calls. Key functions:
+
+- `call_gemini(prompt, retries, json_mode, model)` — single-turn call returning a string.
+- `call_gemini_multiturn(system_prompt, history, user_message, retries, model)` — multi-turn call.
+- `call_gemini_json(prompt, model)` — single-turn call with JSON extraction and backtick-fence stripping.
+- `generate_flashcards(...)` — flashcard generation helper.
+
+Defaults: `MODEL_DEFAULT = "gemini-2.5-flash"`, `MODEL_LITE = "gemini-2.5-flash-lite"`, `MODEL_SMART = "gemini-2.5-pro"`. This file remains as the fallback for `process_document` failures and as the implementation behind routes that predate the Pydantic AI migration (ADR 0001).
+
+---
+
+## Prompts (`backend/prompts/`)
+
+Text prompt files consumed by agents and legacy routes:
+
+| File | Used by |
+|---|---|
+| `preamble.txt` | Shared across tutor modes |
+| `socratic.txt` | Chat tutor — Socratic mode |
+| `expository.txt` | Chat tutor — Expository mode |
+| `teachback.txt` | Chat tutor — TeachBack mode |
+| `shared_context.txt` | Injected context block |
+| `quiz_generation.txt` | Quiz agent |
+| `quiz_context_update.txt` | Quiz context refresh |
+| `syllabus_extraction.txt` | Syllabus agent |
+| `study_match.txt` | Study-guide matching |
+| `flashcard_generation.txt` | Flashcard generation |
+| `flashcard_cleanup.txt` | Flashcard dedup/cleanup |
+| `flashcard_cloze.txt` | Cloze flashcard variant |
+| `flashcard_ocr_split.txt` | OCR flashcard splitting |
+
+The `refactor-3-chat-tutor/` and `refactor-4-syllabus-unification/` subdirectories hold prompt revisions that landed with those named refactors.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-knowledge-graph', 'reference', 'Knowledge Graph & Learning', '## Live Knowledge Graph
+
+Every user''s understanding is represented as a directed graph stored in two Supabase tables — `graph_nodes` and `graph_edges` — and served via `GET /api/graph/{user_id}`. Each node corresponds to a single concept and carries a `mastery_score` (0.0–1.0), a `mastery_tier` (`mastered` / `learning` / `struggling` / `unexplored`), a `last_studied_at` timestamp, and a `course_id` that pins it to an enrolled course. Edges carry a `strength` float and a `relationship_type`. Mastery updates are recorded as append-only rows in `node_mastery_events` (added in migration `0023`), which the backend aggregates into a velocity metric (mastery gained per day over the last 14 days).
+
+### 2D and 3D views
+
+The frontend renders the graph in two modes, toggled by a button that persists the choice in `localStorage` under the key `sapling.kg.mode` and syncs across mounted instances via a `storage` event plus a same-tab custom event (`sapling:kg-mode-change`).
+
+- **2D (default)** — `KnowledgeGraph2D.tsx` uses a live `d3-force` simulation with `forceLink`, `forceManyBody`, `forceCollide`, and `forceCenter`. Nodes are SVG circles; pan and zoom are handled via pointer capture and a wheel handler. The simulation pauses automatically when the SVG scrolls off-screen via `IntersectionObserver`. Subject-root nodes (one per enrolled course) are larger (radius 22 vs. 8–20) and labeled; concept nodes display their name when their radius exceeds 10px. `prefers-reduced-motion` is respected — the simulation fast-forwards 200 ticks and stops instead of animating.
+- **3D (WebGL)** — `KnowledgeGraph3D.tsx` uses `react-force-graph-3d` (three.js under the hood), lazy-loaded via Next.js `dynamic(..., { ssr: false })` so the three.js + `d3-force-3d` stack only enters the bundle as a client chunk when the user actually toggles 3D mode. Without the lazy load the OpenNext Cloudflare Worker bundle would exceed Cloudflare''s size limit.
+
+### Per-course color and mastery opacity
+
+Each enrollment carries a `color` hex chosen at enrollment time. In `KnowledgeGraph2D`, a `shadeFor(baseHex, nodeId)` function derives a per-node HSL shade from the course color by seeding a deterministic hue/saturation/lightness offset from the node''s id (using a shared `hashSeed` helper to avoid `Math.abs` overflow). Subject-root nodes render in the raw course color; concept nodes get their own shade within the course''s hue family. Opacity encodes tier: `mastered` = 1.0, `learning` = 0.78, `struggling` = 0.55, `unexplored` = 0.28. Node radius scales with mastery score (8 + score × 12 pixels).
+
+Study Rooms can overlay a partner''s graph as a dashed comparison ring — `KnowledgeGraph2D` accepts an optional `comparison` prop (an array of `{name, mastery_score, partner_name}` entries matched by concept name) and renders a colored dashed circle around each matched node whose radius scales with the partner''s mastery.
+
+---
+
+## Three Teaching Modes and the Chat Tutor
+
+`routes/learn.py` dispatches chat messages to a Pydantic AI agent (`chat_tutor_agent`) selected by mode. Three agents are instantiated at module load from a shared preamble plus per-mode body (ADR 0015):
+
+- **Socratic** — guides the student through reasoning with questions; prompts are versioned at hash `57f278a01d2d`. The eval case `SocraticEndsWithQuestionEvaluator` asserts that Socratic responses end with a question.
+- **Expository** — explains topics directly with structure; hash `8c840f43b6e2`. `ExpositoryHasStructureEvaluator` checks for organized output.
+- **TeachBack** — the student explains a concept and the tutor listens, corrects, and probes; hash `70a34fb09224`. `TeachBackProbesEvaluator` verifies follow-up questions.
+
+The tutor agent has four tools: `search_course_materials_tool` (keyword overlap on `documents.summary` and `concept_notes`), `read_session_history_tool` (decrypts `messages.content` at the boundary), `read_user_progress_tool` (aggregates `graph_nodes` to mastered/weak/in-progress counts), and `apply_graph_update_tool` (writes mastery changes back to the graph). The default model is `gemini-2.5-pro`, overridable via `SAPLING_MODEL_CHAT_TUTOR`. A `model_pref` field on the chat request body (`"fast"` | `"smart"`) also influences model selection.
+
+### Chat rendering
+
+The `MarkdownChat` component (`frontend/src/components/MarkdownChat.tsx`) renders tutor responses as rich Markdown using `react-markdown` with the following pipeline:
+
+- **remark-math + rehype-katex** — renders inline and block LaTeX. KaTeX macros include Castel-style shortcuts (`\R → \mathbb{R}`, `\norm`, `\abs`, `\inner`, `\Var`, `\Cov`, `\Tr`, `\diag`, `\eps`, etc.) plus the `mhchem` extension for chemistry notation.
+- **remark-directive + custom plugin** — `:::theorem`, `:::definition`, `:::proof`, `:::lemma`, `:::corollary`, `:::proposition`, `:::example`, `:::remark`, `:::note`, `:::tip`, `:::warning` directives render as styled callout boxes. Proof blocks use a dashed border; warning blocks use a warning color.
+- **Mermaid diagrams** — fenced code blocks tagged `mermaid` are extracted before syntax highlighting by a custom `rehypeExtractDiagramBlocks` plugin and handed to the `MermaidBlock` component.
+- **Function plots** — fenced blocks tagged `plot` or `function-plot` are extracted the same way and rendered by `FunctionPlot`.
+- **GeoGebra embeds** — `::geogebra{id=...}` leaf directives become lazy-loaded iframes pointing to `geogebra.org`.
+
+---
+
+## Adaptive Quizzes
+
+Quiz generation runs through `backend/agents/quiz.py`, a Pydantic AI agent backed by Google Gemini (ADRs 0005, 0013, 0014). The agent''s output schema is `Quiz { questions: list[QuizQuestion] }` with `QuizQuestion` carrying `question`, `type` (always `multiple_choice`), `difficulty` (`easy` / `medium` / `hard`), `options` (3–6 items), `correct_answer`, `explanation`, and `concept`.
+
+The agent follows a three-tool workflow on each generation:
+
+1. **`read_concepts_for_user`** — fetches the student''s `graph_nodes` sorted by `mastery_score` ascending (weakest first). Each row includes `last_reviewed_at` for spaced repetition weighting.
+2. **`read_misconceptions_for_course`** — reads the `class_analytics` table for the course offering, returning aggregated `common_misconceptions` strings observed across all students in that class.
+3. **`read_recent_quiz_attempts`** — returns `QuizHistory { summary, recent_attempts }` for the target concept: a rolling digest from `quiz_context_service` plus the last five completed `quiz_attempts` rows (newest first, `completed_at IS NOT NULL` to exclude in-flight rows), with per-attempt `accuracy = score/total` precomputed.
+
+From these signals the agent applies three adaptive rules: **weakest-first concept selection**, **spaced repetition** (concepts with `last_reviewed_at` older than ~7 days are treated as stale and boosted in priority), and **adaptive difficulty** (the difficulty mix shifts up or down by at most one step based on `recent_attempts.accuracy`, so the agent can never override the user''s requested difficulty by more than one tier). Difficulty scaling is bounded to prevent overshooting.
+
+The `QuizPanel` UI (`frontend/src/components/QuizPanel.tsx`) walks through four phases — `select` → `active` → `review` → `results`. After submission the backend scores each answer by looking up `options[i].correct`, updates the concept''s mastery score via `apply_graph_update_tool`, and returns `{ score, total, mastery_before, mastery_after }` so the results screen can show the mastery delta.
+
+---
+
+## Flashcards
+
+Flashcards are stored per-user and optionally per-topic in Supabase. The import surface (`FlashcardImportModal`) offers five tabs, each backed by a dedicated backend endpoint:
+
+- **Paste** — raw text parsed client-side via `flashcardParsers.ts`, supporting CSV, pipe-delimited, and `Q: / A:` formats.
+- **Upload** — file upload (CSV, Markdown, Anki `.apkg`).
+- **URL** — `POST /api/flashcards/import/parse` fetches and parses content from a URL.
+- **AI** — `POST /api/flashcards/import/generate` sends a topic string to Gemini and returns generated front/back pairs.
+- **Photo** — image capture or upload processed through the OCR pipeline.
+
+After preview and optional cleanup (`POST /api/flashcards/import/cleanup` and `/cloze` for cloze-deletion conversion), cards commit via `POST /api/flashcards/import/commit`. During study, `POST /api/flashcards/rate` accepts a rating of **1 (Forgot)**, **2 (Hard)**, or **3 (Easy)**, which feeds the spaced-repetition scheduler. Cards are filterable by topic. AI-generated flashcards are tied to the user''s course graph.
+
+---
+
+## Notetaker
+
+The notetaker (`/notetaker`) is a per-course typed notes surface backed by `routes/notes.py` (ADR 0017). Notes are stored in an encrypted `notes` table — `title`, `body`, `tags text[]`, and `last_summary` are all AES-256-GCM encrypted at the application layer; `tags` is kept plaintext so PostgREST array filters work.
+
+**Autosave** is debounced at 800ms on title, body, and tags changes via `PATCH /api/notes/{note_id}`.
+
+Each note supports four agent-backed actions, each a separate POST endpoint:
+
+- **Summarize** (`/summarize`) — `note_summary` agent (flash-lite, output `NoteSummary { summary: str }`) generates and stores a summary in `notes.last_summary`.
+- **Extract concepts** (`/extract-concepts`) — `note_concepts` agent (flash-lite, output `NoteConcepts { concepts: list[str] }`) extracts concept strings, merges them into the user''s knowledge graph, and links them back to the note via the `note_concepts` junction table.
+- **Note-grounded chat** (`/chat`) — `note_chat` agent (flash, freeform `str` output) has access to a `read_active_note` tool that reads the current note, plus `search_course_materials` and `apply_graph_update_tool`. The active note''s id rides on `SaplingDeps.session_id` so the LLM never chooses which note to read.
+- **Send to tutor** (`/send-to-tutor`) — builds a `{ topic, preface }` handoff from the note and pushes the browser to `/learn?topic=...&course=...`.
+- **Generate quiz** (`/generate-quiz`) — selects the lowest-mastery linked concept and returns `{ concept_node_id, concept_name }`; the frontend then calls `/api/quiz/generate` separately, keeping quiz state in the quiz client.
+
+Concept links are managed independently via `/api/notes/{note_id}/concepts` CRUD routes, with a `ConceptPickerModal` querying `getGraph` filtered to the active course.
+
+---
+
+## Study Guide Generation
+
+`GET /api/study-guide/{user_id}/guide` fetches or generates a Gemini-powered exam study guide from the user''s uploaded course documents. Guides are keyed by exam (an assignment of type exam from the gradebook) and cached per exam; `POST /api/study-guide/regenerate` invalidates the cache. The Study screen (`frontend/src/components/screens/Study.tsx`) renders guide content through `MarkdownChat` so math, diagrams, and callouts work identically to the chat tutor.
+
+---
+
+## Class Intelligence
+
+The quiz agent''s `read_misconceptions_for_course` tool reads a `class_analytics` table keyed by `offering_id` (the course section). Each row represents a concept and carries a `common_misconceptions` string array aggregated across all students enrolled in that offering — the individual student is never identified. The quiz agent uses these strings to write distractor options and quiz questions that address known class-wide weak areas rather than only the individual student''s graph. The same misconception data is also injected into the legacy quiz path''s prompt template at `routes/quiz.py` as a fallback.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-knowledge-graph', 1, '## Live Knowledge Graph
+
+Every user''s understanding is represented as a directed graph stored in two Supabase tables — `graph_nodes` and `graph_edges` — and served via `GET /api/graph/{user_id}`. Each node corresponds to a single concept and carries a `mastery_score` (0.0–1.0), a `mastery_tier` (`mastered` / `learning` / `struggling` / `unexplored`), a `last_studied_at` timestamp, and a `course_id` that pins it to an enrolled course. Edges carry a `strength` float and a `relationship_type`. Mastery updates are recorded as append-only rows in `node_mastery_events` (added in migration `0023`), which the backend aggregates into a velocity metric (mastery gained per day over the last 14 days).
+
+### 2D and 3D views
+
+The frontend renders the graph in two modes, toggled by a button that persists the choice in `localStorage` under the key `sapling.kg.mode` and syncs across mounted instances via a `storage` event plus a same-tab custom event (`sapling:kg-mode-change`).
+
+- **2D (default)** — `KnowledgeGraph2D.tsx` uses a live `d3-force` simulation with `forceLink`, `forceManyBody`, `forceCollide`, and `forceCenter`. Nodes are SVG circles; pan and zoom are handled via pointer capture and a wheel handler. The simulation pauses automatically when the SVG scrolls off-screen via `IntersectionObserver`. Subject-root nodes (one per enrolled course) are larger (radius 22 vs. 8–20) and labeled; concept nodes display their name when their radius exceeds 10px. `prefers-reduced-motion` is respected — the simulation fast-forwards 200 ticks and stops instead of animating.
+- **3D (WebGL)** — `KnowledgeGraph3D.tsx` uses `react-force-graph-3d` (three.js under the hood), lazy-loaded via Next.js `dynamic(..., { ssr: false })` so the three.js + `d3-force-3d` stack only enters the bundle as a client chunk when the user actually toggles 3D mode. Without the lazy load the OpenNext Cloudflare Worker bundle would exceed Cloudflare''s size limit.
+
+### Per-course color and mastery opacity
+
+Each enrollment carries a `color` hex chosen at enrollment time. In `KnowledgeGraph2D`, a `shadeFor(baseHex, nodeId)` function derives a per-node HSL shade from the course color by seeding a deterministic hue/saturation/lightness offset from the node''s id (using a shared `hashSeed` helper to avoid `Math.abs` overflow). Subject-root nodes render in the raw course color; concept nodes get their own shade within the course''s hue family. Opacity encodes tier: `mastered` = 1.0, `learning` = 0.78, `struggling` = 0.55, `unexplored` = 0.28. Node radius scales with mastery score (8 + score × 12 pixels).
+
+Study Rooms can overlay a partner''s graph as a dashed comparison ring — `KnowledgeGraph2D` accepts an optional `comparison` prop (an array of `{name, mastery_score, partner_name}` entries matched by concept name) and renders a colored dashed circle around each matched node whose radius scales with the partner''s mastery.
+
+---
+
+## Three Teaching Modes and the Chat Tutor
+
+`routes/learn.py` dispatches chat messages to a Pydantic AI agent (`chat_tutor_agent`) selected by mode. Three agents are instantiated at module load from a shared preamble plus per-mode body (ADR 0015):
+
+- **Socratic** — guides the student through reasoning with questions; prompts are versioned at hash `57f278a01d2d`. The eval case `SocraticEndsWithQuestionEvaluator` asserts that Socratic responses end with a question.
+- **Expository** — explains topics directly with structure; hash `8c840f43b6e2`. `ExpositoryHasStructureEvaluator` checks for organized output.
+- **TeachBack** — the student explains a concept and the tutor listens, corrects, and probes; hash `70a34fb09224`. `TeachBackProbesEvaluator` verifies follow-up questions.
+
+The tutor agent has four tools: `search_course_materials_tool` (keyword overlap on `documents.summary` and `concept_notes`), `read_session_history_tool` (decrypts `messages.content` at the boundary), `read_user_progress_tool` (aggregates `graph_nodes` to mastered/weak/in-progress counts), and `apply_graph_update_tool` (writes mastery changes back to the graph). The default model is `gemini-2.5-pro`, overridable via `SAPLING_MODEL_CHAT_TUTOR`. A `model_pref` field on the chat request body (`"fast"` | `"smart"`) also influences model selection.
+
+### Chat rendering
+
+The `MarkdownChat` component (`frontend/src/components/MarkdownChat.tsx`) renders tutor responses as rich Markdown using `react-markdown` with the following pipeline:
+
+- **remark-math + rehype-katex** — renders inline and block LaTeX. KaTeX macros include Castel-style shortcuts (`\R → \mathbb{R}`, `\norm`, `\abs`, `\inner`, `\Var`, `\Cov`, `\Tr`, `\diag`, `\eps`, etc.) plus the `mhchem` extension for chemistry notation.
+- **remark-directive + custom plugin** — `:::theorem`, `:::definition`, `:::proof`, `:::lemma`, `:::corollary`, `:::proposition`, `:::example`, `:::remark`, `:::note`, `:::tip`, `:::warning` directives render as styled callout boxes. Proof blocks use a dashed border; warning blocks use a warning color.
+- **Mermaid diagrams** — fenced code blocks tagged `mermaid` are extracted before syntax highlighting by a custom `rehypeExtractDiagramBlocks` plugin and handed to the `MermaidBlock` component.
+- **Function plots** — fenced blocks tagged `plot` or `function-plot` are extracted the same way and rendered by `FunctionPlot`.
+- **GeoGebra embeds** — `::geogebra{id=...}` leaf directives become lazy-loaded iframes pointing to `geogebra.org`.
+
+---
+
+## Adaptive Quizzes
+
+Quiz generation runs through `backend/agents/quiz.py`, a Pydantic AI agent backed by Google Gemini (ADRs 0005, 0013, 0014). The agent''s output schema is `Quiz { questions: list[QuizQuestion] }` with `QuizQuestion` carrying `question`, `type` (always `multiple_choice`), `difficulty` (`easy` / `medium` / `hard`), `options` (3–6 items), `correct_answer`, `explanation`, and `concept`.
+
+The agent follows a three-tool workflow on each generation:
+
+1. **`read_concepts_for_user`** — fetches the student''s `graph_nodes` sorted by `mastery_score` ascending (weakest first). Each row includes `last_reviewed_at` for spaced repetition weighting.
+2. **`read_misconceptions_for_course`** — reads the `class_analytics` table for the course offering, returning aggregated `common_misconceptions` strings observed across all students in that class.
+3. **`read_recent_quiz_attempts`** — returns `QuizHistory { summary, recent_attempts }` for the target concept: a rolling digest from `quiz_context_service` plus the last five completed `quiz_attempts` rows (newest first, `completed_at IS NOT NULL` to exclude in-flight rows), with per-attempt `accuracy = score/total` precomputed.
+
+From these signals the agent applies three adaptive rules: **weakest-first concept selection**, **spaced repetition** (concepts with `last_reviewed_at` older than ~7 days are treated as stale and boosted in priority), and **adaptive difficulty** (the difficulty mix shifts up or down by at most one step based on `recent_attempts.accuracy`, so the agent can never override the user''s requested difficulty by more than one tier). Difficulty scaling is bounded to prevent overshooting.
+
+The `QuizPanel` UI (`frontend/src/components/QuizPanel.tsx`) walks through four phases — `select` → `active` → `review` → `results`. After submission the backend scores each answer by looking up `options[i].correct`, updates the concept''s mastery score via `apply_graph_update_tool`, and returns `{ score, total, mastery_before, mastery_after }` so the results screen can show the mastery delta.
+
+---
+
+## Flashcards
+
+Flashcards are stored per-user and optionally per-topic in Supabase. The import surface (`FlashcardImportModal`) offers five tabs, each backed by a dedicated backend endpoint:
+
+- **Paste** — raw text parsed client-side via `flashcardParsers.ts`, supporting CSV, pipe-delimited, and `Q: / A:` formats.
+- **Upload** — file upload (CSV, Markdown, Anki `.apkg`).
+- **URL** — `POST /api/flashcards/import/parse` fetches and parses content from a URL.
+- **AI** — `POST /api/flashcards/import/generate` sends a topic string to Gemini and returns generated front/back pairs.
+- **Photo** — image capture or upload processed through the OCR pipeline.
+
+After preview and optional cleanup (`POST /api/flashcards/import/cleanup` and `/cloze` for cloze-deletion conversion), cards commit via `POST /api/flashcards/import/commit`. During study, `POST /api/flashcards/rate` accepts a rating of **1 (Forgot)**, **2 (Hard)**, or **3 (Easy)**, which feeds the spaced-repetition scheduler. Cards are filterable by topic. AI-generated flashcards are tied to the user''s course graph.
+
+---
+
+## Notetaker
+
+The notetaker (`/notetaker`) is a per-course typed notes surface backed by `routes/notes.py` (ADR 0017). Notes are stored in an encrypted `notes` table — `title`, `body`, `tags text[]`, and `last_summary` are all AES-256-GCM encrypted at the application layer; `tags` is kept plaintext so PostgREST array filters work.
+
+**Autosave** is debounced at 800ms on title, body, and tags changes via `PATCH /api/notes/{note_id}`.
+
+Each note supports four agent-backed actions, each a separate POST endpoint:
+
+- **Summarize** (`/summarize`) — `note_summary` agent (flash-lite, output `NoteSummary { summary: str }`) generates and stores a summary in `notes.last_summary`.
+- **Extract concepts** (`/extract-concepts`) — `note_concepts` agent (flash-lite, output `NoteConcepts { concepts: list[str] }`) extracts concept strings, merges them into the user''s knowledge graph, and links them back to the note via the `note_concepts` junction table.
+- **Note-grounded chat** (`/chat`) — `note_chat` agent (flash, freeform `str` output) has access to a `read_active_note` tool that reads the current note, plus `search_course_materials` and `apply_graph_update_tool`. The active note''s id rides on `SaplingDeps.session_id` so the LLM never chooses which note to read.
+- **Send to tutor** (`/send-to-tutor`) — builds a `{ topic, preface }` handoff from the note and pushes the browser to `/learn?topic=...&course=...`.
+- **Generate quiz** (`/generate-quiz`) — selects the lowest-mastery linked concept and returns `{ concept_node_id, concept_name }`; the frontend then calls `/api/quiz/generate` separately, keeping quiz state in the quiz client.
+
+Concept links are managed independently via `/api/notes/{note_id}/concepts` CRUD routes, with a `ConceptPickerModal` querying `getGraph` filtered to the active course.
+
+---
+
+## Study Guide Generation
+
+`GET /api/study-guide/{user_id}/guide` fetches or generates a Gemini-powered exam study guide from the user''s uploaded course documents. Guides are keyed by exam (an assignment of type exam from the gradebook) and cached per exam; `POST /api/study-guide/regenerate` invalidates the cache. The Study screen (`frontend/src/components/screens/Study.tsx`) renders guide content through `MarkdownChat` so math, diagrams, and callouts work identically to the chat tutor.
+
+---
+
+## Class Intelligence
+
+The quiz agent''s `read_misconceptions_for_course` tool reads a `class_analytics` table keyed by `offering_id` (the course section). Each row represents a concept and carries a `common_misconceptions` string array aggregated across all students enrolled in that offering — the individual student is never identified. The quiz agent uses these strings to write distractor options and quiz questions that address known class-wide weak areas rather than only the individual student''s graph. The same misconception data is also injected into the legacy quiz path''s prompt template at `routes/quiz.py` as a fallback.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-document-pipeline', 'reference', 'Document Pipeline (Upload, OCR & Streaming)', '## Upload endpoint
+
+Documents enter the pipeline through `POST /api/documents/upload` (streaming) or `POST /api/documents/upload/sync` (non-streaming JSON). Both accept multipart form data with three fields: `file` (the binary payload), `course_id`, and `user_id`. Accepted formats are **PDF, DOCX, and PPTX** up to **100 MB**. The route validates the file extension and content-type before reading the body; oversized or unsupported files receive a `400` before the SSE stream opens.
+
+Every upload is stamped with the `X-Request-ID` header value (set by FastAPI middleware). If a retry arrives with the same ID, the route short-circuits: it looks up the previously persisted `documents` row and returns it without re-running the pipeline. This makes the streaming endpoint safe to retry on network loss without double-processing.
+
+---
+
+## OCR and text extraction
+
+Text extraction is handled by `backend/services/extraction_service.py`. The strategy depends on the `OCR_ENGINE` environment variable (default `"docling"`):
+
+**PDFs** go through a two-tier path:
+1. `pypdf` native extraction is attempted first. If it returns 50+ characters, the result is used directly (fast path for digitally-produced PDFs).
+2. If native extraction yields too little text, `extract_text_from_pdf_ocr` is called. This invokes **Docling** (`extraction_backends/docling_backend.py`), a layout-aware converter that produces structured Markdown preserving headings, tables, and reading order.
+3. When `OCR_ENGINE=auto` and `GOT_OCR_ENABLED=true`, pages that Docling marks as low-confidence (`fallback_pages` in the returned metadata) are re-processed with **GOT-OCR 2.0** (`extraction_backends/got_ocr_backend.py`), which handles handwritten text and mathematical notation. Each flagged page is rendered to a PNG via `pypdfium2` at 2× scale and passed to the GOT-OCR model with `ocr_type="format"`.
+4. If Docling is unavailable (raises `DoclingUnavailableError`) or fails, extraction falls back to **Tesseract** (`extraction_backends/tesseract_backend.py`) as the legacy path.
+
+**DOCX and PPTX** always go through the Tesseract backend''s `python-docx` / `python-pptx` parsers, which extract raw text without OCR.
+
+---
+
+## Async OCR (feature flag)
+
+By default, `extract_text_from_file` runs synchronously before the SSE stream opens, meaning the user sees no events during OCR. When **`OCR_ASYNC_ENABLED=true`**, the route defers extraction into the stream:
+
+1. The `EventSourceResponse` opens immediately.
+2. The stream emits `progress:extracting_text` ("Extracting text from document...").
+3. `asyncio.to_thread(extract_text_from_file, ...)` runs OCR off the event loop.
+4. On success, the stream emits `progress:extracted_text` with the character count and continues to the agent pipeline.
+5. On failure, a terminal `error:failed` event followed by `status:done` ("Failed.") closes the stream.
+
+This delivers the primary UX benefit of ADR 0010 — no blank spinner during OCR — without requiring a separate worker tier or queue. The full two-phase design (separate `POST /upload` returning HTTP 202 + `GET /upload/<id>/events`) is deferred; see ADR 0010 for the trigger conditions.
+
+---
+
+## Four parallel worker agents
+
+After text is extracted, the pipeline runs four **Pydantic AI** agents:
+
+| Agent | Model (default) | Output |
+|---|---|---|
+| `classifier_agent` | `gemini-2.5-flash-lite` | Document category + `is_syllabus` flag |
+| `summary_agent` | `gemini-2.5-flash-lite` | Abstract (2–3 sentence summary) |
+| `concept_extraction_agent` | `gemini-2.5-flash` | `ConceptList` — ordered by importance, `{name, description}` pairs |
+| `syllabus_extraction_agent` | `gemini-2.5-flash` | Assignments, due dates, grading categories (syllabus only) |
+
+The classifier runs first (serial gate). Its output determines which workers fire: **summary and concept extraction always run**; the syllabus agent fires only when `is_syllabus=true`. The applicable workers are launched with `asyncio.gather`, so they execute concurrently. Each agent receives a `SaplingDeps` context (user, course, request ID) and a `WORKER_LIMITS` usage cap.
+
+After the workers complete, `apply_concepts_to_graph` merges extracted concept names into the user''s knowledge graph for the course.
+
+All extracted text, summaries, and concept notes are **AES-256-GCM encrypted** before being written to Supabase (`services/encryption.py`).
+
+---
+
+## SSE streaming events
+
+The streaming upload route wraps the entire pipeline in an `EventSourceResponse` (via `sse-starlette`). A custom `SaplingEvent` Pydantic model and `sapling_event_to_sse` mapper in `backend/services/agent_events.py` produce the wire format. Events are typed by `(type, step)`:
+
+| Wire event | Meaning |
+|---|---|
+| `status:start` | Stream opened, file received |
+| `progress:extracting_text` | OCR started (async mode only) |
+| `progress:extracted_text` | OCR complete, char count in message |
+| `progress:classify` | Classifier agent running |
+| `progress:classified` | Category and `is_syllabus` in `data` |
+| `progress:extract` | Worker agents starting |
+| `progress:extracted` | Workers done, concept count in message |
+| `progress:graph_update` | Graph merge starting |
+| `progress:graph_updated` | N concepts merged |
+| `result:finalize` | Full `DocumentProcessingResult` in `data` |
+| `status:done` | `document_id` in `data`; stream closes |
+| `error:fallback` | Agent guardrails tripped; falling back to legacy single-call pipeline |
+| `error:failed` | Terminal failure |
+
+If the Pydantic AI agents trip a usage limit or behave unexpectedly, an `error:fallback` event is emitted and the route drops to `_legacy_upload_pipeline` — a single `call_gemini_json` call that returns the same shape. If the legacy path also fails, a terminal `error:failed` event and `status:done` close the stream cleanly.
+
+---
+
+## Frontend SSE consumer
+
+The browser''s built-in `EventSource` only supports GET requests and cannot send a multipart body. The frontend uses a custom async generator in **`frontend/src/lib/sse.ts`** instead.
+
+`streamSSE(url, init)` calls `fetch` with the provided `RequestInit` (which carries the multipart form body and auth cookie), then reads `response.body` as a `ReadableStream<Uint8Array>`. It manually implements the [SSE wire format](https://html.spec.whatwg.org/multipage/server-sent-events.html): blocks separated by blank lines (`\n\n` or `\r\n\r\n`), `event:` and `data:` fields parsed per spec, multiple `data:` lines joined with `\n`. The `data` value is always parsed as JSON (backend payloads are guaranteed JSON); on parse failure the raw string is yielded.
+
+```typescript
+for await (const { event, data } of streamSSE<UploadEvent>(''/api/documents/upload'', { method: ''POST'', body: formData })) {
+  // event: "progress:classified" | "result:finalize" | "status:done" | ...
+}
+```
+
+The generator completes when the server closes the connection (reader returns `done: true`). A `finally` block cancels and releases the reader lock on any early exit. Nine Vitest tests in `frontend/src/lib/sse.test.ts` cover the parser against real SSE byte sequences.
+
+---
+
+## Re-scan endpoints
+
+Two endpoints allow concept graphs to be refreshed without re-uploading:
+
+- **`POST /api/documents/doc/{doc_id}/scan-concepts`** — Decrypts the stored summary and concept notes for a single document, then calls `_extend_course_concepts` (a focused `gemini-2.5-flash-lite` prompt) to discover new concepts not yet in the graph and writes them via `apply_graph_update`.
+- **`POST /api/documents/course/{course_id}/scan-concepts`** — Same scan logic, but seeded only from the course label and whatever concepts already exist in the graph.
+
+Both routes check existing graph nodes before calling the LLM, so the model only generates net-new concepts and the graph never receives duplicates.
+
+---
+
+## Concept-by-concept streaming (deferred)
+
+ADR 0012 proposes streaming individual concept names as they materialize from the model via `concept_extraction_agent.run_stream()`, emitting `progress:concept` events per name rather than one `progress:extracted` after the full list arrives. This design is deferred pending empirical data on whether Gemini emits concepts in importance order (the schema requires importance-descending). Concept extraction also currently runs inside `asyncio.gather` alongside summary extraction; extracting it into a streaming branch would require either serializing the gather or running a hybrid concurrent-plus-streaming pattern. See ADR 0012 for the implementation sketch and the conditions under which it should be revisited.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-document-pipeline', 1, '## Upload endpoint
+
+Documents enter the pipeline through `POST /api/documents/upload` (streaming) or `POST /api/documents/upload/sync` (non-streaming JSON). Both accept multipart form data with three fields: `file` (the binary payload), `course_id`, and `user_id`. Accepted formats are **PDF, DOCX, and PPTX** up to **100 MB**. The route validates the file extension and content-type before reading the body; oversized or unsupported files receive a `400` before the SSE stream opens.
+
+Every upload is stamped with the `X-Request-ID` header value (set by FastAPI middleware). If a retry arrives with the same ID, the route short-circuits: it looks up the previously persisted `documents` row and returns it without re-running the pipeline. This makes the streaming endpoint safe to retry on network loss without double-processing.
+
+---
+
+## OCR and text extraction
+
+Text extraction is handled by `backend/services/extraction_service.py`. The strategy depends on the `OCR_ENGINE` environment variable (default `"docling"`):
+
+**PDFs** go through a two-tier path:
+1. `pypdf` native extraction is attempted first. If it returns 50+ characters, the result is used directly (fast path for digitally-produced PDFs).
+2. If native extraction yields too little text, `extract_text_from_pdf_ocr` is called. This invokes **Docling** (`extraction_backends/docling_backend.py`), a layout-aware converter that produces structured Markdown preserving headings, tables, and reading order.
+3. When `OCR_ENGINE=auto` and `GOT_OCR_ENABLED=true`, pages that Docling marks as low-confidence (`fallback_pages` in the returned metadata) are re-processed with **GOT-OCR 2.0** (`extraction_backends/got_ocr_backend.py`), which handles handwritten text and mathematical notation. Each flagged page is rendered to a PNG via `pypdfium2` at 2× scale and passed to the GOT-OCR model with `ocr_type="format"`.
+4. If Docling is unavailable (raises `DoclingUnavailableError`) or fails, extraction falls back to **Tesseract** (`extraction_backends/tesseract_backend.py`) as the legacy path.
+
+**DOCX and PPTX** always go through the Tesseract backend''s `python-docx` / `python-pptx` parsers, which extract raw text without OCR.
+
+---
+
+## Async OCR (feature flag)
+
+By default, `extract_text_from_file` runs synchronously before the SSE stream opens, meaning the user sees no events during OCR. When **`OCR_ASYNC_ENABLED=true`**, the route defers extraction into the stream:
+
+1. The `EventSourceResponse` opens immediately.
+2. The stream emits `progress:extracting_text` ("Extracting text from document...").
+3. `asyncio.to_thread(extract_text_from_file, ...)` runs OCR off the event loop.
+4. On success, the stream emits `progress:extracted_text` with the character count and continues to the agent pipeline.
+5. On failure, a terminal `error:failed` event followed by `status:done` ("Failed.") closes the stream.
+
+This delivers the primary UX benefit of ADR 0010 — no blank spinner during OCR — without requiring a separate worker tier or queue. The full two-phase design (separate `POST /upload` returning HTTP 202 + `GET /upload/<id>/events`) is deferred; see ADR 0010 for the trigger conditions.
+
+---
+
+## Four parallel worker agents
+
+After text is extracted, the pipeline runs four **Pydantic AI** agents:
+
+| Agent | Model (default) | Output |
+|---|---|---|
+| `classifier_agent` | `gemini-2.5-flash-lite` | Document category + `is_syllabus` flag |
+| `summary_agent` | `gemini-2.5-flash-lite` | Abstract (2–3 sentence summary) |
+| `concept_extraction_agent` | `gemini-2.5-flash` | `ConceptList` — ordered by importance, `{name, description}` pairs |
+| `syllabus_extraction_agent` | `gemini-2.5-flash` | Assignments, due dates, grading categories (syllabus only) |
+
+The classifier runs first (serial gate). Its output determines which workers fire: **summary and concept extraction always run**; the syllabus agent fires only when `is_syllabus=true`. The applicable workers are launched with `asyncio.gather`, so they execute concurrently. Each agent receives a `SaplingDeps` context (user, course, request ID) and a `WORKER_LIMITS` usage cap.
+
+After the workers complete, `apply_concepts_to_graph` merges extracted concept names into the user''s knowledge graph for the course.
+
+All extracted text, summaries, and concept notes are **AES-256-GCM encrypted** before being written to Supabase (`services/encryption.py`).
+
+---
+
+## SSE streaming events
+
+The streaming upload route wraps the entire pipeline in an `EventSourceResponse` (via `sse-starlette`). A custom `SaplingEvent` Pydantic model and `sapling_event_to_sse` mapper in `backend/services/agent_events.py` produce the wire format. Events are typed by `(type, step)`:
+
+| Wire event | Meaning |
+|---|---|
+| `status:start` | Stream opened, file received |
+| `progress:extracting_text` | OCR started (async mode only) |
+| `progress:extracted_text` | OCR complete, char count in message |
+| `progress:classify` | Classifier agent running |
+| `progress:classified` | Category and `is_syllabus` in `data` |
+| `progress:extract` | Worker agents starting |
+| `progress:extracted` | Workers done, concept count in message |
+| `progress:graph_update` | Graph merge starting |
+| `progress:graph_updated` | N concepts merged |
+| `result:finalize` | Full `DocumentProcessingResult` in `data` |
+| `status:done` | `document_id` in `data`; stream closes |
+| `error:fallback` | Agent guardrails tripped; falling back to legacy single-call pipeline |
+| `error:failed` | Terminal failure |
+
+If the Pydantic AI agents trip a usage limit or behave unexpectedly, an `error:fallback` event is emitted and the route drops to `_legacy_upload_pipeline` — a single `call_gemini_json` call that returns the same shape. If the legacy path also fails, a terminal `error:failed` event and `status:done` close the stream cleanly.
+
+---
+
+## Frontend SSE consumer
+
+The browser''s built-in `EventSource` only supports GET requests and cannot send a multipart body. The frontend uses a custom async generator in **`frontend/src/lib/sse.ts`** instead.
+
+`streamSSE(url, init)` calls `fetch` with the provided `RequestInit` (which carries the multipart form body and auth cookie), then reads `response.body` as a `ReadableStream<Uint8Array>`. It manually implements the [SSE wire format](https://html.spec.whatwg.org/multipage/server-sent-events.html): blocks separated by blank lines (`\n\n` or `\r\n\r\n`), `event:` and `data:` fields parsed per spec, multiple `data:` lines joined with `\n`. The `data` value is always parsed as JSON (backend payloads are guaranteed JSON); on parse failure the raw string is yielded.
+
+```typescript
+for await (const { event, data } of streamSSE<UploadEvent>(''/api/documents/upload'', { method: ''POST'', body: formData })) {
+  // event: "progress:classified" | "result:finalize" | "status:done" | ...
+}
+```
+
+The generator completes when the server closes the connection (reader returns `done: true`). A `finally` block cancels and releases the reader lock on any early exit. Nine Vitest tests in `frontend/src/lib/sse.test.ts` cover the parser against real SSE byte sequences.
+
+---
+
+## Re-scan endpoints
+
+Two endpoints allow concept graphs to be refreshed without re-uploading:
+
+- **`POST /api/documents/doc/{doc_id}/scan-concepts`** — Decrypts the stored summary and concept notes for a single document, then calls `_extend_course_concepts` (a focused `gemini-2.5-flash-lite` prompt) to discover new concepts not yet in the graph and writes them via `apply_graph_update`.
+- **`POST /api/documents/course/{course_id}/scan-concepts`** — Same scan logic, but seeded only from the course label and whatever concepts already exist in the graph.
+
+Both routes check existing graph nodes before calling the LLM, so the model only generates net-new concepts and the graph never receives duplicates.
+
+---
+
+## Concept-by-concept streaming (deferred)
+
+ADR 0012 proposes streaming individual concept names as they materialize from the model via `concept_extraction_agent.run_stream()`, emitting `progress:concept` events per name rather than one `progress:extracted` after the full list arrives. This design is deferred pending empirical data on whether Gemini emits concepts in importance order (the schema requires importance-descending). Concept extraction also currently runs inside `asyncio.gather` alongside summary extraction; extracting it into a streaming branch would require either serializing the gather or running a hybrid concurrent-plus-streaming pattern. See ADR 0012 for the implementation sketch and the conditions under which it should be revisited.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-infrastructure', 'reference', 'Infrastructure — Data, Observability, Security & Deploy', '## Database
+
+Sapling uses **Supabase (PostgreSQL)** as its only persistent data store. The backend connects exclusively through the service-role key (`SUPABASE_SERVICE_KEY`) via a PostgREST helper in `backend/db/connection.py`. The service role bypasses Supabase RLS, which is intentional — all authorization is enforced in application code before the query is issued, not at the database policy layer (RLS is enabled on all public tables to lock out the `anon` and `authenticated` roles, applied to production as of 2026-06-13; see `docs/security/rls-lockdown-plan.md`).
+
+### Schema & migrations
+
+Schema lives in `backend/db/migrations/` as numbered SQL files (`0001`–`0028`). A minimal runner (`backend/db/migrate.py`) connects via `psycopg` on the **direct Supabase connection string** (`SUPABASE_DB_URL`, port 5432, never the pooler) — this is the only place outside `db/connection.py` that opens a database connection, because PostgREST cannot execute DDL. The runner records applied files in a tracking table, so re-runs are safe.
+
+### DB modular redesign (migrations 0019–0028)
+
+Migrations 0019–0028 represent a full target-schema sweep landed in the `epic/db-modular-redesign` branch (validated end to end on staging as of 2026-06-24, awaiting `epic → main` cutover):
+
+- **0019** — shared conventions: a reusable `set_updated_at()` trigger function; new `schools` and `terms` tables with seeded canonical terms (Fall 2025 through Fall 2026).
+- **0020** — academics split: the existing `courses` table (which was offering-shaped) is renamed to `course_offerings`; a new abstract `courses` catalog table is created; `user_courses` becomes `enrollments` keyed on `offering_id`. The public API boundary still keys on the abstract `course_id`.
+- **0021** — gradebook re-keyed onto `enrollment_id` (semester-aware grades, curve, drop-lowest).
+- **0022** — analytics re-keyed onto `course_offerings`.
+- **0023** — knowledge graph: UNIQUE-backed upserts and an append-only `node_mastery_events` event log; graph writes still flow through `apply_graph_update`.
+- **0024** — identity split: public profile fields moved out of `users` into a dedicated `user_profiles` table; `users` slimmed to identity + auth + activity columns; `oauth_tokens.expires_at` retyped to `TIMESTAMPTZ`.
+- **0025–0028** — study-artifact integrity, ops cleanup (text/uuid PKs on `feedback`/`issue_reports`, FK fixes), Gradescope import table, and dropping a vestigial `course_offerings.course_code NOT NULL` constraint.
+
+---
+
+## Encryption
+
+All sensitive columns are encrypted with **AES-256-GCM** via Python''s `cryptography` library (`cryptography.hazmat.primitives.ciphers.aead.AESGCM`). Implementation lives in `backend/services/encryption.py`.
+
+**Primitive details:**
+- Key: 32 bytes loaded from `ENCRYPTION_KEY` (must be exactly 64 hex characters; any other shape raises `RuntimeError` at import time and prevents the app from booting).
+- Nonce: 12 random bytes from `os.urandom()` per call — never reused.
+- Wire format: `base64(nonce || ciphertext_with_tag)`. The 16-byte GCM authentication tag is embedded in the ciphertext blob, so any tampered byte is detected on decrypt.
+
+**Helper surface:**
+- `encrypt` / `decrypt` — plain string round-trip.
+- `encrypt_if_present` / `decrypt_if_present` — passes `None` through; the decrypt fallback returns the raw value with a structured warning log when it cannot decrypt (enabling gradual backfills without a service break).
+- `encrypt_json` / `decrypt_json` — compact JSON serialization then encrypt.
+- `decrypt_numeric` — decrypt then cast to `float`; passes through native numerics for columns that were retyped from `NUMERIC` to `TEXT` (migration 0017).
+
+**Encrypted columns** (verified against `backend/routes/`):
+
+| Table | Column(s) |
+|---|---|
+| `user_profiles` | `name`, `first_name`, `last_name`, `bio`, `location` |
+| `oauth_tokens` | `access_token`, `refresh_token` |
+| `documents` | `summary`, `concept_notes` |
+| `messages` | `content` (tutor chat history) |
+| `room_messages` | `text` (study-room chat) |
+| `sessions` | `summary_json` |
+| `assignments` | `notes`, `points_possible`, `points_earned` |
+| `calendar_*` | assignment `notes` |
+
+Migration `0017` (`migration_encryption_text_columns.sql`) retyped columns whose original types (`NUMERIC`, `JSONB`) could not hold base64 strings, preserving existing values via `USING column::TEXT`. The idempotent backfill walker (`backend/db/backfill_encryption.py`) re-encrypts legacy plaintext rows without downtime; `--apply` is required to write, and `--table` scopes to one table.
+
+All Gemini callers decrypt to plaintext before constructing a prompt. No encrypted column value is passed verbatim into an LLM call.
+
+---
+
+## Observability
+
+### Logfire
+
+[Logfire](https://logfire.pydantic.dev) is the primary ops/tracing layer. It auto-instruments **Pydantic AI agent runs and tool calls** and **FastAPI requests** with zero manual span creation. When `LOGFIRE_TOKEN` is set, traces ship to `logfire.pydantic.dev`; without the token, Logfire stays local-only. The scrubber (below) fires regardless of whether the token is set.
+
+**`genai-prices`** integrates with Logfire to provide per-call LLM cost telemetry (token counts and USD cost per model call), surfaced as span attributes.
+
+### Custom span scrubber
+
+`backend/services/logfire_scrubber.py` is wired via `logfire.configure(scrubbing=ScrubbingOptions(callback=scrub_value, extra_patterns=EXTRA_PATTERNS))`. Its purpose: Pydantic AI writes full prompt text and model output into span attributes. For Sapling that means uploaded document text — containing student PII — flowing to `logfire.pydantic.dev`.
+
+The scrubber intercepts attributes whose JsonPath contains any of the risky tokens (`prompt`, `completion`, `messages`, `all_messages_events`, `content`, `gen_ai.prompt`, `gen_ai.completion`, `ai.input.messages`, `ai.output.value`, `user_prompt`, `input.value`, `output.value`). For matching attributes, it applies `_sanitize`:
+
+```python
+# strings longer than 80 chars become:
+f"{value[:80]}…[redacted, {len(value)} chars, sha256:{fingerprint_text(value, length=16)}]"
+```
+
+Lists and dicts are recursed into. For non-risky attributes that match Logfire''s built-in patterns (e.g. `password`, `api_key`), the callback returns `None`, deferring to Logfire''s full-redaction behavior. The SHA-256 fingerprint comes from `backend/services/fingerprint.py` — the same helper used for quiz-drift log warnings — enabling cross-log correlation without shipping the body.
+
+### Per-request correlation IDs (ADR-0009)
+
+`backend/services/request_context.py` provides `RequestIDMiddleware`, added **outermost** in `backend/main.py` so every response is tagged. The middleware:
+
+1. Reads `X-Request-ID` from the incoming request; accepts caller-supplied IDs matching `^[A-Za-z0-9_\-]{8,128}$`, generates a `uuid4` otherwise.
+2. Stashes the ID on `request.state.request_id` and in a `contextvars.ContextVar` (accessible anywhere without parameter threading via `current_request_id()`).
+3. Echoes the ID back as `X-Request-ID` on every response, including error responses and SSE error events.
+
+Three global exception handlers include `request_id` in the JSON error body. The streaming `/upload` route''s SSE error events also carry the middleware ID, so a user pasting an error toast can be looked up directly in Logfire.
+
+### Planned: usage analytics (cohort #115–#122)
+
+A planned observability expansion will write curated domain events to owned Supabase tables (`events` and `llm_usage`) in a fire-and-forget async path. No raw content is stored — only SHA-256 fingerprints reusing the scrubber helper. The `llm_usage` table will capture per-call token counts and computed cost per model/feature. This supplements Logfire''s ops traces with queryable usage and cost rollups. See `docs/observability-logging-tracking.md`.
+
+---
+
+## Security
+
+The backend security wave (audit #136 P0/P1s) shipped 2026-06-24. Both P0 data-exposure bugs are closed:
+
+- **P0 #123** — calendar export IDOR: all calendar queries now scoped by `user_id`.
+- **P0 #124** — study-room realtime chat displayed ciphertext instead of decrypting: REST re-fetch now routes through the decrypting backend endpoint before render.
+
+Additional hardening from the same wave: cross-user document leak closed (`search_course_materials` user-scoped, #125); encryption boundary gaps filled at write-time for syllabus notes and at read-time for gradebook/profile responses (#126); fail-closed config validation (#174); OCR endpoint gated with auth + 15 MB size cap + rate limit (#182); profile route gating + cookie-domain CSRF fix (#189/#190); gemini-test and careers/newsletter routes gated (#198/#199); issue-screenshot upload routed through an auth-gated backend (#231); project-wide RLS lockdown applied to production (#231, `docs/security/rls-lockdown-plan.md`).
+
+See `SECURITY.md` for the full security reference.
+
+---
+
+## Deploy
+
+**Frontend** is deployed to **Cloudflare Workers** via `@opennextjs/cloudflare`. The Next.js app is built with `npm run cf:build` (OpenNext adapter) and deployed with `npm run cf:deploy`. TLS terminates at the Cloudflare edge for `*.saplinglearn.com`.
+
+**Staging environment (#100, shipped 2026-06-24):** `frontend/wrangler.toml` defines a `[env.staging]` block that points `NEXT_PUBLIC_API_URL` and `BACKEND_URL` at `https://api.staging.saplinglearn.com` and scopes cookies to `.staging.saplinglearn.com` (preventing prod/staging session cross-contamination). Staging uses a separate Supabase project with its own `ENCRYPTION_KEY`. A configurable `ALLOWED_EMAIL_DOMAINS` env var lets the staging backend accept non-`bu.edu` accounts for internal testing. An idempotent seed script (`backend/db/seed_staging.py`) populates a fake demo dataset (graph, gradebook, courses-with-term) against the modular schema.
+
+**Backend** runs as a containerized FastAPI app (`backend/Dockerfile`); `docker-compose.yml` wires the service for local development.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-infrastructure', 1, '## Database
+
+Sapling uses **Supabase (PostgreSQL)** as its only persistent data store. The backend connects exclusively through the service-role key (`SUPABASE_SERVICE_KEY`) via a PostgREST helper in `backend/db/connection.py`. The service role bypasses Supabase RLS, which is intentional — all authorization is enforced in application code before the query is issued, not at the database policy layer (RLS is enabled on all public tables to lock out the `anon` and `authenticated` roles, applied to production as of 2026-06-13; see `docs/security/rls-lockdown-plan.md`).
+
+### Schema & migrations
+
+Schema lives in `backend/db/migrations/` as numbered SQL files (`0001`–`0028`). A minimal runner (`backend/db/migrate.py`) connects via `psycopg` on the **direct Supabase connection string** (`SUPABASE_DB_URL`, port 5432, never the pooler) — this is the only place outside `db/connection.py` that opens a database connection, because PostgREST cannot execute DDL. The runner records applied files in a tracking table, so re-runs are safe.
+
+### DB modular redesign (migrations 0019–0028)
+
+Migrations 0019–0028 represent a full target-schema sweep landed in the `epic/db-modular-redesign` branch (validated end to end on staging as of 2026-06-24, awaiting `epic → main` cutover):
+
+- **0019** — shared conventions: a reusable `set_updated_at()` trigger function; new `schools` and `terms` tables with seeded canonical terms (Fall 2025 through Fall 2026).
+- **0020** — academics split: the existing `courses` table (which was offering-shaped) is renamed to `course_offerings`; a new abstract `courses` catalog table is created; `user_courses` becomes `enrollments` keyed on `offering_id`. The public API boundary still keys on the abstract `course_id`.
+- **0021** — gradebook re-keyed onto `enrollment_id` (semester-aware grades, curve, drop-lowest).
+- **0022** — analytics re-keyed onto `course_offerings`.
+- **0023** — knowledge graph: UNIQUE-backed upserts and an append-only `node_mastery_events` event log; graph writes still flow through `apply_graph_update`.
+- **0024** — identity split: public profile fields moved out of `users` into a dedicated `user_profiles` table; `users` slimmed to identity + auth + activity columns; `oauth_tokens.expires_at` retyped to `TIMESTAMPTZ`.
+- **0025–0028** — study-artifact integrity, ops cleanup (text/uuid PKs on `feedback`/`issue_reports`, FK fixes), Gradescope import table, and dropping a vestigial `course_offerings.course_code NOT NULL` constraint.
+
+---
+
+## Encryption
+
+All sensitive columns are encrypted with **AES-256-GCM** via Python''s `cryptography` library (`cryptography.hazmat.primitives.ciphers.aead.AESGCM`). Implementation lives in `backend/services/encryption.py`.
+
+**Primitive details:**
+- Key: 32 bytes loaded from `ENCRYPTION_KEY` (must be exactly 64 hex characters; any other shape raises `RuntimeError` at import time and prevents the app from booting).
+- Nonce: 12 random bytes from `os.urandom()` per call — never reused.
+- Wire format: `base64(nonce || ciphertext_with_tag)`. The 16-byte GCM authentication tag is embedded in the ciphertext blob, so any tampered byte is detected on decrypt.
+
+**Helper surface:**
+- `encrypt` / `decrypt` — plain string round-trip.
+- `encrypt_if_present` / `decrypt_if_present` — passes `None` through; the decrypt fallback returns the raw value with a structured warning log when it cannot decrypt (enabling gradual backfills without a service break).
+- `encrypt_json` / `decrypt_json` — compact JSON serialization then encrypt.
+- `decrypt_numeric` — decrypt then cast to `float`; passes through native numerics for columns that were retyped from `NUMERIC` to `TEXT` (migration 0017).
+
+**Encrypted columns** (verified against `backend/routes/`):
+
+| Table | Column(s) |
+|---|---|
+| `user_profiles` | `name`, `first_name`, `last_name`, `bio`, `location` |
+| `oauth_tokens` | `access_token`, `refresh_token` |
+| `documents` | `summary`, `concept_notes` |
+| `messages` | `content` (tutor chat history) |
+| `room_messages` | `text` (study-room chat) |
+| `sessions` | `summary_json` |
+| `assignments` | `notes`, `points_possible`, `points_earned` |
+| `calendar_*` | assignment `notes` |
+
+Migration `0017` (`migration_encryption_text_columns.sql`) retyped columns whose original types (`NUMERIC`, `JSONB`) could not hold base64 strings, preserving existing values via `USING column::TEXT`. The idempotent backfill walker (`backend/db/backfill_encryption.py`) re-encrypts legacy plaintext rows without downtime; `--apply` is required to write, and `--table` scopes to one table.
+
+All Gemini callers decrypt to plaintext before constructing a prompt. No encrypted column value is passed verbatim into an LLM call.
+
+---
+
+## Observability
+
+### Logfire
+
+[Logfire](https://logfire.pydantic.dev) is the primary ops/tracing layer. It auto-instruments **Pydantic AI agent runs and tool calls** and **FastAPI requests** with zero manual span creation. When `LOGFIRE_TOKEN` is set, traces ship to `logfire.pydantic.dev`; without the token, Logfire stays local-only. The scrubber (below) fires regardless of whether the token is set.
+
+**`genai-prices`** integrates with Logfire to provide per-call LLM cost telemetry (token counts and USD cost per model call), surfaced as span attributes.
+
+### Custom span scrubber
+
+`backend/services/logfire_scrubber.py` is wired via `logfire.configure(scrubbing=ScrubbingOptions(callback=scrub_value, extra_patterns=EXTRA_PATTERNS))`. Its purpose: Pydantic AI writes full prompt text and model output into span attributes. For Sapling that means uploaded document text — containing student PII — flowing to `logfire.pydantic.dev`.
+
+The scrubber intercepts attributes whose JsonPath contains any of the risky tokens (`prompt`, `completion`, `messages`, `all_messages_events`, `content`, `gen_ai.prompt`, `gen_ai.completion`, `ai.input.messages`, `ai.output.value`, `user_prompt`, `input.value`, `output.value`). For matching attributes, it applies `_sanitize`:
+
+```python
+# strings longer than 80 chars become:
+f"{value[:80]}…[redacted, {len(value)} chars, sha256:{fingerprint_text(value, length=16)}]"
+```
+
+Lists and dicts are recursed into. For non-risky attributes that match Logfire''s built-in patterns (e.g. `password`, `api_key`), the callback returns `None`, deferring to Logfire''s full-redaction behavior. The SHA-256 fingerprint comes from `backend/services/fingerprint.py` — the same helper used for quiz-drift log warnings — enabling cross-log correlation without shipping the body.
+
+### Per-request correlation IDs (ADR-0009)
+
+`backend/services/request_context.py` provides `RequestIDMiddleware`, added **outermost** in `backend/main.py` so every response is tagged. The middleware:
+
+1. Reads `X-Request-ID` from the incoming request; accepts caller-supplied IDs matching `^[A-Za-z0-9_\-]{8,128}$`, generates a `uuid4` otherwise.
+2. Stashes the ID on `request.state.request_id` and in a `contextvars.ContextVar` (accessible anywhere without parameter threading via `current_request_id()`).
+3. Echoes the ID back as `X-Request-ID` on every response, including error responses and SSE error events.
+
+Three global exception handlers include `request_id` in the JSON error body. The streaming `/upload` route''s SSE error events also carry the middleware ID, so a user pasting an error toast can be looked up directly in Logfire.
+
+### Planned: usage analytics (cohort #115–#122)
+
+A planned observability expansion will write curated domain events to owned Supabase tables (`events` and `llm_usage`) in a fire-and-forget async path. No raw content is stored — only SHA-256 fingerprints reusing the scrubber helper. The `llm_usage` table will capture per-call token counts and computed cost per model/feature. This supplements Logfire''s ops traces with queryable usage and cost rollups. See `docs/observability-logging-tracking.md`.
+
+---
+
+## Security
+
+The backend security wave (audit #136 P0/P1s) shipped 2026-06-24. Both P0 data-exposure bugs are closed:
+
+- **P0 #123** — calendar export IDOR: all calendar queries now scoped by `user_id`.
+- **P0 #124** — study-room realtime chat displayed ciphertext instead of decrypting: REST re-fetch now routes through the decrypting backend endpoint before render.
+
+Additional hardening from the same wave: cross-user document leak closed (`search_course_materials` user-scoped, #125); encryption boundary gaps filled at write-time for syllabus notes and at read-time for gradebook/profile responses (#126); fail-closed config validation (#174); OCR endpoint gated with auth + 15 MB size cap + rate limit (#182); profile route gating + cookie-domain CSRF fix (#189/#190); gemini-test and careers/newsletter routes gated (#198/#199); issue-screenshot upload routed through an auth-gated backend (#231); project-wide RLS lockdown applied to production (#231, `docs/security/rls-lockdown-plan.md`).
+
+See `SECURITY.md` for the full security reference.
+
+---
+
+## Deploy
+
+**Frontend** is deployed to **Cloudflare Workers** via `@opennextjs/cloudflare`. The Next.js app is built with `npm run cf:build` (OpenNext adapter) and deployed with `npm run cf:deploy`. TLS terminates at the Cloudflare edge for `*.saplinglearn.com`.
+
+**Staging environment (#100, shipped 2026-06-24):** `frontend/wrangler.toml` defines a `[env.staging]` block that points `NEXT_PUBLIC_API_URL` and `BACKEND_URL` at `https://api.staging.saplinglearn.com` and scopes cookies to `.staging.saplinglearn.com` (preventing prod/staging session cross-contamination). Staging uses a separate Supabase project with its own `ENCRYPTION_KEY`. A configurable `ALLOWED_EMAIL_DOMAINS` env var lets the staging backend accept non-`bu.edu` accounts for internal testing. An idempotent seed script (`backend/db/seed_staging.py`) populates a fake demo dataset (graph, gradebook, courses-with-term) against the modular schema.
+
+**Backend** runs as a containerized FastAPI app (`backend/Dockerfile`); `docker-compose.yml` wires the service for local development.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-adr-pydantic-ai', 'decisions', 'ADR-0001 · Adopt Pydantic AI', '## Context
+
+Every LLM call in the Sapling backend historically went through `services/gemini_service.py` as bare `google-genai` calls returning unstructured strings that callers parsed downstream. As features grew — document classification, concept extraction, quiz generation, syllabus parsing, tutor chat — the seam began leaking: output parsing, retries, structured output, and tool calling were reimplemented per route. Streaming progress to the client was custom per endpoint. The pattern did not scale to where the product was heading.
+
+## Decision
+
+Adopt Pydantic AI (`pydantic-ai-slim[google]`) as a thin framework wrapping `google-genai`. New agents live in `backend/agents/`. The existing `services/gemini_service.py` is retained as-is during migration; agents are introduced one refactor at a time. Streaming uses `agent.run_stream_events()`. Multi-step flows use agent delegation. Observability uses Logfire. Model selection stays Gemini-only — provider portability is not a paid-for feature at this stage.
+
+## Rationale
+
+Pydantic AI provides typed inputs and outputs via Pydantic models, eliminating per-route parsing code. Tool-calling becomes a unified pattern rather than an ad-hoc reimplementation. `run_stream_events()` yields typed events the frontend can render directly. Logfire attaches free traces across agents, tools, and LLM calls with no additional instrumentation code.
+
+## Consequences
+
+- (+) Typed inputs and outputs via Pydantic models — fewer parsing bugs.
+- (+) Tool-calling unifies a pattern previously reimplemented in `learn.py` and `quiz.py`.
+- (+) `run_stream_events()` gives typed events the frontend can render directly.
+- (+) Logfire gives free traces across agents, tools, and LLM calls.
+- (−) New dependency to keep current. Pydantic AI is moving fast (issue #2293 on thought-signature handling was open at time of writing).
+- (−) Two paradigms coexist during migration. `gemini_service.py` is the legacy fallback until refactor #3 ships.
+- (−) The Gemini free tier was removed as of December 2025 — billing must be enabled before agents go to production.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-adr-pydantic-ai', 1, '## Context
+
+Every LLM call in the Sapling backend historically went through `services/gemini_service.py` as bare `google-genai` calls returning unstructured strings that callers parsed downstream. As features grew — document classification, concept extraction, quiz generation, syllabus parsing, tutor chat — the seam began leaking: output parsing, retries, structured output, and tool calling were reimplemented per route. Streaming progress to the client was custom per endpoint. The pattern did not scale to where the product was heading.
+
+## Decision
+
+Adopt Pydantic AI (`pydantic-ai-slim[google]`) as a thin framework wrapping `google-genai`. New agents live in `backend/agents/`. The existing `services/gemini_service.py` is retained as-is during migration; agents are introduced one refactor at a time. Streaming uses `agent.run_stream_events()`. Multi-step flows use agent delegation. Observability uses Logfire. Model selection stays Gemini-only — provider portability is not a paid-for feature at this stage.
+
+## Rationale
+
+Pydantic AI provides typed inputs and outputs via Pydantic models, eliminating per-route parsing code. Tool-calling becomes a unified pattern rather than an ad-hoc reimplementation. `run_stream_events()` yields typed events the frontend can render directly. Logfire attaches free traces across agents, tools, and LLM calls with no additional instrumentation code.
+
+## Consequences
+
+- (+) Typed inputs and outputs via Pydantic models — fewer parsing bugs.
+- (+) Tool-calling unifies a pattern previously reimplemented in `learn.py` and `quiz.py`.
+- (+) `run_stream_events()` gives typed events the frontend can render directly.
+- (+) Logfire gives free traces across agents, tools, and LLM calls.
+- (−) New dependency to keep current. Pydantic AI is moving fast (issue #2293 on thought-signature handling was open at time of writing).
+- (−) Two paradigms coexist during migration. `gemini_service.py` is the legacy fallback until refactor #3 ships.
+- (−) The Gemini free tier was removed as of December 2025 — billing must be enabled before agents go to production.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-adr-model-routing', 'decisions', 'ADR-0008 · Per-task model routing', '## Context
+
+Until this ADR every worker agent hardcoded `gemini-2.5-flash` via `google_model("gemini-2.5-flash")`. That was reasonable for V1 — one model, easy to reason about — but it left costs on the table. The 7-way document classifier and short-form summary generation are both tasks where Flash is overkill; Flash-Lite handles them at meaningfully lower cost. Concept extraction and syllabus parsing, by contrast, benefit from full Flash due to schema constraints, date parsing, and structured-list outputs. Hardcoding the model in each module also meant any model swap required a code edit and a redeploy.
+
+## Decision
+
+Replace `google_model(name)` with a task-keyed selector in `backend/agents/_providers.py::model_for(task)`. The default routing table is:
+
+| Task | Default model |
+|---|---|
+| classifier | `gemini-2.5-flash-lite` |
+| summary | `gemini-2.5-flash-lite` |
+| concepts | `gemini-2.5-flash` |
+| syllabus | `gemini-2.5-flash` |
+
+Operators override any task via env var: `SAPLING_MODEL_<TASK_UPPER>` (e.g. `SAPLING_MODEL_CLASSIFIER=gemini-2.5-pro`). Selection happens at module import (process start) — changes require a restart, not a redeploy. `google_model(name)` stays as a back-compat shim so callers that want to pin a specific model can bypass the selector.
+
+Cost telemetry comes for free: `genai-prices` is a transitive dependency of `pydantic-ai-slim[google]`, and Logfire''s `instrument_pydantic_ai()` auto-attaches `gen_ai.usage.input_tokens`, `output_tokens`, and `gen_ai.cost.usd` to every span.
+
+## Rationale
+
+Two lighter tasks (classify, summarize) can run on a cheaper model with no meaningful quality loss. A 40–60% Gemini spend reduction on those steps is estimated. Centralizing selection in `model_for(task)` also makes A/B testing model choices an env-var change rather than a code change, and Logfire''s per-task spans make cost attribution straightforward.
+
+## Consequences
+
+- (+) Estimated 40–60% Gemini spend reduction on the classifier and summary steps with no behavior regression.
+- (+) Model swaps are an env-var change — can A/B Flash vs Flash-Lite vs a fine-tuned model without touching code.
+- (+) Per-task telemetry rolls up cleanly in Logfire because each agent run is its own span tagged with the model name.
+- (−) Gemini Flash-Lite has lower-quality outputs on edge cases. A 25-case classifier eval set was added alongside this ADR to catch regressions before they ship.
+- (−) Process restart required for model changes. Acceptable — models are not swapped per request, and a bounce is a ~30s operation.
+- (−) The defaults are opinionated guesses; after a quarter of production data, revisit.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-adr-model-routing', 1, '## Context
+
+Until this ADR every worker agent hardcoded `gemini-2.5-flash` via `google_model("gemini-2.5-flash")`. That was reasonable for V1 — one model, easy to reason about — but it left costs on the table. The 7-way document classifier and short-form summary generation are both tasks where Flash is overkill; Flash-Lite handles them at meaningfully lower cost. Concept extraction and syllabus parsing, by contrast, benefit from full Flash due to schema constraints, date parsing, and structured-list outputs. Hardcoding the model in each module also meant any model swap required a code edit and a redeploy.
+
+## Decision
+
+Replace `google_model(name)` with a task-keyed selector in `backend/agents/_providers.py::model_for(task)`. The default routing table is:
+
+| Task | Default model |
+|---|---|
+| classifier | `gemini-2.5-flash-lite` |
+| summary | `gemini-2.5-flash-lite` |
+| concepts | `gemini-2.5-flash` |
+| syllabus | `gemini-2.5-flash` |
+
+Operators override any task via env var: `SAPLING_MODEL_<TASK_UPPER>` (e.g. `SAPLING_MODEL_CLASSIFIER=gemini-2.5-pro`). Selection happens at module import (process start) — changes require a restart, not a redeploy. `google_model(name)` stays as a back-compat shim so callers that want to pin a specific model can bypass the selector.
+
+Cost telemetry comes for free: `genai-prices` is a transitive dependency of `pydantic-ai-slim[google]`, and Logfire''s `instrument_pydantic_ai()` auto-attaches `gen_ai.usage.input_tokens`, `output_tokens`, and `gen_ai.cost.usd` to every span.
+
+## Rationale
+
+Two lighter tasks (classify, summarize) can run on a cheaper model with no meaningful quality loss. A 40–60% Gemini spend reduction on those steps is estimated. Centralizing selection in `model_for(task)` also makes A/B testing model choices an env-var change rather than a code change, and Logfire''s per-task spans make cost attribution straightforward.
+
+## Consequences
+
+- (+) Estimated 40–60% Gemini spend reduction on the classifier and summary steps with no behavior regression.
+- (+) Model swaps are an env-var change — can A/B Flash vs Flash-Lite vs a fine-tuned model without touching code.
+- (+) Per-task telemetry rolls up cleanly in Logfire because each agent run is its own span tagged with the model name.
+- (−) Gemini Flash-Lite has lower-quality outputs on edge cases. A 25-case classifier eval set was added alongside this ADR to catch regressions before they ship.
+- (−) Process restart required for model changes. Acceptable — models are not swapped per request, and a bounce is a ~30s operation.
+- (−) The defaults are opinionated guesses; after a quarter of production data, revisit.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-adr-sse-protocol', 'decisions', 'ADR-0006 · SSE protocol choice', '## Context
+
+The document upload re-architecture research plan (PR #67) recommended using `pydantic_ai.ui.vercel_ai.VercelAIAdapter.dispatch_request(request, agent=agent)` for streaming. This was the path of least resistance: Pydantic AI ships an adapter that emits Vercel AI''s wire protocol, the React frontend could use Vercel''s `useChat`-style hooks directly, and there would be no custom wire format to maintain.
+
+Sapling deviated. Streaming runs through `sse-starlette`''s `EventSourceResponse` plus a custom `SaplingEvent` schema and a `map_to_sapling_event(event)` function in `backend/services/agent_events.py`. That mapper translates Pydantic AI''s internal event types by class name (not by import). The frontend consumes the stream via a custom `streamSSE` async generator in `frontend/src/lib/sse.ts`.
+
+## Decision
+
+Keep the custom SSE path. Do not adopt `VercelAIAdapter`.
+
+## Rationale
+
+The primary motivation is stability against upstream churn. The mapper dispatches by `type(event).__name__`, so a Pydantic AI class rename (e.g. `FunctionToolCallEvent` → `ToolCallEvent`) does not break the wire format — only the mapper needs updating. The frontend is not coupled to Vercel AI''s protocol or hooks, which means the agent framework can be swapped or supplemented with non-agent event sources (such as the legacy fallback pipeline) without rewriting the React consumer.
+
+The custom `streamSSE` helper is 90 lines, is reusable for future SSE endpoints (the chat tutor stream in refactor #4), and has 9 Vitest tests covering it. The upload UX is a one-shot stream rather than a multi-turn chat, so importing Vercel AI''s `useChat` abstractions would bring in 80% unused surface area.
+
+## Consequences
+
+- (+) Stable Sapling-domain events (`progress:classify`, `progress:classified`, `progress:graph_update`, `result:finalize`, `status:done`) survive Pydantic AI version churn.
+- (+) The frontend is decoupled from Vercel AI''s protocol and hooks; the agent framework can be replaced without rewriting the React consumer.
+- (+) `streamSSE` is a generic reusable helper for future SSE endpoints.
+- (−) The wire format is hand-rolled. Bugs such as the `\r\n\r\n` separator mismatch (caught and fixed in commit `b6f395e`) would not have occurred with the adapter.
+- (−) Vercel AI''s `useChat` integration is unavailable; `uploadDocumentStream` was written from scratch.
+- (−) When the chat tutor (refactor #4) is built, its streaming must reuse this seam rather than getting Vercel''s chat abstractions for free.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-adr-sse-protocol', 1, '## Context
+
+The document upload re-architecture research plan (PR #67) recommended using `pydantic_ai.ui.vercel_ai.VercelAIAdapter.dispatch_request(request, agent=agent)` for streaming. This was the path of least resistance: Pydantic AI ships an adapter that emits Vercel AI''s wire protocol, the React frontend could use Vercel''s `useChat`-style hooks directly, and there would be no custom wire format to maintain.
+
+Sapling deviated. Streaming runs through `sse-starlette`''s `EventSourceResponse` plus a custom `SaplingEvent` schema and a `map_to_sapling_event(event)` function in `backend/services/agent_events.py`. That mapper translates Pydantic AI''s internal event types by class name (not by import). The frontend consumes the stream via a custom `streamSSE` async generator in `frontend/src/lib/sse.ts`.
+
+## Decision
+
+Keep the custom SSE path. Do not adopt `VercelAIAdapter`.
+
+## Rationale
+
+The primary motivation is stability against upstream churn. The mapper dispatches by `type(event).__name__`, so a Pydantic AI class rename (e.g. `FunctionToolCallEvent` → `ToolCallEvent`) does not break the wire format — only the mapper needs updating. The frontend is not coupled to Vercel AI''s protocol or hooks, which means the agent framework can be swapped or supplemented with non-agent event sources (such as the legacy fallback pipeline) without rewriting the React consumer.
+
+The custom `streamSSE` helper is 90 lines, is reusable for future SSE endpoints (the chat tutor stream in refactor #4), and has 9 Vitest tests covering it. The upload UX is a one-shot stream rather than a multi-turn chat, so importing Vercel AI''s `useChat` abstractions would bring in 80% unused surface area.
+
+## Consequences
+
+- (+) Stable Sapling-domain events (`progress:classify`, `progress:classified`, `progress:graph_update`, `result:finalize`, `status:done`) survive Pydantic AI version churn.
+- (+) The frontend is decoupled from Vercel AI''s protocol and hooks; the agent framework can be replaced without rewriting the React consumer.
+- (+) `streamSSE` is a generic reusable helper for future SSE endpoints.
+- (−) The wire format is hand-rolled. Bugs such as the `\r\n\r\n` separator mismatch (caught and fixed in commit `b6f395e`) would not have occurred with the adapter.
+- (−) Vercel AI''s `useChat` integration is unavailable; `uploadDocumentStream` was written from scratch.
+- (−) When the chat tutor (refactor #4) is built, its streaming must reuse this seam rather than getting Vercel''s chat abstractions for free.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-adr-durable-execution', 'decisions', 'ADR-0011 · Durable execution (DBOS)', '## Context
+
+The agentic upload pipeline is in-memory only. If a FastAPI worker process dies mid-upload — pod restart, OOM kill, deploy rollover — the user''s upload is lost and they must retry from scratch, re-paying for OCR, classification, concept extraction, syllabus parsing, and graph update. At Sapling''s early scale this is tolerable: few users hit a flaky upload, the retry cost is bounded, and users accept that uploads can fail. As the user base grows and pipeline steps multiply (especially once the chat tutor agent spawns downstream artifacts), re-running becomes expensive and the failure mode stops being acceptable.
+
+Pydantic AI has first-class integrations with two durable-execution frameworks: DBOS and Temporal. This ADR makes the choice explicit and defines the activation path.
+
+## Decision
+
+Adopt DBOS Transact (`pydantic-ai-dbos`) when conditions are met. A shim module (`backend/services/durable.py`) ships with `@workflow` and `@step` decorators that:
+
+- Activate as real DBOS decorators when `DBOS_ENABLED=true`, the `dbos` package is importable, and `DBOS_DATABASE_URL` is set.
+- Otherwise, no-op as identity passthroughs — code runs identically to pre-ADR behavior.
+
+`@durable_workflow` is applied to `agents.document.process_document`. Each agent run inside `_run_workers` is wrapped with `@durable_step` (`_step_classify`, `_step_summary`, `_step_concepts`, `_step_syllabus`). With DBOS active, a worker crash mid-`asyncio.gather` resumes at the last completed step rather than re-running the whole workflow.
+
+DBOS is preferred over Temporal because it is in-process (no separate worker tier), requires only Postgres for state storage (which Sapling already runs via Supabase), and has a first-party Pydantic AI integration.
+
+**Streaming-route asymmetry (intentional):** The streaming `POST /api/documents/upload` route bypasses `process_document` and calls each agent inline to emit SSE progress events between phases. Those inline calls are NOT wrapped in the durable workflow — only `/upload/sync` gets durability. SSE connections are per-process; if the worker crashes, the client''s stream is gone before any resume could deliver events. Re-running the whole pipeline on the next client retry (deduplicated by `X-Request-ID`) is the correct semantic.
+
+## Rationale
+
+The shim approach lets the codebase adopt the durability contract without blocking on operational readiness. The default is safe (no-op), and operators can activate DBOS by setting three env vars and running a migration — no code changes required.
+
+## Consequences
+
+- (+) Zero behavior change until DBOS is explicitly activated; existing tests pass unchanged.
+- (+) When activated, mid-pipeline crashes resume at the last completed step rather than restarting from zero.
+- (+) Idempotency keys (per ADR-0009 + the `documents.request_id` migration) compose with DBOS — a restarted workflow re-checks the idempotency cache before re-running.
+- (−) Activation requires a dedicated Postgres schema for DBOS metadata (cannot reuse Supabase RLS tables), a dependency install (`pip install dbos`), and a migration step.
+- (−) The streaming upload route does not get durability; this is intentional but means durable streaming UX requires the two-phase design from ADR-0010.
+- (−) Test coverage for resume behavior and production validation of DBOS activation remain outstanding.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-adr-durable-execution', 1, '## Context
+
+The agentic upload pipeline is in-memory only. If a FastAPI worker process dies mid-upload — pod restart, OOM kill, deploy rollover — the user''s upload is lost and they must retry from scratch, re-paying for OCR, classification, concept extraction, syllabus parsing, and graph update. At Sapling''s early scale this is tolerable: few users hit a flaky upload, the retry cost is bounded, and users accept that uploads can fail. As the user base grows and pipeline steps multiply (especially once the chat tutor agent spawns downstream artifacts), re-running becomes expensive and the failure mode stops being acceptable.
+
+Pydantic AI has first-class integrations with two durable-execution frameworks: DBOS and Temporal. This ADR makes the choice explicit and defines the activation path.
+
+## Decision
+
+Adopt DBOS Transact (`pydantic-ai-dbos`) when conditions are met. A shim module (`backend/services/durable.py`) ships with `@workflow` and `@step` decorators that:
+
+- Activate as real DBOS decorators when `DBOS_ENABLED=true`, the `dbos` package is importable, and `DBOS_DATABASE_URL` is set.
+- Otherwise, no-op as identity passthroughs — code runs identically to pre-ADR behavior.
+
+`@durable_workflow` is applied to `agents.document.process_document`. Each agent run inside `_run_workers` is wrapped with `@durable_step` (`_step_classify`, `_step_summary`, `_step_concepts`, `_step_syllabus`). With DBOS active, a worker crash mid-`asyncio.gather` resumes at the last completed step rather than re-running the whole workflow.
+
+DBOS is preferred over Temporal because it is in-process (no separate worker tier), requires only Postgres for state storage (which Sapling already runs via Supabase), and has a first-party Pydantic AI integration.
+
+**Streaming-route asymmetry (intentional):** The streaming `POST /api/documents/upload` route bypasses `process_document` and calls each agent inline to emit SSE progress events between phases. Those inline calls are NOT wrapped in the durable workflow — only `/upload/sync` gets durability. SSE connections are per-process; if the worker crashes, the client''s stream is gone before any resume could deliver events. Re-running the whole pipeline on the next client retry (deduplicated by `X-Request-ID`) is the correct semantic.
+
+## Rationale
+
+The shim approach lets the codebase adopt the durability contract without blocking on operational readiness. The default is safe (no-op), and operators can activate DBOS by setting three env vars and running a migration — no code changes required.
+
+## Consequences
+
+- (+) Zero behavior change until DBOS is explicitly activated; existing tests pass unchanged.
+- (+) When activated, mid-pipeline crashes resume at the last completed step rather than restarting from zero.
+- (+) Idempotency keys (per ADR-0009 + the `documents.request_id` migration) compose with DBOS — a restarted workflow re-checks the idempotency cache before re-running.
+- (−) Activation requires a dedicated Postgres schema for DBOS metadata (cannot reuse Supabase RLS tables), a dependency install (`pip install dbos`), and a migration step.
+- (−) The streaming upload route does not get durability; this is intentional but means durable streaming UX requires the two-phase design from ADR-0010.
+- (−) Test coverage for resume behavior and production validation of DBOS activation remain outstanding.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES ('sapling-adr-drop-orchestrator', 'decisions', 'ADR-0007 · Drop the orchestrator agent', '## Context
+
+PR #67 originally landed with a `document_agent` that wrapped the graph-update step in an LLM-driven agent. The upload route called `document_agent.run_stream_events(...)`; the agent had one tool (`apply_graph_update_tool`); the tool merged extracted concept names into the user''s course graph.
+
+In practice the agent had zero decisions to make. By the time it ran, classification, summary, concept extraction, and (when applicable) syllabus parsing had all completed. Concept names were already extracted and validated. The orchestrator''s only job was "call this one tool with these arguments." The project was paying for a Gemini Pro round-trip (~1–2 seconds plus Pro-tier tokens) to invoke a deterministic function.
+
+The agent loop is justified when (a) the LLM must choose which tools to call, (b) the LLM iterates with intermediate tool results, or (c) retry-on-validation is needed. None of those conditions applied to the graph-update step.
+
+## Decision
+
+Drop `document_agent` and `GraphUpdateConfirmation`. Replace the agent loop in both upload routes with a direct call to a new async function `apply_concepts_to_graph(user_id, course_id, concept_names) -> int` in `backend/agents/tools/graph.py`. The Pydantic AI tool wrapper (`apply_graph_update_tool`) is retained so future agents that legitimately need a graph-update tool surface can register it.
+
+The streaming `/upload` route emits two new SSE events around the direct call — `progress:graph_update` and `progress:graph_updated` — so the user''s progress experience is unchanged.
+
+## Rationale
+
+The orchestrator added latency and cost without adding intelligence. Removing it makes the pipeline faster, cheaper, and easier to reason about. "Agent" in `backend/agents/` now has a clear meaning: a component that produces a typed output from unstructured text, where the LLM has a real decision to make. The graph-update step is a deterministic merge, not a decision.
+
+## Consequences
+
+- (+) One fewer Gemini call per upload — saves ~1–2 seconds wall-clock and the Gemini Pro tokens.
+- (+) One fewer failure surface. `UsageLimitExceeded` and `UnexpectedModelBehavior` no longer apply to a step that never had a real loop.
+- (+) Cleaner mental model: "agent" means "produces a typed output from text," not "wrapper around a single function call."
+- (+) `apply_concepts_to_graph` is callable from anywhere — background workers, the legacy fallback — not only from agent contexts.
+- (−) If a future need arises to make graph-update logic LLM-driven (e.g. decide which concepts to merge based on existing graph state), an agent of the same shape would need to be reintroduced. The tool wrapper stays in place to make that reintroduction trivial.
+- (−) The "agentic upload" framing is now slightly less accurate: the worker phases are agents; the merge step is not. The pipeline is still typed, parallel, and observable — it is simply honest about which steps need an LLM.
+
+## Rule going forward
+
+If an agent''s job is "call this tool with these arguments and return," it is not an agent. Use a direct function call. Reserve agent loops for steps where the LLM has a real decision to make.', 1, '2026-06-25T20:00:00Z', 'AndresL230', 'sapling');
+INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES ('sapling-adr-drop-orchestrator', 1, '## Context
+
+PR #67 originally landed with a `document_agent` that wrapped the graph-update step in an LLM-driven agent. The upload route called `document_agent.run_stream_events(...)`; the agent had one tool (`apply_graph_update_tool`); the tool merged extracted concept names into the user''s course graph.
+
+In practice the agent had zero decisions to make. By the time it ran, classification, summary, concept extraction, and (when applicable) syllabus parsing had all completed. Concept names were already extracted and validated. The orchestrator''s only job was "call this one tool with these arguments." The project was paying for a Gemini Pro round-trip (~1–2 seconds plus Pro-tier tokens) to invoke a deterministic function.
+
+The agent loop is justified when (a) the LLM must choose which tools to call, (b) the LLM iterates with intermediate tool results, or (c) retry-on-validation is needed. None of those conditions applied to the graph-update step.
+
+## Decision
+
+Drop `document_agent` and `GraphUpdateConfirmation`. Replace the agent loop in both upload routes with a direct call to a new async function `apply_concepts_to_graph(user_id, course_id, concept_names) -> int` in `backend/agents/tools/graph.py`. The Pydantic AI tool wrapper (`apply_graph_update_tool`) is retained so future agents that legitimately need a graph-update tool surface can register it.
+
+The streaming `/upload` route emits two new SSE events around the direct call — `progress:graph_update` and `progress:graph_updated` — so the user''s progress experience is unchanged.
+
+## Rationale
+
+The orchestrator added latency and cost without adding intelligence. Removing it makes the pipeline faster, cheaper, and easier to reason about. "Agent" in `backend/agents/` now has a clear meaning: a component that produces a typed output from unstructured text, where the LLM has a real decision to make. The graph-update step is a deterministic merge, not a decision.
+
+## Consequences
+
+- (+) One fewer Gemini call per upload — saves ~1–2 seconds wall-clock and the Gemini Pro tokens.
+- (+) One fewer failure surface. `UsageLimitExceeded` and `UnexpectedModelBehavior` no longer apply to a step that never had a real loop.
+- (+) Cleaner mental model: "agent" means "produces a typed output from text," not "wrapper around a single function call."
+- (+) `apply_concepts_to_graph` is callable from anywhere — background workers, the legacy fallback — not only from agent contexts.
+- (−) If a future need arises to make graph-update logic LLM-driven (e.g. decide which concepts to merge based on existing graph state), an agent of the same shape would need to be reintroduced. The tool wrapper stays in place to make that reintroduction trivial.
+- (−) The "agentic upload" framing is now slightly less accurate: the worker phases are agents; the merge step is not. The pipeline is still typed, parallel, and observable — it is simply honest about which steps need an LLM.
+
+## Rule going forward
+
+If an agent''s job is "call this tool with these arguments and return," it is not an agent. Use a direct function call. Reserve agent loops for steps where the LLM has a real decision to make.', 'Initial published version', 'promoted', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+
+INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('P0 data-exposure fixes + doc pipeline refactor + semesters', 'Ship both P0 cross-user data-exposure bugs (#123/#124), refactor the document pipeline into discrete steps, and deliver semester-scoped grades and classes via the DB modular redesign.', '2026-06-30', 'done', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Agent migration surfaces + staging + performance', 'Migrate calendar, quiz, flashcard, and remaining one-shot LLM call sites off gemini_service onto Pydantic AI agents, ship the staging environment, and land caching and perf improvements.', '2026-07-05', 'in_progress', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Retire gemini_service as primary LLM seam (epic #152)', 'Complete the final cutover (#151) to remove all call_gemini* call sites and gemini_service.py, including the ADR-0001 legacy chat fallback, with output-retry hardening and DBOS durability optionally activated.', '2026-07-31', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Graph-aware tutor end to end (#149)', 'Deliver graph-grounded retrieval and tool-use loop in the tutor agent, backed by a scaled graph data model and query-performance improvements on graph_nodes/graph_edges.', '2026-08-31', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Observability live (cohort #115–#122)', 'Ship backend usage tracking, request correlation IDs, and the observability dashboard UI so the team has operational visibility into LLM costs, pipeline latency, and user activity.', '2026-08-31', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES ('Stable beta with real students', 'Reach production readiness — backups, monitoring, load testing, prompt-injection hardening, accessibility pass, and onboarding flow — and launch the beta to real students.', '2026-09-30', 'upcoming', NULL, '2026-06-25T20:00:00Z', 'AndresL230', '2026-06-25T20:00:00Z');
+
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Shipped DB modular redesign across eight reviewed domain slices (migrations 0019–0028)', 'A full target-schema sweep on epic/db-modular-redesign split courses into courses/course_offerings/terms with enrollments, moved profile fields into user_profiles, added enrollment-keyed gradebook and offering-keyed analytics, and hardened knowledge-graph integrity with UNIQUE-backed upserts. Suite green and 14/14 service checks passed against live staging; awaiting epic-to-main cutover.', NULL, '2026-06-24T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('architecture', 'feed', '1');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('data', 'feed', '1');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Shipped ordered migration runner with CLI on psycopg (#197)', 'Migrations moved into a versioned db/migrations/ directory with an apply/baseline runner; cosmetic FK constraints made idempotent (#196).', NULL, '2026-06-24T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('infra', 'feed', '2');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('data', 'feed', '2');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Stood up staging environment (#100) with separate Supabase project and sign-in allowlist', 'Staging frontend Worker env configured in wrangler.toml (Phase 4) with a configurable email-domain allowlist and its own ENCRYPTION_KEY; staging uses an isolated Supabase project to prevent data bleed from production.', NULL, '2026-06-24T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('infra', 'feed', '3');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Closed both P0 data-exposure bugs and shipped a wave of security hardening (backend audit #136)', 'P0 #123 (calendar export IDOR) and P0 #124 (realtime chat ciphertext) are closed; related hardening covered cross-user doc leak (#125), encryption boundaries (#126), fail-closed config validation (#174), OCR auth+rate-limit (#182), profile-route gating (#189/#190), and auth-gated issue-screenshot upload (#231).', NULL, '2026-06-24T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('auth', 'feed', '4');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('api', 'feed', '4');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Landed frontend design wave 2, a11y wave 2, and CI lint baseline', 'Removed the Liquid Glass system for solid panel surfaces and consolidated brand green tokens (#102–#104/#106/#112); shipped WCAG AA contrast fixes, visible focus rings, and modal focus trap (#107/#108); added ruff lint ratchet and frontend eslint bulk-suppressions baseline so CI gates pass (#193/#194).', NULL, '2026-06-24T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('ui', 'feed', '5');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Applied production RLS lockdown — revoked anon DML on 38 of 40 Supabase tables', 'The Supabase anon role had full SELECT/INSERT/UPDATE/DELETE on 38 public tables via PostgREST, allowing anyone with the frontend-bundled anon key to read and write the entire database. ENABLE ROW LEVEL SECURITY and REVOKE were applied directly to prod on 2026-06-13; service_role bypasses RLS and continues to function normally.', NULL, '2026-06-13T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('auth', 'feed', '6');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('infra', 'feed', '6');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('AndresL230', 'Fixed notetaker data-loss bug — debounced autosave now flushes on unmount (#133)', 'The notetaker page was dropping in-flight autosave writes when navigating away; the debounced save is now flushed rather than cancelled, preventing silent note loss.', NULL, '2026-06-24T18:00:00.000Z');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('ui', 'feed', '7');
+INSERT INTO entry_tags (tag, entry_type, entry_id) VALUES ('api', 'feed', '7');
+
+INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by) VALUES ('Two-phase async document upload to eliminate blocking OCR on the upload critical path', 'extract_text_from_file currently runs synchronously inside the upload route. A 14-page scanned PDF blocks the SSE stream from opening for 3–5 s; bad scans can hold the connection for 20 s or more. A lightweight in-process async path shipped behind OCR_ASYNC_ENABLED but the full two-phase design (POST returns 202 + GET /upload/<id>/events) is deferred because it requires queue infrastructure, a processing_status state machine on documents, and a resumable SSE consumer. ADR 0010 and ADR 0011 (DBOS) are coupled — crash recovery for the background worker depends on which durable-execution path is activated.', 'Defer the full two-phase upload until p95 OCR latency from Logfire exceeds 5 s or browser timeouts appear in production; activate OCR_ASYNC_ENABLED in staging immediately to collect latency data. If the trigger fires, adopt Dramatiq as the queue (lowest-overhead option for FastAPI) and sequence after ADR 0011 is fully activated so durability and queueing ship as one surface.', 'The in-process async flag delivers most of the user-visible benefit — no blank spinner before classification — without new infrastructure. Adding a queue before measuring whether OCR latency is actually a problem risks operational overhead for a theoretical gain; tying the decision to a concrete p95 threshold ensures the complexity is justified before it is incurred.', 'draft', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by) VALUES ('Realtime room-chat JWT bridge to restore live updates under Row-Level Security', 'The production RLS lockdown (2026-06-13) revoked anon read on all tables including the realtime publication, so Supabase Realtime subscriptions from the frontend now receive no events. The interim fix (#230) makes the chat UI re-fetch room messages via the decrypting REST endpoint on each send, which is synchronous and misses messages from other participants in real time. Two options are documented: (a) mint a short-lived Supabase JWT at login and add a membership-scoped RLS policy so the anon subscription works under RLS, or (b) keep the REST-polling model and accept the latency. Option (a) has a known complexity: the session cookie lives 30 days but a Supabase JWT expires in ~1 h, requiring a refresh path that does not currently exist.', 'This decision is open and must be made before the beta launch. Option (a) is preferred if the JWT refresh path can be kept in a single route (POST /api/auth/refresh-realtime-token) that the frontend calls on 401 from the Realtime socket; option (b) is acceptable as a temporary measure if the refresh complexity cannot be bounded in the current sprint.', 'Real-time chat is a core tutoring-app feature; polling is a degraded experience that will surface in user feedback during beta. However, introducing a JWT refresh loop without careful design risks session-expiry edge cases that could lock users out of chat. The decision needs human sign-off because the tradeoffs span auth security, UX, and sprint scope.', 'draft', 'high', '2026-06-25T20:00:00Z', 'AndresL230');
+
+INSERT INTO needs_triage (raw, reason, source_author, resolved, created_at) VALUES ('sessions.summary_json and messages.content are listed as encrypted in CLAUDE.md but were stored plaintext and were anon-readable during the RLS exposure window (Feb–June 2026); encrypt them and correct the docs.', 'Unclear whether this requires a backfill migration on live data, a new encryption boundary in the service layer, or both — and whether any of the exposed content warrants user notification. A human must assess the data-exposure scope and decide on the remediation path before the ticket is filed as a straightforward engineering task.', 'AndresL230', 0, '2026-06-25T20:00:00Z');
+INSERT INTO needs_triage (raw, reason, source_author, resolved, created_at) VALUES ('storage hardening (#231): application_resumes bucket is still public-read (résumé PII) and issues-media-files is public and anon-writable — plan in docs/security/storage-hardening-plan.md but not yet merged or deployed.', 'The plan document exists but the remediation has not been applied; it is unclear whether the fix requires coordinating with active users who may have direct links to their résumé files, and whether the issues-media-files bucket can be locked without breaking the screenshot-upload flow that shipped in #231. A human must confirm scope before the fix is treated as a simple PR.', 'AndresL230', 0, '2026-06-25T20:00:00Z');

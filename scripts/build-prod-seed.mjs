@@ -3,7 +3,7 @@
 // Content documents the REAL Canopy system (accurate to the codebase). One-time bootstrap
 // of an empty prod store; re-running resets the content tables (safe ONLY before agents
 // start writing real content via MCP).
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 
 const AUTHOR = "AndresL230";
 const NOW = "2026-06-25T20:00:00Z";
@@ -168,34 +168,36 @@ Decision: one electric-green accent with two tuned values (bright on black, deep
 Rationale: a single accent keeps live and active state unambiguous and the interface stark and fast to scan, which suits a reference tool the team checks constantly.`},
 ];
 
-// ── Roadmap milestones (no github_ref: repo is private + has no issues; progress null) ──
-const milestones = [
-  { title: "MCP write contract — GA", description: "Typed, staged-only writes for every agent over MCP, all funneling through the gate.", target_date: "2026-04-30", status: "done" },
-  { title: "Triage review console", description: "The human-confirm half: proposals, decisions, and unplaced items in one console with a real diff.", target_date: "2026-05-22", status: "done" },
-  { title: "GitHub OAuth org gate", description: "Sign-in delegated to GitHub, access gated to active SaplingLearn members; hashed MCP bearers.", target_date: "2026-05-30", status: "done" },
-  { title: "Frontend wired to real data", description: "Every screen renders real @shared shapes from D1 over one origin; no mock data remains.", target_date: "2026-06-25", status: "done" },
-  { title: "Roadmap + live GitHub progress", description: "Milestones read closed/total straight from GitHub at view time — stored nowhere. Needs repo-readable token.", target_date: "2026-07-10", status: "in_progress" },
-  { title: "Semantic search ranking", description: "Embeddings over docs and feed so results rank by meaning, behind the existing fixed result shape.", target_date: "2026-08-01", status: "upcoming" },
-  { title: "Multi-agent session attribution", description: "Per-session identity across parallel agent runs, so every write says which agent and session produced it.", target_date: "2026-08-28", status: "upcoming" },
-  { title: "Self-host & deploy guide", description: "A documented path to run Canopy and its MCP server on your own infrastructure.", target_date: "2026-09-20", status: "upcoming" },
-];
+// ── Sapling product docs (sapling space) — authored by subagents from the SaplingLearn/sapling repo.
+const SAPLING_DIR = new URL("./sapling-content/", import.meta.url);
+const read = (f) => readFileSync(new URL(f, SAPLING_DIR), "utf8").trim();
+const saplingDocs = [
+  { file: "product-overview.md",             slug: "sapling-overview",             section: "context",   title: "Product Overview" },
+  { file: "architecture.md",                 slug: "sapling-architecture",         section: "reference", title: "Architecture" },
+  { file: "backend-and-ai.md",               slug: "sapling-backend-ai",           section: "reference", title: "Backend & AI Agents" },
+  { file: "knowledge-graph-and-learning.md", slug: "sapling-knowledge-graph",      section: "reference", title: "Knowledge Graph & Learning" },
+  { file: "document-pipeline.md",            slug: "sapling-document-pipeline",    section: "reference", title: "Document Pipeline (Upload, OCR & Streaming)" },
+  { file: "infrastructure.md",               slug: "sapling-infrastructure",       section: "reference", title: "Infrastructure — Data, Observability, Security & Deploy" },
+  { file: "adr-pydantic-ai.md",              slug: "sapling-adr-pydantic-ai",      section: "decisions", title: "ADR-0001 · Adopt Pydantic AI" },
+  { file: "adr-model-routing.md",            slug: "sapling-adr-model-routing",    section: "decisions", title: "ADR-0008 · Per-task model routing" },
+  { file: "adr-sse-protocol.md",             slug: "sapling-adr-sse-protocol",     section: "decisions", title: "ADR-0006 · SSE protocol choice" },
+  { file: "adr-durable-execution.md",        slug: "sapling-adr-durable-execution",section: "decisions", title: "ADR-0011 · Durable execution (DBOS)" },
+  { file: "adr-drop-orchestrator.md",        slug: "sapling-adr-drop-orchestrator",section: "decisions", title: "ADR-0007 · Drop the orchestrator agent" },
+].map((d) => ({ ...d, body: read(d.file), updated_at: NOW }));
 
-// ── A little cross-screen content so Feed / Triage aren't empty ───────────────
-const feed = [
-  { author: AUTHOR, summary: "Deployed Canopy to canopy.saplinglearn.com", body: "First production deploy: one Worker, D1 bound, custom domain live, GitHub OAuth wired to the SaplingLearn org.", tags: ["infra", "auth"], created_at: "2026-06-25T19:30:00Z" },
-  { author: AUTHOR, summary: "Wired the whole frontend to real routes (Phase 2)", body: "Feed, Docs, Search, Roadmap, Triage, and Settings now render real D1 data; the mock layer is gone.", tags: ["ui", "api"], created_at: "2026-06-25T17:00:00Z" },
-  { author: AUTHOR, summary: "Forced https in the OAuth redirect_uri", body: "GitHub rejects http callbacks for public hosts; the Worker now always emits an https redirect_uri except on localhost.", tags: ["auth"], created_at: "2026-06-25T18:30:00Z" },
-  { author: AUTHOR, summary: "Seeded the documentation library and roadmap", body: "Bootstrapped the store with a detailed reference/context/decisions library and the milestone timeline.", tags: ["data"], created_at: "2026-06-25T20:00:00Z" },
-];
-
-const adrs = [ // drafts → Triage "Decisions" queue
-  { title: "Add the repo scope for private-repo roadmap progress", context: "The roadmap reads GitHub issues with read:org read:user, which cannot see a private repo's issues, so progress is always unavailable for SaplingLearn/canopy.", decision: "Request the repo scope at OAuth time so the stored token can read the private repo's issues and milestones, enabling live progress.", rationale: "It is the smallest change that makes live progress work without making the repo public; the token is already sealed at rest.", author: AUTHOR, created_at: "2026-06-25T20:05:00Z" },
-  { title: "Rate-limit the MCP endpoint per token", context: "Nothing currently bounds how fast an agent can write over /mcp.", decision: "Add a per-token rate limit (proposed: 60 writes/min burst, 600/hour sustained) enforced at the boundary.", rationale: "Protects the store and the gate from a runaway agent without affecting normal session-end writes.", author: AUTHOR, created_at: "2026-06-25T20:06:00Z" },
-];
-
-const triage = [ // needs_triage → Triage "Triage" queue
-  { raw: "Should agent feed entries support threading (replies that reference a prior entry), or stay a flat append-only log? Affects the data model and the feed UI.", reason: "Mixes a Reference description with an unmade Decision; needs a human to choose before it lands anywhere.", source_author: AUTHOR, created_at: "2026-06-25T20:10:00Z" },
-];
+// ── Roadmap / Feed / Triage — Sapling content, from sapling-meta.json (no canopy content here).
+const VALID_TAGS = new Set(["auth", "architecture", "infra", "api", "ui", "data"]);
+const meta = JSON.parse(read("sapling-meta.json"));
+const dayMs = 86400000;
+const baseDate = new Date("2026-06-25T18:00:00Z").getTime();
+const milestones = meta.milestones.map((m) => ({ title: m.title, description: m.description, target_date: m.target_date, status: m.status }));
+const feed = meta.feed.map((f) => ({
+  author: AUTHOR, summary: f.summary, body: f.body || "",
+  tags: (f.tags || []).filter((t) => VALID_TAGS.has(t)),
+  created_at: new Date(baseDate - (f.days_ago || 0) * dayMs).toISOString(),
+}));
+const adrs = meta.adr_drafts.map((a) => ({ title: a.title, context: a.context, decision: a.decision, rationale: a.rationale, author: AUTHOR, created_at: NOW }));
+const triage = meta.triage.map((t) => ({ raw: t.raw, reason: t.reason, source_author: AUTHOR, created_at: NOW }));
 
 // ── Emit SQL ──────────────────────────────────────────────────────────────────
 const q = (v) => v === null || v === undefined ? "NULL" : `'${String(v).replace(/'/g, "''")}'`;
@@ -208,9 +210,12 @@ lines.push("DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE F
 lines.push("DELETE FROM sqlite_sequence;");
 lines.push("");
 
-for (const d of docs) {
-  const currentVersion = d.staged ? 1 : 1; // promoted v1 is current; staged (if any) is v2
-  lines.push(`INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES (${q(d.slug)}, ${q(d.section)}, ${q(d.title)}, ${q(d.body)}, 1, ${q(d.updated_at)}, ${q(AUTHOR)}, 'canopy');`);
+const allDocs = [
+  ...docs.map((d) => ({ ...d, space: "canopy" })),
+  ...saplingDocs.map((d) => ({ ...d, space: "sapling" })),
+];
+for (const d of allDocs) {
+  lines.push(`INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space) VALUES (${q(d.slug)}, ${q(d.section)}, ${q(d.title)}, ${q(d.body)}, 1, ${q(d.updated_at)}, ${q(AUTHOR)}, ${q(d.space)});`);
   lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 1, ${q(d.body)}, ${q("Initial published version")}, 'promoted', 'high', ${q(d.updated_at)}, ${q(AUTHOR)});`);
   if (d.staged) {
     lines.push(`INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by) VALUES (${q(d.slug)}, 2, ${q(d.staged.body)}, ${q(d.staged.summary)}, 'staged', 'high', ${q(NOW)}, ${q(AUTHOR)});`);
@@ -237,4 +242,4 @@ for (const t of triage) {
 lines.push("");
 
 writeFileSync(new URL("./seed-prod.sql", import.meta.url), lines.join("\n"));
-console.log(`Wrote seed-prod.sql: ${docs.length} docs, ${milestones.length} milestones, ${feed.length} feed, ${adrs.length} ADR drafts, ${triage.length} triage`);
+console.log(`Wrote seed-prod.sql: ${docs.length} canopy + ${saplingDocs.length} sapling docs, ${milestones.length} milestones, ${feed.length} feed, ${adrs.length} ADR drafts, ${triage.length} triage`);
