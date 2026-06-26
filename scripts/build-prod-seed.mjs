@@ -29,6 +29,44 @@ The endpoint lives at /mcp and is bearer-only: a personal token in the Authoriza
 
 Rotation: tokens never expire on their own. Revoke and mint a new one from Settings; the old value stops working immediately. A fresh, stateless server is built per request, and the write tools funnel through the same gate as /ingest — an agent can never bypass human review.` } },
 
+  { slug: "connect-over-mcp", section: "reference", title: "Connect to Canopy over MCP", updated_at: "2026-06-26T08:00:00Z",
+    body:
+`Canopy exposes its context store to coding agents over the Model Context Protocol. Once connected, your agent can read the docs library, feed, and roadmap, and stage new context for human review — all through the same gate that guards every write. Here is how to connect from nothing.
+
+## 1. Sign in
+
+Open Canopy in your browser and sign in with GitHub. Access is gated to active members of the SaplingLearn organization: after the OAuth exchange Canopy checks your membership, and non-members are turned away before any session is created. Members land in the app signed in.
+
+## 2. Mint a personal token
+
+Go to Settings, find MCP access tokens, and click Mint new token. Canopy shows the raw token — it begins with canopy_mcp_ — exactly once. Copy it immediately: only its SHA-256 hash is stored, so it can never be displayed again. This token is your personal credential, and any write made with it is attributed to you.
+
+## 3. Point your agent at /mcp
+
+Add Canopy to your MCP client with the token as a bearer header, using the /mcp path on the same origin where you use Canopy. In Claude Code, drop a \`.mcp.json\` into your project (or run \`claude mcp add\`):
+
+\`\`\`json
+{
+  "mcpServers": {
+    "canopy": {
+      "type": "streamable-http",
+      "url": "https://your-canopy-host/mcp",
+      "headers": { "Authorization": "Bearer canopy_mcp_…" }
+    }
+  }
+}
+\`\`\`
+
+The endpoint is bearer-only. A missing or invalid token gets a bare 401 with no OAuth discovery, so the token must be present and exact.
+
+## 4. Use the tools
+
+Restart your client and the Canopy tools appear in the session. Reads return live data right away: list_docs, get_doc, get_feed, search_context, and get_roadmap. The write tools — append_feed, propose_doc_update, and propose_milestone — never publish directly; they stage a proposal that a human confirms later, and the author is always you, never a value the client supplies.
+
+## Rotating and revoking
+
+Tokens never expire on their own. If one leaks, or you just want a fresh credential, revoke it from Settings and mint a new one — the old value stops working immediately. Keep a separate token per agent or machine so you can revoke them independently.`},
+
   { slug: "the-gate", section: "reference", title: "The Gate — the single write surface", updated_at: "2026-06-23T09:00:00Z",
     body:
 `Every write — from MCP and from the HTTP /ingest path alike — funnels through one set of per-entry gate functions. There is exactly one place that decides write-vs-stage-vs-triage, and adding a new write means adding it here rather than introducing a second surface.
