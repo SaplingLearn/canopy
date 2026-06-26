@@ -9,6 +9,7 @@ import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api"
 import type { AdrRow, NeedsTriageRow } from "@shared/rows";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
+import { REPO_URL } from "./github";
 
 export type DocSpace = "canopy" | "sapling";
 
@@ -108,7 +109,6 @@ function logo(size: number): string {
 }
 
 // ── real-data helpers (authors are github logins; no curated display map) ─────
-const REPO_URL = "https://github.com/SaplingLearn/canopy";
 /** Two-letter avatar initials from a github login, e.g. "jose-a" → "JO". */
 function initialsOf(login: string): string {
   const letters = login.replace(/[^a-zA-Z]/g, "");
@@ -138,6 +138,24 @@ function feedArtifacts(json: string | null): { kind: string; label: string; href
   for (const c of a.commits ?? []) out.push({ kind: "commit", label: c, href: `${REPO_URL}/commit/${c}` });
   for (const i of a.issues ?? []) out.push({ kind: "issue", label: `#${i}`, href: `${REPO_URL}/issues/${i}` });
   return out;
+}
+/** A linked GitHub chip (issue / PR / commit / milestone). */
+function ghChip(c: { kind: string; label: string; href: string }): string {
+  return `<a href="${c.href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(c.kind)}</span><span style="font-family:var(--mono);font-weight:500">${esc(c.label)}</span></a>`;
+}
+/** GitHub links for a milestone's github_ref (a milestone number, or an array of issue numbers). */
+function milestoneRefChips(github_ref: string | null): { kind: string; label: string; href: string }[] {
+  if (!github_ref) return [];
+  try {
+    const p = JSON.parse(github_ref);
+    if (typeof p === "number") return [{ kind: "milestone", label: `#${p}`, href: `${REPO_URL}/milestone/${p}` }];
+    if (Array.isArray(p)) return p.map((n) => ({ kind: "issue", label: `#${n}`, href: `${REPO_URL}/issues/${n}` }));
+  } catch { /* malformed ref → no chips */ }
+  return [];
+}
+/** Escape text, then turn bare GitHub issue refs (#123) into links. esc runs first, so it's safe. */
+function linkifyRefs(text: string): string {
+  return esc(text).replace(/#(\d+)\b/g, (_m, n) => `<a href="${REPO_URL}/issues/${n}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">#${n}</a>`);
 }
 /** Centered muted notice reused for loading / error states (no layout change). */
 function notice(text: string): string {
@@ -344,7 +362,7 @@ function feedView(s: AppState): string {
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${esc(initialsOf(e.author))}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${esc(e.summary)}</div>
+          <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${linkifyRefs(e.summary)}</div>
           ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${esc(e.body)}</div>` : ""}
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px">
             <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${esc(e.author)}</span></div>
@@ -638,7 +656,7 @@ function queueEmpty(): string {
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
 interface EnrichedMilestone {
-  id: number; title: string; about: string;
+  id: number; title: string; about: string; github_ref: string | null;
   closed: number | null; total: number | null; done: boolean; ready: boolean; overdue: boolean;
   pct: number; tgt: number; badge: { label: string; color: string; soft?: boolean };
   dateLabel: string; isNext: boolean;
@@ -664,7 +682,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
     const overdue = !done && !ready && tgt < now;
     const pct = total !== null && total > 0 && closed !== null ? Math.round((100 * closed) / total) : 0;
     return {
-      id: m.id, title: m.title, about: m.description ?? "",
+      id: m.id, title: m.title, about: m.description ?? "", github_ref: m.github_ref,
       closed, total, done, ready, overdue, pct, tgt,
       badge: badgeFor(done ? "done" : m.status), dateLabel: fmt(m.target_date),
       isNext: false,
@@ -704,9 +722,18 @@ function roadmapNarrative(s: AppState): string {
       : m.isNext
       ? `Next up · due ${m.dateLabel}`
       : `Due ${m.dateLabel}`;
-    const progressNote = m.total !== null && m.closed !== null
-      ? `${m.closed}/${m.total} issues closed${m.pct > 0 ? ` (${m.pct}%)` : ""}`
+    const barColor = m.done ? "var(--green)" : m.overdue ? "var(--red)" : "var(--accent)";
+    const progressBar = m.total !== null && m.closed !== null
+      ? `<div style="display:flex;align-items:center;gap:10px;margin-top:11px">
+          <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
+          <span style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;flex:none">${m.closed}/${m.total} closed</span>
+        </div>`
       : "";
+    const ready = m.ready ? `<div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--accent);flex:1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"></path></svg><span style="color:var(--fg-70)">All linked issues are closed — <strong style="color:var(--fg);font-weight:600">ready to complete</strong>.</span></div>
+        <button data-act="confirmMilestone" data-arg="${m.id}" class="cnpy-accentbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Confirm done</button>
+      </div>` : "";
+    const refChips = milestoneRefChips(m.github_ref);
     return `<div style="padding:14px 16px;border:1px solid var(--border);border-radius:11px;margin-bottom:8px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
         <div style="flex:1;min-width:0">
@@ -715,11 +742,13 @@ function roadmapNarrative(s: AppState): string {
             ${m.isNext ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px">NEXT</span>` : ""}
             ${m.overdue ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px">OVERDUE</span>` : ""}
           </div>
-          ${m.about ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${esc(m.about)}</p>` : ""}
+          ${m.about ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${linkifyRefs(m.about)}</p>` : ""}
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
             <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${dateNote}</span>
-            ${progressNote ? `<span style="font-size:11.5px;color:var(--fg-40)">${progressNote}</span>` : ""}
           </div>
+          ${progressBar}
+          ${refChips.length ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:10px">${refChips.map(ghChip).join("")}</div>` : ""}
+          ${ready}
         </div>
       </div>
     </div>`;
@@ -757,73 +786,95 @@ function roadmapView(s: AppState): string {
   if (s.roadmap.status === "error") {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Couldn't load the roadmap.")}</div>`;
   }
-  if (s.roadmapTab === "narrative") return roadmapTimeline(s);
+  if (s.roadmapTab === "narrative") return roadmapDigest(s);
   return roadmapNarrative(s);
 }
 
-function roadmapTimeline(s: AppState): string {
+function roadmapDigest(s: AppState): string {
   const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
   const total = list.length;
+  const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
+  const upcoming = list.filter((m) => !m.done && m.badge.label === "Upcoming");
+  // What's "getting the attention" = something actively in progress first; only fall back
+  // to the next upcoming goal when nothing is underway.
+  const focus = inProgress[0] ?? list.find((m) => m.isNext) ?? list.find((m) => !m.done);
 
-  const rows = list.map((m) => {
-    const accent = m.overdue ? "var(--red)" : m.isNext ? "var(--accent)" : "var(--border)";
-    const bg = m.overdue ? "color-mix(in srgb,var(--red) 6%,transparent)" : m.isNext ? "var(--accent-soft)" : "transparent";
-    const barColor = m.done ? "var(--green)" : m.overdue ? "var(--red)" : "var(--accent)";
+  // ── State-of-repo summary (plain-English prose: the actual goals + what's been built) ──
+  const para = "font-size:15px;line-height:1.85;color:var(--fg-70);margin:0 0 14px";
+  const b = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
+  const done = list.filter((m) => m.done);
+  const recent = s.feed.data.slice(0, 3);
+  const goalLine = (m: EnrichedMilestone) => `${b(esc(m.title))}${m.about ? ` (${linkifyRefs(m.about.replace(/\s*\.\s*$/, ""))})` : ""}`;
+  const lower1 = (t: string) => (t ? t.charAt(0).toLowerCase() + t.slice(1) : t);
+  const semiJoin = (arr: string[]) =>
+    arr.length <= 1 ? (arr[0] ?? "") : `${arr.slice(0, -1).join("; ")}; and ${arr[arr.length - 1]}`;
+  const summary = total === 0
+    ? notice("There aren't any goals on the board yet, so there's nothing to describe just yet.")
+    : `<p style="${para}">
+        Here's what the project actually looks like right now, in plain terms. ${done.length ? `The groundwork is already built and shipped: ${semiJoin(done.map(goalLine))}.` : `Nothing has fully shipped yet, but there's plenty already in motion.`}
+      </p>
+      ${inProgress.length ? `<p style="${para}">
+        What the team is actively building right now: ${semiJoin(inProgress.map(goalLine))}.
+      </p>` : ""}
+      ${upcoming.length ? `<p style="${para}">
+        Still ahead on the roadmap: ${semiJoin(upcoming.map(goalLine))}.
+      </p>` : ""}
+      ${recent.length ? `<p style="font-size:15px;line-height:1.85;color:var(--fg-70);margin:0">
+        And most recently, the team ${semiJoin(recent.map((e) => lower1(esc(e.summary))))} — the full trail of work is just below.
+      </p>` : ""}`;
 
-    const badge = `display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:6px;color:${m.badge.color};border:1px solid color-mix(in srgb,${m.badge.color} 45%,transparent);background:${m.badge.soft ? `color-mix(in srgb,${m.badge.color} 12%,transparent)` : "transparent"}`;
-
-    // Progress bar: when progress is null, render empty track only
-    const progressBar = m.total !== null && m.closed !== null
-      ? `<div style="display:flex;align-items:center;gap:12px;margin-top:16px">
-          <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
-          <span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${m.closed} of ${m.total} issues closed</span>
+  // ── Current-focus spotlight (with progress bar + GitHub links) ──
+  const spotlight = focus ? (() => {
+    const barColor = focus.done ? "var(--green)" : focus.overdue ? "var(--red)" : "var(--accent)";
+    const bar = focus.total !== null && focus.closed !== null
+      ? `<div style="display:flex;align-items:center;gap:12px;margin-top:15px">
+          <div style="flex:1;height:6px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${focus.pct}%;background:${barColor}"></div></div>
+          <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${focus.closed}/${focus.total} closed</span>
         </div>`
-      : `<div style="display:flex;align-items:center;gap:12px;margin-top:16px">
-          <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"></div>
-          <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;flex:none">progress unavailable</span>
-        </div>`;
-
-    const ready = m.ready ? `<div style="display:flex;align-items:center;gap:12px;margin-top:15px;padding-top:14px;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--accent);flex:1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"></path></svg><span style="color:var(--fg-70)">All linked issues are closed — <strong style="color:var(--fg);font-weight:600">ready to complete</strong>.</span></div>
-        <button data-act="confirmMilestone" data-arg="${m.id}" class="cnpy-accentbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Confirm done</button>
-      </div>` : "";
-
-    return `<div style="display:block;position:relative;border:1px solid ${accent};border-radius:14px;padding:18px 20px;margin-bottom:12px;background:${bg};transition:border-color .12s ease">
-      <div style="display:flex;align-items:flex-start;gap:14px">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:5px">
-            <span style="font-size:15.5px;font-weight:600;letter-spacing:-0.01em">${esc(m.title)}</span>
-            ${m.isNext ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px">NEXT</span>` : ""}
-            ${m.overdue ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px">OVERDUE</span>` : ""}
-          </div>
+      : "";
+    const chips = milestoneRefChips(focus.github_ref);
+    return `<div style="border:1px solid var(--accent);border-radius:14px;padding:20px;margin:22px 0;background:var(--accent-soft)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0">
+          <span style="font-size:10px;font-weight:700;font-family:var(--mono);letter-spacing:.12em;color:var(--accent);flex:none">NOW</span>
+          <span style="font-size:16px;font-weight:600;letter-spacing:-0.01em">${esc(focus.title)}</span>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:none">
-          <span style="${badge}">${m.badge.label}</span>
-          <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono)">${m.dateLabel}</span>
-        </div>
+        <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono);flex:none">${focus.dateLabel}</span>
       </div>
-      ${m.about ? `<p style="font-size:13.5px;line-height:1.65;color:var(--fg-70);margin:13px 0 0">${esc(m.about)}</p>` : ""}
-      ${progressBar}
-      ${ready}
+      ${focus.about ? `<p style="font-size:13px;line-height:1.6;color:var(--fg-70);margin:10px 0 0">${linkifyRefs(focus.about)}</p>` : ""}
+      ${bar}
+      ${chips.length ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:14px">${chips.map(ghChip).join("")}</div>` : ""}
     </div>`;
-  }).join("");
+  })() : "";
 
-  const empty = s.roadmap.status === "ok" && total === 0 ? notice("No milestones yet.") : "";
+  // ── Recent happenings (compact table from the live feed, with GitHub chips) ──
+  const entries = s.feed.data.slice(0, 6);
+  const happenRows = entries.map((e) => {
+    const chips = feedArtifacts(e.artifacts);
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${relTime(e.created_at)}</td>
+      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)">${esc(e.author)}</td>
+      <td style="padding:11px 0;vertical-align:top;font-size:13px;color:var(--fg);line-height:1.5">${linkifyRefs(e.summary)}${chips.length ? ` <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:4px;vertical-align:middle">${chips.map(ghChip).join("")}</span>` : ""}</td>
+    </tr>`;
+  }).join("");
+  const happenings = s.feed.status === "loading" && entries.length === 0
+    ? notice("Loading recent activity&hellip;")
+    : entries.length === 0
+    ? notice("No recent activity yet.")
+    : `<table style="width:100%;border-collapse:collapse">${happenRows}</table>`;
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 6px">
-      <div>
-        <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Timeline</div>
-        <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0">Milestones</h1>
-      </div>
-      <div style="display:flex;align-items:center;gap:16px;font-size:12.5px">
-        <span style="color:var(--fg-55)"><strong style="color:var(--fg);font-weight:600">${doneCount}</strong> of ${total} done</span>
-        ${overdueCount ? `<span style="display:inline-flex;align-items:center;gap:6px;color:var(--red)"><span style="width:6px;height:6px;border-radius:50%;background:var(--red)"></span>${overdueCount} overdue</span>` : ""}
-      </div>
+    <div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
+      <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px">What's happening</h1>
+      ${summary}
     </div>
-    <div style="font-size:12px;color:var(--fg-40);margin-bottom:20px">Progress is read live from GitHub at view time — not stored here.</div>
-    ${rows}${empty}
-    <div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Milestones are coarse goals — the altitude above GitHub issues.</div>
+    ${spotlight}
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:28px 0 2px">
+      <h2 style="font-size:12px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-55);margin:0">Recent happenings</h2>
+      <button data-act="goFeed" class="cnpy-link" style="font-size:12.5px;font-weight:500;color:var(--accent);background:none">View all in Feed →</button>
+    </div>
+    ${happenings}
   </div>`;
 }
 

@@ -1,7 +1,32 @@
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import DOMPurify from "dompurify";
+import { REPO_URL } from "./github";
 
 marked.setOptions({ gfm: true, breaks: false });
+
+// Auto-link bare GitHub issue/PR refs like #123 in prose. Runs as an inline extension, so
+// it skips code spans/blocks (tokenized separately) and its output is still DOMPurify-sanitized.
+marked.use({
+  extensions: [
+    {
+      name: "issueRef",
+      level: "inline",
+      start(src: string) {
+        const i = src.indexOf("#");
+        return i < 0 ? undefined : i;
+      },
+      tokenizer(src: string) {
+        const m = /^#(\d+)\b/.exec(src);
+        if (m) return { type: "issueRef", raw: m[0], num: m[1] } as Tokens.Generic;
+        return undefined;
+      },
+      renderer(token) {
+        const num = (token as Tokens.Generic).num as string;
+        return `<a href="${REPO_URL}/issues/${num}" target="_blank" rel="noopener">#${num}</a>`;
+      },
+    },
+  ],
+});
 
 /**
  * Render a markdown doc body to sanitized HTML for innerHTML. Doc bodies are agent-written

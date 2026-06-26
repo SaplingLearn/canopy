@@ -263,7 +263,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // primary navigation
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
-    case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); return;
+    case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); loadFeedIfNeeded(); return;
 
     // roadmap tab toggle
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
