@@ -45,14 +45,14 @@ export async function exchangeCode(opts: {
   return data.access_token ?? null;
 }
 
-/** The authenticated user's login + name; null on failure. */
-export async function getUser(token: string): Promise<{ login: string; name: string | null } | null> {
+/** The authenticated user's login + name + avatar_url; null on failure. */
+export async function getUser(token: string): Promise<{ login: string; name: string | null; avatar_url: string | null } | null> {
   const res = await fetch("https://api.github.com/user", {
     headers: { authorization: `Bearer ${token}`, accept: GH_API, "user-agent": USER_AGENT },
   });
   if (!res.ok) return null;
-  const data = (await res.json()) as { login?: string; name?: string | null };
-  return data.login ? { login: data.login, name: data.name ?? null } : null;
+  const data = (await res.json()) as { login?: string; name?: string | null; avatar_url?: string | null };
+  return data.login ? { login: data.login, name: data.name ?? null, avatar_url: data.avatar_url ?? null } : null;
 }
 
 /** True only if the token's owner is an ACTIVE member of SAPLING_ORG. */

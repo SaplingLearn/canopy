@@ -83,7 +83,7 @@ export function listMilestoneProposals(): Promise<MilestoneProposalRow[]> {
   return getJson<{ proposals: MilestoneProposalRow[] }>("/milestone-proposals").then((r) => r.proposals);
 }
 
-export interface Me { login: string; name: string | null; org: string; }
+export interface Me { login: string; name: string | null; avatar_url: string | null; org: string; }
 export function getMe(): Promise<Me> {
   return getJson<Me>("/auth/me");
 }

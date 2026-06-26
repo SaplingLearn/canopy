@@ -61,9 +61,9 @@ authApp.get("/callback", async (c) => {
 
   const sealedToken = await encryptSecret(token, c.env.COOKIE_SECRET);
   await run(c.env.DB,
-    `INSERT INTO users (github_login, name, github_token, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name, github_token = excluded.github_token`,
-    ghUser.login, ghUser.name, sealedToken, nowIso());
+    `INSERT INTO users (github_login, name, avatar_url, github_token, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name, avatar_url = excluded.avatar_url, github_token = excluded.github_token`,
+    ghUser.login, ghUser.name, ghUser.avatar_url, sealedToken, nowIso());
 
   const { id } = await createSession(c.env.DB, ghUser.login);
   await setSessionCookie(c, id, c.env.COOKIE_SECRET);
@@ -73,8 +73,8 @@ authApp.get("/callback", async (c) => {
 // GATED (by sessionGate in src/routes.ts): return the principal's profile.
 authApp.get("/me", async (c) => {
   const login = c.get("principal").login;
-  const row = await first<{ name: string | null }>(c.env.DB, `SELECT name FROM users WHERE github_login = ?`, login);
-  return c.json({ login, name: row?.name ?? null, org: SAPLING_ORG });
+  const row = await first<{ name: string | null; avatar_url: string | null }>(c.env.DB, `SELECT name, avatar_url FROM users WHERE github_login = ?`, login);
+  return c.json({ login, name: row?.name ?? null, avatar_url: row?.avatar_url ?? null, org: SAPLING_ORG });
 });
 
 // GATED (by sessionGate in src/routes.ts): revoke this session.
