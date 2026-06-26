@@ -757,8 +757,8 @@ function roadmapView(s: AppState): string {
   if (s.roadmap.status === "error") {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Couldn't load the roadmap.")}</div>`;
   }
-  if (s.roadmapTab === "narrative") return roadmapNarrative(s);
-  return roadmapTimeline(s);
+  if (s.roadmapTab === "narrative") return roadmapTimeline(s);
+  return roadmapNarrative(s);
 }
 
 function roadmapTimeline(s: AppState): string {
