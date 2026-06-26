@@ -264,6 +264,10 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
     case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); return;
+
+    // roadmap tab toggle
+    case "roadmapNarrative": state.roadmapTab = "narrative"; break;
+    case "roadmapTimeline": state.roadmapTab = "timeline"; break;
     case "goTriage": state.screen = "triage"; loadCurrentTriageQueue(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;

@@ -39,6 +39,7 @@ export interface AppState {
   docSlug: string | null;
   docSpace: DocSpace;
   triageQueue: "proposals" | "decisions" | "triage";
+  roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<MilestoneWithProgress[]>;
   selProposal: string | null;
   selDecision: number | null;
@@ -71,6 +72,7 @@ export function initialState(): AppState {
     docSlug: null,
     docSpace: "sapling",
     triageQueue: "proposals",
+    roadmapTab: "timeline",
     roadmap: { status: "idle", data: [] },
     selProposal: null, selDecision: null, selTriage: null,
     showHistory: false,
@@ -293,6 +295,15 @@ function header(s: AppState): string {
     `<button data-act="setDocSpace" data-arg="${k}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${label}</button>`;
   const docsControls = s.screen === "docs" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${spaceTab("sapling", "Sapling")}${spaceTab("canopy", "Canopy")}</div>` : "";
 
+  const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
+  const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
+    ? roadmapEnriched(s.roadmap.data, s.confirmedMilestones).overdueCount
+    : 0;
+  const roadmapControls = s.screen === "roadmap" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
+      <button data-act="roadmapNarrative" style="${rmTabStyle("narrative")}">Narrative</button>
+      <button data-act="roadmapTimeline" style="${rmTabStyle("timeline")}">Timeline${overdueCount ? `<span style="width:6px;height:6px;border-radius:50%;background:var(--red);margin-left:1px"></span>` : ""}</button>
+    </div>` : "";
+
   const themeBtn = `<button data-act="cycleTheme" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
       ${dark
         ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
@@ -305,7 +316,7 @@ function header(s: AppState): string {
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${triageControls}${docsControls}${themeBtn}
+      ${feedControls}${triageControls}${docsControls}${roadmapControls}${themeBtn}
     </div>
   </header>`;
 }
@@ -674,6 +685,71 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
   };
 }
 
+function roadmapNarrative(s: AppState): string {
+  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
+  const total = list.length;
+
+  const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
+  const upcoming = list.filter((m) => !m.done && m.badge.label === "Upcoming");
+  const done = list.filter((m) => m.done);
+
+  const sectionHeading = (label: string, color: string): string =>
+    `<div style="display:flex;align-items:center;gap:9px;margin:28px 0 12px"><span style="width:7px;height:7px;border-radius:50%;flex:none;background:${color}"></span><span style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:${color}">${label}</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
+
+  const milestoneRow = (m: (typeof list)[0]): string => {
+    const dateNote = m.done
+      ? `Completed by ${m.dateLabel}`
+      : m.overdue
+      ? `Was due ${m.dateLabel} — overdue`
+      : m.isNext
+      ? `Next up · due ${m.dateLabel}`
+      : `Due ${m.dateLabel}`;
+    const progressNote = m.total !== null && m.closed !== null
+      ? `${m.closed}/${m.total} issues closed${m.pct > 0 ? ` (${m.pct}%)` : ""}`
+      : "";
+    return `<div style="padding:14px 16px;border:1px solid var(--border);border-radius:11px;margin-bottom:8px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+            <span style="font-size:14.5px;font-weight:600;letter-spacing:-0.01em">${esc(m.title)}</span>
+            ${m.isNext ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px">NEXT</span>` : ""}
+            ${m.overdue ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px">OVERDUE</span>` : ""}
+          </div>
+          ${m.about ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${esc(m.about)}</p>` : ""}
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${dateNote}</span>
+            ${progressNote ? `<span style="font-size:11.5px;color:var(--fg-40)">${progressNote}</span>` : ""}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  };
+
+  const renderGroup = (items: (typeof list), heading: string, color: string): string =>
+    items.length === 0 ? "" : `${sectionHeading(heading, color)}${items.map(milestoneRow).join("")}`;
+
+  const intro = total === 0
+    ? notice("No milestones yet.")
+    : `<p style="font-size:14px;line-height:1.7;color:var(--fg-70);margin:0 0 4px">
+        ${total} milestone${total !== 1 ? "s" : ""} track the coarse goals above issue-level work.
+        ${doneCount > 0 ? `<strong style="color:var(--fg);font-weight:600">${doneCount} ${doneCount === 1 ? "is" : "are"} done.</strong>` : ""}
+        ${overdueCount > 0 ? `<span style="color:var(--red)">${overdueCount} overdue.</span>` : ""}
+        Progress is read live from GitHub at view time.
+      </p>`;
+
+  return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
+    <div style="margin-bottom:20px">
+      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
+      <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 12px">Roadmap Overview</h1>
+      ${intro}
+    </div>
+    ${renderGroup(inProgress, "In Progress", "var(--amber)")}
+    ${renderGroup(upcoming, "Upcoming", "var(--blue)")}
+    ${renderGroup(done, "Done", "var(--green)")}
+    ${total > 0 ? `<div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Milestones are coarse goals — the altitude above GitHub issues.</div>` : ""}
+  </div>`;
+}
+
 function roadmapView(s: AppState): string {
   if (s.roadmap.status === "loading" && s.roadmap.data.length === 0) {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Loading roadmap&hellip;")}</div>`;
@@ -681,6 +757,7 @@ function roadmapView(s: AppState): string {
   if (s.roadmap.status === "error") {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Couldn't load the roadmap.")}</div>`;
   }
+  if (s.roadmapTab === "narrative") return roadmapNarrative(s);
   return roadmapTimeline(s);
 }
 
