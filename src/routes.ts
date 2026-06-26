@@ -95,7 +95,7 @@ app.post("/adr/:id/ratify", async (c) => {
 // Roadmap read (session-gated): milestones in target-date order with live GitHub progress.
 app.get("/roadmap", async (c) => {
   const token = await getStoredToken(c.env.DB, c.get("principal").login, c.env.COOKIE_SECRET);
-  const milestones = await list_roadmap(c.env.DB, { token, repo: c.env.GITHUB_REPO });
+  const milestones = await list_roadmap(c.env.DB, { token, repo: c.env.GITHUB_REPO, devSynthesize: !!c.env.DEV_LOGIN });
   return c.json({ milestones });
 });
 

@@ -192,6 +192,25 @@ describe("list_roadmap", () => {
     expect(roadmap).toHaveLength(1);
     expect(roadmap[0].progress).toBeNull();
   });
+
+  it("synthesizes demo progress in dev mode when no token is available (local UI preview)", async () => {
+    const pid = await stage_milestone_proposal(env.DB, { title: "WIP", target_date: "2026-08-01", status: "in_progress", github_ref: [1], change_summary: "s", confidence: "high" }, "andres");
+    const m = await promote_milestone_proposal(env.DB, pid, "andres");
+
+    // Production fallback is unchanged: no token and no dev flag → progress null.
+    expect((await list_roadmap(env.DB, { token: null }))[0].progress).toBeNull();
+
+    // Dev preview: no token but devSynthesize → plausible, non-null progress.
+    const dev = await list_roadmap(env.DB, { token: null, devSynthesize: true });
+    expect(dev[0].progress).not.toBeNull();
+    expect(dev[0].progress!.total).toBeGreaterThan(0);
+    expect(dev[0].progress!.closed).toBeLessThanOrEqual(dev[0].progress!.total);
+
+    // A completed milestone synthesizes as fully closed.
+    await complete_milestone(env.DB, m.id);
+    const done = await list_roadmap(env.DB, { token: null, devSynthesize: true });
+    expect(done[0].progress).toEqual({ closed: done[0].progress!.total, total: done[0].progress!.total });
+  });
 });
 
 async function cookieFor(login: string): Promise<string> {
