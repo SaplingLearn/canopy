@@ -271,6 +271,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "goTriage": state.screen = "triage"; loadCurrentTriageQueue(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
+    case "goGuide": state.screen = "guide"; break;
 
     // chrome: theme + sidebar
     case "toggleCollapse":

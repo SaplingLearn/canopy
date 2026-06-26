@@ -13,7 +13,7 @@ import { REPO_URL } from "./github";
 
 export type DocSpace = "canopy" | "sapling";
 
-export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings";
+export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings" | "guide";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -257,6 +257,7 @@ function sidebar(s: AppState): string {
       ${navItem("goDocs", "n-docs", "Docs", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path></svg>`)}
       ${navItem("goTriage", "n-triage", "Triage", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M4 13h4l2 3h4l2-3h4"></path><path d="M5 13 7 5h10l2 8"></path><path d="M4 13v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"></path></svg>`, triageExtra)}
       ${navItem("goSearch", "n-search", "Search", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>`)}
+      ${navItem("goGuide", "n-guide", "Get Started", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M2 4h7a3 3 0 0 1 3 3v14a2.5 2.5 0 0 0-2.5-2.5H2z"></path><path d="M22 4h-7a3 3 0 0 0-3 3v14a2.5 2.5 0 0 1 2.5-2.5H22z"></path></svg>`)}
     </nav>
 
     <div style="padding:10px;border-top:1px solid var(--border)">
@@ -270,7 +271,7 @@ function sidebar(s: AppState): string {
 }
 
 function header(s: AppState): string {
-  const titles: Record<Screen, string> = { feed: "Feed", docs: "Docs", roadmap: "Roadmap", triage: "Triage", search: "Search", settings: "Settings" };
+  const titles: Record<Screen, string> = { feed: "Feed", docs: "Docs", roadmap: "Roadmap", triage: "Triage", search: "Search", settings: "Settings", guide: "Get Started" };
   const dark = resolved(s) === "dark";
 
   const authorFiltered = s.feedAuthor !== "all";
@@ -948,6 +949,54 @@ function searchView(s: AppState): string {
   </div>`;
 }
 
+// ── get started / guide ──────────────────────────────────────────────────────
+function guideView(s: AppState): string {
+  void s;
+  const gP = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:0 0 4px";
+  const gH3 = "font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:40px 0 10px";
+  const gStrong = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
+  const gFig = (src: string, cap: string) => `<figure style="margin:18px 0 4px">
+      <img src="${src}" alt="" style="display:block;width:100%;border:1px solid var(--border);border-radius:12px" />
+      <figcaption style="font-size:12px;color:var(--fg-40);margin-top:8px">${cap}</figcaption>
+    </figure>`;
+  return `<div class="cnpy-scroll" style="max-width:860px;margin:0 auto;padding:36px 40px 120px">
+    <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 6px">Welcome to Canopy — your team's shared memory. Here's a quick tour of how it all fits together, and how to plug your coding agent into it.</p>
+
+    <h2 style="font-size:22px;font-weight:600;letter-spacing:-0.02em;margin:30px 0 10px">How Canopy works</h2>
+    <p style="${gP}">Canopy holds the team's docs, decisions, roadmap, and a running feed of what everyone — people and their coding agents — has done. The golden rule: ${gStrong("agents only ever stage changes, and a human confirms the ones that matter")}. Nothing an agent writes goes live until someone approves it, so the store stays trustworthy no matter how many agents are writing to it.</p>
+    ${gFig("/guide/feed.png", `The <strong style="color:var(--fg-55)">Feed</strong> — every change, from people and their agents, in one running timeline.`)}
+
+    <h3 style="${gH3}">Docs</h3>
+    <p style="${gP}">The Docs library is the team's living reference, grouped into ${gStrong("Reference")}, ${gStrong("Context")}, and ${gStrong("Decisions")}. Every doc is versioned: when an agent proposes an update it lands as a ${gStrong("staged")} new version — the current one stays live and untouched until a human promotes the newer one. Docs improve continuously, and nothing is ever overwritten by surprise.</p>
+    ${gFig("/guide/docs.png", `The <strong style="color:var(--fg-55)">Docs</strong> reader — sections on the left, the live version in the middle, and a banner up top when a newer proposal is waiting.`)}
+
+    <h3 style="${gH3}">Triage</h3>
+    <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. It has three queues: ${gStrong("Proposals")} (doc updates waiting to be promoted), ${gStrong("Decisions")} (ADRs waiting to be ratified), and ${gStrong("Triage")} (anything an agent couldn't confidently place). On each item you either make it live — ${gStrong("Promote")} a doc, ${gStrong("Ratify")} a decision — or ${gStrong("Dismiss")} it.</p>
+    ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Triage</strong> — a staged doc version shown as a diff against the live one, ready to Promote or Dismiss.`)}
+
+    <h3 style="${gH3}">Connect your agent over MCP</h3>
+    <p style="${gP}">Your coding agent talks to Canopy over the Model Context Protocol. Setup takes about a minute:</p>
+    <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
+      <li>You're already signed in — that's step one done.</li>
+      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Mint new token")}. Copy it right away — it's shown only once.</li>
+      <li>Add Canopy to your agent's MCP config with that token as a bearer header. In Claude Code, drop a <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> in your project:</li>
+    </ol>
+    <pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">{
+  "mcpServers": {
+    "canopy": {
+      "type": "streamable-http",
+      "url": "https://&lt;your-canopy-host&gt;/mcp",
+      "headers": { "Authorization": "Bearer canopy_mcp_…" }
+    }
+  }
+}</code></pre>
+    <ol start="4" style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:12px 0 0;padding-left:22px">
+      <li>Restart your agent — the Canopy tools show up in the session.</li>
+    </ol>
+    <p style="${gP};margin-top:14px">Once connected, your agent can read everything (docs, feed, roadmap, search) and add new context with ${gStrong("append_feed")}, ${gStrong("propose_doc_update")}, and ${gStrong("propose_milestone")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store.</p>
+  </div>`;
+}
+
 // ── settings ─────────────────────────────────────────────────────────────────
 function settingsView(s: AppState): string {
   const themeCards = [
@@ -1044,6 +1093,7 @@ function screenBody(s: AppState): string {
     case "triage": return triageView(s);
     case "search": return searchView(s);
     case "settings": return settingsView(s);
+    case "guide": return guideView(s);
     default: return feedView(s);
   }
 }
