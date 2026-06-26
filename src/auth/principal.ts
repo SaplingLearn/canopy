@@ -32,6 +32,14 @@ export async function resolveBearerPrincipal(request: Request, env: Env): Promis
  */
 export const sessionGate: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (PUBLIC_PATHS.has(c.req.path)) return next();
+  // LOCAL DEV ONLY: DEV_LOGIN exists only in .dev.vars (never in production vars or
+  // secrets), so this branch is inert in prod. When set, skip the OAuth/session check
+  // and act as that seeded user — lets the UI be exercised over `wrangler dev` without
+  // the real GitHub flow. Mirrors scripts/dev-cookie.mjs, but with zero cookie fuss.
+  if (c.env.DEV_LOGIN) {
+    c.set("principal", { login: c.env.DEV_LOGIN });
+    return next();
+  }
   const principal = await resolveSessionPrincipal(c);
   if (!principal) return c.json({ error: "unauthorized" }, 401);
   c.set("principal", principal);
