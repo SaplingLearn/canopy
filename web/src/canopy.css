@@ -28,7 +28,7 @@ input, select { font-family: inherit; }
 .cnpy-nav { display:flex; align-items:center; gap:11px; width:100%; padding:9px 11px; border-radius:8px; font-size:13.5px; font-weight:500; position:relative; color:var(--fg-55); text-align:left; }
 .cnpy-nav:hover { color:var(--fg-70); background:var(--hover); }
 [data-collapsed="1"] .cnpy-nav { justify-content:center; padding:9px 0; }
-[data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="triage"] .cnpy-nav.n-triage, [data-screen="search"] .cnpy-nav.n-search { background:var(--accent-soft); color:var(--accent); }
+[data-screen="mywork"] .cnpy-nav.n-mywork, [data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="triage"] .cnpy-nav.n-triage, [data-screen="search"] .cnpy-nav.n-search { background:var(--accent-soft); color:var(--accent); }
 .cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:9px; }
 .cnpy-chip:hover { background:var(--hover); }
 [data-collapsed="1"] .cnpy-chip { justify-content:center; padding:6px 0; }

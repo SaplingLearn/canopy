@@ -7,13 +7,14 @@ import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow } from "@shared/rows";
+import type { DashboardData, RoadmapPhase } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
 
 export type DocSpace = "canopy" | "sapling";
 
-export type Screen = "feed" | "docs" | "roadmap" | "triage" | "search" | "settings" | "guide";
+export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "triage" | "search" | "settings" | "guide";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -26,6 +27,7 @@ export interface AppState {
   view: "auth" | "app";
   authStep: "login" | "verifying" | "nonmember";
   me: Me | null;
+  mywork: Loadable<DashboardData | null>;
   screen: Screen;
   theme: "dark" | "light" | "system";
   systemDark: boolean;
@@ -62,11 +64,12 @@ export function initialState(): AppState {
   return {
     view: "auth", authStep: "login",
     me: null,
-    screen: "feed",
+    screen: "mywork",
     theme: "dark", systemDark: true,
     collapsed: false,
     feedAuthor: "all", feedTag: "all", feedRange: "all",
     feed: { status: "idle", data: [] },
+    mywork: { status: "idle", data: null },
     feedAuthors: [],
     docsList: { status: "idle", data: [] },
     docDetail: { status: "idle", data: null },
@@ -252,6 +255,7 @@ function sidebar(s: AppState): string {
     </div>` : ""}
 
     <nav style="display:flex;flex-direction:column;gap:3px;padding:6px 10px;flex:1">
+      ${navItem("goMyWork", "n-mywork", "My Work", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M3 12 12 3l9 9"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg>`)}
       ${navItem("goRoadmap", "n-roadmap", "Roadmap", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg>`)}
       ${navItem("goFeed", "n-feed", "Feed", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path></svg>`)}
       ${navItem("goDocs", "n-docs", "Docs", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path></svg>`)}
@@ -271,7 +275,7 @@ function sidebar(s: AppState): string {
 }
 
 function header(s: AppState): string {
-  const titles: Record<Screen, string> = { feed: "Feed", docs: "Docs", roadmap: "Roadmap", triage: "Triage", search: "Search", settings: "Settings", guide: "Get Started" };
+  const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", triage: "Triage", search: "Search", settings: "Settings", guide: "Get Started" };
   const dark = resolved(s) === "dark";
 
   const authorFiltered = s.feedAuthor !== "all";
@@ -1084,9 +1088,115 @@ function settingsView(s: AppState): string {
   </div>`;
 }
 
+// ── my work (personal dashboard) ──────────────────────────────────────────────
+const MW_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)";
+
+function wrapMyWork(inner: string): string {
+  return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 32px 100px">${inner}</div>`;
+}
+function greetingFor(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+function mwSection(label: string, body: string): string {
+  return `<section style="margin-top:26px"><div style="${MW_LABEL};margin-bottom:12px">${label}</div>${body}</section>`;
+}
+function mwRoadmapRow(label: string, p: RoadmapPhase): string {
+  return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px">
+      <span style="font-size:12.5px;font-weight:600;color:var(--fg-70)">${esc(label)}</span>
+      ${p.window ? `<span style="font-size:11px;color:var(--fg-40)">${esc(p.window)}</span>` : ""}
+    </div>
+    <div style="font-size:13px;line-height:1.55;color:var(--fg-55)">${linkifyRefs(p.bullet)}</div>
+  </div>`;
+}
+
+function myWorkView(s: AppState): string {
+  const slice = s.mywork;
+  if (slice.status === "loading" && !slice.data) return wrapMyWork(notice("Loading your work&hellip;"));
+  if (slice.status === "error") return wrapMyWork(notice("Couldn't load your dashboard."));
+  const d = slice.data;
+  if (!d) return wrapMyWork(notice("Nothing to show yet."));
+
+  const name = esc(s.displayName || s.me?.name || s.me?.login || "there");
+  const subParts: string[] = [];
+  if (d.role) subParts.push(`<span style="color:var(--fg-70);font-weight:500">${esc(d.role)}</span>`);
+  if (d.owns) subParts.push(`owns ${esc(d.owns)}`);
+  const header = `<div style="margin-bottom:24px">
+    <h2 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0">${greetingFor()}, ${name}</h2>
+    ${subParts.length ? `<div style="font-size:13px;color:var(--fg-55);margin-top:5px">${subParts.join(" · ")}</div>` : ""}
+  </div>`;
+
+  // headline: focus (preferred) → roadmap "now" (fallback) → empty hint
+  let headline: string;
+  if (d.focus) {
+    headline = `<div style="border:1px solid var(--accent);background:var(--accent-soft);border-radius:13px;padding:18px 20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
+        <span style="${MW_LABEL};color:var(--accent)">Working on now</span>
+        <span style="font-size:11.5px;color:var(--fg-40)">updated ${relTime(d.focus.updatedAt)}</span>
+      </div>
+      <div style="font-size:15px;line-height:1.6;color:var(--fg)">${linkifyRefs(d.focus.workingOn)}</div>
+      ${d.focus.nextUp ? `<div style="margin-top:14px"><div style="${MW_LABEL};margin-bottom:6px">Next up</div><div style="font-size:14px;line-height:1.6;color:var(--fg-70)">${linkifyRefs(d.focus.nextUp)}</div></div>` : ""}
+    </div>`;
+  } else if (d.workingNow) {
+    headline = `<div style="border:1px solid var(--border-strong);border-radius:13px;padding:18px 20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
+        <span style="${MW_LABEL}">Working on now</span>
+        <span style="font-size:11.5px;color:var(--fg-40)">${esc(d.workingNow.title)}${d.workingNow.window ? ` · ${esc(d.workingNow.window)}` : ""}</span>
+      </div>
+      <div style="font-size:15px;line-height:1.6;color:var(--fg)">${linkifyRefs(d.workingNow.bullet)}</div>
+    </div>`;
+  } else {
+    headline = `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">No focus set yet. Ask your coding agent to &ldquo;record this session&rdquo; to set what you're working on.</div>`;
+  }
+
+  // roadmap context below the focus headline (or upcoming list when roadmap is the headline)
+  const rows: string[] = [];
+  if (d.focus && d.workingNow) rows.push(mwRoadmapRow(d.workingNow.title, d.workingNow));
+  for (const p of d.comingUp) rows.push(mwRoadmapRow(p.title, p));
+  const roadmap = rows.length ? mwSection("From the roadmap", `<div style="display:flex;flex-direction:column;gap:10px">${rows.join("")}</div>`) : "";
+
+  // assigned issues
+  let issues: string;
+  if (d.degraded) {
+    issues = mwSection("Assigned to you", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">Connect GitHub to see issues assigned to you.</div>`);
+  } else if (d.assignedIssues.length === 0) {
+    issues = mwSection("Assigned to you", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">No open issues assigned to you.</div>`);
+  } else {
+    const list = d.assignedIssues.map((it) => {
+      const pr = it.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(it.priority)}</span>` : "";
+      const labels = it.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
+      return `<a href="${attr(it.url)}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
+        ${pr}
+        <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${it.number}</span>
+        <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.title)}</span>
+        <span style="display:flex;gap:5px;flex:none">${labels}</span>
+      </a>`;
+    }).join("");
+    issues = mwSection(`Assigned to you <span style="color:var(--fg-40);font-weight:400">· ${d.assignedIssues.length} open</span>`, `<div style="display:flex;flex-direction:column;gap:8px">${list}</div>`);
+  }
+
+  // recent activity (feed)
+  let activity: string;
+  if (d.feed.length === 0) {
+    activity = mwSection("Your recent activity", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">No feed entries yet.</div>`);
+  } else {
+    const items = d.feed.map((e) => `<div style="display:flex;gap:11px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0;font-size:13.5px;line-height:1.5">${linkifyRefs(e.summary)}</div>
+      <span style="font-size:11.5px;color:var(--fg-40);flex:none;white-space:nowrap">${relTime(e.created_at)}</span>
+    </div>`).join("");
+    activity = mwSection("Your recent activity", items);
+  }
+
+  return wrapMyWork(`${header}${headline}${roadmap}${issues}${activity}`);
+}
+
 // ── root ─────────────────────────────────────────────────────────────────────
 function screenBody(s: AppState): string {
   switch (s.screen) {
+    case "mywork": return myWorkView(s);
     case "feed": return feedView(s);
     case "docs": return docsView(s);
     case "roadmap": return roadmapView(s);

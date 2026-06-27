@@ -57,3 +57,11 @@ INSERT INTO milestones (title, description, target_date, status, github_ref, cre
 -- Milestone proposal (staged) for the Triage promote-proposal action.
 INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by) VALUES
   ('Self-host & deploy guide','2026-09-20','upcoming',NULL,'Run the whole store on your own infrastructure.','high','staged','2026-06-25T00:00:00Z','devraj');
+
+-- Personal "My Work" preview for DEV_LOGIN=devuser. No GitHub token in dev, so the
+-- roadmap + assigned-issues sections degrade; focus + feed render from D1.
+INSERT INTO focus (author, working_on, next_up, updated_at) VALUES
+  ('devuser','Wiring the personal "My Work" dashboard — focus headline, assigned issues, recent activity. #142','Promote-flow polish, then the record-session focus capture.','2026-06-26T09:00:00Z');
+INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES
+  ('devuser','Scaffolded the My Work dashboard route and view',NULL,'{"prs":[],"commits":[],"issues":[]}','2026-06-26T09:05:00Z'),
+  ('devuser','Added set_focus MCP tool through the gate',NULL,'{"prs":[],"commits":[],"issues":[]}','2026-06-25T17:00:00Z');

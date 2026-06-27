@@ -6,7 +6,7 @@
 import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
 import {
-  getFeed, listDocs, getDoc, search, getRoadmap,
+  getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   listStagedProposals, listAdrs, listNeedsTriage,
   promoteDoc, ratifyAdr, completeMilestone,
   getMe, logout, mintMcpToken,
@@ -83,6 +83,25 @@ function loadFeed(): void {
 }
 function loadFeedIfNeeded(): void {
   if (state.feed.status === "idle") loadFeed();
+  else rerender();
+}
+
+function loadMyWork(): void {
+  state.mywork = { status: "loading", data: state.mywork.data };
+  rerender();
+  getMyDashboard()
+    .then((data) => {
+      state.mywork = { status: "ok", data };
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.mywork = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadMyWorkIfNeeded(): void {
+  if (state.mywork.status === "idle") loadMyWork();
   else rerender();
 }
 
@@ -261,6 +280,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
 
     // primary navigation
+    case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
     case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); loadFeedIfNeeded(); return;
@@ -455,7 +475,7 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
       state.me = me;
       state.displayName = me.name ?? me.login;
       state.view = "app";
-      loadFeed();
+      loadMyWork();
     })
     .catch(() => {
       // Unauthorized or any error → show login

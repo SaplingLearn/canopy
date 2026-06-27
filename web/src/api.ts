@@ -7,6 +7,7 @@
 import type {
   FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow,
 } from "@shared/rows";
+import type { DashboardData } from "@shared/dashboard";
 
 export class Unauthorized extends Error {
   constructor() { super("unauthorized"); }
@@ -88,6 +89,10 @@ export function getMe(): Promise<Me> {
   return getJson<Me>("/auth/me");
 }
 
+export function getMyDashboard(): Promise<DashboardData> {
+  return getJson<DashboardData>("/me/dashboard");
+}
+
 // The Triage "Proposals" queue = staged doc versions newer than the live doc. There is no
 // single route for this (G9), so aggregate it from /docs + /doc/:slug (N+1 over docs). Each
 // proposal carries both bodies so the detail pane can diff staged vs promoted.
@@ -142,3 +147,4 @@ export function mintMcpToken(): Promise<{ token: string }> {
 
 // Re-export the row types the UI renders, so screens import shapes from one place.
 export type { FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow };
+export type { DashboardData };
