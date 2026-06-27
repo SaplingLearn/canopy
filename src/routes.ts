@@ -8,6 +8,7 @@ import { get_doc, list_docs, get_feed, search_context, list_needs_triage, list_a
 import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone } from "./tools/writes";
 import { list_roadmap } from "./tools/roadmap";
 import { getMyDashboard } from "./tools/dashboard";
+import type { DashboardData } from "@shared/dashboard";
 import { nowIso } from "./db";
 import { getStoredToken } from "./auth/github";
 
@@ -105,15 +106,24 @@ app.get("/roadmap", async (c) => {
 // assigned issues, and recent feed — assembled live, stored nowhere. Never 500s.
 app.get("/me/dashboard", async (c) => {
   const login = c.get("principal").login;
-  const token = await getStoredToken(c.env.DB, login, c.env.COOKIE_SECRET);
-  const data = await getMyDashboard({
-    db: c.env.DB,
-    login,
-    token,
-    repo: c.env.CONTENT_REPO ?? "SaplingLearn/sapling",
-    today: nowIso(),
-  });
-  return c.json(data);
+  try {
+    const token = await getStoredToken(c.env.DB, login, c.env.COOKIE_SECRET);
+    const data = await getMyDashboard({
+      db: c.env.DB,
+      login,
+      token,
+      repo: c.env.CONTENT_REPO ?? "SaplingLearn/sapling",
+      today: nowIso(),
+    });
+    return c.json(data);
+  } catch {
+    // Absolute backstop: never 500. Anything unexpected (token decrypt, D1) → empty degraded payload.
+    const empty: DashboardData = {
+      person: null, role: null, owns: null, focus: null,
+      workingNow: null, comingUp: [], assignedIssues: [], feed: [], degraded: true,
+    };
+    return c.json(empty);
+  }
 });
 
 // Human confirmation (session-gated): promote a staged milestone proposal into a live milestone.

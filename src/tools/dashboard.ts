@@ -202,11 +202,25 @@ export async function getMyDashboard(opts: {
 }): Promise<DashboardData> {
   const { db, login, token, repo, today, fetchImpl } = opts;
 
-  const focusRow = await get_focus(db, login);
+  // D1 reads are wrapped so a missing table (e.g. a migration not applied to the remote
+  // DB) or a transient D1 error degrades to an empty section instead of 500ing the route.
+  let focusRow: Awaited<ReturnType<typeof get_focus>> = null;
+  try {
+    focusRow = await get_focus(db, login);
+  } catch {
+    /* focus table/D1 error → no focus headline */
+  }
   const focus: Focus | null = focusRow
     ? { workingOn: focusRow.working_on, nextUp: focusRow.next_up, updatedAt: focusRow.updated_at }
     : null;
-  const feed = await get_feed(db, { author: login, limit: 8 });
+
+  let feed: Awaited<ReturnType<typeof get_feed>> = [];
+  try {
+    feed = await get_feed(db, { author: login, limit: 8 });
+  } catch {
+    /* feed/D1 error → empty recent activity */
+  }
+
   const person = loginToPerson(login);
 
   let role: string | null = null;
