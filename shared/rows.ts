@@ -108,3 +108,10 @@ export interface MilestoneProposalRow {
   created_at: string;
   created_by: string;
 }
+
+export interface FocusRow {
+  author: string;
+  working_on: string;
+  next_up: string | null;
+  updated_at: string;
+}

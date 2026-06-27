@@ -230,3 +230,22 @@ export async function complete_milestone(db: DB, id: number): Promise<MilestoneR
   await run(db, `UPDATE milestones SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
   return { ...m, status: "done", updated_at };
 }
+
+/** Upsert the author's current focus. One row per person — a re-write overwrites it. */
+export async function set_focus(
+  db: DB,
+  focus: { author: string; working_on: string; next_up?: string | null }
+): Promise<void> {
+  await run(
+    db,
+    `INSERT INTO focus (author, working_on, next_up, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(author) DO UPDATE SET
+       working_on = excluded.working_on,
+       next_up    = excluded.next_up,
+       updated_at = excluded.updated_at`,
+    focus.author,
+    focus.working_on,
+    focus.next_up ?? null,
+    nowIso()
+  );
+}

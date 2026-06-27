@@ -6,7 +6,7 @@ import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
 import { getStoredToken } from "./auth/github";
-import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal } from "./consumer";
+import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate } from "./consumer";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -96,6 +96,14 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       confidence: z.enum(["high", "low"]),
     },
     async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login))
+  );
+
+  server.tool(
+    "set_focus",
+    "Set your current focus for the personal dashboard: what you're working on now and (optionally) what's next. Upserts one row per person — overwrites your previous focus.",
+    { working_on: z.string(), next_up: z.string().optional() },
+    async ({ working_on, next_up }) =>
+      runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
   );
 
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).

@@ -1,7 +1,7 @@
-import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal } from "@shared/contract";
+import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, FocusUpdate } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB } from "./db";
-import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal } from "./tools/writes";
+import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal, set_focus } from "./tools/writes";
 import type { Principal } from "./auth/principal";
 
 export interface IngestResult {
@@ -97,6 +97,17 @@ export async function ingestMilestoneProposal(
   }
   const id = await stage_milestone_proposal(db, proposal, author);
   return { outcome: "written", id };
+}
+
+/** Focus: a direct per-person upsert (like the feed, not staged — it is low-stakes
+ *  self-report needing no human confirmation). Author is always the principal. */
+export async function ingestFocusUpdate(
+  db: DB,
+  update: FocusUpdate,
+  author: string
+): Promise<{ outcome: "written" }> {
+  await set_focus(db, { author, working_on: update.working_on, next_up: update.next_up ?? null });
+  return { outcome: "written" };
 }
 
 /**

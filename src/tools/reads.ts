@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, FocusRow } from "@shared/rows";
 import { type DB, first, all } from "../db";
 
 export async function get_doc(
@@ -137,4 +137,8 @@ export async function list_adrs(db: DB, status?: string): Promise<AdrRow[]> {
 
 export async function list_milestone_proposals(db: DB): Promise<MilestoneProposalRow[]> {
   return all<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE staged_status = 'staged' ORDER BY created_at DESC, id DESC`);
+}
+
+export async function get_focus(db: DB, author: string): Promise<FocusRow | null> {
+  return first<FocusRow>(db, `SELECT * FROM focus WHERE author = ?`, author);
 }
