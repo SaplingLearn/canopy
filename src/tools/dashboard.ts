@@ -1,4 +1,7 @@
-import type { RoadmapPhase, AssignedIssue } from "@shared/dashboard";
+import type { RoadmapPhase, AssignedIssue, DashboardData, Focus } from "@shared/dashboard";
+import type { DB } from "../db";
+import { get_focus, get_feed } from "./reads";
+import { loginToPerson } from "../people";
 
 const GH_API = "application/vnd.github+json";
 const USER_AGENT = "canopy";
@@ -163,4 +166,70 @@ export async function listAssignedIssues(opts: {
   } catch {
     return [];
   }
+}
+
+/** Fetch ROADMAP.md raw from `repo`. Never throws — returns null on any failure. */
+export async function fetchRoadmapMarkdown(opts: {
+  token: string;
+  repo: string;
+  fetchImpl?: typeof fetch;
+}): Promise<string | null> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  try {
+    const res = await doFetch(`https://api.github.com/repos/${opts.repo}/contents/ROADMAP.md`, {
+      headers: { authorization: `Bearer ${opts.token}`, accept: "application/vnd.github.raw", "user-agent": USER_AGENT },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/** Assemble the personal dashboard. D1 data (focus, feed) is always returned; the
+ *  GitHub-derived roadmap/issues are returned when the token works, else degraded. */
+export async function getMyDashboard(opts: {
+  db: DB;
+  login: string;
+  token: string | null;
+  repo: string;
+  today: string;
+  fetchImpl?: typeof fetch;
+}): Promise<DashboardData> {
+  const { db, login, token, repo, today, fetchImpl } = opts;
+
+  const focusRow = await get_focus(db, login);
+  const focus: Focus | null = focusRow
+    ? { workingOn: focusRow.working_on, nextUp: focusRow.next_up, updatedAt: focusRow.updated_at }
+    : null;
+  const feed = await get_feed(db, { author: login, limit: 8 });
+  const person = loginToPerson(login);
+
+  let role: string | null = null;
+  let owns: string | null = null;
+  let workingNow: RoadmapPhase | null = null;
+  let comingUp: RoadmapPhase[] = [];
+  let assignedIssues: AssignedIssue[] = [];
+  let degraded = false;
+
+  if (!token) {
+    degraded = true;
+  } else {
+    const [md, issues] = await Promise.all([
+      person ? fetchRoadmapMarkdown({ token, repo, fetchImpl }) : Promise.resolve(null),
+      listAssignedIssues({ token, repo, login, fetchImpl }),
+    ]);
+    assignedIssues = issues;
+    if (person && md) {
+      const parsed = parseRoadmapForPerson(md, person, today);
+      role = parsed.role;
+      owns = parsed.owns;
+      workingNow = parsed.workingNow;
+      comingUp = parsed.comingUp;
+    } else if (person && !md) {
+      degraded = true; // had a token + a mapped person, but the roadmap read failed
+    }
+  }
+
+  return { person, role, owns, focus, workingNow, comingUp, assignedIssues, feed, degraded };
 }
