@@ -1,4 +1,7 @@
-import type { RoadmapPhase } from "@shared/dashboard";
+import type { RoadmapPhase, AssignedIssue } from "@shared/dashboard";
+
+const GH_API = "application/vnd.github+json";
+const USER_AGENT = "canopy";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -115,4 +118,49 @@ export function parseRoadmapForPerson(markdown: string, person: string, today: s
   const comingUp = fromCurrent.slice(1).map(toPhase);
 
   return { role, owns, workingNow, comingUp };
+}
+
+function priorityOf(title: string): "P0" | "P1" | "P2" | "P3" | null {
+  const m = title.match(/^\s*\[(P[0-3])\]/);
+  return m ? (m[1] as "P0" | "P1" | "P2" | "P3") : null;
+}
+function stripPriority(title: string): string {
+  return title.replace(/^\s*\[P[0-3]\]\s*/, "").trim();
+}
+
+/** Open issues assigned to `login` in `repo`, fetched live. PRs are filtered out (the
+ *  issues endpoint returns both). Never throws — returns [] on any non-OK/parse failure. */
+export async function listAssignedIssues(opts: {
+  token: string;
+  repo: string;
+  login: string;
+  fetchImpl?: typeof fetch;
+}): Promise<AssignedIssue[]> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  const headers = { authorization: `Bearer ${opts.token}`, accept: GH_API, "user-agent": USER_AGENT };
+  const url = `https://api.github.com/repos/${opts.repo}/issues?assignee=${encodeURIComponent(opts.login)}&state=open&per_page=50`;
+  try {
+    const res = await doFetch(url, { headers });
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<{
+      number: number;
+      title: string;
+      html_url: string;
+      updated_at: string;
+      pull_request?: unknown;
+      labels?: Array<{ name?: string } | string>;
+    }>;
+    return data
+      .filter((it) => !it.pull_request)
+      .map((it) => ({
+        number: it.number,
+        title: stripPriority(it.title),
+        priority: priorityOf(it.title),
+        labels: (it.labels ?? []).map((l) => (typeof l === "string" ? l : l.name ?? "")).filter(Boolean),
+        url: it.html_url,
+        updatedAt: it.updated_at,
+      }));
+  } catch {
+    return [];
+  }
 }
