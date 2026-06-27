@@ -2,7 +2,7 @@
 name: record-session
 description: Use when a person explicitly asks to wrap up, record, log, or capture the current Claude Code session into Canopy (triggers — "record this session", "session-end", "log this to Canopy", "save what we did"). Explicit invocation only — must never auto-fire at a natural stopping point.
 disable-model-invocation: true
-allowed-tools: Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh issue view:*), mcp__canopy__append_feed, mcp__canopy__get_feed, mcp__canopy__propose_doc_update
+allowed-tools: Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh issue view:*), mcp__canopy__append_feed, mcp__canopy__get_feed, mcp__canopy__propose_doc_update, mcp__canopy__set_focus
 ---
 
 # Record Session → Canopy
@@ -74,6 +74,20 @@ otherwise (no fitting tag / guessing / recording an interpretation) ──► LO
   `confidence`); out-of-vocab section or `confidence:"low"` routes to triage. You stage; you never promote.
 - **ESSENTIALLY NEVER — `propose_milestone`.** A session wrap-up does not create roadmap milestones.
   Only on an explicit, separate ask.
+
+### 5. Update your focus (the personal dashboard headline)
+
+After the feed entry is written, set the person's **current focus** so their "My Work"
+dashboard reflects this session:
+
+- `working_on` — a one-line summary of what this session actually advanced (the same
+  factual thrust as the feed entry; prose intent is fine here).
+- `next_up` — the clearly-stated next step, if there is one (omit if there isn't).
+
+Call `set_focus` **once** per explicit wrap-up request, alongside the feed entry. Focus is
+forward-looking prose (intent), so it is exempt from the "artifacts are observed" rule —
+that rule still binds the feed entry's artifacts. `set_focus` upserts one row per person
+(it overwrites your previous focus); the author is resolved from your bearer, never sent.
 
 ## Vocabulary — source of truth is `shared/vocabulary.ts` (verify before tagging)
 
