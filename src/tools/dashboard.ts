@@ -132,19 +132,20 @@ function stripPriority(title: string): string {
 }
 
 /** Open issues assigned to `login` in `repo`, fetched live. PRs are filtered out (the
- *  issues endpoint returns both). Never throws — returns [] on any non-OK/parse failure. */
+ *  issues endpoint returns both). Never throws — returns `{ issues: [], ok: false }` on
+ *  any non-OK/parse failure so callers can distinguish "no issues" from "token failed". */
 export async function listAssignedIssues(opts: {
   token: string;
   repo: string;
   login: string;
   fetchImpl?: typeof fetch;
-}): Promise<AssignedIssue[]> {
+}): Promise<{ issues: AssignedIssue[]; ok: boolean }> {
   const doFetch = opts.fetchImpl ?? fetch;
   const headers = { authorization: `Bearer ${opts.token}`, accept: GH_API, "user-agent": USER_AGENT };
   const url = `https://api.github.com/repos/${opts.repo}/issues?assignee=${encodeURIComponent(opts.login)}&state=open&per_page=50`;
   try {
     const res = await doFetch(url, { headers });
-    if (!res.ok) return [];
+    if (!res.ok) return { issues: [], ok: false };
     const data = (await res.json()) as Array<{
       number: number;
       title: string;
@@ -153,18 +154,21 @@ export async function listAssignedIssues(opts: {
       pull_request?: unknown;
       labels?: Array<{ name?: string } | string>;
     }>;
-    return data
-      .filter((it) => !it.pull_request)
-      .map((it) => ({
-        number: it.number,
-        title: stripPriority(it.title),
-        priority: priorityOf(it.title),
-        labels: (it.labels ?? []).map((l) => (typeof l === "string" ? l : l.name ?? "")).filter(Boolean),
-        url: it.html_url,
-        updatedAt: it.updated_at,
-      }));
+    return {
+      issues: data
+        .filter((it) => !it.pull_request)
+        .map((it) => ({
+          number: it.number,
+          title: stripPriority(it.title),
+          priority: priorityOf(it.title),
+          labels: (it.labels ?? []).map((l) => (typeof l === "string" ? l : l.name ?? "")).filter(Boolean),
+          url: it.html_url,
+          updatedAt: it.updated_at,
+        })),
+      ok: true,
+    };
   } catch {
-    return [];
+    return { issues: [], ok: false };
   }
 }
 
@@ -215,19 +219,18 @@ export async function getMyDashboard(opts: {
   if (!token) {
     degraded = true;
   } else {
-    const [md, issues] = await Promise.all([
+    const [md, issuesRes] = await Promise.all([
       person ? fetchRoadmapMarkdown({ token, repo, fetchImpl }) : Promise.resolve(null),
       listAssignedIssues({ token, repo, login, fetchImpl }),
     ]);
-    assignedIssues = issues;
+    assignedIssues = issuesRes.issues;
+    if (!issuesRes.ok) degraded = true;        // the token actually failed for GitHub
     if (person && md) {
       const parsed = parseRoadmapForPerson(md, person, today);
       role = parsed.role;
       owns = parsed.owns;
       workingNow = parsed.workingNow;
       comingUp = parsed.comingUp;
-    } else if (person && !md) {
-      degraded = true; // had a token + a mapped person, but the roadmap read failed
     }
   }
 

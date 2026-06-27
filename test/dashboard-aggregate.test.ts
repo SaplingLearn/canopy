@@ -68,4 +68,27 @@ describe("getMyDashboard", () => {
     expect(d.comingUp).toEqual([]);
     expect(d.assignedIssues).toEqual([]);
   });
+
+  it("degrades when token is present but GitHub returns errors: focus + feed returned, workingNow null, assignedIssues empty", async () => {
+    await ingestFocusUpdate(env.DB, { working_on: "fix #42" }, "AndresL230");
+    await append_feed(env.DB, { author: "AndresL230", summary: "still here", artifacts: { prs: [], commits: [], issues: [] } });
+
+    // ROADMAP.md fetch → 404, issues fetch → 401 (revoked token)
+    const failFetch: typeof fetch = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("/contents/ROADMAP.md")) return new Response("not found", { status: 404 });
+      if (u.includes("/issues?assignee=")) return new Response("Unauthorized", { status: 401 });
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const d = await getMyDashboard({
+      db: env.DB, login: "AndresL230", token: "t", repo: "o/r", today: "2026-06-26", fetchImpl: failFetch,
+    });
+
+    expect(d.degraded).toBe(true);
+    expect(d.focus?.workingOn).toBe("fix #42");
+    expect(d.feed).toHaveLength(1);
+    expect(d.workingNow).toBeNull();
+    expect(d.assignedIssues).toEqual([]);
+  });
 });

@@ -101,7 +101,7 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
   server.tool(
     "set_focus",
     "Set your current focus for the personal dashboard: what you're working on now and (optionally) what's next. Upserts one row per person — overwrites your previous focus.",
-    { working_on: z.string(), next_up: z.string().optional() },
+    { working_on: z.string().min(1), next_up: z.string().optional() },
     async ({ working_on, next_up }) =>
       runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
   );

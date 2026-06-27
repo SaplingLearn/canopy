@@ -1124,7 +1124,7 @@ function myWorkView(s: AppState): string {
   const subParts: string[] = [];
   if (d.role) subParts.push(`<span style="color:var(--fg-70);font-weight:500">${esc(d.role)}</span>`);
   if (d.owns) subParts.push(`owns ${esc(d.owns)}`);
-  const header = `<div style="margin-bottom:24px">
+  const hero = `<div style="margin-bottom:24px">
     <h2 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0">${greetingFor()}, ${name}</h2>
     ${subParts.length ? `<div style="font-size:13px;color:var(--fg-55);margin-top:5px">${subParts.join(" · ")}</div>` : ""}
   </div>`;
@@ -1190,7 +1190,7 @@ function myWorkView(s: AppState): string {
     activity = mwSection("Your recent activity", items);
   }
 
-  return wrapMyWork(`${header}${headline}${roadmap}${issues}${activity}`);
+  return wrapMyWork(`${hero}${headline}${roadmap}${issues}${activity}`);
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
