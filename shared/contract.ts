@@ -48,6 +48,11 @@ export const MilestoneProposal = z.object({
   confidence: z.enum(["high", "low"]),
 });
 
+export const FocusUpdate = z.object({
+  working_on: z.string().min(1),
+  next_up: z.string().optional(),
+});
+
 export const IngestPayload = z.object({
   session: Session,
   feed_entries: z.array(FeedEntry).default([]),
@@ -63,4 +68,5 @@ export type DocProposal = z.infer<typeof DocProposal>;
 export type AdrDraft = z.infer<typeof AdrDraft>;
 export type TriageItem = z.infer<typeof TriageItem>;
 export type MilestoneProposal = z.infer<typeof MilestoneProposal>;
+export type FocusUpdate = z.infer<typeof FocusUpdate>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
