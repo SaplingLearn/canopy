@@ -5,5 +5,6 @@ export interface Env {
   GITHUB_CLIENT_SECRET: string;
   COOKIE_SECRET: string;
   GITHUB_REPO?: string;   // "owner/repo" for live roadmap progress; absent → milestones without progress
+  CONTENT_REPO?: string;  // "owner/repo" the dashboard reads (ROADMAP.md + assigned issues); defaults to SaplingLearn/sapling
   DEV_LOGIN?: string;     // LOCAL DEV ONLY (set in .dev.vars): bypass OAuth, act as this seeded user. Never set in prod.
 }

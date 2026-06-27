@@ -7,6 +7,8 @@ import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, search_context, list_needs_triage, list_adrs, list_milestone_proposals } from "./tools/reads";
 import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone } from "./tools/writes";
 import { list_roadmap } from "./tools/roadmap";
+import { getMyDashboard } from "./tools/dashboard";
+import { nowIso } from "./db";
 import { getStoredToken } from "./auth/github";
 
 export const app = new Hono<AppEnv>();
@@ -97,6 +99,21 @@ app.get("/roadmap", async (c) => {
   const token = await getStoredToken(c.env.DB, c.get("principal").login, c.env.COOKIE_SECRET);
   const milestones = await list_roadmap(c.env.DB, { token, repo: c.env.GITHUB_REPO, devSynthesize: !!c.env.DEV_LOGIN });
   return c.json({ milestones });
+});
+
+// Personal dashboard (session-gated): the signed-in user's focus, roadmap assignments,
+// assigned issues, and recent feed — assembled live, stored nowhere. Never 500s.
+app.get("/me/dashboard", async (c) => {
+  const login = c.get("principal").login;
+  const token = await getStoredToken(c.env.DB, login, c.env.COOKIE_SECRET);
+  const data = await getMyDashboard({
+    db: c.env.DB,
+    login,
+    token,
+    repo: c.env.CONTENT_REPO ?? "SaplingLearn/sapling",
+    today: nowIso(),
+  });
+  return c.json(data);
 });
 
 // Human confirmation (session-gated): promote a staged milestone proposal into a live milestone.
