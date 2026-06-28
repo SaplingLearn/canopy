@@ -7,8 +7,15 @@ import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
 import { getStoredToken } from "./auth/github";
 import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate } from "./consumer";
+import { feedEntryFromMcpArgs } from "./mcp-args";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
+
+// Each MCP write tool is a one-item batch with an ephemeral session id, so it
+// funnels through the SAME reconciling gate as /ingest — no second write path.
+// A fresh uuid never collides in the replay ledger, so each call is reconciled
+// on its own merits (vocab/confidence/content-hash dedupe still apply).
+const ephemeralLedger = () => ({ sessionId: crypto.randomUUID(), itemIndex: 0 });
 
 async function runTool(fn: () => Promise<unknown>) {
   try {
@@ -66,22 +73,31 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "append_feed",
-    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage). Optional issues link GitHub issue numbers.",
-    { summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional(), issues: z.array(z.number()).optional() },
-    async ({ summary, body, tags, issues }) =>
-      // Thin adapter: shape the args into a FeedEntry and let the gate decide write-vs-triage.
+    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage). Optional prs/commits/issues record the artifacts (PR urls, commit shas, GitHub issue numbers) this session observed.",
+    {
+      summary: z.string(),
+      body: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      prs: z.array(z.string()).optional(),
+      commits: z.array(z.string()).optional(),
+      issues: z.array(z.number()).optional(),
+    },
+    async ({ summary, body, tags, prs, commits, issues }) =>
+      // Thin adapter: feedEntryFromMcpArgs shapes the args into a FeedEntry
+      // (carrying prs/commits/issues), then the gate decides write-vs-triage.
       runTool(() =>
         ingestFeedEntry(
           env.DB,
-          { summary, body: body ?? "", tags: tags ?? [], artifacts: { prs: [], commits: [], issues: issues ?? [] } },
-          principal.login
+          feedEntryFromMcpArgs({ summary, body, tags, prs, commits, issues }),
+          principal.login,
+          ephemeralLedger()
         )
       )
   );
 
   server.tool(
     "propose_doc_update",
-    "Propose a doc version through the gate (out-of-vocab section or low confidence routes to needs_triage; otherwise staged non-destructively — current_version is untouched).",
+    "Propose a doc version through the reconciling gate. Out-of-vocab section or low confidence on a NEW slug routes to needs_triage; an unchanged body is dropped; otherwise staged non-destructively (current_version untouched) and classified new/edit/rewrite. Pass base_version (the current_version you read) so a stale edit is flagged, space to place a new doc, and force to stage an identical body.",
     {
       slug: z.string(),
       section: z.string(),
@@ -89,8 +105,11 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
       body: z.string(),
       change_summary: z.string(),
       confidence: z.enum(["high", "low"]),
+      space: z.enum(["sapling", "canopy"]).optional(),
+      base_version: z.number().optional(),
+      force: z.boolean().optional(),
     },
-    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login))
+    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login, ephemeralLedger()))
   );
 
   server.tool("get_roadmap", "Read the roadmap: milestones in target-date order with live GitHub progress.", {}, async () =>
@@ -111,7 +130,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
       change_summary: z.string(),
       confidence: z.enum(["high", "low"]),
     },
-    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login))
+    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login, ephemeralLedger()))
   );
 
   server.tool(
