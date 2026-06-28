@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const Session = z.object({
+  id: z.string(),                  // uuid minted by the writer; the replay key with item_index
   author: z.string(),   // advisory only — overwritten server-side from the authenticated principal
   ended_at: z.string(),            // ISO8601
   skill_version: z.string(),
@@ -24,6 +25,9 @@ export const DocProposal = z.object({
   body: z.string(),                      // markdown, or mermaid/d2 for diagrams
   change_summary: z.string(),
   confidence: z.enum(["high", "low"]),
+  space: z.enum(["sapling", "canopy"]).optional(),  // server defaults canopy on first creation
+  base_version: z.number().optional(),   // the current_version the writer read before editing
+  force: z.boolean().optional(),         // escape hatch: stage even if the body hash is unchanged
 });
 
 export const AdrDraft = z.object({
@@ -108,6 +112,7 @@ export const IngestPayload = z.object({
   adr_drafts: z.array(AdrDraft).default([]),
   needs_triage: z.array(TriageItem).default([]),
   milestone_proposals: z.array(MilestoneProposal).default([]),
+  focus: FocusUpdate.optional(),   // the writer's end-of-session focus, reconciled as an upsert
 });
 
 export type Session = z.infer<typeof Session>;

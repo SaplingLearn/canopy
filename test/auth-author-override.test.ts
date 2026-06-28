@@ -8,7 +8,7 @@ import type { FeedRow, DocVersionRow } from "@shared/rows";
 describe("author override", () => {
   it("stores the authenticated principal as author, ignoring the payload's claimed session.author", async () => {
     const payload = IngestPayload.parse({
-      session: { author: "someone-else", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" },
+      session: { id: "sess-override", author: "someone-else", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" },
       feed_entries: [{ summary: "s", body: "b", tags: ["auth"], artifacts: { prs: [], commits: [] } }],
       doc_proposals: [{ slug: "architecture", section: "reference", title: "Architecture", body: "x", change_summary: "c", confidence: "high" }],
     });

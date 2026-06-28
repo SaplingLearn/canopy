@@ -6,7 +6,7 @@ import { get_feed } from "../src/tools/reads";
 import { all } from "../src/db";
 import type { NeedsTriageRow, DocVersionRow } from "@shared/rows";
 
-const session = { author: "andres", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
+const session = { id: "sess-vocab", author: "andres", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
 
 describe("vocabulary gate", () => {
   it("writes in-vocab feed entries and routes out-of-vocab tags to needs_triage", async () => {

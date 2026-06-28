@@ -35,7 +35,7 @@ describe("GitHub token retention", () => {
   });
 });
 
-const sessionMeta = { author: "x", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
+const sessionMeta = { id: "sess-roadmap", author: "x", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
 
 describe("milestone proposal gate", () => {
   it("stages a valid proposal; it is NOT a live milestone until promoted", async () => {
