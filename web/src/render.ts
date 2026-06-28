@@ -5,7 +5,7 @@
 
 import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow } from "@shared/rows";
 import type { DashboardData, RoadmapPhase } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
@@ -49,8 +49,8 @@ export interface AppState {
   selTriage: number | null;
   showHistory: boolean;
   searchQuery: string;
-  searchType: "all" | "doc" | "feed" | "adr";
-  searchResults: Loadable<SearchResult[]>;
+  searchType: "all" | "doc" | "feed" | "decision";
+  searchResults: Loadable<QueryResult>;
   displayName: string;
   revealedToken: string | null;
   tokenCopied: boolean;
@@ -82,7 +82,7 @@ export function initialState(): AppState {
     selProposal: null, selDecision: null, selTriage: null,
     showHistory: false,
     searchQuery: "token", searchType: "all",
-    searchResults: { status: "idle", data: [] },
+    searchResults: { status: "idle", data: { primary: [], pointers: [], meta: { engine: "fts5", total: 0 } } },
     displayName: "",
     revealedToken: null,
     tokenCopied: false,
@@ -886,17 +886,75 @@ function roadmapDigest(s: AppState): string {
 }
 
 // ── search ───────────────────────────────────────────────────────────────────
-function searchView(s: AppState): string {
-  const typeIcon: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", adr: "M9 12l2 2 4-4" };
-  const typeLabel: Record<string, string> = { doc: "Doc", feed: "Feed", adr: "Decision" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4" };
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision" };
 
+// Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
+// the others are mapped for completeness. Reuses the Triage badge styling.
+function authorityBadge(a: Authority): string {
+  const map: Record<Authority, { label: string; color: string }> = {
+    live: { label: "LIVE", color: "var(--green)" },
+    staged_pending: { label: "PENDING", color: "var(--amber)" },
+    unpromoted: { label: "UNPROMOTED", color: "var(--amber)" },
+    draft: { label: "DRAFT", color: "var(--blue)" },
+  };
+  const { label, color } = map[a];
+  return `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${color};border:1px solid color-mix(in srgb,${color} 45%,transparent);background:color-mix(in srgb,${color} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${label}</span>`;
+}
+
+function searchTypeBadge(type: string): string {
+  const color = type === "decision" ? "var(--blue)" : type === "feed" ? "var(--fg-70)" : "var(--accent)";
+  const border = type === "decision" ? "color-mix(in srgb,var(--blue) 45%,transparent)" : type === "feed" ? "var(--border-strong)" : "color-mix(in srgb,var(--accent) 45%,transparent)";
+  const label = SEARCH_TYPE_LABEL[type] ?? type;
+  const icon = SEARCH_TYPE_ICON[type] ?? SEARCH_TYPE_ICON["doc"];
+  return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${color};border:1px solid ${border}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>`;
+}
+
+// Highlight the active query term inside a body of text.
+function highlight(text: string, sq: string): string {
+  if (!sq) return esc(text);
+  const idx = text.toLowerCase().indexOf(sq);
+  if (idx < 0) return esc(text);
+  const pre = text.slice(0, idx), mid = text.slice(idx, idx + sq.length), post = text.slice(idx + sq.length);
+  return `${esc(pre)}<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>${esc(post)}`;
+}
+
+// G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed.
+function searchOpenAttr(type: string, id: string): string | null {
+  if (type === "decision") return null;
+  return type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(id)}"`;
+}
+
+function primaryCard(r: QueryPrimary, sq: string): string {
+  const preview = r.body.replace(/\s+/g, " ").trim().slice(0, 280);
+  const inner = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap">${searchTypeBadge(r.type)}${authorityBadge(r.authority)}</div>
+    <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
+    <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${highlight(preview, sq)}${r.body.length > 280 ? "…" : ""}</div>`;
+  const act = searchOpenAttr(r.type, r.id);
+  return act
+    ? `<button ${act} class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;cursor:pointer">${inner}</button>`
+    : `<div class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px">${inner}</div>`;
+}
+
+function pointerRow(r: QueryPointer, sq: string): string {
+  const inner = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">${searchTypeBadge(r.type)}${authorityBadge(r.authority)}<span style="font-size:13px;font-weight:500;letter-spacing:-0.01em">${esc(r.title)}</span></div>
+    <div style="font-size:12.5px;line-height:1.55;color:var(--fg-55)">${highlight(r.snippet, sq)}</div>`;
+  const act = searchOpenAttr(r.type, r.id);
+  return act
+    ? `<button ${act} style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:10px;padding:11px 14px;margin-bottom:8px;background:transparent;cursor:pointer">${inner}</button>`
+    : `<div style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:10px;padding:11px 14px;margin-bottom:8px">${inner}</div>`;
+}
+
+function searchView(s: AppState): string {
+  const result = s.searchResults.data;
   // Client-side filter by type (no refetch — the full set is already fetched).
-  let filtered: SearchResult[] = s.searchResults.data;
-  if (s.searchType !== "all") filtered = filtered.filter((r) => r.type === s.searchType);
+  const keep = (t: string) => s.searchType === "all" || s.searchType === t;
+  const primary = result.primary.filter((r) => keep(r.type));
+  const pointers = result.pointers.filter((r) => keep(r.type));
 
   const sq = (s.searchQuery || "").trim().toLowerCase();
 
-  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["adr", "Decisions"]].map(([k, label]) => {
+  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"]].map(([k, label]) => {
     const sel = s.searchType === k;
     const style = `padding:6px 13px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};color:${sel ? "var(--accent)" : "var(--fg-55)"};background:${sel ? "var(--accent-soft)" : "transparent"};transition:all .12s ease`;
     return `<button data-act="setSearchType" data-arg="${k}" style="${style}">${label}</button>`;
@@ -905,42 +963,22 @@ function searchView(s: AppState): string {
   let body: string;
   if (s.searchResults.status === "loading") {
     body = notice("Searching&hellip;");
+  } else if (s.searchResults.status === "ok" && primary.length === 0 && pointers.length === 0) {
+    body = notice("No results for that query.");
   } else {
-    const cards = filtered.map((r) => {
-      const idx = sq ? r.snippet.toLowerCase().indexOf(sq) : -1;
-      const pre = idx >= 0 ? r.snippet.slice(0, idx) : r.snippet;
-      const mid = idx >= 0 ? r.snippet.slice(idx, idx + sq.length) : "";
-      const post = idx >= 0 ? r.snippet.slice(idx + sq.length) : "";
-      const badgeColor = r.type === "adr" ? "var(--blue)" : r.type === "feed" ? "var(--fg-70)" : "var(--accent)";
-      const badgeBorder = r.type === "adr" ? "color-mix(in srgb,var(--blue) 45%,transparent)" : r.type === "feed" ? "var(--border-strong)" : "color-mix(in srgb,var(--accent) 45%,transparent)";
-      const label = typeLabel[r.type] ?? r.type;
-      const icon = typeIcon[r.type] ?? typeIcon["doc"];
-      // G3: adr results are NOT navigable (no adr detail route). doc → openDocFrom, feed → goFeed.
-      if (r.type === "adr") {
-        return `<div class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
-            <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${badgeColor};border:1px solid ${badgeBorder}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>
-          </div>
-          <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
-          <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${esc(pre)}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>` : ""}${esc(post)}</div>
-        </div>`;
-      }
-      const act = r.type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(r.id)}"`;
-      return `<button ${act} class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;cursor:pointer">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
-          <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${badgeColor};border:1px solid ${badgeBorder}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>
-        </div>
-        <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
-        <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${esc(pre)}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>` : ""}${esc(post)}</div>
-      </button>`;
-    }).join("");
-
-    const empty = s.searchResults.status === "ok" && filtered.length === 0
-      ? notice("No results for that query.")
+    const primaryBlock = primary.length
+      ? `<div>${primary.map((r) => primaryCard(r, sq)).join("")}</div>`
       : "";
-    body = `${cards}${empty}`;
+    const pointerBlock = pointers.length
+      ? `<div style="margin-top:22px">
+           <div style="font-size:11px;font-weight:600;font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-40);margin-bottom:10px">More pointers</div>
+           ${pointers.map((r) => pointerRow(r, sq)).join("")}
+         </div>`
+      : "";
+    body = `${primaryBlock}${pointerBlock}`;
   }
 
+  const count = primary.length + pointers.length;
   return `<div style="max-width:780px;margin:0 auto;padding:32px 24px 100px">
     <div style="display:flex;align-items:center;gap:11px;border:1px solid var(--border-strong);border-radius:12px;padding:0 16px;height:52px;margin-bottom:18px">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none;color:var(--fg-40)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
@@ -949,7 +987,7 @@ function searchView(s: AppState): string {
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:7px">${typeChips}</div>
-      <span style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono)">${filtered.length} results</span>
+      <span style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono)">${count} results</span>
     </div>
     ${body}
   </div>`;

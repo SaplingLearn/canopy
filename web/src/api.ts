@@ -62,11 +62,35 @@ export function getDoc(slug: string): Promise<{ doc: DocRow; versions: DocVersio
   });
 }
 
-export interface SearchResult { type: "doc" | "feed" | "adr"; id: string; title: string; snippet: string; }
-export function search(q: string, section?: string): Promise<SearchResult[]> {
-  const p = new URLSearchParams({ q });
-  if (section) p.set("section", section);
-  return getJson<{ results: SearchResult[] }>(`/search?${p}`).then((r) => r.results);
+// The read-side query envelope, re-declared here (web/ can't import the @shared
+// contract's Zod module). Mirrors shared/contract.ts QueryResult exactly.
+export type Authority = "live" | "staged_pending" | "unpromoted" | "draft";
+export type QueryType = "doc" | "decision" | "feed";
+export interface QueryPrimary {
+  type: QueryType; id: string; title: string;
+  section: string | null; space: string | null;
+  body: string; authority: Authority;
+  current_version: number | null; pending_version: number | null;
+  staged_body: string | null; confidence: string | null;
+  updated_at: string | null; updated_by: string | null; score: number;
+}
+export interface QueryPointer {
+  type: QueryType; id: string; title: string; snippet: string; authority: Authority; score: number;
+}
+export interface QueryResult {
+  primary: QueryPrimary[]; pointers: QueryPointer[]; meta: { engine: "fts5"; total: number };
+}
+
+// Human Search: the route forces include_staged:false, so results are live-only.
+export function search(q: string, opts: { types?: QueryType[]; section?: string; space?: string; limit?: number } = {}): Promise<QueryResult> {
+  const p = new URLSearchParams();
+  if (q) p.set("q", q);
+  if (opts.types && opts.types.length) p.set("types", opts.types.join(","));
+  if (opts.section) p.set("section", opts.section);
+  if (opts.space) p.set("space", opts.space);
+  if (opts.limit) p.set("limit", String(opts.limit));
+  const qs = p.toString();
+  return getJson<{ result: QueryResult }>(`/search${qs ? `?${qs}` : ""}`).then((r) => r.result);
 }
 
 export type MilestoneWithProgress = MilestoneRow & { progress: { closed: number; total: number } | null };

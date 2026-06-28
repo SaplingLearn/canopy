@@ -150,17 +150,19 @@ function loadDocsIfNeeded(): void {
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
+const EMPTY_QUERY_RESULT = { primary: [], pointers: [], meta: { engine: "fts5" as const, total: 0 } };
+
 function loadSearch(): void {
   state.searchResults = { status: "loading", data: state.searchResults.data };
   rerender();
   search(state.searchQuery)
-    .then((results) => {
-      state.searchResults = { status: "ok", data: results };
+    .then((result) => {
+      state.searchResults = { status: "ok", data: result };
       rerender();
     })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.searchResults = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      state.searchResults = { status: "error", data: EMPTY_QUERY_RESULT, error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
 }
@@ -393,7 +395,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       rerender();
       return;
     case "setSearchType":
-      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "adr") state.searchType = arg;
+      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision") state.searchType = arg;
       break;
 
     // settings — display name echoes live; everything else is Phase 2
