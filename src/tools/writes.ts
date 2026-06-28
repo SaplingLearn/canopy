@@ -39,6 +39,12 @@ export async function propose_doc_update(
     body: string;
     change_summary: string;
     confidence: "high" | "low";
+    // Reconciler-computed metadata (set by the gate; defaulted for direct callers).
+    space?: "sapling" | "canopy";
+    content_hash?: string | null;
+    base_version?: number | null;
+    change_kind?: "new" | "edit" | "rewrite" | null;
+    low_confidence?: boolean;
   },
   author: string
 ): Promise<{ slug: string; version: number; status: "staged" }> {
@@ -48,16 +54,18 @@ export async function propose_doc_update(
   if (!existing) {
     // Title resolution on first creation only: proposal.title ?? humanizeSlug(slug).
     // (On an existing doc we never rewrite title/section — a human may have set them.)
+    // `space` (audit F4) is persisted on the INSERT, defaulting to 'canopy'.
     const title = proposal.title ?? humanizeSlug(proposal.slug);
     await run(
       db,
-      `INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by)
-       VALUES (?, ?, ?, '', 0, ?, ?)`,
+      `INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by, space)
+       VALUES (?, ?, ?, '', 0, ?, ?, ?)`,
       proposal.slug,
       proposal.section,
       title,
       created_at,
-      author
+      author,
+      proposal.space ?? "canopy"
     );
   }
 
@@ -70,15 +78,21 @@ export async function propose_doc_update(
 
   await run(
     db,
-    `INSERT INTO doc_versions (slug, version, body, summary, status, confidence, created_at, created_by)
-     VALUES (?, ?, ?, ?, 'staged', ?, ?, ?)`,
+    `INSERT INTO doc_versions
+       (slug, version, body, summary, status, confidence, created_at, created_by,
+        content_hash, base_version, change_kind, low_confidence)
+     VALUES (?, ?, ?, ?, 'staged', ?, ?, ?, ?, ?, ?, ?)`,
     proposal.slug,
     version,
     proposal.body,
     proposal.change_summary,
     proposal.confidence,
     created_at,
-    author
+    author,
+    proposal.content_hash ?? null,
+    proposal.base_version ?? null,
+    proposal.change_kind ?? null,
+    proposal.low_confidence ? 1 : 0
   );
 
   // docs.current_version intentionally untouched — promotion is a human action (out of scope).
@@ -88,20 +102,22 @@ export async function propose_doc_update(
 export async function stage_adr(
   db: DB,
   draft: { title: string; context: string; decision: string; rationale: string; confidence: "high" | "low" },
-  author: string
+  author: string,
+  contentHash?: string | null
 ): Promise<number> {
   const created_at = nowIso();
   const res = await run(
     db,
-    `INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by)
-     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
+    `INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by, content_hash)
+     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
     draft.title,
     draft.context,
     draft.decision,
     draft.rationale,
     draft.confidence,
     created_at,
-    author
+    author,
+    contentHash ?? null
   );
   return res.meta.last_row_id as number;
 }
@@ -161,13 +177,14 @@ export async function promote_doc(
 export async function stage_milestone_proposal(
   db: DB,
   proposal: { title: string; target_date: string; status: string; github_ref?: number | number[]; change_summary: string; confidence: "high" | "low" },
-  author: string
+  author: string,
+  contentHash?: string | null
 ): Promise<number> {
   const github_ref = proposal.github_ref === undefined ? null : JSON.stringify(proposal.github_ref);
   const res = await run(
     db,
-    `INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'staged', ?, ?)`,
+    `INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, 'staged', ?, ?, ?)`,
     proposal.title,
     proposal.target_date,
     proposal.status,
@@ -175,7 +192,8 @@ export async function stage_milestone_proposal(
     proposal.change_summary,
     proposal.confidence,
     nowIso(),
-    author
+    author,
+    contentHash ?? null
   );
   return res.meta.last_row_id as number;
 }

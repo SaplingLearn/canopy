@@ -85,7 +85,7 @@ describe("milestone proposal gate", () => {
       ],
     });
     const result = await consume(env.DB, payload, { login: "andres" });
-    expect(result.milestones).toBe(1);
+    expect(result.milestones.staged).toBe(1);
     const staged = await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`);
     expect(staged.length).toBe(1);
     expect(staged[0].created_by).toBe("andres"); // author from principal, not session
