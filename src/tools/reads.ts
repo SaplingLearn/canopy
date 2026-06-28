@@ -69,9 +69,47 @@ export async function list_needs_triage(db: DB): Promise<NeedsTriageRow[]> {
 }
 
 export async function list_adrs(db: DB, status?: string): Promise<AdrRow[]> {
+  // Decision reads exclude 'rejected' (Phase 3): a rejected draft leaves the queue.
+  // With an explicit status filter the caller already constrains it (the UI asks
+  // for 'draft' / 'ratified', never 'rejected').
   return status
     ? all<AdrRow>(db, `SELECT * FROM adrs WHERE status = ? ORDER BY created_at DESC, id DESC`, status)
-    : all<AdrRow>(db, `SELECT * FROM adrs ORDER BY created_at DESC, id DESC`);
+    : all<AdrRow>(db, `SELECT * FROM adrs WHERE status != 'rejected' ORDER BY created_at DESC, id DESC`);
+}
+
+// The Proposals queue, server-joined (Phase 3, audit G9): every staged doc version
+// newer than the live doc, not rejected, joined to its doc — carrying both bodies
+// (live promoted + staged) and the Phase 2 reconciler metadata so Phase 4 can chip
+// and diff the queue without the old per-doc N+1.
+export interface ProposalRow {
+  slug: string;
+  version: number;
+  title: string;
+  section: string;
+  space: string;
+  summary: string | null;
+  author: string;
+  confidence: string | null;
+  status: string;
+  change_kind: "new" | "edit" | "rewrite" | null;
+  low_confidence: number;
+  base_version: number | null;
+  current_version: number;
+  stagedBody: string;    // doc_versions.body (the proposed body)
+  promotedBody: string;  // docs.body (the current live body)
+}
+
+export async function list_proposals(db: DB): Promise<ProposalRow[]> {
+  return all<ProposalRow>(
+    db,
+    `SELECT v.slug AS slug, v.version AS version, d.title AS title, d.section AS section, d.space AS space,
+            v.summary AS summary, v.created_by AS author, v.confidence AS confidence, v.status AS status,
+            v.change_kind AS change_kind, v.low_confidence AS low_confidence, v.base_version AS base_version,
+            d.current_version AS current_version, v.body AS stagedBody, d.body AS promotedBody
+       FROM doc_versions v JOIN docs d ON d.slug = v.slug
+      WHERE v.status = 'staged' AND v.version > d.current_version
+      ORDER BY v.created_at DESC, v.id DESC`
+  );
 }
 
 export async function list_milestone_proposals(db: DB): Promise<MilestoneProposalRow[]> {

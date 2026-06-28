@@ -4,8 +4,8 @@ import type { AppEnv } from "./auth/principal";
 import { sessionGate } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
-import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals } from "./tools/reads";
-import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone } from "./tools/writes";
+import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals } from "./tools/reads";
+import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
 import { list_roadmap } from "./tools/roadmap";
 import { getMyDashboard } from "./tools/dashboard";
 import type { DashboardData } from "@shared/dashboard";
@@ -85,6 +85,11 @@ app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.que
 
 app.get("/milestone-proposals", async (c) => c.json({ proposals: await list_milestone_proposals(c.env.DB) }));
 
+// The Proposals queue (Phase 3): staged doc versions newer than their live doc,
+// not rejected, server-joined with both bodies + reconciler metadata. Kills the
+// old web N+1 (audit G9) and is the data source Phase 4's detail pane renders.
+app.get("/proposals", async (c) => c.json({ proposals: await list_proposals(c.env.DB) }));
+
 // Human confirmation (session-gated): promote a staged doc version into the live doc.
 app.post("/doc/:slug/promote", async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -98,12 +103,74 @@ app.post("/doc/:slug/promote", async (c) => {
   }
 });
 
+// Human write-back (session-gated): reject a staged doc version. Soft status flip
+// to 'rejected' so it leaves the proposals queue; the row + body remain.
+app.post("/doc/:slug/reject", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const version = Number(body?.version);
+  if (!Number.isInteger(version)) return c.json({ error: "version (integer) required" }, 400);
+  try {
+    const res = await reject_doc_version(c.env.DB, c.req.param("slug"), version);
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
 // Human confirmation (session-gated): ratify an ADR draft.
 app.post("/adr/:id/ratify", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
     const res = await ratify_adr(c.env.DB, id);
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Human write-back (session-gated): reject an ADR draft. Soft flip to 'rejected'
+// so it leaves the decisions queue; the row remains.
+app.post("/adr/:id/reject", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  try {
+    const res = await reject_adr(c.env.DB, id);
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Human write-back (session-gated): discard a triage item. Soft — sets the audit
+// columns + resolved flag so it leaves the queue; never a hard-delete.
+app.post("/needs-triage/:id/discard", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  try {
+    const res = await resolve_triage(c.env.DB, id, c.get("principal").login, "discarded");
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Human write-back (session-gated): assign-materialize a triage item. Re-runs the
+// item's `raw` through the SAME gate for the chosen target type, then resolves it
+// as 'assigned' with assigned_ref. The author is the authenticated principal.
+app.post("/needs-triage/:id/assign", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    type?: AssignType; section?: string; space?: "sapling" | "canopy"; tags?: string[];
+  } | null;
+  try {
+    const res = await assign_triage(c.env.DB, id, c.get("principal").login, {
+      type: body?.type,
+      section: body?.section,
+      space: body?.space,
+      tags: body?.tags,
+    });
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
