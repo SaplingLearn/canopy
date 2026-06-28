@@ -254,4 +254,28 @@ describe("POST /needs-triage/:id/assign", () => {
     const res = await app.request(`/needs-triage/${id}/assign`, { method: "POST" }, env);
     expect(res.status).toBe(401);
   });
+
+  it("assign on an already-discarded item reports resolution:'discarded', not 'assigned'", async () => {
+    const cookie = await authedCookie("andres");
+    // Triage a free-form item (cannot be placed via assign — but first we discard it).
+    const id = await route_triage(env.DB, { raw: "some free text", reason: "out of vocab" });
+
+    // Discard it first.
+    const discardRes = await post(`/needs-triage/${id}/discard`, cookie);
+    expect(discardRes.status).toBe(200);
+    expect(await discardRes.json()).toMatchObject({ ok: true, resolution: "discarded" });
+
+    // Now call assign on the already-discarded item.
+    const assignRes = await post(`/needs-triage/${id}/assign`, cookie, { type: "doc", section: "reference" });
+    expect(assignRes.status).toBe(200);
+    const out = (await assignRes.json()) as { ok: boolean; resolution: string; assigned_ref: string };
+    // Must surface the actual recorded resolution ("discarded"), NOT falsely report "assigned".
+    expect(out.resolution).toBe("discarded");
+    expect(out.ok).toBe(true);
+
+    // The row remains with its original discarded resolution — nothing was re-materialized.
+    const row = await first<NeedsTriageRow>(env.DB, `SELECT * FROM needs_triage WHERE id = ?`, id);
+    expect(row?.resolution).toBe("discarded");
+    expect(row?.assigned_ref).toBeNull();
+  });
 });

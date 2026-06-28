@@ -19,7 +19,7 @@ export const FeedEntry = z.object({
 });
 
 export const DocProposal = z.object({
-  slug: z.string(),
+  slug: z.string().regex(/^[a-z0-9][a-z0-9_/-]*$/),
   section: z.string(),
   title: z.string().optional(),          // session sends a real title when it has one
   body: z.string(),                      // markdown, or mermaid/d2 for diagrams

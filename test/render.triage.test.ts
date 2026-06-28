@@ -17,6 +17,8 @@ import {
   collapsedLineDiff,
   changeKindChip,
   renderProposalContent,
+  render,
+  initialState,
   type DiffRow,
 } from "../web/src/render";
 import type { StagedProposal } from "../web/src/api";
@@ -358,5 +360,65 @@ describe("action button data-act verification", () => {
     const html = changeKindChip("new");
     expect(html).not.toContain("data-act");
     expect(html).toContain("NEW");
+  });
+});
+
+// ── XSS regression: slug attribute escaping ───────────────────────────────────
+
+describe("XSS: proposal slug in triage list and detail is attribute-escaped", () => {
+  /** Build a minimal AppState that renders the triage proposals queue with one entry. */
+  function stateWithMaliciousProposal(slug: string): ReturnType<typeof initialState> {
+    const s = initialState();
+    const key = `${slug}@1`;
+    const proposal: StagedProposal = {
+      slug,
+      version: 1,
+      title: "Injected",
+      section: "reference",
+      space: "canopy",
+      summary: "xss probe",
+      author: "attacker",
+      confidence: "high",
+      status: "staged",
+      change_kind: null,
+      low_confidence: 0,
+      base_version: null,
+      current_version: 0,
+      stagedBody: "body",
+      promotedBody: "",
+    };
+    return {
+      ...s,
+      view: "app",
+      screen: "triage",
+      triageQueue: "proposals",
+      me: { login: "reviewer", name: null, avatar_url: null, org: "SaplingLearn" },
+      proposals: { status: "ok", data: [proposal] },
+      selProposal: key,
+    };
+  }
+
+  it("the list button data-arg does NOT contain the raw unescaped double-quote from a malicious slug", () => {
+    // Slug crafted to break out of a double-quoted HTML attribute.
+    const slug = 'x" onmouseover="alert(1)';
+    const html = render(stateWithMaliciousProposal(slug));
+    // The raw injection payload must NOT appear verbatim anywhere in the output.
+    expect(html).not.toContain('" onmouseover="');
+    // The double-quote in the slug MUST be entity-encoded.
+    expect(html).toContain("&quot;");
+  });
+
+  it("the detail dismiss/promote buttons do NOT contain the raw unescaped double-quote from a malicious slug", () => {
+    const slug = 'x" onmouseover="alert(1)';
+    const html = render(stateWithMaliciousProposal(slug));
+    // Neither the dismiss nor the promote button should carry the raw payload.
+    expect(html).not.toContain('" onmouseover="');
+  });
+
+  it("a slug with < is entity-escaped in data-arg attributes", () => {
+    const slug = "x<script>alert(1)</script";
+    const html = render(stateWithMaliciousProposal(slug));
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;");
   });
 });

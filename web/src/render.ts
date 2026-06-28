@@ -524,7 +524,7 @@ function triageView(s: AppState): string {
       <div style="font-size:12.5px;color:var(--fg-40)">Nothing waiting for review here.</div>
     </div>`;
   } else {
-    listHtml = listItems.map((it) => `<button data-act="selectItem" data-arg="${it.id}" class="cnpy-titem">
+    listHtml = listItems.map((it) => `<button data-act="selectItem" data-arg="${attr(it.id)}" class="cnpy-titem">
         ${it.selected ? `<span class="cnpy-selbar"></span>` : ""}
         <div style="position:relative">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">
@@ -726,8 +726,8 @@ function triageDetail(s: AppState): string {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismiss" data-arg="${key}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
-        <button data-act="promote" data-arg="${key}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
+        <button data-act="dismiss" data-arg="${attr(key)}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
+        <button data-act="promote" data-arg="${attr(key)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
       </div>
     </div>
     ${staleBanner}

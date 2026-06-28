@@ -351,12 +351,12 @@ export async function assign_triage(
   id: number,
   by: string,
   target: AssignTarget = {}
-): Promise<{ id: number; resolution: "assigned"; assigned_ref: string }> {
+): Promise<{ id: number; resolution: "assigned" | "discarded"; assigned_ref: string }> {
   const row = await first<NeedsTriageRow>(db, `SELECT * FROM needs_triage WHERE id = ?`, id);
   if (!row) throw new Error(`no such triage item: ${id}`);
   if (row.resolved) {
-    // Idempotent: surface the prior outcome, stage nothing new.
-    return { id, resolution: "assigned", assigned_ref: row.assigned_ref ?? "" };
+    // Idempotent: surface the ACTUAL recorded resolution, stage nothing new.
+    return { id, resolution: row.resolution ?? "assigned", assigned_ref: row.assigned_ref ?? "" };
   }
 
   let raw: Record<string, unknown>;
