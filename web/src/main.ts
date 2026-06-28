@@ -261,6 +261,34 @@ function flash(msg: string): void {
   setTimeout(() => { state.toast = null; rerender(); }, 2200);
 }
 
+// Copy text to the clipboard. Prefers the async Clipboard API (available on
+// localhost + https); falls back to a hidden-textarea execCommand for older or
+// non-secure contexts. Resolves to whether the copy succeeded.
+function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+
+function fallbackCopy(text: string): boolean {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -417,13 +445,25 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; rerender(); })
+        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; rerender(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Could not mint token");
         });
       return;
-    case "dismissReveal": state.revealedToken = null; break;
+    case "copyToken": {
+      const tk = state.revealedToken;
+      if (!tk) return;
+      copyToClipboard(tk).then((ok) => {
+        if (!ok) { flash("Couldn't copy — select the token and copy it manually"); return; }
+        state.tokenCopied = true;
+        rerender();
+        flash("Token copied to clipboard");
+        setTimeout(() => { state.tokenCopied = false; rerender(); }, 1800);
+      });
+      return;
+    }
+    case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
     // INERT — no backend route for saving display name or revoking tokens
     case "saveProfile": return;
     case "revokeToken": return;

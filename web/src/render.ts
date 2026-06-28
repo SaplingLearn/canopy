@@ -53,6 +53,7 @@ export interface AppState {
   searchResults: Loadable<SearchResult[]>;
   displayName: string;
   revealedToken: string | null;
+  tokenCopied: boolean;
   confirmedMilestones: Record<string, boolean>;
   toast: string | null;
   proposals: Loadable<StagedProposal[]>;
@@ -84,6 +85,7 @@ export function initialState(): AppState {
     searchResults: { status: "idle", data: [] },
     displayName: "",
     revealedToken: null,
+    tokenCopied: false,
     confirmedMilestones: {},
     toast: null,
     proposals: { status: "idle", data: [] },
@@ -1018,16 +1020,24 @@ function settingsView(s: AppState): string {
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
 
-  const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:11px;padding:16px;margin-bottom:14px;background:var(--accent-soft)">
-      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:10px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this now — it won't be shown again</div>
-      <div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border-strong);border-radius:8px;padding:11px 13px">
-        <code style="flex:1;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
-        <button data-act="dismissReveal" class="cnpy-outlinebtn" style="flex:none;padding:6px 12px;border-radius:7px;border:1px solid var(--border-strong);font-size:12px;font-weight:500">Done</button>
+  const copied = s.tokenCopied;
+  const copyBtn = copied
+    ? `<button data-act="copyToken" class="cnpy-copybtn is-copied" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
+    : `<button data-act="copyToken" class="cnpy-copybtn" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
+  const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:12px;padding:15px 16px;margin-bottom:14px;background:var(--accent-soft);animation:cnpy-pop .22s ease">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this token now — it won't be shown again</div>
+      <div style="display:flex;align-items:stretch;gap:8px;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;padding:6px 6px 6px 13px">
+        <code style="flex:1;min-width:0;display:flex;align-items:center;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
+        ${copyBtn}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px">
+        <div style="font-size:11.5px;color:var(--fg-55);min-width:0">Use it as a <code style="font-family:var(--mono);font-size:11px">Bearer</code> header in your agent's MCP config.</div>
+        <button data-act="dismissReveal" class="cnpy-mutelink" style="flex:none;font-size:12px;font-weight:500;color:var(--fg-40)">Done</button>
       </div>
     </div>` : "";
 
   // No GET route for existing tokens — list is empty with a note.
-  const tokenListBody = `<div style="padding:14px 18px;font-size:12.5px;color:var(--fg-40)">Existing tokens aren't listed here.</div>`;
+  const tokenListBody = `<div style="display:flex;align-items:center;gap:11px;padding:15px 18px;font-size:12.5px;color:var(--fg-40)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;opacity:.8"><circle cx="8" cy="15" r="4.5"></circle><path d="m11.2 11.8 7.3-7.3M16 5l3 3M18.5 7.5l-2.2 2.2"></path></svg><span>Tokens are shown once when minted and never stored in readable form, so they can't be listed here.</span></div>`;
 
   const meLogin = s.me?.login ?? "";
   const meName = s.me?.name ?? meLogin;

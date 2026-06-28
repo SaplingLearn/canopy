@@ -73,6 +73,12 @@ input, select { font-family: inherit; }
 .cnpy-themecard { transition:all .12s ease; }
 .cnpy-mintbtn { transition:filter .12s ease; }
 .cnpy-mintbtn:hover { filter:brightness(1.05); }
+.cnpy-copybtn { transition:filter .12s ease, transform .12s ease; }
+.cnpy-copybtn:hover { filter:brightness(1.06); }
+.cnpy-copybtn:active { transform:translateY(1px); }
+.cnpy-copybtn.is-copied { cursor:default; }
+.cnpy-copybtn.is-copied:hover { filter:none; }
+.cnpy-copybtn.is-copied:active { transform:none; }
 .cnpy-signout { transition:all .12s ease; }
 .cnpy-signout:hover { border-color:var(--red); color:var(--red); }
 .cnpy-mutelink:hover { color:var(--fg-70); }
