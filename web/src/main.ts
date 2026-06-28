@@ -467,15 +467,23 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // Assign-materialize a triaged item through the gate. Minimal wiring: targets a
     // doc (the section picker is Phase 4 — until then the gate uses the raw item's
     // own section and surfaces "valid section required" when it can't place it).
-    case "assignItem":
+    case "assignItem": {
       if (!arg) return;
-      assignTriage(Number(arg), { type: "doc" })
+      // arg = "<id>:<type>:<section>" — encode the full target so render.ts can be pure
+      const parts = arg.split(":");
+      const id = Number(parts[0]);
+      const type = (parts[1] || "doc") as "doc" | "adr" | "milestone" | "feed";
+      const section = parts[2] || undefined;
+      const target: { type?: "doc" | "adr" | "milestone" | "feed"; section?: string } = { type };
+      if (section) target.section = section;
+      assignTriage(id, target)
         .then(() => { flash("Assigned — staged for review"); loadTriageItems(); loadProposals(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Assign failed");
         });
       return;
+    }
     case "discardItem":
       if (!arg) return;
       discardTriage(Number(arg))
