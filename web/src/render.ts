@@ -29,7 +29,7 @@ export interface AppState {
   me: Me | null;
   mywork: Loadable<DashboardData | null>;
   screen: Screen;
-  theme: "dark" | "light" | "system";
+  theme: "dark" | "light" | "midnight" | "system";
   systemDark: boolean;
   collapsed: boolean;
   feedAuthor: string;
@@ -95,7 +95,7 @@ export function initialState(): AppState {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-function resolved(s: AppState): "dark" | "light" {
+function resolved(s: AppState): "dark" | "light" | "midnight" {
   return s.theme === "system" ? (s.systemDark ? "dark" : "light") : s.theme;
 }
 /** Escape text content for safe insertion into innerHTML. */
@@ -278,7 +278,8 @@ function sidebar(s: AppState): string {
 
 function header(s: AppState): string {
   const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", triage: "Triage", search: "Search", settings: "Settings", guide: "Get Started" };
-  const dark = resolved(s) === "dark";
+  // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
+  const dark = resolved(s) !== "light";
 
   const authorFiltered = s.feedAuthor !== "all";
   const authorFilterLabel = authorFiltered ? `${s.feedAuthor}'s activity` : "";
@@ -1172,6 +1173,7 @@ function settingsView(s: AppState): string {
   const themeCards = [
     ["light", "Light"],
     ["dark", "Dark"],
+    ["midnight", "Midnight"],
     ["system", "System"],
   ].map(([k, label]) => {
     const sel = s.theme === k;
@@ -1180,6 +1182,8 @@ function settingsView(s: AppState): string {
       ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"></path></svg>`
       : k === "dark"
       ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
+      : k === "midnight"
+      ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path><path d="M17 3.2l.55 1.55L19.1 5.3l-1.55.55L17 7.4l-.55-1.55L14.9 5.3l1.55-.55z"></path></svg>`
       : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`;
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
@@ -1399,8 +1403,7 @@ function toastBlock(msg: string): string {
 }
 
 export function render(s: AppState): string {
-  const dark = resolved(s) === "dark";
-  const themeAttr = dark ? "dark" : "light";
+  const themeAttr = resolved(s);
   return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" data-tq="${s.triageQueue}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
     ${s.view === "auth" ? authView(s) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}

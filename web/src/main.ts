@@ -23,7 +23,7 @@ const state: AppState = initialState();
 // ── persisted client prefs (theme + sidebar only; not backend state) ─────────
 try {
   const t = localStorage.getItem("canopy.theme");
-  if (t === "dark" || t === "light" || t === "system") state.theme = t;
+  if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
 } catch { /* localStorage unavailable */ }
@@ -56,7 +56,7 @@ function rerender(): void {
   }
 }
 
-function resolvedTheme(): "dark" | "light" {
+function resolvedTheme(): "dark" | "light" | "midnight" {
   return state.theme === "system" ? (state.systemDark ? "dark" : "light") : state.theme;
 }
 function persist(key: string, value: string): void {
@@ -330,13 +330,15 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       persist("canopy.collapsed", state.collapsed ? "1" : "0");
       break;
     case "cycleTheme": {
-      const next = resolvedTheme() === "dark" ? "light" : "dark";
+      // header button steps through the three concrete themes; settings can also pick "system".
+      const order = ["light", "dark", "midnight"] as const;
+      const next = order[(order.indexOf(resolvedTheme()) + 1) % order.length];
       state.theme = next;
       persist("canopy.theme", next);
       break;
     }
     case "setTheme":
-      if (arg === "dark" || arg === "light" || arg === "system") {
+      if (arg === "dark" || arg === "light" || arg === "midnight" || arg === "system") {
         state.theme = arg;
         persist("canopy.theme", arg);
       }
