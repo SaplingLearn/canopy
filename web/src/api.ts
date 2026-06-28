@@ -117,36 +117,30 @@ export function getMyDashboard(): Promise<DashboardData> {
   return getJson<DashboardData>("/me/dashboard");
 }
 
-// The Triage "Proposals" queue = staged doc versions newer than the live doc. There is no
-// single route for this (G9), so aggregate it from /docs + /doc/:slug (N+1 over docs). Each
-// proposal carries both bodies so the detail pane can diff staged vs promoted.
+// The Triage "Proposals" queue = staged doc versions newer than the live doc.
+// Backed by the single server-joined GET /proposals route (Phase 3, G9) — no more
+// N+1 over /docs + /doc/:slug. Each proposal carries both bodies (so the detail
+// pane diffs staged vs promoted without extra fetches) plus the Phase 2 reconciler
+// metadata (change_kind / low_confidence / base_version) Phase 4 renders by shape.
 export interface StagedProposal {
   slug: string;
   version: number;
   title: string;
   section: string;
+  space: string;
   summary: string | null;
   author: string;
   confidence: string | null;
+  status: string;
+  change_kind: "new" | "edit" | "rewrite" | null;
+  low_confidence: number;
+  base_version: number | null;
+  current_version: number;
   stagedBody: string;
   promotedBody: string;
 }
-export async function listStagedProposals(): Promise<StagedProposal[]> {
-  const docs = await listDocs();
-  const out: StagedProposal[] = [];
-  for (const d of docs) {
-    const { doc, versions } = await getDoc(d.slug);
-    for (const v of versions) {
-      if (v.status === "staged" && v.version > doc.current_version) {
-        out.push({
-          slug: doc.slug, version: v.version, title: doc.title, section: doc.section,
-          summary: v.summary, author: v.created_by, confidence: v.confidence,
-          stagedBody: v.body, promotedBody: doc.body,
-        });
-      }
-    }
-  }
-  return out;
+export function listStagedProposals(): Promise<StagedProposal[]> {
+  return getJson<{ proposals: StagedProposal[] }>("/proposals").then((r) => r.proposals);
 }
 
 // ── confirms (cookie-authed) ─────────────────────────────────────────────────
@@ -161,6 +155,21 @@ export function promoteMilestoneProposal(id: number): Promise<{ ok: true }> {
 }
 export function completeMilestone(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/milestones/${id}/complete`);
+}
+
+// ── triage write-back (Phase 3): reject / discard / assign-materialize ─────────
+export function rejectDoc(slug: string, version: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/doc/${encodeURIComponent(slug)}/reject`, { version });
+}
+export function rejectAdr(id: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/adr/${id}/reject`);
+}
+export function discardTriage(id: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/needs-triage/${id}/discard`);
+}
+export interface AssignTarget { type?: "doc" | "adr" | "milestone" | "feed"; section?: string; space?: "sapling" | "canopy"; tags?: string[]; }
+export function assignTriage(id: number, target: AssignTarget): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/needs-triage/${id}/assign`, target);
 }
 export function logout(): Promise<{ ok: true }> {
   return postJson<{ ok: true }>("/auth/logout");

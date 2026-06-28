@@ -9,6 +9,7 @@ import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   listStagedProposals, listAdrs, listNeedsTriage,
   promoteDoc, ratifyAdr, completeMilestone,
+  rejectDoc, rejectAdr, discardTriage, assignTriage,
   getMe, logout, mintMcpToken,
   Unauthorized, NotFound, ApiError,
 } from "./api";
@@ -436,14 +437,54 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         });
       return;
     }
-    // ── Inert (no backing route — rendered but do nothing) ───────────────────
-    // dismiss (proposals + decisions): no route exists
-    // assignItem (Reference/Context/Decisions): no route exists
-    // discardItem: no route exists
-    case "dismiss":
+    // ── Phase 3 triage write-back (cookie-authed) ───────────────────────────
+    // Dismiss = reject. Shared by the Proposals queue (arg "slug@version" → reject
+    // the staged doc version) and the Decisions queue (arg id → reject the ADR);
+    // the active queue disambiguates.
+    case "dismiss": {
+      if (!arg) return;
+      if (state.triageQueue === "proposals") {
+        const atIdx = arg.indexOf("@");
+        if (atIdx < 0) return;
+        const slug = arg.slice(0, atIdx);
+        const version = Number(arg.slice(atIdx + 1));
+        rejectDoc(slug, version)
+          .then(() => { flash("Proposal rejected"); loadProposals(); })
+          .catch((e) => {
+            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+            flash(e instanceof ApiError ? e.message : "Reject failed");
+          });
+      } else {
+        rejectAdr(Number(arg))
+          .then(() => { flash("Decision rejected"); loadDecisions(); })
+          .catch((e) => {
+            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+            flash(e instanceof ApiError ? e.message : "Reject failed");
+          });
+      }
+      return;
+    }
+    // Assign-materialize a triaged item through the gate. Minimal wiring: targets a
+    // doc (the section picker is Phase 4 — until then the gate uses the raw item's
+    // own section and surfaces "valid section required" when it can't place it).
     case "assignItem":
+      if (!arg) return;
+      assignTriage(Number(arg), { type: "doc" })
+        .then(() => { flash("Assigned — staged for review"); loadTriageItems(); loadProposals(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Assign failed");
+        });
+      return;
     case "discardItem":
-      return; // inert — keep rendered, do nothing
+      if (!arg) return;
+      discardTriage(Number(arg))
+        .then(() => { flash("Item discarded"); loadTriageItems(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Discard failed");
+        });
+      return;
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()
