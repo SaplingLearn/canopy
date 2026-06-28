@@ -66,6 +66,12 @@ export interface NeedsTriageRow {
   source_author: string | null;
   resolved: number;
   created_at: string;
+  // Phase 3 (0010) resolution audit. NULL until resolved; `resolved` flips to 1
+  // when set. Soft only — a resolved item leaves the queue, it is never deleted.
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution: "assigned" | "discarded" | null;
+  assigned_ref: string | null;   // what an 'assigned' item materialized into (e.g. "doc:slug@2")
 }
 
 export interface UserRow {
