@@ -19,10 +19,15 @@ export interface DocVersionRow {
   version: number;
   body: string;
   summary: string | null;
-  status: "staged" | "promoted";
+  // 'rejected' is set only by Phase 3's reject route; Phase 2 never sets it.
+  status: "staged" | "promoted" | "rejected";
   confidence: string | null;
   created_at: string;
   created_by: string;
+  content_hash: string | null;   // SHA-256 of body — the dedupe key (0009)
+  base_version: number | null;   // the version this edit was based on (0009)
+  change_kind: "new" | "edit" | "rewrite" | null; // server-classified delta size (0009)
+  low_confidence: number;        // 1 = staged-and-flagged (low-conf on an existing slug) (0009)
 }
 
 export interface FeedRow {
@@ -40,10 +45,12 @@ export interface AdrRow {
   context: string | null;
   decision: string | null;
   rationale: string | null;
-  status: "draft" | "ratified";
+  // 'rejected' is set only by Phase 3's reject route; Phase 2 never sets it.
+  status: "draft" | "ratified" | "rejected";
   confidence: string | null;
   created_at: string;
   created_by: string;
+  content_hash: string | null;   // SHA-256 of title+context+decision+rationale — dedupe key (0009)
 }
 
 export interface EntryTagRow {
@@ -59,6 +66,12 @@ export interface NeedsTriageRow {
   source_author: string | null;
   resolved: number;
   created_at: string;
+  // Phase 3 (0010) resolution audit. NULL until resolved; `resolved` flips to 1
+  // when set. Soft only — a resolved item leaves the queue, it is never deleted.
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution: "assigned" | "discarded" | null;
+  assigned_ref: string | null;   // what an 'assigned' item materialized into (e.g. "doc:slug@2")
 }
 
 export interface UserRow {
@@ -107,6 +120,7 @@ export interface MilestoneProposalRow {
   staged_status: "staged" | "promoted";
   created_at: string;
   created_by: string;
+  content_hash: string | null;   // SHA-256 of the proposed milestone fields — dedupe key (0009)
 }
 
 export interface FocusRow {
@@ -114,4 +128,15 @@ export interface FocusRow {
   working_on: string;
   next_up: string | null;
   updated_at: string;
+}
+
+// The replay ledger (0009). One row per (session_id, item_index) the worker has
+// seen; a re-POST of the same payload hits every row and drops as unchanged.
+export interface ProcessedItemRow {
+  session_id: string;
+  item_index: number;
+  item_type: "feed" | "doc" | "adr" | "milestone" | "focus" | "triage";
+  outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
+  ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
+  created_at: string;
 }

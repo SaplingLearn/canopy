@@ -9,6 +9,7 @@ import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   listStagedProposals, listAdrs, listNeedsTriage,
   promoteDoc, ratifyAdr, completeMilestone,
+  rejectDoc, rejectAdr, discardTriage, assignTriage,
   getMe, logout, mintMcpToken,
   Unauthorized, NotFound, ApiError,
 } from "./api";
@@ -150,17 +151,19 @@ function loadDocsIfNeeded(): void {
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
+const EMPTY_QUERY_RESULT = { primary: [], pointers: [], meta: { engine: "fts5" as const, total: 0 } };
+
 function loadSearch(): void {
   state.searchResults = { status: "loading", data: state.searchResults.data };
   rerender();
   search(state.searchQuery)
-    .then((results) => {
-      state.searchResults = { status: "ok", data: results };
+    .then((result) => {
+      state.searchResults = { status: "ok", data: result };
       rerender();
     })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.searchResults = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      state.searchResults = { status: "error", data: EMPTY_QUERY_RESULT, error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
 }
@@ -259,6 +262,34 @@ function flash(msg: string): void {
   state.toast = msg;
   rerender();
   setTimeout(() => { state.toast = null; rerender(); }, 2200);
+}
+
+// Copy text to the clipboard. Prefers the async Clipboard API (available on
+// localhost + https); falls back to a hidden-textarea execCommand for older or
+// non-secure contexts. Resolves to whether the copy succeeded.
+function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+
+function fallbackCopy(text: string): boolean {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 // ── action dispatch ──────────────────────────────────────────────────────────
@@ -365,7 +396,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       rerender();
       return;
     case "setSearchType":
-      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "adr") state.searchType = arg;
+      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision") state.searchType = arg;
       break;
 
     // settings — display name echoes live; everything else is Phase 2
@@ -406,24 +437,84 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         });
       return;
     }
-    // ── Inert (no backing route — rendered but do nothing) ───────────────────
-    // dismiss (proposals + decisions): no route exists
-    // assignItem (Reference/Context/Decisions): no route exists
-    // discardItem: no route exists
-    case "dismiss":
-    case "assignItem":
+    // ── Phase 3 triage write-back (cookie-authed) ───────────────────────────
+    // Dismiss = reject. Shared by the Proposals queue (arg "slug@version" → reject
+    // the staged doc version) and the Decisions queue (arg id → reject the ADR);
+    // the active queue disambiguates.
+    case "dismiss": {
+      if (!arg) return;
+      if (state.triageQueue === "proposals") {
+        const atIdx = arg.indexOf("@");
+        if (atIdx < 0) return;
+        const slug = arg.slice(0, atIdx);
+        const version = Number(arg.slice(atIdx + 1));
+        rejectDoc(slug, version)
+          .then(() => { flash("Proposal rejected"); loadProposals(); })
+          .catch((e) => {
+            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+            flash(e instanceof ApiError ? e.message : "Reject failed");
+          });
+      } else {
+        rejectAdr(Number(arg))
+          .then(() => { flash("Decision rejected"); loadDecisions(); })
+          .catch((e) => {
+            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+            flash(e instanceof ApiError ? e.message : "Reject failed");
+          });
+      }
+      return;
+    }
+    // Assign-materialize a triaged item through the gate. Minimal wiring: targets a
+    // doc (the section picker is Phase 4 — until then the gate uses the raw item's
+    // own section and surfaces "valid section required" when it can't place it).
+    case "assignItem": {
+      if (!arg) return;
+      // arg = "<id>:<type>:<section>" — encode the full target so render.ts can be pure
+      const parts = arg.split(":");
+      const id = Number(parts[0]);
+      const type = (parts[1] || "doc") as "doc" | "adr" | "milestone" | "feed";
+      const section = parts[2] || undefined;
+      const target: { type?: "doc" | "adr" | "milestone" | "feed"; section?: string } = { type };
+      if (section) target.section = section;
+      assignTriage(id, target)
+        .then(() => { flash("Assigned — staged for review"); loadTriageItems(); loadProposals(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Assign failed");
+        });
+      return;
+    }
     case "discardItem":
-      return; // inert — keep rendered, do nothing
+      if (!arg) return;
+      discardTriage(Number(arg))
+        .then(() => { flash("Item discarded"); loadTriageItems(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Discard failed");
+        });
+      return;
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; rerender(); })
+        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; rerender(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Could not mint token");
         });
       return;
-    case "dismissReveal": state.revealedToken = null; break;
+    case "copyToken": {
+      const tk = state.revealedToken;
+      if (!tk) return;
+      copyToClipboard(tk).then((ok) => {
+        if (!ok) { flash("Couldn't copy — select the token and copy it manually"); return; }
+        state.tokenCopied = true;
+        rerender();
+        flash("Token copied to clipboard");
+        setTimeout(() => { state.tokenCopied = false; rerender(); }, 1800);
+      });
+      return;
+    }
+    case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
     // INERT — no backend route for saving display name or revoking tokens
     case "saveProfile": return;
     case "revokeToken": return;

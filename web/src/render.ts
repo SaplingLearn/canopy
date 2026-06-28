@@ -5,7 +5,7 @@
 
 import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { SearchResult, MilestoneWithProgress, StagedProposal } from "./api";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow } from "@shared/rows";
 import type { DashboardData, RoadmapPhase } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
@@ -49,10 +49,11 @@ export interface AppState {
   selTriage: number | null;
   showHistory: boolean;
   searchQuery: string;
-  searchType: "all" | "doc" | "feed" | "adr";
-  searchResults: Loadable<SearchResult[]>;
+  searchType: "all" | "doc" | "feed" | "decision";
+  searchResults: Loadable<QueryResult>;
   displayName: string;
   revealedToken: string | null;
+  tokenCopied: boolean;
   confirmedMilestones: Record<string, boolean>;
   toast: string | null;
   proposals: Loadable<StagedProposal[]>;
@@ -81,9 +82,10 @@ export function initialState(): AppState {
     selProposal: null, selDecision: null, selTriage: null,
     showHistory: false,
     searchQuery: "token", searchType: "all",
-    searchResults: { status: "idle", data: [] },
+    searchResults: { status: "idle", data: { primary: [], pointers: [], meta: { engine: "fts5", total: 0 } } },
     displayName: "",
     revealedToken: null,
+    tokenCopied: false,
     confirmedMilestones: {},
     toast: null,
     proposals: { status: "idle", data: [] },
@@ -483,7 +485,7 @@ function triageView(s: AppState): string {
   const q = s.triageQueue;
 
   // Determine list pane contents + loading state per queue
-  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; author: string; badgeText: string; badgeColor: string };
+  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; author: string; badgeText: string; badgeColor: string; kindChip?: string };
   let listItems: ListItem[] = [];
   let listStatus: "idle" | "loading" | "ok" | "error" | "unauth" = "idle";
 
@@ -493,7 +495,7 @@ function triageView(s: AppState): string {
       const key = `${p.slug}@${p.version}`;
       const confColor = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
       const confLabel = p.confidence ? p.confidence.toUpperCase() : "?";
-      return { id: key, selected: key === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary ?? "", author: p.author, badgeText: confLabel, badgeColor: confColor };
+      return { id: key, selected: key === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary ?? "", author: p.author, badgeText: confLabel, badgeColor: confColor, kindChip: changeKindChip(p.change_kind) };
     });
   } else if (q === "decisions") {
     listStatus = s.decisions.status;
@@ -522,11 +524,14 @@ function triageView(s: AppState): string {
       <div style="font-size:12.5px;color:var(--fg-40)">Nothing waiting for review here.</div>
     </div>`;
   } else {
-    listHtml = listItems.map((it) => `<button data-act="selectItem" data-arg="${it.id}" class="cnpy-titem">
+    listHtml = listItems.map((it) => `<button data-act="selectItem" data-arg="${attr(it.id)}" class="cnpy-titem">
         ${it.selected ? `<span class="cnpy-selbar"></span>` : ""}
         <div style="position:relative">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">
-            <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</span>
+              ${it.kindChip ?? ""}
+            </div>
             <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${it.badgeColor};border:1px solid color-mix(in srgb,${it.badgeColor} 45%,transparent);background:color-mix(in srgb,${it.badgeColor} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${esc(it.badgeText)}</span>
           </div>
           <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${esc(it.title)}</div>
@@ -544,9 +549,10 @@ function triageView(s: AppState): string {
   </div>`;
 }
 
-type DiffKind = "ctx" | "add" | "del";
+export type DiffKind = "ctx" | "add" | "del" | "ellipsis";
 
 function diffLineStyle(t: DiffKind): string {
+  if (t === "ellipsis") return `font-family:var(--mono);font-size:11px;line-height:1.85;padding:4px 12px;color:var(--fg-40);background:transparent;border-left:2px solid transparent;text-align:center;font-style:italic`;
   const border = t === "add" ? "var(--green)" : t === "del" ? "var(--red)" : "transparent";
   const bg = t === "add" ? "color-mix(in srgb,var(--green) 12%,transparent)" : t === "del" ? "color-mix(in srgb,var(--red) 11%,transparent)" : "transparent";
   const color = t === "ctx" ? "var(--fg-55)" : "var(--fg)";
@@ -557,8 +563,8 @@ function signStyle(t: DiffKind): string {
   return `color:${color};margin-right:10px;user-select:none;font-weight:600`;
 }
 
-type DiffRow = { t: DiffKind; text: string };
-function lineDiff(oldText: string, newText: string): DiffRow[] {
+export type DiffRow = { t: DiffKind; text: string };
+export function lineDiff(oldText: string, newText: string): DiffRow[] {
   const a = oldText.split("\n"), b = newText.split("\n");
   const n = a.length, m = b.length;
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
@@ -576,6 +582,119 @@ function lineDiff(oldText: string, newText: string): DiffRow[] {
   return out;
 }
 
+/** Chip showing the change shape: NEW / EDIT / REWRITE. Phase 4 list and detail. */
+export function changeKindChip(kind: string | null): string {
+  if (!kind) return "";
+  const map: Record<string, { label: string; color: string }> = {
+    new: { label: "NEW", color: "var(--green)" },
+    edit: { label: "EDIT", color: "var(--accent)" },
+    rewrite: { label: "REWRITE", color: "var(--amber)" },
+  };
+  const { label, color } = map[kind] ?? { label: kind.toUpperCase(), color: "var(--fg-40)" };
+  return `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${color};border:1px solid color-mix(in srgb,${color} 45%,transparent);background:color-mix(in srgb,${color} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${label}</span>`;
+}
+
+/**
+ * Line diff with large unchanged runs collapsed to "N unchanged lines" ellipsis markers.
+ * ctx = how many context lines to show around each changed hunk (default 3).
+ */
+export function collapsedLineDiff(oldText: string, newText: string, ctx = 3): DiffRow[] {
+  const rows = lineDiff(oldText, newText);
+  if (rows.length === 0) return [];
+  const changed = new Set<number>();
+  rows.forEach((r, i) => { if (r.t !== "ctx") changed.add(i); });
+  if (changed.size === 0) return rows; // nothing changed — return as-is (or callers can skip)
+  const visible = new Set<number>();
+  changed.forEach((idx) => {
+    for (let j = Math.max(0, idx - ctx); j <= Math.min(rows.length - 1, idx + ctx); j++) visible.add(j);
+  });
+  const out: DiffRow[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (visible.has(i)) { out.push(rows[i]); i++; }
+    else {
+      let j = i;
+      while (j < rows.length && !visible.has(j)) j++;
+      out.push({ t: "ellipsis", text: `${j - i} unchanged line${j - i !== 1 ? "s" : ""}` });
+      i = j;
+    }
+  }
+  return out;
+}
+
+/**
+ * Render the content pane of a staged proposal, branching by change_kind.
+ * markdownFn is injected so tests can pass a no-op renderer instead of the real DOMPurify path.
+ *
+ * - new    → markdown preview of staged body (no diff — avoids the green wall)
+ * - edit   → collapsed line diff with context
+ * - rewrite → side-by-side rendered previews (live vs staged)
+ * - null   → full line diff (fallback for pre-Phase-2 rows)
+ */
+export function renderProposalContent(p: StagedProposal, markdownFn: (body: string) => string): string {
+  const kind = p.change_kind;
+
+  if (kind === "new") {
+    return `<div style="margin-top:20px">
+      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--green);margin-bottom:10px">New page — staged preview</div>
+      <div class="cnpy-md" style="border:1px solid var(--border);border-radius:10px;padding:20px 24px;margin-top:6px;background:color-mix(in srgb,var(--green) 5%,transparent)">${markdownFn(p.stagedBody)}</div>
+    </div>`;
+  }
+
+  if (kind === "edit") {
+    const rows = collapsedLineDiff(p.promotedBody, p.stagedBody);
+    const add = rows.filter((r) => r.t === "add").length;
+    const del = rows.filter((r) => r.t === "del").length;
+    const lines = rows.map((r) => {
+      if (r.t === "ellipsis") {
+        return `<div style="${diffLineStyle("ellipsis")}">↕ ${esc(r.text)}</div>`;
+      }
+      const sign = r.t === "add" ? "+" : r.t === "del" ? "−" : " ";
+      return `<div style="${diffLineStyle(r.t)}"><span style="${signStyle(r.t)}">${sign}</span>${esc(r.text) || " "}</div>`;
+    }).join("");
+    return `<div style="margin:24px 0 0">
+      <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border);border-bottom:none;border-radius:11px 11px 0 0;background:var(--bg)">
+        <span style="font-size:11.5px;font-weight:600;letter-spacing:.02em">Changes (collapsed context)</span>
+        <div style="flex:1"></div>
+        <span style="font-size:11px;font-family:var(--mono);color:var(--green)">+${add}</span>
+        <span style="font-size:11px;font-family:var(--mono);color:var(--red)">&minus;${del}</span>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:0 0 11px 11px;padding:12px 0;overflow-x:auto">${lines}</div>
+    </div>`;
+  }
+
+  if (kind === "rewrite") {
+    return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px">
+      <div>
+        <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Live (v${p.current_version})</div>
+        <div class="cnpy-md cnpy-rewrite-pane" style="border:1px solid var(--border);border-radius:10px;padding:16px 18px;font-size:13.5px;line-height:1.7;overflow:hidden">${markdownFn(p.promotedBody)}</div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Staged</div>
+        <div class="cnpy-md cnpy-rewrite-pane" style="border:1px solid var(--border);border-radius:10px;padding:16px 18px;font-size:13.5px;line-height:1.7;overflow:hidden;border-color:color-mix(in srgb,var(--accent) 40%,transparent)">${markdownFn(p.stagedBody)}</div>
+      </div>
+    </div>`;
+  }
+
+  // Fallback: full line diff (pre-Phase-2 rows with no change_kind)
+  const diff = lineDiff(p.promotedBody, p.stagedBody);
+  const add = diff.filter((l) => l.t === "add").length;
+  const del = diff.filter((l) => l.t === "del").length;
+  const lines = diff.map((l) => {
+    const sign = l.t === "add" ? "+" : l.t === "del" ? "−" : " ";
+    return `<div style="${diffLineStyle(l.t)}"><span style="${signStyle(l.t)}">${sign}</span>${esc(l.text) || " "}</div>`;
+  }).join("");
+  return `<div style="margin:24px 0 0">
+    <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border);border-bottom:none;border-radius:11px 11px 0 0;background:var(--bg)">
+      <span style="font-size:11.5px;font-weight:600;letter-spacing:.02em">Diff against promoted version</span>
+      <div style="flex:1"></div>
+      <span style="font-size:11px;font-family:var(--mono);color:var(--green)">+${add}</span>
+      <span style="font-size:11px;font-family:var(--mono);color:var(--red)">&minus;${del}</span>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:0 0 11px 11px;padding:12px 0;overflow-x:auto">${lines}</div>
+  </div>`;
+}
+
 function triageDetail(s: AppState): string {
   const q = s.triageQueue;
   if (q === "proposals") {
@@ -584,16 +703,21 @@ function triageDetail(s: AppState): string {
     const key = `${p.slug}@${p.version}`;
     const confClr = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
     const confLbl = p.confidence ? `${p.confidence} confidence` : "";
-    const diff = lineDiff(p.promotedBody, p.stagedBody);
-    const add = diff.filter((l) => l.t === "add").length;
-    const del = diff.filter((l) => l.t === "del").length;
-    const lines = diff.map((l) => {
-      const sign = l.t === "add" ? "+" : l.t === "del" ? "−" : " ";
-      return `<div style="${diffLineStyle(l.t)}"><span style="${signStyle(l.t)}">${sign}</span>${esc(l.text) || " "}</div>`;
-    }).join("");
+    // Phase 4 flags
+    const lowConfBadge = p.low_confidence
+      ? `<span class="cnpy-flag-lowconf" style="display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 7px;white-space:nowrap"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 9v4M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>LOW CONFIDENCE</span>`
+      : "";
+    const staleBanner = p.base_version !== null && p.base_version < p.current_version
+      ? `<div class="cnpy-stale-base" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);border-left:2px solid var(--amber);border-radius:9px;margin-top:16px;background:color-mix(in srgb,var(--amber) 7%,transparent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.9" style="flex:none"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path></svg><span style="font-size:12.5px;color:var(--fg-70)">Edited from <strong style="color:var(--fg);font-weight:600">v${p.base_version}</strong>; live is now <strong style="color:var(--fg);font-weight:600">v${p.current_version}</strong> — conflict possible</span></div>`
+      : "";
     return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
       <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Proposal · ${esc(p.section)}</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span></div>
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">
+          <span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Proposal · ${esc(p.section)}</span>
+          <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span>
+          ${changeKindChip(p.change_kind)}
+          ${lowConfBadge}
+        </div>
         <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${esc(p.title)}</h1>
         <p style="font-size:14px;color:var(--fg-70);line-height:1.6;margin:0 0 12px;max-width:540px">${esc(p.summary ?? "")}</p>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -602,17 +726,12 @@ function triageDetail(s: AppState): string {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismiss" data-arg="${key}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
-        <button data-act="promote" data-arg="${key}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
+        <button data-act="dismiss" data-arg="${attr(key)}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
+        <button data-act="promote" data-arg="${attr(key)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:12px;margin:24px 0 0;padding:11px 14px;border:1px solid var(--border);border-bottom:none;border-radius:11px 11px 0 0;background:var(--bg)">
-      <span style="font-size:11.5px;font-weight:600;letter-spacing:.02em">Diff against promoted version</span>
-      <div style="flex:1"></div>
-      <span style="font-size:11px;font-family:var(--mono);color:var(--green)">+${add}</span>
-      <span style="font-size:11px;font-family:var(--mono);color:var(--red)">&minus;${del}</span>
-    </div>
-    <div style="border:1px solid var(--border);border-radius:0 0 11px 11px;padding:12px 0;overflow-x:auto">${lines}</div>`;
+    ${staleBanner}
+    ${renderProposalContent(p, renderMarkdown)}`;
   }
 
   if (q === "decisions") {
@@ -625,7 +744,7 @@ function triageDetail(s: AppState): string {
         <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(d.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${esc(d.created_by)}</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismiss" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:13px;font-weight:500;color:var(--fg-70)">Dismiss</button>
+        <button data-act="dismiss" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
         <button data-act="ratify" data-arg="${String(d.id)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Ratify</button>
       </div>
     </div>
@@ -645,9 +764,18 @@ function triageDetail(s: AppState): string {
     <div style="display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--red);border-radius:9px;margin-bottom:20px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg><div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:4px">Why it couldn't be placed</div><div style="font-size:13px;color:var(--fg-70);line-height:1.55">${esc(t.reason)}</div></div></div>
     <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Raw content</div>
     <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap">${esc(t.raw)}</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-top:18px;border-top:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--fg-55);margin-right:2px">Assign to</span><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Reference</button><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Context</button><button data-act="assignItem" data-arg="${t.id}" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Decisions</button></div>
-      <button data-act="discardItem" data-arg="${t.id}" class="cnpy-discard" style="font-size:12.5px;font-weight:500;color:var(--fg-40)">Discard</button>
+    <div style="padding-top:18px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:10px">Assign to</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        <button data-act="assignItem" data-arg="${t.id}:doc:reference" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Reference doc</button>
+        <button data-act="assignItem" data-arg="${t.id}:doc:context" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Context doc</button>
+        <button data-act="assignItem" data-arg="${t.id}:doc:decisions" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Decision doc</button>
+        <button data-act="assignItem" data-arg="${t.id}:adr:" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">ADR</button>
+        <button data-act="assignItem" data-arg="${t.id}:feed:" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Feed entry</button>
+      </div>
+      <div style="display:flex;justify-content:flex-end">
+        <button data-act="discardItem" data-arg="${t.id}" class="cnpy-discard" style="font-size:12.5px;font-weight:500;color:var(--fg-40)">Discard</button>
+      </div>
     </div>`;
 }
 
@@ -884,17 +1012,75 @@ function roadmapDigest(s: AppState): string {
 }
 
 // ── search ───────────────────────────────────────────────────────────────────
-function searchView(s: AppState): string {
-  const typeIcon: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", adr: "M9 12l2 2 4-4" };
-  const typeLabel: Record<string, string> = { doc: "Doc", feed: "Feed", adr: "Decision" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4" };
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision" };
 
+// Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
+// the others are mapped for completeness. Reuses the Triage badge styling.
+function authorityBadge(a: Authority): string {
+  const map: Record<Authority, { label: string; color: string }> = {
+    live: { label: "LIVE", color: "var(--green)" },
+    staged_pending: { label: "PENDING", color: "var(--amber)" },
+    unpromoted: { label: "UNPROMOTED", color: "var(--amber)" },
+    draft: { label: "DRAFT", color: "var(--blue)" },
+  };
+  const { label, color } = map[a];
+  return `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${color};border:1px solid color-mix(in srgb,${color} 45%,transparent);background:color-mix(in srgb,${color} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${label}</span>`;
+}
+
+function searchTypeBadge(type: string): string {
+  const color = type === "decision" ? "var(--blue)" : type === "feed" ? "var(--fg-70)" : "var(--accent)";
+  const border = type === "decision" ? "color-mix(in srgb,var(--blue) 45%,transparent)" : type === "feed" ? "var(--border-strong)" : "color-mix(in srgb,var(--accent) 45%,transparent)";
+  const label = SEARCH_TYPE_LABEL[type] ?? type;
+  const icon = SEARCH_TYPE_ICON[type] ?? SEARCH_TYPE_ICON["doc"];
+  return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${color};border:1px solid ${border}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>`;
+}
+
+// Highlight the active query term inside a body of text.
+function highlight(text: string, sq: string): string {
+  if (!sq) return esc(text);
+  const idx = text.toLowerCase().indexOf(sq);
+  if (idx < 0) return esc(text);
+  const pre = text.slice(0, idx), mid = text.slice(idx, idx + sq.length), post = text.slice(idx + sq.length);
+  return `${esc(pre)}<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>${esc(post)}`;
+}
+
+// G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed.
+function searchOpenAttr(type: string, id: string): string | null {
+  if (type === "decision") return null;
+  return type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(id)}"`;
+}
+
+function primaryCard(r: QueryPrimary, sq: string): string {
+  const preview = r.body.replace(/\s+/g, " ").trim().slice(0, 280);
+  const inner = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap">${searchTypeBadge(r.type)}${authorityBadge(r.authority)}</div>
+    <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
+    <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${highlight(preview, sq)}${r.body.length > 280 ? "…" : ""}</div>`;
+  const act = searchOpenAttr(r.type, r.id);
+  return act
+    ? `<button ${act} class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;cursor:pointer">${inner}</button>`
+    : `<div class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px">${inner}</div>`;
+}
+
+function pointerRow(r: QueryPointer, sq: string): string {
+  const inner = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">${searchTypeBadge(r.type)}${authorityBadge(r.authority)}<span style="font-size:13px;font-weight:500;letter-spacing:-0.01em">${esc(r.title)}</span></div>
+    <div style="font-size:12.5px;line-height:1.55;color:var(--fg-55)">${highlight(r.snippet, sq)}</div>`;
+  const act = searchOpenAttr(r.type, r.id);
+  return act
+    ? `<button ${act} style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:10px;padding:11px 14px;margin-bottom:8px;background:transparent;cursor:pointer">${inner}</button>`
+    : `<div style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:10px;padding:11px 14px;margin-bottom:8px">${inner}</div>`;
+}
+
+function searchView(s: AppState): string {
+  const result = s.searchResults.data;
   // Client-side filter by type (no refetch — the full set is already fetched).
-  let filtered: SearchResult[] = s.searchResults.data;
-  if (s.searchType !== "all") filtered = filtered.filter((r) => r.type === s.searchType);
+  const keep = (t: string) => s.searchType === "all" || s.searchType === t;
+  const primary = result.primary.filter((r) => keep(r.type));
+  const pointers = result.pointers.filter((r) => keep(r.type));
 
   const sq = (s.searchQuery || "").trim().toLowerCase();
 
-  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["adr", "Decisions"]].map(([k, label]) => {
+  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"]].map(([k, label]) => {
     const sel = s.searchType === k;
     const style = `padding:6px 13px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};color:${sel ? "var(--accent)" : "var(--fg-55)"};background:${sel ? "var(--accent-soft)" : "transparent"};transition:all .12s ease`;
     return `<button data-act="setSearchType" data-arg="${k}" style="${style}">${label}</button>`;
@@ -903,42 +1089,22 @@ function searchView(s: AppState): string {
   let body: string;
   if (s.searchResults.status === "loading") {
     body = notice("Searching&hellip;");
+  } else if (s.searchResults.status === "ok" && primary.length === 0 && pointers.length === 0) {
+    body = notice("No results for that query.");
   } else {
-    const cards = filtered.map((r) => {
-      const idx = sq ? r.snippet.toLowerCase().indexOf(sq) : -1;
-      const pre = idx >= 0 ? r.snippet.slice(0, idx) : r.snippet;
-      const mid = idx >= 0 ? r.snippet.slice(idx, idx + sq.length) : "";
-      const post = idx >= 0 ? r.snippet.slice(idx + sq.length) : "";
-      const badgeColor = r.type === "adr" ? "var(--blue)" : r.type === "feed" ? "var(--fg-70)" : "var(--accent)";
-      const badgeBorder = r.type === "adr" ? "color-mix(in srgb,var(--blue) 45%,transparent)" : r.type === "feed" ? "var(--border-strong)" : "color-mix(in srgb,var(--accent) 45%,transparent)";
-      const label = typeLabel[r.type] ?? r.type;
-      const icon = typeIcon[r.type] ?? typeIcon["doc"];
-      // G3: adr results are NOT navigable (no adr detail route). doc → openDocFrom, feed → goFeed.
-      if (r.type === "adr") {
-        return `<div class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
-            <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${badgeColor};border:1px solid ${badgeBorder}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>
-          </div>
-          <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
-          <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${esc(pre)}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>` : ""}${esc(post)}</div>
-        </div>`;
-      }
-      const act = r.type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(r.id)}"`;
-      return `<button ${act} class="cnpy-card" style="display:block;width:100%;text-align:left;border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;cursor:pointer">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
-          <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${badgeColor};border:1px solid ${badgeBorder}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>
-        </div>
-        <div style="font-size:14.5px;font-weight:500;letter-spacing:-0.01em;margin-bottom:6px">${esc(r.title)}</div>
-        <div style="font-size:13px;line-height:1.6;color:var(--fg-55)">${esc(pre)}${mid ? `<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>` : ""}${esc(post)}</div>
-      </button>`;
-    }).join("");
-
-    const empty = s.searchResults.status === "ok" && filtered.length === 0
-      ? notice("No results for that query.")
+    const primaryBlock = primary.length
+      ? `<div>${primary.map((r) => primaryCard(r, sq)).join("")}</div>`
       : "";
-    body = `${cards}${empty}`;
+    const pointerBlock = pointers.length
+      ? `<div style="margin-top:22px">
+           <div style="font-size:11px;font-weight:600;font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-40);margin-bottom:10px">More pointers</div>
+           ${pointers.map((r) => pointerRow(r, sq)).join("")}
+         </div>`
+      : "";
+    body = `${primaryBlock}${pointerBlock}`;
   }
 
+  const count = primary.length + pointers.length;
   return `<div style="max-width:780px;margin:0 auto;padding:32px 24px 100px">
     <div style="display:flex;align-items:center;gap:11px;border:1px solid var(--border-strong);border-radius:12px;padding:0 16px;height:52px;margin-bottom:18px">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none;color:var(--fg-40)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
@@ -947,7 +1113,7 @@ function searchView(s: AppState): string {
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:7px">${typeChips}</div>
-      <span style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono)">${filtered.length} results</span>
+      <span style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono)">${count} results</span>
     </div>
     ${body}
   </div>`;
@@ -1018,16 +1184,24 @@ function settingsView(s: AppState): string {
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
 
-  const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:11px;padding:16px;margin-bottom:14px;background:var(--accent-soft)">
-      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:10px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this now — it won't be shown again</div>
-      <div style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border-strong);border-radius:8px;padding:11px 13px">
-        <code style="flex:1;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
-        <button data-act="dismissReveal" class="cnpy-outlinebtn" style="flex:none;padding:6px 12px;border-radius:7px;border:1px solid var(--border-strong);font-size:12px;font-weight:500">Done</button>
+  const copied = s.tokenCopied;
+  const copyBtn = copied
+    ? `<button data-act="copyToken" class="cnpy-copybtn is-copied" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
+    : `<button data-act="copyToken" class="cnpy-copybtn" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
+  const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:12px;padding:15px 16px;margin-bottom:14px;background:var(--accent-soft);animation:cnpy-pop .22s ease">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this token now — it won't be shown again</div>
+      <div style="display:flex;align-items:stretch;gap:8px;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;padding:6px 6px 6px 13px">
+        <code style="flex:1;min-width:0;display:flex;align-items:center;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
+        ${copyBtn}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px">
+        <div style="font-size:11.5px;color:var(--fg-55);min-width:0">Use it as a <code style="font-family:var(--mono);font-size:11px">Bearer</code> header in your agent's MCP config.</div>
+        <button data-act="dismissReveal" class="cnpy-mutelink" style="flex:none;font-size:12px;font-weight:500;color:var(--fg-40)">Done</button>
       </div>
     </div>` : "";
 
   // No GET route for existing tokens — list is empty with a note.
-  const tokenListBody = `<div style="padding:14px 18px;font-size:12.5px;color:var(--fg-40)">Existing tokens aren't listed here.</div>`;
+  const tokenListBody = `<div style="display:flex;align-items:center;gap:11px;padding:15px 18px;font-size:12.5px;color:var(--fg-40)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;opacity:.8"><circle cx="8" cy="15" r="4.5"></circle><path d="m11.2 11.8 7.3-7.3M16 5l3 3M18.5 7.5l-2.2 2.2"></path></svg><span>Tokens are shown once when minted and never stored in readable form, so they can't be listed here.</span></div>`;
 
   const meLogin = s.me?.login ?? "";
   const meName = s.me?.name ?? meLogin;

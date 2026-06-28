@@ -6,7 +6,7 @@ import { get_feed } from "../src/tools/reads";
 import { all } from "../src/db";
 import type { NeedsTriageRow, DocVersionRow } from "@shared/rows";
 
-const session = { author: "andres", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
+const session = { id: "sess-vocab", author: "andres", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
 
 describe("vocabulary gate", () => {
   it("writes in-vocab feed entries and routes out-of-vocab tags to needs_triage", async () => {
@@ -19,8 +19,8 @@ describe("vocabulary gate", () => {
     });
 
     const result = await consume(env.DB, payload, { login: "andres" });
-    expect(result.feed).toBe(1);
-    expect(result.triaged).toBe(1);
+    expect(result.feed.written).toBe(1);
+    expect(result.feed.triaged).toBe(1);
 
     const feed = await get_feed(env.DB, {});
     expect(feed.some((f) => f.summary === "known")).toBe(true);
@@ -47,10 +47,13 @@ describe("vocabulary gate", () => {
     });
 
     const result = await consume(env.DB, payload, { login: "andres" });
-    expect(result.docs).toBe(1);
-    expect(result.adrs).toBe(1);
-    // bad-section + low-conf doc + weak adr + explicit triage item = 4
-    expect(result.triaged).toBe(4);
+    expect(result.docs.staged).toBe(1);
+    expect(result.adrs.staged).toBe(1);
+    // bad-section + low-conf doc (docs.triaged) + weak adr (adrs.triaged) + explicit
+    // triage item (triage.recorded) = 4 routed to needs_triage in total.
+    expect(result.docs.triaged).toBe(2);
+    expect(result.adrs.triaged).toBe(1);
+    expect(result.triage.recorded).toBe(1);
 
     const staged = await all<DocVersionRow>(env.DB, `SELECT * FROM doc_versions`);
     expect(staged.length).toBe(1);

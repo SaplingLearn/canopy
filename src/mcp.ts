@@ -3,12 +3,19 @@ import { createMcpHandler } from "agents/mcp";
 import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
-import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
+import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
 import { getStoredToken } from "./auth/github";
 import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate } from "./consumer";
+import { feedEntryFromMcpArgs } from "./mcp-args";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
+
+// Each MCP write tool is a one-item batch with an ephemeral session id, so it
+// funnels through the SAME reconciling gate as /ingest — no second write path.
+// A fresh uuid never collides in the replay ledger, so each call is reconciled
+// on its own merits (vocab/confidence/content-hash dedupe still apply).
+const ephemeralLedger = () => ({ sessionId: crypto.randomUUID(), itemIndex: 0 });
 
 async function runTool(fn: () => Promise<unknown>) {
   try {
@@ -21,10 +28,33 @@ async function runTool(fn: () => Promise<unknown>) {
   }
 }
 
-export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
-  // Fresh McpServer per request — MCP SDK 1.26+ guards against reused instances,
-  // so it must NOT be constructed in global scope.
+/**
+ * Build a fully-registered Canopy MCP server for one principal. Exported so tests
+ * can drive the REAL registered tools (e.g. over an in-memory transport) rather
+ * than re-implementing the tool bodies — the same closures production runs.
+ *
+ * A fresh McpServer per request is required (SDK 1.26+ guards against reuse), so
+ * this must NOT be hoisted to global scope.
+ */
+export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer {
   const server = new McpServer({ name: "canopy", version: "1.0.0" });
+
+  server.tool(
+    "query",
+    "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
+    {
+      q: z.string().optional(),
+      types: z.array(z.enum(["doc", "decision", "feed"])).optional(),
+      section: z.string().optional(),
+      space: z.enum(["sapling", "canopy"]).optional(),
+      include_staged: z.boolean().optional(),
+      limit: z.number().optional(),
+      pointer_limit: z.number().optional(),
+    },
+    // Agent default include_staged:true — the agent should see staged/unpromoted
+    // context (flagged), unlike the human Search which defaults false.
+    async (args) => runTool(() => query(env.DB, { ...args, q: args.q ?? "", include_staged: args.include_staged ?? true })),
+  );
 
   server.tool("get_doc", "Get a doc and all its versions by slug.", { slug: z.string() }, async ({ slug }) =>
     runTool(() => get_doc(env.DB, slug))
@@ -42,30 +72,32 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
   );
 
   server.tool(
-    "search_context",
-    "Text search across docs, feed, and ADRs.",
-    { query: z.string(), section: z.string().optional(), limit: z.number().optional() },
-    async ({ query, section, limit }) => runTool(() => search_context(env.DB, query, { section, limit }))
-  );
-
-  server.tool(
     "append_feed",
-    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage). Optional issues link GitHub issue numbers.",
-    { summary: z.string(), body: z.string().optional(), tags: z.array(z.string()).optional(), issues: z.array(z.number()).optional() },
-    async ({ summary, body, tags, issues }) =>
-      // Thin adapter: shape the args into a FeedEntry and let the gate decide write-vs-triage.
+    "Append a feed entry through the vocabulary gate (an out-of-vocab tag routes the entry to needs_triage). Optional prs/commits/issues record the artifacts (PR urls, commit shas, GitHub issue numbers) this session observed.",
+    {
+      summary: z.string(),
+      body: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      prs: z.array(z.string()).optional(),
+      commits: z.array(z.string()).optional(),
+      issues: z.array(z.number()).optional(),
+    },
+    async ({ summary, body, tags, prs, commits, issues }) =>
+      // Thin adapter: feedEntryFromMcpArgs shapes the args into a FeedEntry
+      // (carrying prs/commits/issues), then the gate decides write-vs-triage.
       runTool(() =>
         ingestFeedEntry(
           env.DB,
-          { summary, body: body ?? "", tags: tags ?? [], artifacts: { prs: [], commits: [], issues: issues ?? [] } },
-          principal.login
+          feedEntryFromMcpArgs({ summary, body, tags, prs, commits, issues }),
+          principal.login,
+          ephemeralLedger()
         )
       )
   );
 
   server.tool(
     "propose_doc_update",
-    "Propose a doc version through the gate (out-of-vocab section or low confidence routes to needs_triage; otherwise staged non-destructively — current_version is untouched).",
+    "Propose a doc version through the reconciling gate. Out-of-vocab section or low confidence on a NEW slug routes to needs_triage; an unchanged body is dropped; otherwise staged non-destructively (current_version untouched) and classified new/edit/rewrite. Pass base_version (the current_version you read) so a stale edit is flagged, space to place a new doc, and force to stage an identical body.",
     {
       slug: z.string(),
       section: z.string(),
@@ -73,8 +105,11 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       body: z.string(),
       change_summary: z.string(),
       confidence: z.enum(["high", "low"]),
+      space: z.enum(["sapling", "canopy"]).optional(),
+      base_version: z.number().optional(),
+      force: z.boolean().optional(),
     },
-    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login))
+    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login, ephemeralLedger()))
   );
 
   server.tool("get_roadmap", "Read the roadmap: milestones in target-date order with live GitHub progress.", {}, async () =>
@@ -95,7 +130,7 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       change_summary: z.string(),
       confidence: z.enum(["high", "low"]),
     },
-    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login))
+    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login, ephemeralLedger()))
   );
 
   server.tool(
@@ -106,6 +141,11 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
   );
 
+  return server;
+}
+
+export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
+  const server = buildCanopyMcpServer(env, principal);
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
   const handler = createMcpHandler(server, { route: "/mcp" });
   return handler(request, env, ctx);
