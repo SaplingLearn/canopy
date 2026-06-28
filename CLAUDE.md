@@ -4,6 +4,14 @@ Canopy — a shared context store backend. **One** Cloudflare Worker on one orig
 a stateless MCP endpoint at `/mcp`, and the static web build (via the assets binding). Agents (Claude
 Code sessions) write context through a single gated path; humans confirm the consequential changes.
 
+## Working memory (use the skills)
+
+Canopy is the team's working memory. **Orient against it before touching an existing area** — run the
+`load-context` skill (it calls the read-only `query` tool: assembled authoritative bodies + ranked
+pointers, each authority-flagged). At **session end**, record what changed with the `record-session`
+skill. Trust `live` results; **scrutinize `staged_pending` / `unpromoted` / `draft`** — anything not
+`live` is not-yet-settled and must not be treated as established fact.
+
 ## Commands
 
 - `npm test` — Vitest against a real Miniflare D1 (the source of truth for "is it green").
