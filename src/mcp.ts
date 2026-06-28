@@ -3,7 +3,7 @@ import { createMcpHandler } from "agents/mcp";
 import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
-import { get_doc, list_docs, get_feed, search_context } from "./tools/reads";
+import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
 import { getStoredToken } from "./auth/github";
 import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate } from "./consumer";
@@ -21,10 +21,33 @@ async function runTool(fn: () => Promise<unknown>) {
   }
 }
 
-export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
-  // Fresh McpServer per request — MCP SDK 1.26+ guards against reused instances,
-  // so it must NOT be constructed in global scope.
+/**
+ * Build a fully-registered Canopy MCP server for one principal. Exported so tests
+ * can drive the REAL registered tools (e.g. over an in-memory transport) rather
+ * than re-implementing the tool bodies — the same closures production runs.
+ *
+ * A fresh McpServer per request is required (SDK 1.26+ guards against reuse), so
+ * this must NOT be hoisted to global scope.
+ */
+export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer {
   const server = new McpServer({ name: "canopy", version: "1.0.0" });
+
+  server.tool(
+    "query",
+    "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
+    {
+      q: z.string().optional(),
+      types: z.array(z.enum(["doc", "decision", "feed"])).optional(),
+      section: z.string().optional(),
+      space: z.enum(["sapling", "canopy"]).optional(),
+      include_staged: z.boolean().optional(),
+      limit: z.number().optional(),
+      pointer_limit: z.number().optional(),
+    },
+    // Agent default include_staged:true — the agent should see staged/unpromoted
+    // context (flagged), unlike the human Search which defaults false.
+    async (args) => runTool(() => query(env.DB, { ...args, q: args.q ?? "", include_staged: args.include_staged ?? true })),
+  );
 
   server.tool("get_doc", "Get a doc and all its versions by slug.", { slug: z.string() }, async ({ slug }) =>
     runTool(() => get_doc(env.DB, slug))
@@ -39,13 +62,6 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
     "Read the feed with optional author/tags/since/limit filters.",
     { author: z.string().optional(), tags: z.array(z.string()).optional(), since: z.string().optional(), limit: z.number().optional() },
     async (args) => runTool(() => get_feed(env.DB, args))
-  );
-
-  server.tool(
-    "search_context",
-    "Text search across docs, feed, and ADRs.",
-    { query: z.string(), section: z.string().optional(), limit: z.number().optional() },
-    async ({ query, section, limit }) => runTool(() => search_context(env.DB, query, { section, limit }))
   );
 
   server.tool(
@@ -106,6 +122,11 @@ export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, pri
       runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
   );
 
+  return server;
+}
+
+export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
+  const server = buildCanopyMcpServer(env, principal);
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
   const handler = createMcpHandler(server, { route: "/mcp" });
   return handler(request, env, ctx);

@@ -4,7 +4,7 @@ import type { AppEnv } from "./auth/principal";
 import { sessionGate } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
-import { get_doc, list_docs, get_feed, search_context, list_needs_triage, list_adrs, list_milestone_proposals } from "./tools/reads";
+import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals } from "./tools/reads";
 import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone } from "./tools/writes";
 import { list_roadmap } from "./tools/roadmap";
 import { getMyDashboard } from "./tools/dashboard";
@@ -55,14 +55,29 @@ app.get("/feed", async (c) => {
   return c.json({ feed });
 });
 
+// Human Search backs onto the same query() engine as MCP, but include_staged is
+// false — the human screen surfaces only settled (live) context, never staged.
 app.get("/search", async (c) => {
+  const typesCsv = c.req.query("types");
+  const types = typesCsv
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" =>
+        t === "doc" || t === "decision" || t === "feed"))
+    : undefined;
+  const spaceRaw = c.req.query("space");
+  const space = spaceRaw === "sapling" || spaceRaw === "canopy" ? spaceRaw : undefined;
   const limit = c.req.query("limit");
-  const results = await search_context(c.env.DB, c.req.query("q") ?? "", {
+  const result = await query(c.env.DB, {
+    q: c.req.query("q") ?? "",
+    types: types && types.length ? types : undefined,
     section: c.req.query("section"),
+    space,
+    include_staged: false,
     limit: limit ? Number(limit) : undefined,
   });
-  return c.json({ results });
+  return c.json({ result });
 });
+
+// SEAM: POST /ask — retrieve via query(), synthesize a grounded, slug-citing answer. Out of scope.
 
 app.get("/needs-triage", async (c) => c.json({ items: await list_needs_triage(c.env.DB) }));
 

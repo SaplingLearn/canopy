@@ -61,70 +61,8 @@ export async function get_feed(db: DB, filter: FeedFilter = {}): Promise<FeedRow
   );
 }
 
-export interface SearchResult {
-  type: "doc" | "feed" | "adr";
-  id: string;
-  title: string;
-  snippet: string;
-}
-
-export interface SearchFilters {
-  section?: string;
-  limit?: number;
-}
-
-// Simple D1 text match for v1. SEAM: Vectorize / semantic search is deferred and
-// would slot in here without changing the signature.
-export async function search_context(
-  db: DB,
-  query: string,
-  filters: SearchFilters = {}
-): Promise<SearchResult[]> {
-  const like = `%${query}%`;
-  const limit = Math.trunc(Math.min(Math.max(filters.limit ?? 25, 1), 200));
-  const results: SearchResult[] = [];
-
-  const docParams: unknown[] = [like, like];
-  let docSection = "";
-  if (filters.section) {
-    docSection = ` AND section = ?`;
-    docParams.push(filters.section);
-  }
-  const docs = await all<DocRow>(
-    db,
-    `SELECT * FROM docs WHERE (title LIKE ? OR body LIKE ?)${docSection} LIMIT ${limit}`,
-    ...docParams
-  );
-  for (const d of docs) {
-    results.push({ type: "doc", id: d.slug, title: d.title, snippet: d.body.slice(0, 200) });
-  }
-
-  // feed and adrs have no section; only included when no section filter is set.
-  if (!filters.section) {
-    const feed = await all<FeedRow>(
-      db,
-      `SELECT * FROM feed WHERE summary LIKE ? OR body LIKE ? LIMIT ${limit}`,
-      like,
-      like
-    );
-    for (const f of feed) {
-      results.push({ type: "feed", id: String(f.id), title: f.summary, snippet: (f.body ?? "").slice(0, 200) });
-    }
-
-    const adrs = await all<AdrRow>(
-      db,
-      `SELECT * FROM adrs WHERE title LIKE ? OR context LIKE ? OR decision LIKE ? LIMIT ${limit}`,
-      like,
-      like,
-      like
-    );
-    for (const a of adrs) {
-      results.push({ type: "adr", id: String(a.id), title: a.title, snippet: (a.decision ?? "").slice(0, 200) });
-    }
-  }
-
-  return results;
-}
+// NOTE: the old flat-LIKE search_context was replaced by query() (below) — one
+// engine. /search and the MCP `query` tool both back onto it.
 
 export async function list_needs_triage(db: DB): Promise<NeedsTriageRow[]> {
   return all<NeedsTriageRow>(db, `SELECT * FROM needs_triage WHERE resolved = 0 ORDER BY created_at DESC, id DESC`);
