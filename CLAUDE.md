@@ -6,11 +6,23 @@ Code sessions) write context through a single gated path; humans confirm the con
 
 ## Working memory (use the skills)
 
-Canopy is the team's working memory. **Orient against it before touching an existing area** — run the
-`load-context` skill (it calls the read-only `query` tool: assembled authoritative bodies + ranked
-pointers, each authority-flagged). At **session end**, record what changed with the `record-session`
-skill. Trust `live` results; **scrutinize `staged_pending` / `unpromoted` / `draft`** — anything not
-`live` is not-yet-settled and must not be treated as established fact.
+Canopy is the team's working memory, and three skills under `.claude/skills/` are **the root of how it
+stays living** (orient → work → record), not a side feature:
+
+- **`canopy`** — the umbrella/overview skill: the whole loop, the authority model, and the read/write
+  tool map. Its `references/querying.md` is the full `query` parameter reference (filtering, browse,
+  pointers, `include_staged`). Start here to understand the system.
+- **`load-context`** (auto-fires, read-only) — **orient before touching an existing area**: it calls
+  `query` (assembled authoritative bodies + ranked pointers, each authority-flagged) so you build on what
+  exists instead of guessing. ALWAYS run it before proposing a doc change (note the doc's
+  `current_version` as the writer's base).
+- **`record-session`** (explicit only — never auto-fires) — at **session end**, observe what actually
+  shipped (`git`/`gh`), read the touched docs back from Canopy, and stage **one** reconciled batch via
+  `/ingest`.
+
+Trust `live` results; **scrutinize `staged_pending` / `unpromoted` / `draft`** — anything not `live` is
+not-yet-settled and must not be treated as established fact. Agents only ever stage; a human confirms in
+Triage. That staging-plus-confirmation loop is what keeps the store trustworthy as it grows.
 
 ## Commands
 

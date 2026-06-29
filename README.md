@@ -10,7 +10,8 @@ served via the ASSETS binding). Live at `canopy.saplinglearn.com`.
 - `web/` — Full SPA with screens: My Work (default dashboard), Feed, Docs, Roadmap,
   Triage, Search, Settings, and a Get Started guide. Built to `web/dist`.
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`)
-- `.claude/skills/` — `load-context` (read/orient) and `record-session` (session-end batch writer)
+- `.claude/skills/` — `canopy` (umbrella + `query` reference), `load-context` (read/orient),
+  `record-session` (session-end batch writer)
 
 ## Read side
 
@@ -27,6 +28,30 @@ out-of-vocab or low-confidence entries route to `needs_triage`. HTTP confirm rou
 (promote, ratify, reject, assign, discard) are session-cookie-only — never MCP tools.
 
 MCP write tools: `append_feed`, `propose_doc_update`, `propose_milestone`, `set_focus`.
+
+## The living loop (the skills)
+
+Canopy stays current because agents continuously feed it and humans curate it. Three skills under
+`.claude/skills/` drive that loop — **this is the root of how the context system stays alive**, not a
+side feature:
+
+1. **Orient — `load-context`** (auto-fires, read-only). Before an agent works an existing area it pulls
+   the relevant context via `query` (assembled bodies + ranked pointers, each authority-flagged), so it
+   builds on what's already there instead of guessing.
+2. **Work** — the agent does the task.
+3. **Record — `record-session`** (explicit: "record this session"). At the end it observes what actually
+   shipped (`git`/`gh`), reads the affected docs back from Canopy for a true base, and stages **one**
+   reconciled batch via `POST /ingest`.
+
+The gate reconciles every write — drops no-ops (content-hash), tags each doc change `new`/`edit`/`rewrite`,
+and routes out-of-vocab or low-confidence entries to Triage. A human then promotes / ratifies / rejects /
+assigns / discards. **Staging + confirmation is what keeps the store trustworthy as it grows**: nothing
+goes live unreviewed, and nothing rots, because every session writes back what it learned.
+
+`canopy` is the umbrella skill (the map, plus the full `query` reference in `references/querying.md`);
+`load-context` and `record-session` are the two halves it composes — kept separate because one must
+auto-fire and the other must never. They live in this repo so they version with the tools they wrap;
+copy them into `~/.claude/skills/` to use from another repo.
 
 ## Develop
 
