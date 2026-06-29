@@ -1141,9 +1141,12 @@ function guideView(s: AppState): string {
     <p style="${gP}">The Docs library is the team's living reference, grouped into ${gStrong("Reference")}, ${gStrong("Context")}, and ${gStrong("Decisions")}. Every doc is versioned: when an agent proposes an update it lands as a ${gStrong("staged")} new version — the current one stays live and untouched until a human promotes the newer one. Docs improve continuously, and nothing is ever overwritten by surprise.</p>
     ${gFig("/guide/docs.png", `The <strong style="color:var(--fg-55)">Docs</strong> reader — sections on the left, the live version in the middle, and a banner up top when a newer proposal is waiting.`)}
 
+    <h3 style="${gH3}">Search &amp; My Work</h3>
+    <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what you're focused on, your open GitHub issues, and the team's latest activity.</p>
+
     <h3 style="${gH3}">Triage</h3>
-    <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. It has three queues: ${gStrong("Proposals")} (doc updates waiting to be promoted), ${gStrong("Decisions")} (ADRs waiting to be ratified), and ${gStrong("Triage")} (anything an agent couldn't confidently place). On each item you either make it live — ${gStrong("Promote")} a doc, ${gStrong("Ratify")} a decision — or ${gStrong("Dismiss")} it.</p>
-    ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Triage</strong> — a staged doc version shown as a diff against the live one, ready to Promote or Dismiss.`)}
+    <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. Three queues: ${gStrong("Proposals")} (doc updates), ${gStrong("Decisions")} (ADRs), and ${gStrong("Triage")} (anything an agent couldn't confidently place). Proposals render to match the change — a brand-new doc as a full ${gStrong("preview")}, a small edit as a tight ${gStrong("diff")}, a large rewrite ${gStrong("side-by-side")} — and flag low-confidence or stale-base edits. On each item you make it live (${gStrong("Promote")} a doc, ${gStrong("Ratify")} a decision), ${gStrong("Reject")} it, or — for triage items — ${gStrong("Assign")} it to the right place or ${gStrong("Discard")} it. Nothing is ever hard-deleted.</p>
+    ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Triage</strong> — a staged doc version shown against the live one, ready to Promote or Reject.`)}
 
     <h3 style="${gH3}">Connect your agent over MCP</h3>
     <p style="${gP}">Your coding agent talks to Canopy over the Model Context Protocol. Setup takes about a minute:</p>
@@ -1164,7 +1167,10 @@ function guideView(s: AppState): string {
     <ol start="4" style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:12px 0 0;padding-left:22px">
       <li>Restart your agent — the Canopy tools show up in the session.</li>
     </ol>
-    <p style="${gP};margin-top:14px">Once connected, your agent can read everything (docs, feed, roadmap, search) and add new context with ${gStrong("append_feed")}, ${gStrong("propose_doc_update")}, and ${gStrong("propose_milestone")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store.</p>
+    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")}, ${gStrong("propose_doc_update")}, and ${gStrong("propose_milestone")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
+
+    <h3 style="${gH3}">Skills that wire it together</h3>
+    <p style="${gP}">Two Claude Code skills ship in the repo under <code style="font-family:var(--mono);font-size:13px">.claude/skills/</code>: ${gStrong("load-context")} pulls the relevant Canopy context (via the read-only <code style="font-family:var(--mono);font-size:13px">query</code> tool) before your agent works an area, so it builds on what exists instead of guessing; ${gStrong("record-session")} captures what changed at the end of a session in one batch. In this repo they're active automatically — to use them elsewhere, copy the folders into <code style="font-family:var(--mono);font-size:13px">~/.claude/skills/</code>.</p>
   </div>`;
 }
 
