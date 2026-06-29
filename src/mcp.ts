@@ -6,8 +6,9 @@ import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
 import { getStoredToken } from "./auth/github";
-import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate } from "./consumer";
+import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
+import { IngestPayload } from "@shared/contract";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -139,6 +140,17 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     { working_on: z.string().min(1), next_up: z.string().optional() },
     async ({ working_on, next_up }) =>
       runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
+  );
+
+  server.tool(
+    "record_session",
+    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / milestone_proposals / focus). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
+    IngestPayload.shape,
+    // Same reconciling path as the cookie /ingest route: forward the full payload to
+    // consume() under the bearer principal already in scope. Re-parse with the contract
+    // so defaults (empty arrays) are applied and the type is exactly IngestPayload —
+    // the SDK already validated against IngestPayload.shape, so this never throws.
+    async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
   );
 
   return server;
