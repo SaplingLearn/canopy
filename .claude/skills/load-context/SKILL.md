@@ -14,6 +14,10 @@ of the top hits plus ranked **pointers** to the rest, and flags every result wit
 This is the **reader** half of the loop; `record-session` is the writer. This skill never writes —
 it only retrieves and reports what it found.
 
+Part of the **`canopy`** skill set — see the `canopy` skill for the whole orient→work→record loop, and
+its `references/querying.md` for the full `query` parameter set (filtering by `space`, browse mode,
+`pointer_limit`, `include_staged`) when a focused orient query isn't enough.
+
 ## When to use
 
 - You're starting work on a **named or existing** subsystem (auth, the gate, the roadmap reader, …).

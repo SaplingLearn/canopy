@@ -19,6 +19,9 @@ You build the payload; you never bypass the gate and you never confirm (promote/
 copied from real `git`/`gh` output. Every doc/ADR you touch is first **read back from Canopy** so
 you write a true delta from a known base — not from memory of the conversation.
 
+Part of the **`canopy`** skill set — this is the **writer** half of the loop; the `canopy` skill is the
+umbrella, and `load-context` is the reader that orients before work.
+
 ## When to use / NOT use
 
 - Use only when a person **explicitly** says: record / log / wrap up / capture this session. **One**
