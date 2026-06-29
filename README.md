@@ -27,7 +27,8 @@ Every agent write flows through the gate in `src/consumer.ts` — replay ledger
 out-of-vocab or low-confidence entries route to `needs_triage`. HTTP confirm routes
 (promote, ratify, reject, assign, discard) are session-cookie-only — never MCP tools.
 
-MCP write tools: `append_feed`, `propose_doc_update`, `propose_milestone`, `set_focus`.
+MCP write tools: `append_feed`, `propose_doc_update`, `propose_milestone`, `set_focus`, and
+`record_session` (the session-end batch writer — a whole `IngestPayload` through the same gate).
 
 ## The living loop (the skills)
 
@@ -41,7 +42,8 @@ side feature:
 2. **Work** — the agent does the task.
 3. **Record — `record-session`** (explicit: "record this session"). At the end it observes what actually
    shipped (`git`/`gh`), reads the affected docs back from Canopy for a true base, and stages **one**
-   reconciled batch via `POST /ingest`.
+   reconciled batch through the `record_session` MCP tool (same gate as `POST /ingest`, reachable over
+   the agent's bearer).
 
 The gate reconciles every write — drops no-ops (content-hash), tags each doc change `new`/`edit`/`rewrite`,
 and routes out-of-vocab or low-confidence entries to Triage. A human then promotes / ratifies / rejects /
