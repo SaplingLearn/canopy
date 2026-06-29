@@ -18,7 +18,7 @@ stays living** (orient → work → record), not a side feature:
   `current_version` as the writer's base).
 - **`record-session`** (explicit only — never auto-fires) — at **session end**, observe what actually
   shipped (`git`/`gh`), read the touched docs back from Canopy, and stage **one** reconciled batch via
-  `/ingest`.
+  the `record_session` MCP tool (a bearer-reachable batch over the same gate as `/ingest`).
 
 Trust `live` results; **scrutinize `staged_pending` / `unpromoted` / `draft`** — anything not `live` is
 not-yet-settled and must not be treated as established fact. Agents only ever stage; a human confirms in
@@ -44,15 +44,16 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started) served via the ASSETS binding.
 - `.claude/skills/` — Claude Code skills: `load-context` (read-only orient, model-invocable) and
-  `record-session` (explicit session-end batch writer into `/ingest`). Referenced in the Working
-  memory section above.
+  `record-session` (explicit session-end batch writer via the `record_session` MCP tool). Referenced in
+  the Working memory section above.
 
 ## Core invariant — the single gated write path
 
 Every write funnels through the per-entry **gate** functions in `src/consumer.ts`
 (`ingestFeedEntry` / `ingestDocProposal` / `ingestAdrDraft` / `ingestMilestoneProposal`). Both entry
-points are thin adapters over these: `/ingest` (via `consume`) and the MCP write tools (`append_feed`,
-`propose_doc_update`, `propose_milestone`, `set_focus`). The gate now **reconciles**, not just routes:
+points are thin adapters over these: `/ingest` and the MCP `record_session` batch tool (both via
+`consume`), plus the per-entry MCP write tools (`append_feed`, `propose_doc_update`, `propose_milestone`,
+`set_focus`). The gate now **reconciles**, not just routes:
 
 - **Replay ledger** (`processed_items`, keyed by `session.id + item_index`): a re-POST of the same
   payload drops every item as `unchanged` — nothing is double-written. MCP tools use an ephemeral
