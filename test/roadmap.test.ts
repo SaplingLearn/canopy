@@ -77,7 +77,7 @@ describe("milestone proposal gate", () => {
     expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
   });
 
-  it("/ingest funnels milestone_proposals through the same gate and stages them", async () => {
+  it("consume() funnels milestone_proposals through the same gate and stages them", async () => {
     const payload = IngestPayload.parse({
       session: sessionMeta,
       milestone_proposals: [

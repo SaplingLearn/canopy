@@ -5,13 +5,15 @@ import { get_feed } from "../src/tools/reads";
 import { all } from "../src/db";
 import type { DocRow, DocVersionRow, NeedsTriageRow } from "@shared/rows";
 
-// These are the exact gate functions the MCP `append_feed` / `propose_doc_update`
-// tools delegate to (see src/mcp.ts). Driving them proves the vocabulary/confidence
-// gate now holds on the MCP write surface, identically to the /ingest consumer.
+// These call the gate functions in src/consumer.ts DIRECTLY (ingestFeedEntry /
+// ingestDocProposal) — the layer beneath BOTH the MCP write tools and /ingest. They
+// prove the vocabulary/confidence gate itself. The registered MCP tools are driven
+// end-to-end through real dispatch in mcp.append_feed / mcp.propose_doc /
+// record-session.mcp tests, not here.
 const AUTHOR = "real-user";
 
-describe("MCP write tools route through the vocabulary gate", () => {
-  it("append_feed: an in-vocab tag is written to the feed, nothing triaged", async () => {
+describe("gate functions (consumer.ts) enforce the vocabulary/confidence gate", () => {
+  it("ingestFeedEntry: an in-vocab tag is written to the feed, nothing triaged", async () => {
     const r = await ingestFeedEntry(
       env.DB,
       { summary: "ok", body: "b", tags: ["auth"], artifacts: { prs: [], commits: [], issues: [] } },
@@ -27,7 +29,7 @@ describe("MCP write tools route through the vocabulary gate", () => {
     expect(triage.length).toBe(0);
   });
 
-  it("append_feed: an out-of-vocab tag routes the whole entry to needs_triage and writes no feed row", async () => {
+  it("ingestFeedEntry: an out-of-vocab tag routes the whole entry to needs_triage and writes no feed row", async () => {
     const r = await ingestFeedEntry(
       env.DB,
       { summary: "bad", body: "b", tags: ["not-a-real-tag"], artifacts: { prs: [], commits: [], issues: [] } },
@@ -44,7 +46,7 @@ describe("MCP write tools route through the vocabulary gate", () => {
     expect(triage[0].source_author).toBe(AUTHOR);
   });
 
-  it("propose_doc_update: in-vocab high-confidence stages a version (non-destructive), nothing triaged", async () => {
+  it("ingestDocProposal: in-vocab high-confidence stages a version (non-destructive), nothing triaged", async () => {
     const r = await ingestDocProposal(
       env.DB,
       { slug: "architecture", section: "reference", title: "Architecture", body: "# v1", change_summary: "s", confidence: "high" },
@@ -63,7 +65,7 @@ describe("MCP write tools route through the vocabulary gate", () => {
     expect(triage.length).toBe(0);
   });
 
-  it("propose_doc_update: an out-of-vocab section routes to triage and writes no doc/version", async () => {
+  it("ingestDocProposal: an out-of-vocab section routes to triage and writes no doc/version", async () => {
     const r = await ingestDocProposal(
       env.DB,
       { slug: "bad-section", section: "made-up", body: "x", change_summary: "s", confidence: "high" },
@@ -81,7 +83,7 @@ describe("MCP write tools route through the vocabulary gate", () => {
     expect(triage[0].reason).toContain("made-up");
   });
 
-  it("propose_doc_update: a low-confidence proposal routes to triage and writes no doc/version", async () => {
+  it("ingestDocProposal: a low-confidence proposal routes to triage and writes no doc/version", async () => {
     const r = await ingestDocProposal(
       env.DB,
       { slug: "low-conf", section: "reference", body: "x", change_summary: "s", confidence: "low" },

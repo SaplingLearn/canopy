@@ -2,7 +2,7 @@
 name: record-session
 description: Use when a person explicitly asks to wrap up, record, log, or capture the current Claude Code session into Canopy (triggers — "record this session", "session-end", "log this to Canopy", "save what we did"). Explicit invocation only — must never auto-fire at a natural stopping point.
 disable-model-invocation: true
-allowed-tools: Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(git diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh issue view:*), Bash(uuidgen:*), Bash(curl:*), mcp__canopy__query, mcp__canopy__get_doc
+allowed-tools: Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(git diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh issue view:*), Bash(uuidgen:*), mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__record_session
 ---
 
 # Record Session → Canopy
@@ -82,10 +82,11 @@ Build at most one of each, only for what the session genuinely touched:
 - **Focus** — your forward headline for the personal dashboard. `{ working_on, next_up? }`. Intent
   prose is fine here (it is exempt from the observed-artifacts rule; the feed's artifacts are not).
 
-### 5. Assemble ONE payload and POST once to `/ingest`
+### 5. Assemble ONE payload and call `record_session` once
 
-Mint a session id (`uuidgen`) — it is the **replay key**: re-POSTing the same payload stages nothing
-new. Assemble a single `IngestPayload` and POST it **once**:
+Mint a session id (`uuidgen`) — it is the **replay key**: re-running the same payload stages
+nothing new. Assemble a single `IngestPayload` and pass it to the **`record_session` MCP tool** in
+**one** call:
 
 ```jsonc
 {
@@ -98,13 +99,10 @@ new. Assemble a single `IngestPayload` and POST it **once**:
 }
 ```
 
-```sh
-curl -sS -X POST "$CANOPY_ORIGIN/ingest" -H 'content-type: application/json' --data @payload.json
-```
-
-The POST authenticates as you (your authenticated Canopy session — the same principal Canopy resolves
-for its HTTP routes); **`session.author` is advisory and ignored — the server stamps the author from
-your authenticated principal.** Then **report the structured counts** the response returns, e.g.
+Call `mcp__canopy__record_session` with that payload. The MCP channel carries your bearer, so the
+call authenticates as you and routes through the SAME gate as the human `/ingest` path;
+**`session.author` is advisory and ignored — the server stamps the author from your authenticated
+principal.** Then **report the structured counts** the tool returns, e.g.
 `{ "docs": { "staged": 1, "unchanged": 2, "triaged": 0 }, … }` → "3 docs: 1 staged, 2 unchanged."
 `unchanged` means the gate recognised a no-op or a replay and correctly dropped it.
 
@@ -120,9 +118,9 @@ your authenticated principal.** Then **report the structured counts** the respon
 - Never set or spoof **author** — the authenticated principal owns it, server-side.
 - Never mark `'done'`, never **promote / ratify / complete**. You only stage/append; humans confirm.
 - Never **invent vocab**. In-vocab, or out-of-vocab → triage. Nothing in between.
-- Never write **secrets, tokens, or your bearer** into a body or artifact.
+- Never write **secrets or tokens** into a doc body or artifact.
 - **Artifacts are observed** from git/gh, never recalled. Docs/ADRs are **read back before written**.
-- **POST once.** The session id makes a re-POST replay-safe, but emit one payload per explicit ask.
+- **Call once.** The session id makes a re-run replay-safe, but emit one payload per explicit ask.
 
 ## Common mistakes
 
@@ -135,5 +133,6 @@ your authenticated principal.** Then **report the structured counts** the respon
 ## Install (one-time, per teammate)
 
 The skill ships in the repo at `.claude/skills/record-session/` and is **auto-discovered**. Configure
-the `canopy` MCP server with your **personal** bearer (for the read tools `query`/`get_doc`) and set
-`CANOPY_ORIGIN` to the Canopy origin for the `/ingest` POST. See the repo README, "Canopy MCP setup".
+the `canopy` MCP server with your **personal** bearer — it carries the read tools (`query`/`get_doc`)
+and the session-end writer (`record_session`) over the same channel. See the repo README,
+"Canopy MCP setup".
