@@ -120,7 +120,7 @@ principal.** Then **report the structured counts** the tool returns, e.g.
 - Never **invent vocab**. In-vocab, or out-of-vocab → triage. Nothing in between.
 - Never write **secrets or tokens** into a doc body or artifact.
 - **Artifacts are observed** from git/gh, never recalled. Docs/ADRs are **read back before written**.
-- **POST once.** The session id makes a re-POST replay-safe, but emit one payload per explicit ask.
+- **Call once.** The session id makes a re-run replay-safe, but emit one payload per explicit ask.
 
 ## Common mistakes
 
