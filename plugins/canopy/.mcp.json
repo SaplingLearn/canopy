@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "canopy": {
+      "type": "streamable-http",
+      "url": "https://canopy.saplinglearn.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CANOPY_MCP_TOKEN}"
+      }
+    }
+  }
+}

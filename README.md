@@ -10,8 +10,12 @@ served via the ASSETS binding). Live at `canopy.saplinglearn.com`.
 - `web/` — Full SPA with screens: My Work (default dashboard), Feed, Docs, Roadmap,
   Triage, Search, Settings, and a Get Started guide. Built to `web/dist`.
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`)
-- `.claude/skills/` — `canopy` (umbrella + `query` reference), `load-context` (read/orient),
-  `record-session` (session-end batch writer)
+- `plugins/canopy/` + `.claude-plugin/marketplace.json` — the Canopy **plugin** and the marketplace
+  that distributes it (see **Install the Canopy plugin**). Bundles the three skills — `canopy`
+  (umbrella + `query` reference), `load-context` (read/orient), `record-session` (session-end batch
+  writer) — under `plugins/canopy/skills/`, plus the auto-wired MCP server.
+- `.claude/skills/` — symlinks into `plugins/canopy/skills/` so this repo's own sessions load the
+  bundled skills directly (single source of truth; nothing to keep in sync)
 
 ## Read side
 
@@ -52,8 +56,9 @@ goes live unreviewed, and nothing rots, because every session writes back what i
 
 `canopy` is the umbrella skill (the map, plus the full `query` reference in `references/querying.md`);
 `load-context` and `record-session` are the two halves it composes — kept separate because one must
-auto-fire and the other must never. They live in this repo so they version with the tools they wrap;
-copy them into `~/.claude/skills/` to use from another repo.
+auto-fire and the other must never. They live in this repo so they version with the tools they wrap.
+To use them from another machine or repo, install the **Canopy plugin** (below) — it bundles all three
+skills and auto-wires the MCP server in one step, so there's nothing to copy by hand.
 
 ## Develop
 
@@ -76,5 +81,32 @@ Production: `wrangler secret put GITHUB_CLIENT_ID` (and the others).
 Local dev: copy `.dev.vars.example` to `.dev.vars` (git-ignored) and fill it in.
 
 Mint an MCP token from a logged-in session: `POST /auth/mcp-token` → `{ "token": "canopy_mcp_..." }`
-(shown once). Connect Claude Code to the live endpoint:
-`claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp --header "Authorization: Bearer canopy_mcp_..."`.
+(shown once; or use the web app → Settings → MCP access tokens).
+
+## Install the Canopy plugin (skills + MCP in one step)
+
+The three skills and the MCP wiring ship as a Claude Code **plugin**, distributed from this repo as a
+marketplace. Anyone on the team gets both in two commands inside Claude Code:
+
+```text
+/plugin marketplace add SaplingLearn/canopy
+/plugin install canopy@canopy
+```
+
+The plugin's MCP config reads your **personal** bearer from `$CANOPY_MCP_TOKEN`, so export it in the
+shell that launches Claude Code (e.g. add it to your shell profile), then restart:
+
+```bash
+export CANOPY_MCP_TOKEN=canopy_mcp_...   # your token, minted above — per person, never stored in the plugin
+```
+
+That auto-wires the `canopy` MCP server (`query` / `get_doc` / `record_session` …) and loads the
+`canopy`, `load-context`, and `record-session` skills — no manual `claude mcp add`, no copying skill
+folders. (The single-server manual path still works:
+`claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp --header "Authorization: Bearer canopy_mcp_..."`.)
+
+> **Maintainers:** the plugin is at `plugins/canopy/`; the marketplace manifest at
+> `.claude-plugin/marketplace.json`. Validate either with `claude plugin validate <path>`. The real
+> skill files live under `plugins/canopy/skills/`; the in-repo `.claude/skills/*` entries are symlinks
+> into that bundle, so there is a single source of truth and the two can never drift — edit the files
+> under `plugins/canopy/skills/`.
