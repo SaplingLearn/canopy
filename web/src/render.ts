@@ -1130,6 +1130,7 @@ function guideView(s: AppState): string {
       <img src="${src}" alt="" style="display:block;width:100%;border:1px solid var(--border);border-radius:12px" />
       <figcaption style="font-size:12px;color:var(--fg-40);margin-top:8px">${cap}</figcaption>
     </figure>`;
+  const gPre = (body: string) => `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">${body}</code></pre>`;
   return `<div class="cnpy-scroll" style="max-width:860px;margin:0 auto;padding:36px 40px 120px">
     <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 6px">Welcome to Canopy — your team's shared memory. Here's a quick tour of how it all fits together, and how to plug your coding agent into it.</p>
 
@@ -1149,13 +1150,18 @@ function guideView(s: AppState): string {
     ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Triage</strong> — a staged doc version shown against the live one, ready to Promote or Reject.`)}
 
     <h3 style="${gH3}">Connect your agent over MCP</h3>
-    <p style="${gP}">Your coding agent talks to Canopy over the Model Context Protocol. Setup takes about a minute:</p>
+    <p style="${gP}">Your coding agent talks to Canopy over the Model Context Protocol. First, get a token:</p>
     <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
       <li>You're already signed in — that's step one done.</li>
       <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Mint new token")}. Copy it right away — it's shown only once.</li>
-      <li>Add Canopy to your agent's MCP config with that token as a bearer header. In Claude Code, drop a <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> in your project:</li>
     </ol>
-    <pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">{
+    <p style="${gP};margin-top:14px">${gStrong("Easiest — install the Canopy plugin.")} It bundles the three skills below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand. In Claude Code:</p>
+    ${gPre(`/plugin marketplace add SaplingLearn/canopy
+/plugin install canopy@canopy`)}
+    <p style="${gP};margin-top:12px">The plugin reads your token from an environment variable — export it in the shell that launches your agent (add it to your shell profile to make it stick), then restart:</p>
+    ${gPre(`export CANOPY_MCP_TOKEN=canopy_mcp_…`)}
+    <p style="${gP};margin-top:14px">${gStrong("Prefer to wire it by hand")} — or running your own Canopy? Skip the plugin and drop a <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> in your project with the token as a bearer header, then restart your agent:</p>
+    ${gPre(`{
   "mcpServers": {
     "canopy": {
       "type": "streamable-http",
@@ -1163,10 +1169,7 @@ function guideView(s: AppState): string {
       "headers": { "Authorization": "Bearer canopy_mcp_…" }
     }
   }
-}</code></pre>
-    <ol start="4" style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:12px 0 0;padding-left:22px">
-      <li>Restart your agent — the Canopy tools show up in the session.</li>
-    </ol>
+}`)}
     <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")}, ${gStrong("propose_doc_update")}, and ${gStrong("propose_milestone")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
 
     <h3 style="${gH3}">The living loop — how Canopy stays current</h3>
@@ -1177,7 +1180,7 @@ function guideView(s: AppState): string {
       <li>${gStrong("Record — record-session.")} You ask for it explicitly at the end ("record this session" — it never fires on its own). It observes what actually shipped from <code style="font-family:var(--mono);font-size:13px">git</code>/<code style="font-family:var(--mono);font-size:13px">gh</code>, reads the docs it touched back from Canopy so it writes a true delta from a known base, and stages one reconciled batch through the ${gStrong("record_session")} MCP tool — over the same bearer connection you set up above, no extra auth. The gate drops no-ops, tags each doc change new/edit/rewrite, and routes anything low-confidence or out-of-vocab to Triage.</li>
     </ol>
     <p style="${gP};margin-top:12px">Then you ${gStrong("confirm")} in Triage. That's the whole point: agents feed the store continuously, a human curates what matters, and because nothing goes live unreviewed — and every session writes back what it learned — the context stays trustworthy and current instead of going stale. This loop is the difference between a wiki that rots and a memory that grows.</p>
-    <p style="${gP}">${gStrong("canopy")} is the umbrella skill that maps all of this and carries the full ${gStrong("query")} reference; ${gStrong("load-context")} and ${gStrong("record-session")} are the two halves it composes — kept separate because one must fire on its own and the other must never. In this repo they're active automatically; to use them from another project, copy the folders into <code style="font-family:var(--mono);font-size:13px">~/.claude/skills/</code>.</p>
+    <p style="${gP}">${gStrong("canopy")} is the umbrella skill that maps all of this and carries the full ${gStrong("query")} reference; ${gStrong("load-context")} and ${gStrong("record-session")} are the two halves it composes — kept separate because one must fire on its own and the other must never. The Canopy plugin (above) ships all three, so installing it is all it takes to get them in any project — no copying by hand.</p>
   </div>`;
 }
 
