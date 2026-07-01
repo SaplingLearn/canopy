@@ -4,9 +4,9 @@ import { app } from "../src/routes";
 import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
 import { all, first } from "../src/db";
-import type { DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
+import type { DocVersionRow, AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import { ingestDocProposal } from "../src/consumer";
-import { propose_doc_update, promote_doc, stage_adr, ratify_adr, route_triage } from "../src/tools/writes";
+import { propose_doc_update, promote_doc, stage_adr, ratify_adr, route_triage, stage_milestone_proposal, promote_milestone_proposal, reject_milestone_proposal } from "../src/tools/writes";
 
 async function authedCookie(login: string): Promise<string> {
   await env.DB.prepare(
@@ -131,6 +131,55 @@ describe("POST /adr/:id/reject", () => {
     await ratify_adr(env.DB, ratifiedId);
     const res = await post(`/adr/${ratifiedId}/reject`, cookie);
     expect(res.status).toBe(400); // a ratified decision is not rejectable
+  });
+});
+
+// ── reject milestone proposal ─────────────────────────────────────────────────
+const milestoneBase = {
+  title: "Launch v1",
+  target_date: "2026-09-01",
+  status: "upcoming",
+  change_summary: "initial proposal",
+  confidence: "high" as const,
+};
+
+describe("POST /milestone-proposals/:id/reject", () => {
+  it("flips a staged proposal to 'rejected', drops it from the queue, and never deletes it", async () => {
+    const cookie = await authedCookie("andres");
+    const id = await stage_milestone_proposal(env.DB, milestoneBase, "andres");
+
+    let proposals = (await getJson<{ proposals: unknown[] }>("/milestone-proposals", cookie)).proposals;
+    expect(proposals.length).toBe(1);
+
+    const res = await post(`/milestone-proposals/${id}/reject`, cookie);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: "rejected" });
+
+    proposals = (await getJson<{ proposals: unknown[] }>("/milestone-proposals", cookie)).proposals;
+    expect(proposals.length).toBe(0);
+
+    const row = await first<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
+    expect(row?.staged_status).toBe("rejected"); // still present, soft flip
+  });
+
+  it("double-reject is idempotent-safe; cannot reject a promoted proposal", async () => {
+    const cookie = await authedCookie("andres");
+    const id = await stage_milestone_proposal(env.DB, milestoneBase, "andres");
+    expect((await post(`/milestone-proposals/${id}/reject`, cookie)).status).toBe(200);
+    expect((await post(`/milestone-proposals/${id}/reject`, cookie)).status).toBe(200); // idempotent
+
+    const promotedId = await stage_milestone_proposal(env.DB, { ...milestoneBase, title: "Other" }, "andres");
+    await promote_milestone_proposal(env.DB, promotedId, "andres");
+    const res = await post(`/milestone-proposals/${promotedId}/reject`, cookie);
+    expect(res.status).toBe(400); // a promoted proposal is not rejectable
+  });
+
+  it("returns 401 without a session cookie (and does not mutate)", async () => {
+    const id = await stage_milestone_proposal(env.DB, milestoneBase, "andres");
+    const res = await app.request(`/milestone-proposals/${id}/reject`, { method: "POST" }, env);
+    expect(res.status).toBe(401);
+    const row = await first<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
+    expect(row?.staged_status).toBe("staged"); // untouched
   });
 });
 

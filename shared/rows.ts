@@ -117,7 +117,7 @@ export interface MilestoneProposalRow {
   github_ref: string | null;
   change_summary: string;
   confidence: string;
-  staged_status: "staged" | "promoted";
+  staged_status: "staged" | "promoted" | "rejected";
   created_at: string;
   created_by: string;
   content_hash: string | null;   // SHA-256 of the proposed milestone fields — dedupe key (0009)

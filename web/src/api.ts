@@ -164,6 +164,9 @@ export function rejectDoc(slug: string, version: number): Promise<{ ok: true }> 
 export function rejectAdr(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/adr/${id}/reject`);
 }
+export function rejectMilestoneProposal(id: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/milestone-proposals/${id}/reject`);
+}
 export function discardTriage(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/needs-triage/${id}/discard`);
 }
