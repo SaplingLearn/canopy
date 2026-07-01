@@ -7,9 +7,9 @@ import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
-  listStagedProposals, listAdrs, listNeedsTriage,
-  promoteDoc, ratifyAdr, completeMilestone,
-  rejectDoc, rejectAdr, discardTriage, assignTriage,
+  listStagedProposals, listAdrs, listNeedsTriage, listMilestoneProposals,
+  promoteDoc, ratifyAdr, completeMilestone, promoteMilestoneProposal,
+  rejectDoc, rejectAdr, rejectMilestoneProposal, discardTriage, assignTriage,
   getMe, logout, mintMcpToken,
   Unauthorized, NotFound, ApiError,
 } from "./api";
@@ -247,7 +247,25 @@ function loadTriageItems(): void {
     });
 }
 
-// Load all three queues on entering Triage so the tab counts + sidebar badge are
+function loadMilestoneProposals(): void {
+  state.milestoneProps = { status: "loading", data: state.milestoneProps.data };
+  rerender();
+  listMilestoneProposals()
+    .then((rows) => {
+      state.milestoneProps = { status: "ok", data: rows };
+      if (state.triageQueue === "milestones" && (state.selMilestoneProp === null || !rows.some((r) => r.id === state.selMilestoneProp))) {
+        state.selMilestoneProp = rows.length > 0 ? rows[0].id : null;
+      }
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.milestoneProps = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+// Load all four queues on entering Triage so the tab counts + sidebar badge are
 // accurate immediately (not just for the active queue). Each loader re-renders as it
 // resolves; tab switches afterward find their queue already loaded.
 function loadCurrentTriageQueue(): void {
@@ -255,6 +273,7 @@ function loadCurrentTriageQueue(): void {
   if (state.proposals.status === "idle") { loadProposals(); started = true; }
   if (state.decisions.status === "idle") { loadDecisions(); started = true; }
   if (state.triageItems.status === "idle") { loadTriageItems(); started = true; }
+  if (state.milestoneProps.status === "idle") { loadMilestoneProposals(); started = true; }
   if (!started) rerender();
 }
 
@@ -363,11 +382,16 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       state.triageQueue = "triage";
       if (state.triageItems.status === "idle") { loadTriageItems(); return; }
       break;
+    case "queueMilestones":
+      state.triageQueue = "milestones";
+      if (state.milestoneProps.status === "idle") { loadMilestoneProposals(); return; }
+      break;
     case "selectItem":
       if (arg) {
         if (state.triageQueue === "proposals") state.selProposal = arg;
         else if (state.triageQueue === "decisions") state.selDecision = Number(arg);
-        else state.selTriage = Number(arg);
+        else if (state.triageQueue === "triage") state.selTriage = Number(arg);
+        else state.selMilestoneProp = Number(arg);
       }
       break;
 
@@ -429,6 +453,16 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         });
       return;
     }
+    case "promoteMilestone": {
+      if (!arg) return;
+      promoteMilestoneProposal(Number(arg))
+        .then(() => { flash("Milestone promoted — now live on the roadmap"); loadMilestoneProposals(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Promote failed");
+        });
+      return;
+    }
     case "confirmMilestone": {
       if (!arg) return;
       completeMilestone(Number(arg))
@@ -441,8 +475,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     }
     // ── Phase 3 triage write-back (cookie-authed) ───────────────────────────
     // Dismiss = reject. Shared by the Proposals queue (arg "slug@version" → reject
-    // the staged doc version) and the Decisions queue (arg id → reject the ADR);
-    // the active queue disambiguates.
+    // the staged doc version), the Decisions queue (arg id → reject the ADR), and
+    // the Milestones queue (arg id → reject the staged proposal); the active queue
+    // disambiguates.
     case "dismiss": {
       if (!arg) return;
       if (state.triageQueue === "proposals") {
@@ -452,6 +487,13 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         const version = Number(arg.slice(atIdx + 1));
         rejectDoc(slug, version)
           .then(() => { flash("Proposal rejected"); loadProposals(); })
+          .catch((e) => {
+            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+            flash(e instanceof ApiError ? e.message : "Reject failed");
+          });
+      } else if (state.triageQueue === "milestones") {
+        rejectMilestoneProposal(Number(arg))
+          .then(() => { flash("Milestone proposal rejected"); loadMilestoneProposals(); })
           .catch((e) => {
             if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
             flash(e instanceof ApiError ? e.message : "Reject failed");

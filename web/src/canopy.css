@@ -40,9 +40,9 @@ input, select { font-family: inherit; }
 [data-author="all"] .cnpy-achip.a-all, [data-author="jose-a"] .cnpy-achip.a-jose-a, [data-author="meilin"] .cnpy-achip.a-meilin, [data-author="dev-raj"] .cnpy-achip.a-dev-raj, [data-author="sanaok"] .cnpy-achip.a-sanaok { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
 .cnpy-qtab { display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:7px; font-size:12.5px; font-weight:500; color:var(--fg-55); background:transparent; }
 .cnpy-qtab:hover { color:var(--fg-70); }
-[data-tq="proposals"] .cnpy-qtab.q-proposals, [data-tq="decisions"] .cnpy-qtab.q-decisions, [data-tq="triage"] .cnpy-qtab.q-triage { color:var(--fg); background:var(--hover); }
+[data-tq="proposals"] .cnpy-qtab.q-proposals, [data-tq="decisions"] .cnpy-qtab.q-decisions, [data-tq="triage"] .cnpy-qtab.q-triage, [data-tq="milestones"] .cnpy-qtab.q-milestones { color:var(--fg); background:var(--hover); }
 .cnpy-qcount { font-size:10.5px; font-family:var(--mono); font-weight:600; min-width:16px; height:16px; padding:0 4px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:transparent; color:var(--fg-40); border:1px solid var(--border); }
-[data-tq="proposals"] .cnpy-qtab.q-proposals .cnpy-qcount, [data-tq="decisions"] .cnpy-qtab.q-decisions .cnpy-qcount, [data-tq="triage"] .cnpy-qtab.q-triage .cnpy-qcount { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+[data-tq="proposals"] .cnpy-qtab.q-proposals .cnpy-qcount, [data-tq="decisions"] .cnpy-qtab.q-decisions .cnpy-qcount, [data-tq="triage"] .cnpy-qtab.q-triage .cnpy-qcount, [data-tq="milestones"] .cnpy-qtab.q-milestones .cnpy-qcount { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
 .cnpy-titem { display:block; width:100%; text-align:left; padding:13px 15px; border-radius:11px; border:1px solid var(--border); background:transparent; margin-bottom:8px; position:relative; transition:all .12s ease; cursor:pointer; }
 .cnpy-titem:hover { border-color:var(--border-strong); }
 .cnpy-selbar { position:absolute; inset:0; border-radius:inherit; border:1px solid var(--border-strong); background:var(--hover); box-shadow:inset 2px 0 0 var(--accent); pointer-events:none; }

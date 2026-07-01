@@ -296,6 +296,18 @@ export async function reject_adr(db: DB, id: number): Promise<{ id: number; stat
   return { id, status: "rejected" };
 }
 
+/** Soft-reject a staged milestone proposal (mirrors reject_adr): flip staged_status to
+ *  'rejected' so it leaves the queue (list_milestone_proposals filters to 'staged'); the
+ *  row remains. Idempotent; a promoted proposal cannot be rejected. */
+export async function reject_milestone_proposal(db: DB, id: number): Promise<{ id: number; status: "rejected" }> {
+  const p = await first<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
+  if (!p) throw new Error(`no such milestone proposal: ${id}`);
+  if (p.staged_status === "rejected") return { id, status: "rejected" }; // idempotent
+  if (p.staged_status !== "staged") throw new Error(`cannot reject milestone proposal ${id}: it is ${p.staged_status}`);
+  await run(db, `UPDATE milestone_proposals SET staged_status = 'rejected' WHERE id = ?`, id);
+  return { id, status: "rejected" };
+}
+
 /**
  * Resolve a triage item: set the audit columns + flip `resolved` so it leaves the
  * queue. Soft only — the row remains. Idempotent-safe: resolving an

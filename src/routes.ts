@@ -5,7 +5,7 @@ import { sessionGate } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals } from "./tools/reads";
-import { promote_doc, ratify_adr, promote_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
+import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
 import { list_roadmap } from "./tools/roadmap";
 import { getMyDashboard } from "./tools/dashboard";
 import type { DashboardData } from "@shared/dashboard";
@@ -215,6 +215,19 @@ app.post("/milestone-proposals/:id/promote", async (c) => {
   try {
     const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").login);
     return c.json({ ok: true, milestone });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// Human write-back (session-gated): reject a staged milestone proposal. Soft flip to
+// 'rejected' so it leaves the milestones queue; the row remains. Idempotent.
+app.post("/milestone-proposals/:id/reject", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+  try {
+    const res = await reject_milestone_proposal(c.env.DB, id);
+    return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

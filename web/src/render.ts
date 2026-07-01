@@ -6,7 +6,7 @@
 import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, StagedProposal } from "./api";
-import type { AdrRow, NeedsTriageRow } from "@shared/rows";
+import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import type { DashboardData, RoadmapPhase } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
@@ -41,12 +41,13 @@ export interface AppState {
   docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
   docSlug: string | null;
   docSpace: DocSpace;
-  triageQueue: "proposals" | "decisions" | "triage";
+  triageQueue: "proposals" | "decisions" | "triage" | "milestones";
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<MilestoneWithProgress[]>;
   selProposal: string | null;
   selDecision: number | null;
   selTriage: number | null;
+  selMilestoneProp: number | null;
   showHistory: boolean;
   searchQuery: string;
   searchType: "all" | "doc" | "feed" | "decision";
@@ -59,6 +60,7 @@ export interface AppState {
   proposals: Loadable<StagedProposal[]>;
   decisions: Loadable<AdrRow[]>;
   triageItems: Loadable<NeedsTriageRow[]>;
+  milestoneProps: Loadable<MilestoneProposalRow[]>;
 }
 
 export function initialState(): AppState {
@@ -79,7 +81,7 @@ export function initialState(): AppState {
     triageQueue: "proposals",
     roadmapTab: "timeline",
     roadmap: { status: "idle", data: [] },
-    selProposal: null, selDecision: null, selTriage: null,
+    selProposal: null, selDecision: null, selTriage: null, selMilestoneProp: null,
     showHistory: false,
     searchQuery: "token", searchType: "all",
     searchResults: { status: "idle", data: { primary: [], pointers: [], meta: { engine: "fts5", total: 0 } } },
@@ -91,6 +93,7 @@ export function initialState(): AppState {
     proposals: { status: "idle", data: [] },
     decisions: { status: "idle", data: [] },
     triageItems: { status: "idle", data: [] },
+    milestoneProps: { status: "idle", data: [] },
   };
 }
 
@@ -234,7 +237,7 @@ function sidebar(s: AppState): string {
   const navItem = (act: string, cls: string, title: string, svg: string, extra = ""): string =>
     `<button data-act="${act}" title="${title}" class="cnpy-nav ${cls}">${svg}${expanded ? `<span style="white-space:nowrap;flex:1;text-align:left">${title}</span>` : ""}${extra}</button>`;
 
-  const counts = s.proposals.data.length + s.decisions.data.length + s.triageItems.data.length;
+  const counts = s.proposals.data.length + s.decisions.data.length + s.triageItems.data.length + s.milestoneProps.data.length;
   const triageExtra = expanded
     ? `<span style="font-size:11px;font-weight:600;font-family:var(--mono);min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--accent);color:var(--accent-fg);display:inline-flex;align-items:center;justify-content:center;flex:none">${counts}</span>`
     : `<span style="position:absolute;top:7px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--accent)"></span>`;
@@ -315,6 +318,7 @@ function header(s: AppState): string {
       <button data-act="queueProposals" class="cnpy-qtab q-proposals">Proposals<span class="cnpy-qcount">${s.proposals.data.length}</span></button>
       <button data-act="queueDecisions" class="cnpy-qtab q-decisions">Decisions<span class="cnpy-qcount">${s.decisions.data.length}</span></button>
       <button data-act="queueTriage" class="cnpy-qtab q-triage">Triage<span class="cnpy-qcount">${s.triageItems.data.length}</span></button>
+      <button data-act="queueMilestones" class="cnpy-qtab q-milestones">Milestones<span class="cnpy-qcount">${s.milestoneProps.data.length}</span></button>
     </div>` : "";
 
   const spaceTab = (k: DocSpace, label: string) =>
@@ -505,12 +509,19 @@ function triageView(s: AppState): string {
       eyebrow: "ADR", title: d.title, summary: d.context ?? "",
       author: d.created_by, badgeText: "DRAFT", badgeColor: "var(--blue)",
     }));
-  } else {
+  } else if (q === "triage") {
     listStatus = s.triageItems.status;
     listItems = s.triageItems.data.map((t) => {
       const firstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
       return { id: String(t.id), selected: t.id === s.selTriage, eyebrow: "Unplaced", title: firstLine, summary: t.reason, author: t.source_author ?? "unknown", badgeText: "NEEDS-TRIAGE", badgeColor: "var(--red)" };
     });
+  } else {
+    listStatus = s.milestoneProps.status;
+    listItems = s.milestoneProps.data.map((m) => ({
+      id: String(m.id), selected: m.id === s.selMilestoneProp,
+      eyebrow: `Milestone · ${m.target_date}`, title: m.title, summary: m.change_summary ?? "",
+      author: m.created_by, badgeText: "STAGED", badgeColor: "var(--amber)",
+    }));
   }
 
   let listHtml: string;
@@ -753,6 +764,34 @@ function triageDetail(s: AppState): string {
       <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(d.context ?? "")}</p></div>
       <div style="border-left:2px solid var(--accent);padding-left:18px"><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg);margin:0">${esc(d.decision ?? "")}</p></div>
       <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(d.rationale ?? "")}</p></div>
+    </div>`;
+  }
+
+  if (q === "milestones") {
+    const m = s.milestoneProps.data.find((x) => x.id === s.selMilestoneProp);
+    if (!m) return queueEmpty();
+    const confClr = m.confidence === "high" ? "var(--green)" : m.confidence === "low" ? "var(--red)" : "var(--amber)";
+    return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
+      <div style="min-width:0">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Milestone proposal</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span></div>
+        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${esc(m.title)}</h1>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(m.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Proposed by ${esc(m.created_by)}</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${esc(m.confidence)} confidence</span></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;flex:none">
+        <button data-act="dismiss" data-arg="${m.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
+        <button data-act="promoteMilestone" data-arg="${String(m.id)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
+      </div>
+    </div>
+    <div style="margin-top:26px;display:flex;flex-direction:column;gap:22px">
+      <div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap">
+        <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:6px">Target date</div><div style="font-size:14.5px;color:var(--fg)">${esc(m.target_date)}</div></div>
+        <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:6px">Proposed status</div><div style="font-size:14.5px;color:var(--fg)">${esc(m.status)}</div></div>
+        ${m.github_ref ? `<div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:6px">GitHub ref</div><div style="font-size:14.5px;color:var(--fg);font-family:var(--mono)">${esc(m.github_ref)}</div></div>` : ""}
+      </div>
+      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Change summary</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(m.change_summary ?? "")}</p></div>
     </div>`;
   }
 
@@ -1145,7 +1184,7 @@ function guideView(s: AppState): string {
     <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what you're focused on, your open GitHub issues, and the team's latest activity.</p>
 
     <h3 style="${gH3}">Triage</h3>
-    <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. Three queues: ${gStrong("Proposals")} (doc updates), ${gStrong("Decisions")} (ADRs), and ${gStrong("Triage")} (anything an agent couldn't confidently place). Proposals render to match the change — a brand-new doc as a full ${gStrong("preview")}, a small edit as a tight ${gStrong("diff")}, a large rewrite ${gStrong("side-by-side")} — and flag low-confidence or stale-base edits. On each item you make it live (${gStrong("Promote")} a doc, ${gStrong("Ratify")} a decision), ${gStrong("Reject")} it, or — for triage items — ${gStrong("Assign")} it to the right place or ${gStrong("Discard")} it. Nothing is ever hard-deleted.</p>
+    <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. Four queues: ${gStrong("Proposals")} (doc updates), ${gStrong("Decisions")} (ADRs), ${gStrong("Triage")} (anything an agent couldn't confidently place), and ${gStrong("Milestones")} (proposed roadmap milestones). Proposals render to match the change — a brand-new doc as a full ${gStrong("preview")}, a small edit as a tight ${gStrong("diff")}, a large rewrite ${gStrong("side-by-side")} — and flag low-confidence or stale-base edits. On each item you make it live (${gStrong("Promote")} a doc or milestone, ${gStrong("Ratify")} a decision), ${gStrong("Reject")} it, or — for triage items — ${gStrong("Assign")} it to the right place or ${gStrong("Discard")} it. Nothing is ever hard-deleted.</p>
     ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Triage</strong> — a staged doc version shown against the live one, ready to Promote or Reject.`)}
 
     <h3 style="${gH3}">Connect your agent over MCP</h3>
