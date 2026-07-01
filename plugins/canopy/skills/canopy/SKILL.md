@@ -63,10 +63,24 @@ the web Triage desk over session-cookie routes — **never** MCP tools.
 
 ## Connect an agent over MCP
 
+Mint a personal token first: Canopy web app → Settings → MCP access tokens (shown once).
+
+**Recommended — install the plugin** (bundles all three skills AND auto-wires the MCP server):
+
+```bash
+claude plugin marketplace add SaplingLearn/canopy
+claude plugin install canopy@canopy
+export CANOPY_MCP_TOKEN=canopy_mcp_…        # the plugin's MCP config reads this
+```
+
+**Manual fallback** — wire the MCP server and copy the skills yourself:
+
 ```bash
 claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp \
   --header "Authorization: Bearer canopy_mcp_…"
+# then copy the skill folders into another repo / your home dir:
+cp -r .claude/skills/{canopy,load-context,record-session} ~/.claude/skills/
 ```
-Mint the token in the Canopy web app → Settings → MCP access tokens (shown once). The `load-context`
-and `record-session` skills ship in this repo under `.claude/skills/`; to use them from another repo,
-copy those folders into `~/.claude/skills/`.
+
+The skills are bundled in this repo under `plugins/canopy/skills/` (the in-repo `.claude/skills/*`
+entries are symlinks into that bundle, so there is a single source of truth).
