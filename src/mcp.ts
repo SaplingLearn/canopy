@@ -10,6 +10,7 @@ import { getStoredToken } from "./auth/github";
 import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload } from "@shared/contract";
+import { write_plan, type PlanWrite } from "./tools/plan";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -166,6 +167,24 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     // so defaults (empty arrays) are applied and the type is exactly IngestPayload —
     // the SDK already validated against IngestPayload.shape, so this never throws.
     async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
+  );
+
+  server.tool(
+    "update_plan",
+    "ADMIN plan write: replace the roadmap narrative and create/update milestones (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Milestones not listed are untouched. Use via the update-plan skill.",
+    {
+      narrative: z.string(),
+      milestones: z.array(z.object({
+        id: z.number().int().optional(),
+        title: z.string(),
+        description: z.string().nullable().optional(),
+        phase: z.string().nullable().optional(),
+        target_date: z.string(),
+        status: z.enum(["upcoming", "in_progress", "done"]),
+        github_ref: z.union([z.number(), z.array(z.number())]).nullable().optional(),
+      })).default([]),
+    },
+    async (input) => runTool(() => write_plan(env.DB, input as PlanWrite, principal.login))
   );
 
   return server;
