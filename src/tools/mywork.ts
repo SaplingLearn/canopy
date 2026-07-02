@@ -1,3 +1,4 @@
+import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import type { EventRow, PersonRow } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
 
@@ -5,38 +6,17 @@ import { type DB, all, first, nowIso } from "../db";
 // GitHub reads — this is deliberately the "what already happened + what's
 // open" view built entirely from `events` (+ `pr_summaries`, `people`).
 
-export interface MyWorkPr {
-  number: number;
-  title: string;
-  url: string;
-  merged: boolean;
-  occurredAt: string;
-  summary: string | null;
-}
-
-export interface MyWorkTodo {
-  number: number;
-  title: string;
-  priority: "P0" | "P1" | "P2" | "P3" | null;
-  labels: string[];
-  url: string;
-  updatedAt: string;
-}
-
-export interface MyWork {
-  person: string | null;
-  previousActivity: MyWorkPr[];
-  todo: MyWorkTodo[];
-  degraded: boolean;
-}
+// The projection is structurally the /me/dashboard DTO; the shared type is the
+// single source of truth so the Worker and web build agree on the shape.
+export type MyWork = DashboardData;
 
 const WINDOW_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], degraded });
 
-// Copied from src/tools/dashboard.ts:126-132 (NOT imported — dashboard.ts is
-// rewritten/deleted in Phase 3 of this rebuild).
+// Priority is parsed from a leading "[P0]"–"[P3]" tag on the issue title; the
+// tag is stripped from the displayed title.
 function priorityOf(title: string): "P0" | "P1" | "P2" | "P3" | null {
   const m = title.match(/^\s*\[(P[0-3])\]/);
   return m ? (m[1] as "P0" | "P1" | "P2" | "P3") : null;

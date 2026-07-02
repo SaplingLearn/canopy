@@ -6,7 +6,6 @@ export interface Env {
   COOKIE_SECRET: string;
   GITHUB_WEBHOOK_SECRET?: string; // HMAC key for the /webhook/github third auth class; absent → the surface 401s
   GITHUB_REPO?: string;   // "owner/repo" for live roadmap progress; absent → milestones without progress
-  CONTENT_REPO?: string;  // "owner/repo" the dashboard reads (ROADMAP.md + assigned issues); defaults to SaplingLearn/sapling
   DEV_LOGIN?: string;     // LOCAL DEV ONLY (set in .dev.vars): bypass OAuth, act as this seeded user. Never set in prod.
   AI?: Ai;                // Workers AI binding: capture-time completed-PR summaries only, never at render.
   GITHUB_SERVICE_TOKEN?: string; // app-level token for the scheduled progress-cache recompute backstop; absent → scheduled() no-ops
