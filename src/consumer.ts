@@ -1,4 +1,4 @@
-import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, FocusUpdate } from "@shared/contract";
+import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, FocusUpdate, CapturedEvent } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import type { DocRow, DocVersionRow, AdrRow, MilestoneProposalRow, ProcessedItemRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "./db";
@@ -16,6 +16,7 @@ export interface IngestResult {
   milestones: { staged: number; unchanged: number; triaged: number };
   focus: { unchanged: number };
   triage: { recorded: number; unchanged: number };
+  events: { written: number; unchanged: number };
 }
 
 // The replay key for one item. The worker assigns item_index by stable
@@ -44,6 +45,7 @@ export type MilestoneIngestResult =
   | { outcome: "written"; id: number }
   | { outcome: "unchanged"; id?: number }
   | { outcome: "triaged"; reason: string };
+export type EventIngestResult = { outcome: "written"; id: number } | { outcome: "unchanged" };
 
 // ---------------------------------------------------------------------------
 // The replay ledger. ledger-first per item: a (sessionId, itemIndex) already in
@@ -267,12 +269,31 @@ export async function ingestFocusUpdate(
   return { outcome: "written" };
 }
 
+/** Captured events: dedupe is the UNIQUE semantic_key (INSERT OR IGNORE) — a
+ *  redelivery or backfill overlap drops as unchanged. No vocab/confidence checks:
+ *  the event is external fact, captured verbatim. The writer is the authenticated
+ *  principal; subject_login is the event's own identity (trusted post-HMAC). */
+export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: string, ledger?: LedgerRef): Promise<EventIngestResult> {
+  if (ledger && (await ledgerLookup(db, ledger))) return { outcome: "unchanged" };
+  const res = await run(
+    db,
+    `INSERT OR IGNORE INTO events (semantic_key, event_type, ref_number, subject_login, raw, provenance, occurred_at, recorded_at, recorded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    event.semantic_key, event.event_type, event.ref_number, event.subject_login,
+    event.raw, event.provenance, event.occurred_at ?? null, nowIso(), recordedBy
+  );
+  const written = (res.meta.changes ?? 0) > 0;
+  if (ledger) await ledgerRecord(db, ledger, "event", written ? "written" : "unchanged", event.semantic_key);
+  return written ? { outcome: "written", id: res.meta.last_row_id as number } : { outcome: "unchanged" };
+}
+
 /**
  * Validate-and-reconcile the (already structurally-validated) /ingest payload.
  * The Worker verifies structure; the gate functions above verify vocabulary,
  * confidence, content-hash identity, and the replay ledger. item_index is
- * assigned by stable enumeration across the typed arrays so a re-POST of the
- * same payload replays to all-`unchanged`.
+ * assigned by stable enumeration across the typed arrays — feed, docs, adrs,
+ * milestones, focus, needs_triage, THEN events last — so a re-POST of the
+ * same payload replays to all-`unchanged` and existing indices never shift.
  */
 export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
   const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
@@ -284,6 +305,7 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     milestones: { staged: 0, unchanged: 0, triaged: 0 },
     focus: { unchanged: 0 },
     triage: { recorded: 0, unchanged: 0 },
+    events: { written: 0, unchanged: 0 },
   };
   let idx = 0;
 
@@ -334,6 +356,14 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     await route_triage(db, { raw: item.raw, reason: item.reason, source_author: author });
     await ledgerRecord(db, ledger, "triage", "triaged", null);
     result.triage.recorded++;
+  }
+
+  // Captured events (Task 2): enumerated LAST so every existing item_index
+  // stays replay-stable across this and future payload arms.
+  for (const event of payload.events) {
+    const r = await ingestEvent(db, event, author, { sessionId, itemIndex: idx++ });
+    if (r.outcome === "written") result.events.written++;
+    else result.events.unchanged++;
   }
 
   return result;

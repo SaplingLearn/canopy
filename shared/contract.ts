@@ -57,6 +57,19 @@ export const FocusUpdate = z.object({
   next_up: z.string().optional(),
 });
 
+// A captured GitHub event (webhook/backfill). subject_login is who the event is
+// ABOUT — a second identity, distinct from the writer principal — and is trusted
+// only because the webhook branch verified the delivery's HMAC before the gate.
+export const CapturedEvent = z.object({
+  semantic_key: z.string().min(1),   // derived identity, e.g. 'gh:pr:42:merged'
+  event_type: z.enum(["pr_merged", "pr_closed", "issue"]),
+  ref_number: z.number().int(),
+  subject_login: z.string().min(1),
+  raw: z.string(),                   // JSON snapshot slice — the truth
+  provenance: z.enum(["webhook", "backfill"]),
+  occurred_at: z.string().optional(),
+});
+
 // ── Read-side query contract (Phase 1) ───────────────────────────────────────
 // The stable seam for assembled, authority-flagged retrieval. RRF (Reciprocal
 // Rank Fusion) is the future cross-source merge when Vectorize lands; this
@@ -113,6 +126,7 @@ export const IngestPayload = z.object({
   needs_triage: z.array(TriageItem).default([]),
   milestone_proposals: z.array(MilestoneProposal).default([]),
   focus: FocusUpdate.optional(),   // the writer's end-of-session focus, reconciled as an upsert
+  events: z.array(CapturedEvent).default([]),
 });
 
 export type Session = z.infer<typeof Session>;
@@ -122,6 +136,7 @@ export type AdrDraft = z.infer<typeof AdrDraft>;
 export type TriageItem = z.infer<typeof TriageItem>;
 export type MilestoneProposal = z.infer<typeof MilestoneProposal>;
 export type FocusUpdate = z.infer<typeof FocusUpdate>;
+export type CapturedEvent = z.infer<typeof CapturedEvent>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
 export type QueryRequest = z.infer<typeof QueryRequest>;
 export type Authority = z.infer<typeof Authority>;
