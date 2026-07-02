@@ -124,8 +124,6 @@ export const IngestPayload = z.object({
   doc_proposals: z.array(DocProposal).default([]),
   adr_drafts: z.array(AdrDraft).default([]),
   needs_triage: z.array(TriageItem).default([]),
-  milestone_proposals: z.array(MilestoneProposal).default([]),
-  focus: FocusUpdate.optional(),   // the writer's end-of-session focus, reconciled as an upsert
   events: z.array(CapturedEvent).default([]),
 });
 

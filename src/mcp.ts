@@ -7,7 +7,7 @@ import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
 import { getMyWork, list_events } from "./tools/mywork";
 import { getStoredToken } from "./auth/github";
-import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate, consume } from "./consumer";
+import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload } from "@shared/contract";
 import { write_plan, type PlanWrite } from "./tools/plan";
@@ -123,20 +123,6 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   );
 
   server.tool(
-    "propose_milestone",
-    "Propose a NEW roadmap milestone through the gate; staged for a human to promote into a live milestone. A 'done' status or low confidence routes to needs_triage.",
-    {
-      title: z.string(),
-      target_date: z.string(),
-      status: z.enum(["upcoming", "in_progress", "done"]),
-      github_ref: z.union([z.number(), z.array(z.number())]).optional(),
-      change_summary: z.string(),
-      confidence: z.enum(["high", "low"]),
-    },
-    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login, ephemeralLedger()))
-  );
-
-  server.tool(
     "get_my_work",
     "Your personal My Work projection from captured GitHub events (no live GitHub): previous-activity (summarized merged/closed PRs, last 14 days) and to-do (your open assigned issues). Read-only.",
     {},
@@ -151,16 +137,8 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   );
 
   server.tool(
-    "set_focus",
-    "Set your current focus for the personal dashboard: what you're working on now and (optionally) what's next. Upserts one row per person — overwrites your previous focus.",
-    { working_on: z.string().min(1), next_up: z.string().optional() },
-    async ({ working_on, next_up }) =>
-      runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
-  );
-
-  server.tool(
     "record_session",
-    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / milestone_proposals / focus). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
+    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage / events). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
     IngestPayload.shape,
     // Same reconciling path as the cookie /ingest route: forward the full payload to
     // consume() under the bearer principal already in scope. Re-parse with the contract

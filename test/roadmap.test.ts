@@ -78,18 +78,21 @@ describe("milestone proposal gate", () => {
     expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
   });
 
-  it("consume() funnels milestone_proposals through the same gate and stages them", async () => {
-    const payload = IngestPayload.parse({
+  it("consume() no longer carries a milestone_proposals arm — zod strips it, nothing is staged", async () => {
+    // Task 9: milestone_proposals was retired from IngestPayload. A raw payload
+    // still carrying it parses fine (zod strips unknown keys) but stages nothing —
+    // the gate fn above (driven directly) is what triage-assign still relies on.
+    const rawPayload: unknown = {
       session: sessionMeta,
       milestone_proposals: [
         { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" },
       ],
-    });
-    const result = await consume(env.DB, payload, { login: "andres" });
-    expect(result.milestones.staged).toBe(1);
-    const staged = await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`);
-    expect(staged.length).toBe(1);
-    expect(staged[0].created_by).toBe("andres"); // author from principal, not session
+    };
+    const payload = IngestPayload.parse(rawPayload);
+    expect((payload as Record<string, unknown>).milestone_proposals).toBeUndefined();
+
+    await consume(env.DB, payload, { login: "andres" });
+    expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
   });
 });
 

@@ -13,8 +13,6 @@ export interface IngestResult {
   feed: { written: number; unchanged: number; triaged: number };
   docs: { staged: number; unchanged: number; triaged: number };
   adrs: { staged: number; unchanged: number; triaged: number };
-  milestones: { staged: number; unchanged: number; triaged: number };
-  focus: { unchanged: number };
   triage: { recorded: number; unchanged: number };
   events: { written: number; unchanged: number };
 }
@@ -292,8 +290,8 @@ export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: stri
  * The Worker verifies structure; the gate functions above verify vocabulary,
  * confidence, content-hash identity, and the replay ledger. item_index is
  * assigned by stable enumeration across the typed arrays — feed, docs, adrs,
- * milestones, focus, needs_triage, THEN events last — so a re-POST of the
- * same payload replays to all-`unchanged` and existing indices never shift.
+ * needs_triage, THEN events last — so a re-POST of the same payload replays
+ * to all-`unchanged` and existing indices never shift.
  */
 export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
   const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
@@ -302,8 +300,6 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     feed: { written: 0, unchanged: 0, triaged: 0 },
     docs: { staged: 0, unchanged: 0, triaged: 0 },
     adrs: { staged: 0, unchanged: 0, triaged: 0 },
-    milestones: { staged: 0, unchanged: 0, triaged: 0 },
-    focus: { unchanged: 0 },
     triage: { recorded: 0, unchanged: 0 },
     events: { written: 0, unchanged: 0 },
   };
@@ -328,21 +324,6 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     if (r.outcome === "written") result.adrs.staged++;
     else if (r.outcome === "unchanged") result.adrs.unchanged++;
     else result.adrs.triaged++;
-  }
-
-  for (const proposal of payload.milestone_proposals) {
-    const r = await ingestMilestoneProposal(db, proposal, author, { sessionId, itemIndex: idx++ });
-    if (r.outcome === "written") result.milestones.staged++;
-    else if (r.outcome === "unchanged") result.milestones.unchanged++;
-    else result.milestones.triaged++;
-  }
-
-  // Focus (single, optional): an idempotent upsert, always "unchanged". Reserve
-  // an index slot so the explicit-triage items after it keep stable indices on replay.
-  if (payload.focus) {
-    await ingestFocusUpdate(db, payload.focus, author);
-    result.focus.unchanged++;
-    idx++;
   }
 
   // Explicit triage items: already a triage request — written directly, but
