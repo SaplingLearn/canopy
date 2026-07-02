@@ -9,4 +9,5 @@ export interface Env {
   CONTENT_REPO?: string;  // "owner/repo" the dashboard reads (ROADMAP.md + assigned issues); defaults to SaplingLearn/sapling
   DEV_LOGIN?: string;     // LOCAL DEV ONLY (set in .dev.vars): bypass OAuth, act as this seeded user. Never set in prod.
   AI?: Ai;                // Workers AI binding: capture-time completed-PR summaries only, never at render.
+  GITHUB_SERVICE_TOKEN?: string; // app-level token for the scheduled progress-cache recompute backstop; absent → scheduled() no-ops
 }

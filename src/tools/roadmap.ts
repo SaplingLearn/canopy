@@ -1,62 +1,8 @@
 import type { MilestoneRow } from "@shared/rows";
 import { type DB, all } from "../db";
-
-const GH_API = "application/vnd.github+json";
-const USER_AGENT = "canopy";
-
-/**
- * Live progress for a milestone's github_ref, computed from GitHub at read time.
- * `ref` is JSON: a number (a GitHub milestone) or an array of issue numbers.
- * Never throws — returns null on parse failure, a non-OK response (expired/revoked
- * token, missing resource), or any error, so /roadmap degrades gracefully.
- * `fetchImpl` is injectable for tests (the pool has no exported fetch mock).
- */
-export async function fetchMilestoneProgress(opts: {
-  token: string;
-  repo: string;
-  ref: string;
-  fetchImpl?: typeof fetch;
-}): Promise<{ closed: number; total: number } | null> {
-  const doFetch = opts.fetchImpl ?? fetch;
-  const headers = { authorization: `Bearer ${opts.token}`, accept: GH_API, "user-agent": USER_AGENT };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(opts.ref);
-  } catch {
-    return null;
-  }
-
-  try {
-    if (Array.isArray(parsed)) {
-      let closed = 0;
-      let total = 0;
-      for (const n of parsed) {
-        const res = await doFetch(`https://api.github.com/repos/${opts.repo}/issues/${n}`, { headers });
-        if (!res.ok) {
-          // Token/auth-level failure → the whole milestone's progress is unknown.
-          if (res.status === 401 || res.status === 403) return null;
-          // A single missing/inaccessible issue (e.g. 404) → skip it; keep counting the rest.
-          continue;
-        }
-        const data = (await res.json()) as { state?: string };
-        if (data.state === "closed") closed++;
-        total++;
-      }
-      return { closed, total };
-    }
-    if (typeof parsed === "number") {
-      const res = await doFetch(`https://api.github.com/repos/${opts.repo}/milestones/${parsed}`, { headers });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { open_issues?: number; closed_issues?: number };
-      const closed = data.closed_issues ?? 0;
-      return { closed, total: (data.open_issues ?? 0) + closed };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+// fetchMilestoneProgress moved to ./progress (Task 5, shared with the
+// event-derived cache + scheduled recompute) — import it from there.
+import { fetchMilestoneProgress } from "./progress";
 
 export type MilestoneWithProgress = MilestoneRow & {
   progress: { closed: number; total: number } | null;

@@ -3,6 +3,7 @@ import type { Env } from "./env";
 import { type DB } from "./db";
 import { ingestEvent } from "./consumer";
 import { type Summarizer, workersAiSummarizer, storePrSummary } from "./tools/summarize";
+import { applyEventProgress } from "./tools/progress";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
@@ -230,10 +231,10 @@ export function progressFromIssueEvent(
 }
 
 // ---------------------------------------------------------------------------
-// Downstream projections, hung off each NEWLY-WRITTEN event. Task 4
-// (summarizePrSeam) is filled below; Task 5's progressSeam remains a no-op —
-// issue events must never reach storePrSummary, and PR events never reach
-// progressSeam (the branch in handleGithubWebhook keeps them disjoint).
+// Downstream projections, hung off each NEWLY-WRITTEN event. Both seams are
+// filled: summarizePrSeam (Task 4) and progressSeam (Task 5). Issue events
+// never reach storePrSummary, and PR events never reach progressSeam — the
+// branch in handleGithubWebhook keeps them disjoint.
 // ---------------------------------------------------------------------------
 
 // Task 4: parse the PR event's own `raw` (its title/body — nothing else) and
@@ -250,9 +251,10 @@ async function summarizePrSeam(db: DB, summarizer: Summarizer | null, event: Cap
   });
 }
 
-// filled by Task 5: applyEventProgress(db, payload) → upsert milestone_progress.
-async function progressSeam(_db: DB, _payload: unknown): Promise<void> {
-  // no-op until Task 5 wires the event-derived progress cache
+// Task 5: apply this newly-captured issue event's implication(s) to the
+// milestone_progress cache (absolute overwrite — see applyEventProgress).
+async function progressSeam(db: DB, payload: unknown): Promise<void> {
+  await applyEventProgress(db, payload);
 }
 
 // ---------------------------------------------------------------------------

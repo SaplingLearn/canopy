@@ -26,3 +26,7 @@ enabled = true
 # Workers AI: capture-time summaries of completed PR bodies (never at render).
 [ai]
 binding = "AI"
+
+# Scheduled backstop for the milestone progress cache (event-derived writes are primary).
+[triggers]
+crons = ["0 */6 * * *"]
