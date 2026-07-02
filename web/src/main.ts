@@ -177,13 +177,17 @@ function loadRoadmap(): void {
   state.roadmap = { status: "loading", data: state.roadmap.data };
   rerender();
   getRoadmap()
-    .then((milestones) => {
-      state.roadmap = { status: "ok", data: milestones };
+    .then((planView) => {
+      state.roadmap = { status: "ok", data: planView };
       rerender();
     })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.roadmap = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      state.roadmap = {
+        status: "error",
+        data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] },
+        error: e instanceof Error ? e.message : String(e),
+      };
       rerender();
     });
 }

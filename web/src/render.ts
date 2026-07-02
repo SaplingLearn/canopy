@@ -5,7 +5,7 @@
 
 import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, StagedProposal } from "./api";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
@@ -43,7 +43,7 @@ export interface AppState {
   docSpace: DocSpace;
   triageQueue: "proposals" | "decisions" | "triage" | "milestones";
   roadmapTab: "narrative" | "timeline";
-  roadmap: Loadable<MilestoneWithProgress[]>;
+  roadmap: Loadable<PlanView>;
   selProposal: string | null;
   selDecision: number | null;
   selTriage: number | null;
@@ -80,7 +80,7 @@ export function initialState(): AppState {
     docSpace: "sapling",
     triageQueue: "proposals",
     roadmapTab: "timeline",
-    roadmap: { status: "idle", data: [] },
+    roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
     selProposal: null, selDecision: null, selTriage: null, selMilestoneProp: null,
     showHistory: false,
     searchQuery: "token", searchType: "all",
@@ -327,7 +327,7 @@ function header(s: AppState): string {
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
   const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
-    ? roadmapEnriched(s.roadmap.data, s.confirmedMilestones).overdueCount
+    ? roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones).overdueCount
     : 0;
   const roadmapControls = s.screen === "roadmap" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
       <button data-act="roadmapNarrative" style="${rmTabStyle("narrative")}">Narrative</button>
@@ -829,7 +829,7 @@ function queueEmpty(): string {
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
 interface EnrichedMilestone {
-  id: number; title: string; about: string; github_ref: string | null;
+  id: number; title: string; about: string; github_ref: string | null; phase: string | null;
   closed: number | null; total: number | null; done: boolean; ready: boolean; overdue: boolean;
   pct: number; tgt: number; badge: { label: string; color: string; soft?: boolean };
   dateLabel: string; isNext: boolean;
@@ -855,7 +855,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
     const overdue = !done && !ready && tgt < now;
     const pct = total !== null && total > 0 && closed !== null ? Math.round((100 * closed) / total) : 0;
     return {
-      id: m.id, title: m.title, about: m.description ?? "", github_ref: m.github_ref,
+      id: m.id, title: m.title, about: m.description ?? "", github_ref: m.github_ref, phase: m.phase,
       closed, total, done, ready, overdue, pct, tgt,
       badge: badgeFor(done ? "done" : m.status), dateLabel: fmt(m.target_date),
       isNext: false,
@@ -877,7 +877,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
 }
 
 function roadmapNarrative(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
+  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones);
   const total = list.length;
 
   const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
@@ -896,6 +896,7 @@ function roadmapNarrative(s: AppState): string {
       ? `Next up · due ${m.dateLabel}`
       : `Due ${m.dateLabel}`;
     const barColor = m.done ? "var(--green)" : m.overdue ? "var(--red)" : "var(--accent)";
+    const phasePrefix = m.phase ? `${esc(m.phase)} · ` : "";
     const progressBar = m.total !== null && m.closed !== null
       ? `<div style="display:flex;align-items:center;gap:10px;margin-top:11px">
           <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
@@ -917,7 +918,7 @@ function roadmapNarrative(s: AppState): string {
           </div>
           ${m.about ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${linkifyRefs(m.about)}</p>` : ""}
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-            <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${dateNote}</span>
+            <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${phasePrefix}${dateNote}</span>
           </div>
           ${progressBar}
           ${refChips.length ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:10px">${refChips.map(ghChip).join("")}</div>` : ""}
@@ -936,7 +937,7 @@ function roadmapNarrative(s: AppState): string {
         ${total} milestone${total !== 1 ? "s" : ""} track the coarse goals above issue-level work.
         ${doneCount > 0 ? `<strong style="color:var(--fg);font-weight:600">${doneCount} ${doneCount === 1 ? "is" : "are"} done.</strong>` : ""}
         ${overdueCount > 0 ? `<span style="color:var(--red)">${overdueCount} overdue.</span>` : ""}
-        Progress is read live from GitHub at view time.
+        Progress reflects cached issue counts recorded from GitHub events.
       </p>`;
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
@@ -953,7 +954,7 @@ function roadmapNarrative(s: AppState): string {
 }
 
 function roadmapView(s: AppState): string {
-  if (s.roadmap.status === "loading" && s.roadmap.data.length === 0) {
+  if (s.roadmap.status === "loading" && s.roadmap.data.milestones.length === 0) {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Loading roadmap&hellip;")}</div>`;
   }
   if (s.roadmap.status === "error") {
@@ -963,38 +964,31 @@ function roadmapView(s: AppState): string {
   return roadmapNarrative(s);
 }
 
+/**
+ * The ADMIN-AUTHORED plan narrative (written via the update-plan skill), rendered as markdown
+ * inside the digest card idiom (mono "Narrative" label + h1, matching the rest of the app's
+ * section chrome). The narrative is the ONLY thing here that goes through markdownFn — it is
+ * DB-sourced prose, so it must be sanitized the same way doc bodies are (real callers pass
+ * renderMarkdown, i.e. DOMPurify); it is never additionally esc()'d (that would double-encode
+ * markdownFn's own escaping/output). Empty narrative → the existing dashed-card empty-state hint.
+ */
+export function planNarrativeBlock(narrative: string, markdownFn: (body: string) => string): string {
+  const body = narrative.trim()
+    ? `<div class="cnpy-md">${markdownFn(narrative)}</div>`
+    : `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">No plan narrative yet — write one with the update-plan skill</div>`;
+  return `<div style="margin-bottom:18px">
+    <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
+    <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px">What's happening</h1>
+    ${body}
+  </div>`;
+}
+
 function roadmapDigest(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
-  const total = list.length;
+  const { list } = roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones);
   const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
-  const upcoming = list.filter((m) => !m.done && m.badge.label === "Upcoming");
   // What's "getting the attention" = something actively in progress first; only fall back
   // to the next upcoming goal when nothing is underway.
   const focus = inProgress[0] ?? list.find((m) => m.isNext) ?? list.find((m) => !m.done);
-
-  // ── State-of-repo summary (plain-English prose: the actual goals + what's been built) ──
-  const para = "font-size:15px;line-height:1.85;color:var(--fg-70);margin:0 0 14px";
-  const b = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
-  const done = list.filter((m) => m.done);
-  const recent = s.feed.data.slice(0, 3);
-  const goalLine = (m: EnrichedMilestone) => `${b(esc(m.title))}${m.about ? ` (${linkifyRefs(m.about.replace(/\s*\.\s*$/, ""))})` : ""}`;
-  const lower1 = (t: string) => (t ? t.charAt(0).toLowerCase() + t.slice(1) : t);
-  const semiJoin = (arr: string[]) =>
-    arr.length <= 1 ? (arr[0] ?? "") : `${arr.slice(0, -1).join("; ")}; and ${arr[arr.length - 1]}`;
-  const summary = total === 0
-    ? notice("There aren't any goals on the board yet, so there's nothing to describe just yet.")
-    : `<p style="${para}">
-        Here's what the project actually looks like right now, in plain terms. ${done.length ? `The groundwork is already built and shipped: ${semiJoin(done.map(goalLine))}.` : `Nothing has fully shipped yet, but there's plenty already in motion.`}
-      </p>
-      ${inProgress.length ? `<p style="${para}">
-        What the team is actively building right now: ${semiJoin(inProgress.map(goalLine))}.
-      </p>` : ""}
-      ${upcoming.length ? `<p style="${para}">
-        Still ahead on the roadmap: ${semiJoin(upcoming.map(goalLine))}.
-      </p>` : ""}
-      ${recent.length ? `<p style="font-size:15px;line-height:1.85;color:var(--fg-70);margin:0">
-        And most recently, the team ${semiJoin(recent.map((e) => lower1(esc(e.summary))))} — the full trail of work is just below.
-      </p>` : ""}`;
 
   // ── Current-focus spotlight (with progress bar + GitHub links) ──
   const spotlight = focus ? (() => {
@@ -1037,11 +1031,7 @@ function roadmapDigest(s: AppState): string {
     : `<table style="width:100%;border-collapse:collapse">${happenRows}</table>`;
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
-    <div style="margin-bottom:18px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
-      <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px">What's happening</h1>
-      ${summary}
-    </div>
+    ${planNarrativeBlock(s.roadmap.data.narrative, renderMarkdown)}
     ${spotlight}
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:28px 0 2px">
       <h2 style="font-size:12px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-55);margin:0">Recent happenings</h2>
@@ -1085,10 +1075,14 @@ function highlight(text: string, sq: string): string {
   return `${esc(pre)}<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>${esc(post)}`;
 }
 
-// G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed.
+// G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed,
+// milestone → goRoadmap (the Roadmap screen — milestones have no standalone detail route
+// either, so this navigates to the screen that lists them, same idiom as goFeed).
 function searchOpenAttr(type: string, id: string): string | null {
   if (type === "decision") return null;
-  return type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(id)}"`;
+  if (type === "feed") return `data-act="goFeed"`;
+  if (type === "milestone") return `data-act="goRoadmap"`;
+  return `data-act="openDocFrom" data-arg="${attr(id)}"`;
 }
 
 function primaryCard(r: QueryPrimary, sq: string): string {

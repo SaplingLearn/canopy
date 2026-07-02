@@ -93,9 +93,20 @@ export function search(q: string, opts: { types?: QueryType[]; section?: string;
   return getJson<{ result: QueryResult }>(`/search${qs ? `?${qs}` : ""}`).then((r) => r.result);
 }
 
-export type MilestoneWithProgress = MilestoneRow & { progress: { closed: number; total: number } | null };
-export function getRoadmap(): Promise<MilestoneWithProgress[]> {
-  return getJson<{ milestones: MilestoneWithProgress[] }>("/roadmap").then((r) => r.milestones);
+export type MilestoneWithProgress = MilestoneRow & { progress: { closed: number; total: number; computed_at: string } | null };
+
+// The roadmap read is the ADMIN plan: an authored narrative + version metadata alongside
+// the milestones (each merged with cached, event-derived progress — no live GitHub). Mirrors
+// src/tools/plan.ts's PlanView exactly (web/ can't import src/, so it's re-declared here).
+export interface PlanView {
+  narrative: string;
+  version: number;
+  updated_at: string | null;
+  updated_by: string | null;
+  milestones: MilestoneWithProgress[];
+}
+export function getRoadmap(): Promise<PlanView> {
+  return getJson<PlanView>("/roadmap");
 }
 
 export function listNeedsTriage(): Promise<NeedsTriageRow[]> {
