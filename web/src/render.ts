@@ -110,6 +110,8 @@ function esc(v: string): string {
 function attr(v: string): string {
   return esc(v);
 }
+// Defense-in-depth: external URLs from captured payloads must be http(s) — never javascript:/data:/etc.
+const safeUrl = (u: string): string => (/^https?:\/\//i.test(u) ? u : "#");
 const AVATAR = "border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center";
 
 function logo(size: number): string {
@@ -1176,7 +1178,7 @@ function guideView(s: AppState): string {
     ${gFig("/guide/docs.png", `The <strong style="color:var(--fg-55)">Docs</strong> reader — sections on the left, the live version in the middle, and a banner up top when a newer proposal is waiting.`)}
 
     <h3 style="${gH3}">Search &amp; My Work</h3>
-    <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what you're focused on, your open GitHub issues, and the team's latest activity.</p>
+    <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what shipped and what's on your plate — recently merged/closed PRs and your open assigned issues.</p>
 
     <h3 style="${gH3}">Triage</h3>
     <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. Four queues: ${gStrong("Proposals")} (doc updates), ${gStrong("Decisions")} (ADRs), ${gStrong("Triage")} (anything an agent couldn't confidently place), and ${gStrong("Milestones")} (proposed roadmap milestones). Proposals render to match the change — a brand-new doc as a full ${gStrong("preview")}, a small edit as a tight ${gStrong("diff")}, a large rewrite ${gStrong("side-by-side")} — and flag low-confidence or stale-base edits. On each item you make it live (${gStrong("Promote")} a doc or milestone, ${gStrong("Ratify")} a decision), ${gStrong("Reject")} it, or — for triage items — ${gStrong("Assign")} it to the right place or ${gStrong("Discard")} it. Nothing is ever hard-deleted.</p>
@@ -1203,7 +1205,7 @@ function guideView(s: AppState): string {
     }
   }
 }`)}
-    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")}, ${gStrong("propose_doc_update")}, and ${gStrong("propose_milestone")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
+    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")} and ${gStrong("propose_doc_update")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
 
     <h3 style="${gH3}">The living loop — how Canopy stays current</h3>
     <p style="${gP}">The thing that keeps Canopy alive isn't any one screen — it's a loop your agent runs every session: ${gStrong("orient → work → record")}. Three Claude Code skills (under <code style="font-family:var(--mono);font-size:13px">.claude/skills/</code>) drive it, and they're the real heart of the system.</p>
@@ -1350,7 +1352,7 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
   return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin-bottom:10px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:9px;min-width:0">
-        <a href="${attr(pr.url)}" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:12px;color:var(--fg-40);text-decoration:none;flex:none">#${pr.number}</a>
+        <a href="${attr(safeUrl(pr.url))}" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:12px;color:var(--fg-40);text-decoration:none;flex:none">#${pr.number}</a>
         <span style="font-size:14px;font-weight:500;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
@@ -1366,7 +1368,7 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
 export function todoCard(t: MyWorkTodo): string {
   const prio = t.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(t.priority)}</span>` : "";
   const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
-  return `<a href="${attr(t.url)}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
+  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
     ${prio}
     <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
     <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>

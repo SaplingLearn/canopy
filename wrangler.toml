@@ -17,7 +17,7 @@ database_name = "canopy"
 database_id = "80386dc4-deef-461d-932a-0670d22ddf83"
 
 [vars]
-GITHUB_REPO = "SaplingLearn/canopy"
+GITHUB_REPO = "SaplingLearn/sapling"
 
 [observability]
 enabled = true

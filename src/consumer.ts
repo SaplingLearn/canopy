@@ -1,4 +1,8 @@
 import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, CapturedEvent } from "@shared/contract";
+// NOTE: CapturedEvent is imported for ingestEvent's signature only — the webhook
+// (src/webhook.ts) calls ingestEvent directly. There is no `events` arm on
+// IngestPayload: subject_login is trustworthy only once the webhook has verified
+// the delivery's HMAC, so no bearer/cookie payload may route events through here.
 import { isSection, isTag } from "@shared/vocabulary";
 import type { DocRow, DocVersionRow, AdrRow, MilestoneProposalRow, ProcessedItemRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "./db";
@@ -14,7 +18,6 @@ export interface IngestResult {
   docs: { staged: number; unchanged: number; triaged: number };
   adrs: { staged: number; unchanged: number; triaged: number };
   triage: { recorded: number; unchanged: number };
-  events: { written: number; unchanged: number };
 }
 
 // The replay key for one item. The worker assigns item_index by stable
@@ -278,8 +281,10 @@ export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: stri
  * The Worker verifies structure; the gate functions above verify vocabulary,
  * confidence, content-hash identity, and the replay ledger. item_index is
  * assigned by stable enumeration across the typed arrays — feed, docs, adrs,
- * needs_triage, THEN events last — so a re-POST of the same payload replays
- * to all-`unchanged` and existing indices never shift.
+ * THEN needs_triage — so a re-POST of the same payload replays to all-`unchanged`
+ * and existing indices never shift. There is no events arm here: captured events
+ * only ever reach the gate via the HMAC-verified webhook calling ingestEvent
+ * directly (src/webhook.ts), never through this bearer/cookie-authenticated path.
  */
 export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
   const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
@@ -289,7 +294,6 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     docs: { staged: 0, unchanged: 0, triaged: 0 },
     adrs: { staged: 0, unchanged: 0, triaged: 0 },
     triage: { recorded: 0, unchanged: 0 },
-    events: { written: 0, unchanged: 0 },
   };
   let idx = 0;
 
@@ -325,14 +329,6 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     await route_triage(db, { raw: item.raw, reason: item.reason, source_author: author });
     await ledgerRecord(db, ledger, "triage", "triaged", null);
     result.triage.recorded++;
-  }
-
-  // Captured events (Task 2): enumerated LAST so every existing item_index
-  // stays replay-stable across this and future payload arms.
-  for (const event of payload.events) {
-    const r = await ingestEvent(db, event, author, { sessionId, itemIndex: idx++ });
-    if (r.outcome === "written") result.events.written++;
-    else result.events.unchanged++;
   }
 
   return result;

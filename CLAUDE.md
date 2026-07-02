@@ -191,6 +191,6 @@ never summarized.
 Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s),
 `GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress recompute — absent → `scheduled()`
-no-ops). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/canopy`). Bindings: `DB`
+no-ops). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`). Bindings: `DB`
 (D1), `ASSETS` (static), `AI` (Workers AI — capture-time PR summaries only, never at render).
 `[triggers] crons` drives the progress recompute backstop.

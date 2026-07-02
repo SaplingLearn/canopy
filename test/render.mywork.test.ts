@@ -83,6 +83,12 @@ describe("prActivityCard", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
+
+  it("scheme-guard: a javascript: url is neutered to href=\"#\"", () => {
+    const html = prActivityCard(makePr({ url: "javascript:alert(1)" }), mockMd);
+    expect(html).toContain('href="#"');
+    expect(html).not.toContain("javascript:alert(1)");
+  });
 });
 
 // ── todoCard ──────────────────────────────────────────────────────────────────
@@ -114,6 +120,12 @@ describe("todoCard", () => {
     const html = todoCard(makeTodo({ title: '<img src=x onerror=alert(1)>' }));
     expect(html).not.toContain("<img src=x onerror=alert(1)>");
     expect(html).toContain("&lt;img");
+  });
+
+  it("scheme-guard: a javascript: url is neutered to href=\"#\"", () => {
+    const html = todoCard(makeTodo({ url: "javascript:alert(1)" }));
+    expect(html).toContain('href="#"');
+    expect(html).not.toContain("javascript:alert(1)");
   });
 
   it("omits the priority chip when priority is null", () => {

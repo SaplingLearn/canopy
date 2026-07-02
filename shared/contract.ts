@@ -119,7 +119,6 @@ export const IngestPayload = z.object({
   doc_proposals: z.array(DocProposal).default([]),
   adr_drafts: z.array(AdrDraft).default([]),
   needs_triage: z.array(TriageItem).default([]),
-  events: z.array(CapturedEvent).default([]),
 });
 
 export type Session = z.infer<typeof Session>;

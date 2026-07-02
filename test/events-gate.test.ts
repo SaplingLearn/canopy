@@ -26,15 +26,21 @@ describe("ingestEvent gate arm", () => {
     expect(rows[0].recorded_by).toBe("github-webhook"); // writer = principal
   });
 
-  it("consume() carries an events[] arm through the same gate, replay-safe", async () => {
-    const payload = {
+  // Revert guard (spec decision 7): the events[] arm on IngestPayload is GONE —
+  // subject_login is trustworthy only post-HMAC (the webhook), so no bearer/cookie
+  // payload may carry events into the gate. zod strips the unknown key silently;
+  // consume() must not write to `events` or report an events count for it.
+  it("consume() no longer carries an events[] arm: the key is stripped, zero rows written, no events field in the result", async () => {
+    const payloadWithEvents = {
       session: { id: "evt-S1", author: "spoof", ended_at: "2026-07-01T10:00:00Z", skill_version: "2.0" },
       events: [ev(), ev({ semantic_key: "gh:pr:43:closed", event_type: "pr_closed", ref_number: 43 })],
     };
-    const r1 = await consume(env.DB, IngestPayload.parse(structuredClone(payload)), { login: "AndresL230" });
-    expect(r1.events).toEqual({ written: 2, unchanged: 0 });
-    const r2 = await consume(env.DB, IngestPayload.parse(structuredClone(payload)), { login: "AndresL230" });
-    expect(r2.events).toEqual({ written: 0, unchanged: 2 }); // replay ledger drop
-    expect((await all<EventRow>(env.DB, `SELECT * FROM events`)).length).toBe(2);
+
+    const parsed = IngestPayload.parse(structuredClone(payloadWithEvents));
+    expect(parsed).not.toHaveProperty("events");
+
+    const result = await consume(env.DB, parsed, { login: "AndresL230" });
+    expect(result).not.toHaveProperty("events");
+    expect((await all<EventRow>(env.DB, `SELECT * FROM events`)).length).toBe(0);
   });
 });
