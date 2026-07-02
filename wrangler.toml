@@ -22,3 +22,7 @@ CONTENT_REPO = "SaplingLearn/sapling"
 
 [observability]
 enabled = true
+
+# Workers AI: capture-time summaries of completed PR bodies (never at render).
+[ai]
+binding = "AI"

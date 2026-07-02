@@ -2,6 +2,7 @@ import type { CapturedEvent } from "@shared/contract";
 import type { Env } from "./env";
 import { type DB } from "./db";
 import { ingestEvent } from "./consumer";
+import { type Summarizer, workersAiSummarizer, storePrSummary } from "./tools/summarize";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
@@ -229,23 +230,24 @@ export function progressFromIssueEvent(
 }
 
 // ---------------------------------------------------------------------------
-// Downstream projections. These are intentionally no-ops in Task 3 — the seams
-// where later tasks hang their derived writes. Keeping them as real call sites
-// (not just comments) means Task 4/5 only fill a body.
+// Downstream projections, hung off each NEWLY-WRITTEN event. Task 4
+// (summarizePrSeam) is filled below; Task 5's progressSeam remains a no-op —
+// issue events must never reach storePrSummary, and PR events never reach
+// progressSeam (the branch in handleGithubWebhook keeps them disjoint).
 // ---------------------------------------------------------------------------
 
-// Task 4 replaces this with the real Workers-AI summarizer (src/tools/summarize.ts).
-export interface Summarizer {
-  summarize(input: { title: string; body: string }): Promise<string | null>;
-}
-
-// filled by Task 4: parse the PR event's own `raw` and storePrSummary(...).
-async function summarizePrSeam(
-  _db: DB,
-  _summarizer: Summarizer | null,
-  _event: CapturedEvent
-): Promise<void> {
-  // no-op until Task 4 wires the completed-PR summarizer
+// Task 4: parse the PR event's own `raw` (its title/body — nothing else) and
+// store a capture-time summary. `summarizer` is already resolved by the
+// caller (opts?.summarizer ?? (env.AI ? workersAiSummarizer(env.AI) : null));
+// storePrSummary itself never throws, so a summary failure never fails capture.
+async function summarizePrSeam(db: DB, summarizer: Summarizer | null, event: CapturedEvent): Promise<void> {
+  const parsed = JSON.parse(event.raw) as { pr: { number: number; title: string; body: string | null } };
+  await storePrSummary(db, summarizer, {
+    semantic_key: event.semantic_key,
+    pr_number: parsed.pr.number,
+    title: parsed.pr.title,
+    body: parsed.pr.body ?? "",
+  });
 }
 
 // filled by Task 5: applyEventProgress(db, payload) → upsert milestone_progress.
@@ -292,7 +294,8 @@ export async function handleGithubWebhook(
     if (res.outcome === "written") {
       captured++;
       if (ev.event_type === "pr_merged" || ev.event_type === "pr_closed") {
-        await summarizePrSeam(env.DB, opts?.summarizer ?? null, ev);
+        const summarizer = opts?.summarizer ?? (env.AI ? workersAiSummarizer(env.AI) : null);
+        await summarizePrSeam(env.DB, summarizer, ev);
       } else {
         await progressSeam(env.DB, payload);
       }

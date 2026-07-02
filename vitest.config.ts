@@ -11,6 +11,16 @@ export default defineConfig({
   plugins: [
     cloudflareTest(async () => ({
       wrangler: { configPath: "./wrangler.toml" },
+      // Workers AI (the [ai] binding, added for Task 4's capture-time PR
+      // summarizer) has no local simulator — Wrangler proxies it to a real
+      // Cloudflare account. Without this, every test run tries to open a
+      // remote proxy session and fails non-interactively whenever more than
+      // one account is available (as here). With it false, env.AI is still
+      // present but every property access throws "needs to be run remotely";
+      // workersAiSummarizer() catches that (same as any other AI failure) and
+      // falls back to excerptSummary, so the suite stays green and hermetic
+      // (real D1 via Miniflare, no network) without ever needing a real session.
+      remoteBindings: false,
       miniflare: {
         // exposed to tests as env.TEST_MIGRATIONS; applied in the setup file
         bindings: {
