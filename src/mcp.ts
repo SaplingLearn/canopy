@@ -4,13 +4,11 @@ import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query } from "./tools/reads";
-import { list_roadmap } from "./tools/roadmap";
 import { getMyWork, list_events } from "./tools/mywork";
-import { getStoredToken } from "./auth/github";
 import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload } from "@shared/contract";
-import { write_plan, type PlanWrite } from "./tools/plan";
+import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -115,11 +113,11 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login, ephemeralLedger()))
   );
 
-  server.tool("get_roadmap", "Read the roadmap: milestones in target-date order with live GitHub progress.", {}, async () =>
-    runTool(async () => {
-      const token = await getStoredToken(env.DB, principal.login, env.COOKIE_SECRET);
-      return list_roadmap(env.DB, { token, repo: env.GITHUB_REPO });
-    })
+  server.tool(
+    "get_roadmap",
+    "Read the roadmap plan: admin narrative + milestones in target-date order with cached progress (no live GitHub).",
+    {},
+    async () => runTool(() => get_plan(env.DB))
   );
 
   server.tool(

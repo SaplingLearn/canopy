@@ -6,12 +6,16 @@ import { run, nowIso, all, first } from "../src/db";
 import { IngestPayload } from "@shared/contract";
 import { ingestMilestoneProposal, consume } from "../src/consumer";
 import type { MilestoneProposalRow, MilestoneRow, NeedsTriageRow } from "@shared/rows";
-import { list_roadmap } from "../src/tools/roadmap";
-import { fetchMilestoneProgress } from "../src/tools/progress";
+import { fetchMilestoneProgress, upsertProgress } from "../src/tools/progress";
+import { get_plan, write_plan } from "../src/tools/plan";
 import { promote_milestone_proposal, complete_milestone, stage_milestone_proposal } from "../src/tools/writes";
 import { app } from "../src/routes";
 import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { buildCanopyMcpServer } from "../src/mcp";
+import type { Env } from "../src/env";
 
 const SECRET = "test-cookie-secret";
 
@@ -166,57 +170,6 @@ describe("promote_milestone_proposal + complete_milestone", () => {
   });
 });
 
-describe("list_roadmap", () => {
-  it("computes progress from a MOCKED GitHub response, orders by target_date, and stores nothing; all-closed does NOT auto-flip", async () => {
-    // Two live milestones, the earlier-dated one second to prove ordering.
-    const p1 = await stage_milestone_proposal(env.DB, { title: "Later", target_date: "2026-12-01", status: "upcoming", github_ref: [1], change_summary: "s", confidence: "high" }, "andres");
-    const p2 = await stage_milestone_proposal(env.DB, { title: "Sooner", target_date: "2026-07-01", status: "in_progress", github_ref: [1, 2], change_summary: "s", confidence: "high" }, "andres");
-    const mLater = await promote_milestone_proposal(env.DB, p1, "andres");
-    const mSooner = await promote_milestone_proposal(env.DB, p2, "andres");
-
-    // All linked issues closed.
-    const fetchImpl = stubFetch({ "/issues/1": { state: "closed" }, "/issues/2": { state: "closed" } });
-    const roadmap = await list_roadmap(env.DB, { token: "t", repo: "o/r", fetchImpl });
-
-    expect(roadmap.map((m) => m.title)).toEqual(["Sooner", "Later"]); // target_date ASC
-    expect(roadmap.find((m) => m.title === "Sooner")!.progress).toEqual({ closed: 2, total: 2 });
-
-    // 100% closed must NOT flip status — only the explicit complete route does that.
-    expect(roadmap.find((m) => m.title === "Sooner")!.status).toBe("in_progress");
-    const storedSooner = await first<MilestoneRow>(env.DB, `SELECT * FROM milestones WHERE id = ?`, mSooner.id);
-    expect(storedSooner?.status).toBe("in_progress"); // nothing written by the read
-    expect(storedSooner?.updated_at).toBe(mSooner.updated_at);
-    void mLater;
-  });
-
-  it("returns milestones WITHOUT progress when no token is available (fallback seam)", async () => {
-    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: [1], change_summary: "s", confidence: "high" }, "andres");
-    await promote_milestone_proposal(env.DB, pid, "andres");
-    const roadmap = await list_roadmap(env.DB, { token: null, repo: "o/r" });
-    expect(roadmap).toHaveLength(1);
-    expect(roadmap[0].progress).toBeNull();
-  });
-
-  it("synthesizes demo progress in dev mode when no token is available (local UI preview)", async () => {
-    const pid = await stage_milestone_proposal(env.DB, { title: "WIP", target_date: "2026-08-01", status: "in_progress", github_ref: [1], change_summary: "s", confidence: "high" }, "andres");
-    const m = await promote_milestone_proposal(env.DB, pid, "andres");
-
-    // Production fallback is unchanged: no token and no dev flag → progress null.
-    expect((await list_roadmap(env.DB, { token: null }))[0].progress).toBeNull();
-
-    // Dev preview: no token but devSynthesize → plausible, non-null progress.
-    const dev = await list_roadmap(env.DB, { token: null, devSynthesize: true });
-    expect(dev[0].progress).not.toBeNull();
-    expect(dev[0].progress!.total).toBeGreaterThan(0);
-    expect(dev[0].progress!.closed).toBeLessThanOrEqual(dev[0].progress!.total);
-
-    // A completed milestone synthesizes as fully closed.
-    await complete_milestone(env.DB, m.id);
-    const done = await list_roadmap(env.DB, { token: null, devSynthesize: true });
-    expect(done[0].progress).toEqual({ closed: done[0].progress!.total, total: done[0].progress!.total });
-  });
-});
-
 async function cookieFor(login: string): Promise<string> {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
@@ -226,18 +179,24 @@ async function cookieFor(login: string): Promise<string> {
 }
 
 describe("roadmap HTTP routes (session-gated)", () => {
-  it("GET /roadmap returns milestones (no token in test env → progress null) and 401 without a session", async () => {
-    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: [1], change_summary: "s", confidence: "high" }, "andres");
-    await promote_milestone_proposal(env.DB, pid, "andres");
+  it("GET /roadmap reads the plan store — narrative + milestones + cached progress, no live GitHub — and 401s without a session", async () => {
+    const { milestones } = await write_plan(
+      env.DB,
+      { narrative: "Q3 push", milestones: [{ title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: 3 }] },
+      "andres"
+    );
+    await upsertProgress(env.DB, milestones[0].id, 4, 6, "event");
 
     const unauth = await app.request("/roadmap", {}, env);
     expect(unauth.status).toBe(401);
 
     const res = await app.request("/roadmap", { headers: { cookie: await cookieFor("andres") } }, env);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { milestones: { title: string; progress: unknown }[] };
+    const body = (await res.json()) as Awaited<ReturnType<typeof get_plan>>;
+    expect(body.narrative).toBe("Q3 push");
     expect(body.milestones).toHaveLength(1);
-    expect(body.milestones[0].progress).toBeNull(); // no stored github_token for this user → fallback
+    expect(body.milestones[0].title).toBe("GA");
+    expect(body.milestones[0].progress).toEqual({ closed: 4, total: 6, computed_at: expect.any(String) });
   });
 
   it("POST /milestones/:id/complete flips status for an authenticated principal", async () => {
@@ -254,5 +213,37 @@ describe("roadmap HTTP routes (session-gated)", () => {
     const res = await app.request(`/milestone-proposals/${pid}/promote`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
     expect(res.status).toBe(200);
     expect(await all<MilestoneRow>(env.DB, `SELECT * FROM milestones`)).toHaveLength(1);
+  });
+});
+
+describe("registered MCP get_roadmap tool", () => {
+  it("returns the same PlanView shape as GET /roadmap — the plan store, no token plumbing", async () => {
+    const { milestones } = await write_plan(
+      env.DB,
+      { narrative: "MCP view", milestones: [{ title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: 3 }] },
+      "andres"
+    );
+    await upsertProgress(env.DB, milestones[0].id, 4, 6, "event");
+
+    const server = buildCanopyMcpServer(env as unknown as Env, { login: "andres" });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const res = (await client.callTool({ name: "get_roadmap", arguments: {} })) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+      expect(res.isError).toBeFalsy();
+      const body = JSON.parse(res.content[0].text) as Awaited<ReturnType<typeof get_plan>>;
+      expect(body.narrative).toBe("MCP view");
+      expect(body.milestones).toHaveLength(1);
+      expect(body.milestones[0].title).toBe("GA");
+      expect(body.milestones[0].progress).toEqual({ closed: 4, total: 6, computed_at: expect.any(String) });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });

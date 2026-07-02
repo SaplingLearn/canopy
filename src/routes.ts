@@ -6,7 +6,7 @@ import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals } from "./tools/reads";
 import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
-import { list_roadmap } from "./tools/roadmap";
+import { get_plan } from "./tools/plan";
 import { getMyDashboard } from "./tools/dashboard";
 import type { DashboardData } from "@shared/dashboard";
 import { nowIso } from "./db";
@@ -177,12 +177,9 @@ app.post("/needs-triage/:id/assign", async (c) => {
   }
 });
 
-// Roadmap read (session-gated): milestones in target-date order with live GitHub progress.
-app.get("/roadmap", async (c) => {
-  const token = await getStoredToken(c.env.DB, c.get("principal").login, c.env.COOKIE_SECRET);
-  const milestones = await list_roadmap(c.env.DB, { token, repo: c.env.GITHUB_REPO, devSynthesize: !!c.env.DEV_LOGIN });
-  return c.json({ milestones });
-});
+// Roadmap read (session-gated): admin narrative + milestones in target-date order,
+// merged with cached progress from the plan store. No live GitHub, no per-user token.
+app.get("/roadmap", async (c) => c.json(await get_plan(c.env.DB)));
 
 // Personal dashboard (session-gated): the signed-in user's focus, roadmap assignments,
 // assigned issues, and recent feed — assembled live, stored nowhere. Never 500s.
