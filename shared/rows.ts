@@ -107,6 +107,7 @@ export interface MilestoneRow {
   created_at: string;
   created_by: string;
   updated_at: string | null;
+  phase: string | null;
 }
 
 export interface MilestoneProposalRow {
@@ -135,8 +136,64 @@ export interface FocusRow {
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "milestone" | "focus" | "triage";
+  item_type: "feed" | "doc" | "adr" | "milestone" | "focus" | "triage" | "event";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;
+}
+
+// Captured GitHub event (0012). semantic_key is the dedupe identity.
+export interface EventRow {
+  id: number;
+  semantic_key: string;
+  event_type: "pr_merged" | "pr_closed" | "issue";
+  ref_number: number;
+  subject_login: string;
+  raw: string;             // JSON snapshot slice — the truth
+  provenance: "webhook" | "backfill";
+  occurred_at: string | null;
+  recorded_at: string;
+  recorded_by: string;
+}
+
+// Worker-generated completed-PR summary (0012). Derived, regenerable, never truth.
+export interface PrSummaryRow {
+  semantic_key: string;
+  pr_number: number;
+  summary: string;
+  model: string | null;    // 'excerpt' = deterministic fallback
+  created_at: string;
+}
+
+// Absolute per-milestone progress cache (0012).
+export interface MilestoneProgressRow {
+  milestone_id: number;
+  closed: number;
+  total: number;
+  source: "event" | "recompute";
+  computed_at: string;
+}
+
+// Identity map (0012): GitHub login → Canopy person. Admin-maintained.
+export interface PersonRow {
+  login: string;
+  person: string;
+}
+
+// The plan singleton (0012).
+export interface PlanRow {
+  id: number;
+  narrative: string;
+  current_version: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+// Non-destructive plan snapshot (0012).
+export interface PlanVersionRow {
+  version: number;
+  narrative: string;
+  milestones_json: string;
+  created_at: string;
+  created_by: string;
 }
