@@ -1,6 +1,7 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, FocusRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, FocusRow, MilestoneRow, MilestoneProgressRow, PlanRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
 import { type DB, first, all } from "../db";
+import { getProgress } from "./progress";
 
 export async function get_doc(
   db: DB,
@@ -132,7 +133,7 @@ export async function get_focus(db: DB, author: string): Promise<FocusRow | null
 // RRF (Reciprocal Rank Fusion). The QueryResult envelope is the stable contract;
 // this normalize-bm25-then-global-sort is the FTS-only special case of that merge.
 
-type QueryType = "doc" | "decision" | "feed";
+type QueryType = "doc" | "decision" | "feed" | "milestone";
 
 // Internal assembled record: a superset carrying everything both a primary
 // (full body) and a pointer (snippet) need, so we hydrate once per candidate.
@@ -157,7 +158,7 @@ interface Assembled {
 // A raw candidate from one type's FTS (or browse) pass, before hydration.
 interface Candidate {
   type: QueryType;
-  key: string;      // doc slug | feed id | adr id (as text)
+  key: string;      // doc slug | feed id | adr id (as text) | roadmap ref ('milestone:<id>' | 'plan')
   score: number;    // normalized so higher = better
   snippet: string;  // fts5 snippet() or a browse body slice
 }
@@ -187,8 +188,18 @@ function assembleAdrBody(a: AdrRow): string {
   return parts.join("\n\n");
 }
 
+// The hydrated milestone body: description + phase + (when cached) a live progress
+// line. The progress cache is read once per query() call and passed in here.
+function assembleMilestoneBody(m: MilestoneRow, progress: MilestoneProgressRow | undefined): string {
+  const parts: string[] = [];
+  if (m.description) parts.push(m.description);
+  if (m.phase) parts.push(m.phase);
+  if (progress) parts.push(`Progress: ${progress.closed}/${progress.total} closed`);
+  return parts.join("\n");
+}
+
 export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
-  const types: QueryType[] = req.types ?? ["doc", "decision", "feed"];
+  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "milestone"];
   const limit = Math.trunc(Math.min(Math.max(req.limit ?? 6, 0), 50));
   const pointerLimit = Math.trunc(Math.min(Math.max(req.pointer_limit ?? 20, 0), 100));
   const includeStaged = req.include_staged ?? false;
@@ -274,6 +285,34 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
 
+  // Roadmap: one FTS pass over roadmap_fts (plan + milestones, keyed by `ref`).
+  // section/space filters are doc-only, so milestone drops out under docsOnly.
+  if (types.includes("milestone") && !docsOnly) {
+    if (match) {
+      const rows = await all<{ key: string; rank: number; snip: string }>(
+        db,
+        `SELECT ref AS key, bm25(roadmap_fts, 1.0, 5.0, 1.0) AS rank,
+                snippet(roadmap_fts, -1, ${SNIPPET}) AS snip
+         FROM roadmap_fts WHERE roadmap_fts MATCH ? ORDER BY rank LIMIT ${fetchCap}`,
+        match
+      );
+      for (const r of rows) candidates.push({ type: "milestone", key: String(r.key), score: -r.rank, snippet: r.snip });
+    } else {
+      // Browse: the plan row first (only when it carries a narrative), then
+      // milestones by recency (updated_at, then created_at).
+      const planRow = await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`);
+      if (planRow && planRow.narrative.trim() !== "") {
+        candidates.push({ type: "milestone", key: "plan", score: 0, snippet: "" });
+      }
+      const rows = await all<{ key: number }>(
+        db,
+        `SELECT id AS key FROM milestones
+         ORDER BY (updated_at IS NULL), updated_at DESC, created_at DESC, id DESC LIMIT ${fetchCap}`
+      );
+      for (const r of rows) candidates.push({ type: "milestone", key: `milestone:${r.key}`, score: 0, snippet: "" });
+    }
+  }
+
   // 2. Hydrate base rows in bulk (one round-trip per type), then assemble.
   const docKeys = candidates.filter((c) => c.type === "doc").map((c) => c.key);
   const feedKeys = candidates.filter((c) => c.type === "feed").map((c) => Number(c.key));
@@ -306,6 +345,22 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     const ph = adrKeys.map(() => "?").join(", ");
     for (const a of await all<AdrRow>(db, `SELECT * FROM adrs WHERE id IN (${ph})`, ...adrKeys)) adrMap.set(String(a.id), a);
   }
+
+  // Roadmap hydration: milestone ids (from 'milestone:<id>' refs) + the plan flag.
+  const milestoneIds = candidates
+    .filter((c) => c.type === "milestone" && c.key.startsWith("milestone:"))
+    .map((c) => Number(c.key.slice("milestone:".length)));
+  const needPlan = candidates.some((c) => c.type === "milestone" && c.key === "plan");
+
+  const milestoneMap = new Map<string, MilestoneRow>();
+  if (milestoneIds.length) {
+    const ph = milestoneIds.map(() => "?").join(", ");
+    for (const m of await all<MilestoneRow>(db, `SELECT * FROM milestones WHERE id IN (${ph})`, ...milestoneIds)) {
+      milestoneMap.set(`milestone:${m.id}`, m);
+    }
+  }
+  const progressMap = milestoneIds.length ? await getProgress(db) : new Map<number, MilestoneProgressRow>();
+  const planRow = needPlan ? await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`) : null;
 
   // Browse mode carries no per-row score, so order is by the merged recency from
   // step 1; FTS mode already has a normalized score. Sort once by score desc and,
@@ -357,7 +412,7 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
         staged_body: null, confidence: null, updated_at: f.created_at, updated_by: f.author,
         score: c.score, snippet: c.snippet || browseSnippet(f.body),
       };
-    } else {
+    } else if (c.type === "decision") {
       const adr = adrMap.get(c.key);
       if (!adr) continue;
       const body = assembleAdrBody(adr);
@@ -368,6 +423,28 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
         updated_at: adr.created_at, updated_by: adr.created_by,
         score: c.score, snippet: c.snippet || browseSnippet(body),
       };
+    } else {
+      // milestone: either the plan singleton (ref 'plan') or a milestone row.
+      // Both are direct/authored writes, so always authority "live".
+      if (c.key === "plan") {
+        if (!planRow) continue;
+        a = {
+          type: "milestone", id: "plan", title: "Roadmap plan", section: null, space: null,
+          body: planRow.narrative, authority: "live", current_version: null, pending_version: null,
+          staged_body: null, confidence: null, updated_at: planRow.updated_at, updated_by: planRow.updated_by,
+          score: c.score, snippet: c.snippet || browseSnippet(planRow.narrative),
+        };
+      } else {
+        const m = milestoneMap.get(c.key);
+        if (!m) continue;
+        const body = assembleMilestoneBody(m, progressMap.get(m.id));
+        a = {
+          type: "milestone", id: `milestone:${m.id}`, title: m.title, section: null, space: null,
+          body, authority: "live", current_version: null, pending_version: null,
+          staged_body: null, confidence: null, updated_at: m.updated_at ?? m.created_at, updated_by: m.created_by,
+          score: c.score, snippet: c.snippet || browseSnippet(body),
+        };
+      }
     }
     // Human (include_staged false) never surfaces not-yet-settled content: drop
     // unpromoted (empty-live) docs and unratified (draft) decisions entirely.

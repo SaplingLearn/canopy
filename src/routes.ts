@@ -58,8 +58,8 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" =>
-        t === "doc" || t === "decision" || t === "feed"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "milestone" =>
+        t === "doc" || t === "decision" || t === "feed" || t === "milestone"))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "sapling" || spaceRaw === "canopy" ? spaceRaw : undefined;

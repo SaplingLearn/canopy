@@ -65,7 +65,7 @@ export function getDoc(slug: string): Promise<{ doc: DocRow; versions: DocVersio
 // The read-side query envelope, re-declared here (web/ can't import the @shared
 // contract's Zod module). Mirrors shared/contract.ts QueryResult exactly.
 export type Authority = "live" | "staged_pending" | "unpromoted" | "draft";
-export type QueryType = "doc" | "decision" | "feed";
+export type QueryType = "doc" | "decision" | "feed" | "milestone";
 export interface QueryPrimary {
   type: QueryType; id: string; title: string;
   section: string | null; space: string | null;
