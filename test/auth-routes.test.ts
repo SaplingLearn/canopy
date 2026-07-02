@@ -3,6 +3,15 @@ import { authApp } from "../src/auth/routes";
 import { env } from "cloudflare:test";
 import { hmacSeal } from "../src/auth/crypto";
 
+describe("users schema", () => {
+  it("no longer has a github_token column — the per-user sealed token is retired (Task 17)", async () => {
+    const rows = await env.DB.prepare(
+      `SELECT * FROM pragma_table_info('users') WHERE name = 'github_token'`
+    ).all();
+    expect(rows.results).toHaveLength(0);
+  });
+});
+
 describe("GET /auth/login", () => {
   it("302-redirects to GitHub authorize with PKCE params and sets the oauth_tx cookie", async () => {
     const res = await authApp.request("/login", {}, env);

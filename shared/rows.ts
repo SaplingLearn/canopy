@@ -77,7 +77,6 @@ export interface NeedsTriageRow {
 export interface UserRow {
   github_login: string;
   name: string | null;
-  github_token: string | null;   // AES-GCM sealed GitHub OAuth token, or null
   created_at: string;
 }
 
