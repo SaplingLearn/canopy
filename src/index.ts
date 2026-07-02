@@ -1,5 +1,6 @@
 import { app } from "./routes";
 import { handleMcp } from "./mcp";
+import { handleGithubWebhook } from "./webhook";
 import { resolveBearerPrincipal } from "./auth/principal";
 import type { Env } from "./env";
 
@@ -18,6 +19,11 @@ export default {
         });
       }
       return handleMcp(request, env, ctx, principal);
+    }
+    // Third auth class: GitHub webhook deliveries, HMAC-verified over the raw
+    // body against GITHUB_WEBHOOK_SECRET. Never touches sessionGate.
+    if (url.pathname === "/webhook/github" && request.method === "POST") {
+      return handleGithubWebhook(request, env);
     }
     return app.fetch(request, env, ctx);
   },

@@ -20,6 +20,7 @@ export default defineConfig({
           COOKIE_SECRET: "test-cookie-secret",
           GITHUB_CLIENT_ID: "test-client-id",
           GITHUB_CLIENT_SECRET: "test-client-secret",
+          GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
           DEV_LOGIN: "", // override .dev.vars: tests exercise REAL auth, never the dev bypass
         },
       },

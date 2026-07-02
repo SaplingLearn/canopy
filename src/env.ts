@@ -4,6 +4,7 @@ export interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   COOKIE_SECRET: string;
+  GITHUB_WEBHOOK_SECRET?: string; // HMAC key for the /webhook/github third auth class; absent → the surface 401s
   GITHUB_REPO?: string;   // "owner/repo" for live roadmap progress; absent → milestones without progress
   CONTENT_REPO?: string;  // "owner/repo" the dashboard reads (ROADMAP.md + assigned issues); defaults to SaplingLearn/sapling
   DEV_LOGIN?: string;     // LOCAL DEV ONLY (set in .dev.vars): bypass OAuth, act as this seeded user. Never set in prod.
