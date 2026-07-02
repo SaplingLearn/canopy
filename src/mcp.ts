@@ -5,6 +5,7 @@ import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { list_roadmap } from "./tools/roadmap";
+import { getMyWork, list_events } from "./tools/mywork";
 import { getStoredToken } from "./auth/github";
 import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
@@ -132,6 +133,20 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
       confidence: z.enum(["high", "low"]),
     },
     async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login, ephemeralLedger()))
+  );
+
+  server.tool(
+    "get_my_work",
+    "Your personal My Work projection from captured GitHub events (no live GitHub): previous-activity (summarized merged/closed PRs, last 14 days) and to-do (your open assigned issues). Read-only.",
+    {},
+    async () => runTool(() => getMyWork(env.DB, principal.login))
+  );
+
+  server.tool(
+    "get_events",
+    "Recent captured GitHub events (raw log behind My Work and roadmap progress). Filter by type/subject. Read-only.",
+    { type: z.enum(["pr_merged", "pr_closed", "issue"]).optional(), subject: z.string().optional(), limit: z.number().optional() },
+    async (args) => runTool(() => list_events(env.DB, args))
   );
 
   server.tool(
