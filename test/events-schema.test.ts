@@ -32,4 +32,14 @@ describe("0012 stores", () => {
     expect(rows[0].phase).toBe("Phase 1");
     expect(await all(env.DB, `SELECT * FROM plan_versions`)).toEqual([]);
   });
+
+  // Revert guard (0014): the `focus` table (0007) is torn down for good — the
+  // per-person "current focus" feature never shipped a reader beyond the gate.
+  it("the focus table is gone (0014_drop_focus)", async () => {
+    const rows = await all<{ name: string }>(
+      env.DB,
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='focus'`
+    );
+    expect(rows).toEqual([]);
+  });
 });

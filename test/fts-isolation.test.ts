@@ -13,7 +13,7 @@ import { all, run, nowIso } from "../src/db";
 // leaves zero leaked FTS rows.
 
 const HARNESS_TRUNCATION =
-  "DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM focus; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;";
+  "DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;";
 
 async function ftsCounts() {
   const docs = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM docs_fts`);

@@ -4,7 +4,7 @@ import { app } from "../src/routes";
 import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
 import { all, first } from "../src/db";
-import type { DocRow, DocVersionRow, FeedRow, MilestoneProposalRow, FocusRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, MilestoneProposalRow } from "@shared/rows";
 import type { IngestResult } from "../src/consumer";
 
 // Identical helper to triage-writeback.test.ts and query.mcp-route.test.ts.
@@ -161,7 +161,7 @@ describe("live POST /ingest route", () => {
     expect(Array.isArray(body.issues)).toBe(true);
   });
 
-  it("narrows the contract: a payload still carrying milestone_proposals/focus is 200'd (stripped by zod), and writes zero rows to either table", async () => {
+  it("narrows the contract: a payload still carrying milestone_proposals/focus (legacy keys, the latter's table now dropped entirely) is 200'd (stripped by zod), and writes zero rows to the milestone_proposals table", async () => {
     const cookie = await authedCookie("agent-user");
     const payload = {
       session: {
@@ -180,6 +180,5 @@ describe("live POST /ingest route", () => {
     expect(res.status).toBe(200);
 
     expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
-    expect(await all<FocusRow>(env.DB, `SELECT * FROM focus`)).toHaveLength(0);
   });
 });

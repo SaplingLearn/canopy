@@ -13,6 +13,6 @@ beforeEach(async () => {
   await env.DB.exec(
     // pr_summaries.semantic_key REFERENCES events(semantic_key) — delete the
     // child before its parent, or the FK constraint rejects the parent delete.
-    "DELETE FROM processed_items; DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM focus; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;"
+    "DELETE FROM processed_items; DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;"
   );
 });

@@ -52,11 +52,6 @@ export const MilestoneProposal = z.object({
   confidence: z.enum(["high", "low"]),
 });
 
-export const FocusUpdate = z.object({
-  working_on: z.string().min(1),
-  next_up: z.string().optional(),
-});
-
 // A captured GitHub event (webhook/backfill). subject_login is who the event is
 // ABOUT — a second identity, distinct from the writer principal — and is trusted
 // only because the webhook branch verified the delivery's HMAC before the gate.
@@ -133,7 +128,6 @@ export type DocProposal = z.infer<typeof DocProposal>;
 export type AdrDraft = z.infer<typeof AdrDraft>;
 export type TriageItem = z.infer<typeof TriageItem>;
 export type MilestoneProposal = z.infer<typeof MilestoneProposal>;
-export type FocusUpdate = z.infer<typeof FocusUpdate>;
 export type CapturedEvent = z.infer<typeof CapturedEvent>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
 export type QueryRequest = z.infer<typeof QueryRequest>;

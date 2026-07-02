@@ -124,19 +124,12 @@ export interface MilestoneProposalRow {
   content_hash: string | null;   // SHA-256 of the proposed milestone fields — dedupe key (0009)
 }
 
-export interface FocusRow {
-  author: string;
-  working_on: string;
-  next_up: string | null;
-  updated_at: string;
-}
-
 // The replay ledger (0009). One row per (session_id, item_index) the worker has
 // seen; a re-POST of the same payload hits every row and drops as unchanged.
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "milestone" | "focus" | "triage" | "event";
+  item_type: "feed" | "doc" | "adr" | "milestone" | "triage" | "event";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;

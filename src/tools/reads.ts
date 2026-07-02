@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, FocusRow, MilestoneRow, MilestoneProgressRow, PlanRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, MilestoneRow, MilestoneProgressRow, PlanRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
 import { type DB, first, all } from "../db";
 import { getProgress } from "./progress";
@@ -115,10 +115,6 @@ export async function list_proposals(db: DB): Promise<ProposalRow[]> {
 
 export async function list_milestone_proposals(db: DB): Promise<MilestoneProposalRow[]> {
   return all<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE staged_status = 'staged' ORDER BY created_at DESC, id DESC`);
-}
-
-export async function get_focus(db: DB, author: string): Promise<FocusRow | null> {
-  return first<FocusRow>(db, `SELECT * FROM focus WHERE author = ?`, author);
 }
 
 // ── query(): ranked, assembled FTS5 retrieval (Phase 1 read-side brain) ───────
