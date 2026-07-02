@@ -78,9 +78,6 @@ Build at most one of each, only for what the session genuinely touched:
   from step 2; `space` is `sapling` for product docs, `canopy` for tooling docs).
 - **ADR** — when the session settled a real decision. `{ title, context, decision, rationale,
   confidence }`. (Previously nothing emitted these — now they land typed in the decisions queue.)
-- **Milestone** — **only if genuinely new** roadmap work. A wrap-up rarely creates one.
-- **Focus** — your forward headline for the personal dashboard. `{ working_on, next_up? }`. Intent
-  prose is fine here (it is exempt from the observed-artifacts rule; the feed's artifacts are not).
 
 ### 5. Assemble ONE payload and call `record_session` once
 
@@ -94,8 +91,7 @@ nothing new. Assemble a single `IngestPayload` and pass it to the **`record_sess
   "feed_entries":        [ /* step 4 */ ],
   "doc_proposals":       [ /* step 4, with base_version */ ],
   "adr_drafts":          [ /* step 4 */ ],
-  "milestone_proposals": [ /* step 4, only if new */ ],
-  "focus":               { "working_on": "…", "next_up": "…" }
+  "needs_triage":        [ /* step 4 */ ]
 }
 ```
 
