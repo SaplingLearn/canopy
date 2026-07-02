@@ -8,5 +8,5 @@
   // web-DOM render tests import browser code (web/src) and are type-checked under
   // tsconfig.web.json (DOM lib) — never with worker fetch types. Vitest still runs
   // them in the pool-workers harness at runtime (file discovery ignores tsconfig).
-  "exclude": ["test/render.triage.test.ts"]
+  "exclude": ["test/render.triage.test.ts", "test/render.mywork.test.ts"]
 }

@@ -7,7 +7,7 @@ import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
-import type { DashboardData, RoadmapPhase } from "@shared/dashboard";
+import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
@@ -1336,14 +1336,48 @@ function greetingFor(): string {
 function mwSection(label: string, body: string): string {
   return `<section style="margin-top:26px"><div style="${MW_LABEL};margin-bottom:12px">${label}</div>${body}</section>`;
 }
-function mwRoadmapRow(label: string, p: RoadmapPhase): string {
-  return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px">
-      <span style="font-size:12.5px;font-weight:600;color:var(--fg-70)">${esc(label)}</span>
-      ${p.window ? `<span style="font-size:11px;color:var(--fg-40)">${esc(p.window)}</span>` : ""}
+/** Dashed-card empty-state hint (existing idiom, e.g. old "no focus set yet"). */
+function mwEmptyHint(text: string): string {
+  return `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">${text}</div>`;
+}
+/** Muted single-line hint for a degraded (D1 projection unavailable) section (existing idiom). */
+function mwDegradedHint(text: string): string {
+  return `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">${text}</div>`;
+}
+
+/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip, markdown summary. */
+export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
+  const chip = pr.merged
+    ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
+    : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
+  const body = pr.summary !== null
+    ? `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`
+    : `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`;
+  return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:9px;min-width:0">
+        <a href="${attr(pr.url)}" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:12px;color:var(--fg-40);text-decoration:none;flex:none">#${pr.number}</a>
+        <span style="font-size:14px;font-weight:500;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;flex:none">
+        ${chip}
+        <span style="font-size:11.5px;color:var(--fg-40)">${relTime(pr.occurredAt)}</span>
+      </div>
     </div>
-    <div style="font-size:13px;line-height:1.55;color:var(--fg-55)">${linkifyRefs(p.bullet)}</div>
+    ${body}
   </div>`;
+}
+
+/** An assigned-issue card — priority + #number + title + up-to-3 labels, no markdown. */
+export function todoCard(t: MyWorkTodo): string {
+  const prio = t.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(t.priority)}</span>` : "";
+  const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
+  return `<a href="${attr(t.url)}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
+    ${prio}
+    <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
+    <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
+    <span style="display:flex;gap:5px;flex:none">${labels}</span>
+  </a>`;
 }
 
 function myWorkView(s: AppState): string {
@@ -1354,76 +1388,26 @@ function myWorkView(s: AppState): string {
   if (!d) return wrapMyWork(notice("Nothing to show yet."));
 
   const name = esc(s.displayName || s.me?.name || s.me?.login || "there");
-  const subParts: string[] = [];
-  if (d.role) subParts.push(`<span style="color:var(--fg-70);font-weight:500">${esc(d.role)}</span>`);
-  if (d.owns) subParts.push(`owns ${esc(d.owns)}`);
   const hero = `<div style="margin-bottom:24px">
     <h2 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0">${greetingFor()}, ${name}</h2>
-    ${subParts.length ? `<div style="font-size:13px;color:var(--fg-55);margin-top:5px">${subParts.join(" · ")}</div>` : ""}
   </div>`;
 
-  // headline: focus (preferred) → roadmap "now" (fallback) → empty hint
-  let headline: string;
-  if (d.focus) {
-    headline = `<div style="border:1px solid var(--accent);background:var(--accent-soft);border-radius:13px;padding:18px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
-        <span style="${MW_LABEL};color:var(--accent)">Working on now</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">updated ${relTime(d.focus.updatedAt)}</span>
-      </div>
-      <div style="font-size:15px;line-height:1.6;color:var(--fg)">${linkifyRefs(d.focus.workingOn)}</div>
-      ${d.focus.nextUp ? `<div style="margin-top:14px"><div style="${MW_LABEL};margin-bottom:6px">Next up</div><div style="font-size:14px;line-height:1.6;color:var(--fg-70)">${linkifyRefs(d.focus.nextUp)}</div></div>` : ""}
-    </div>`;
-  } else if (d.workingNow) {
-    headline = `<div style="border:1px solid var(--border-strong);border-radius:13px;padding:18px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
-        <span style="${MW_LABEL}">Working on now</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">${esc(d.workingNow.title)}${d.workingNow.window ? ` · ${esc(d.workingNow.window)}` : ""}</span>
-      </div>
-      <div style="font-size:15px;line-height:1.6;color:var(--fg)">${linkifyRefs(d.workingNow.bullet)}</div>
-    </div>`;
-  } else {
-    headline = `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">No focus set yet. Ask your coding agent to &ldquo;record this session&rdquo; to set what you're working on.</div>`;
-  }
+  const activityBody = d.degraded
+    ? mwDegradedHint("Couldn't load your recent activity right now.")
+    : d.previousActivity.length === 0
+      ? mwEmptyHint("No merged or closed PRs in the last 14 days.")
+      : d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("");
 
-  // roadmap context below the focus headline (or upcoming list when roadmap is the headline)
-  const rows: string[] = [];
-  if (d.focus && d.workingNow) rows.push(mwRoadmapRow(d.workingNow.title, d.workingNow));
-  for (const p of d.comingUp) rows.push(mwRoadmapRow(p.title, p));
-  const roadmap = rows.length ? mwSection("From the roadmap", `<div style="display:flex;flex-direction:column;gap:10px">${rows.join("")}</div>`) : "";
+  const todoBody = d.degraded
+    ? mwDegradedHint("Couldn't load your to-do list right now.")
+    : d.todo.length === 0
+      ? mwEmptyHint("No open issues assigned to you.")
+      : `<div style="display:flex;flex-direction:column;gap:8px">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
 
-  // assigned issues
-  let issues: string;
-  if (d.degraded) {
-    issues = mwSection("Assigned to you", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">Connect GitHub to see issues assigned to you.</div>`);
-  } else if (d.assignedIssues.length === 0) {
-    issues = mwSection("Assigned to you", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">No open issues assigned to you.</div>`);
-  } else {
-    const list = d.assignedIssues.map((it) => {
-      const pr = it.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(it.priority)}</span>` : "";
-      const labels = it.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
-      return `<a href="${attr(it.url)}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
-        ${pr}
-        <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${it.number}</span>
-        <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.title)}</span>
-        <span style="display:flex;gap:5px;flex:none">${labels}</span>
-      </a>`;
-    }).join("");
-    issues = mwSection(`Assigned to you <span style="color:var(--fg-40);font-weight:400">· ${d.assignedIssues.length} open</span>`, `<div style="display:flex;flex-direction:column;gap:8px">${list}</div>`);
-  }
+  const activity = mwSection("Previous activity — last 14 days", activityBody);
+  const todo = mwSection("To-do", todoBody);
 
-  // recent activity (feed)
-  let activity: string;
-  if (d.feed.length === 0) {
-    activity = mwSection("Your recent activity", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">No feed entries yet.</div>`);
-  } else {
-    const items = d.feed.map((e) => `<div style="display:flex;gap:11px;padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="flex:1;min-width:0;font-size:13.5px;line-height:1.5">${linkifyRefs(e.summary)}</div>
-      <span style="font-size:11.5px;color:var(--fg-40);flex:none;white-space:nowrap">${relTime(e.created_at)}</span>
-    </div>`).join("");
-    activity = mwSection("Your recent activity", items);
-  }
-
-  return wrapMyWork(`${hero}${headline}${roadmap}${issues}${activity}`);
+  return wrapMyWork(`${hero}${activity}${todo}`);
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
