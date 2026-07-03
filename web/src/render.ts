@@ -8,6 +8,7 @@ import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
+import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
@@ -339,7 +340,7 @@ function header(s: AppState): string {
   // ADMIN-only, My Work screen: trigger the server-side GitHub backfill. Rendered
   // only when /auth/me returned admin:true (outline button, promote-class action).
   const myworkControls = s.screen === "mywork" && s.me?.admin
-    ? `<button data-act="adminBackfill" title="Fetch recent GitHub PRs + issues" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">
+    ? `<button data-act="adminBackfill" title="Fetch all GitHub PRs + issues" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
       Sync GitHub
     </button>` : "";
@@ -1329,6 +1330,7 @@ function settingsView(s: AppState): string {
 
 // ── my work (personal dashboard) ──────────────────────────────────────────────
 const MW_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)";
+const MW_FIELD_LABEL = "font-size:10px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:3px";
 
 function wrapMyWork(inner: string): string {
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 32px 100px">${inner}</div>`;
@@ -1351,14 +1353,34 @@ function mwDegradedHint(text: string): string {
   return `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">${text}</div>`;
 }
 
-/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip, markdown summary. */
+/** Renders a structured {what, why} summary as labeled rows (small caption + markdown body each). */
+function structuredSummaryBody(structured: StructuredPrSummary, markdownFn: (body: string) => string): string {
+  const whatRow = `<div${structured.why ? ' style="margin-bottom:10px"' : ""}>
+      <div style="${MW_FIELD_LABEL}">What changed</div>
+      <div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(structured.what)}</div>
+    </div>`;
+  const whyRow = structured.why
+    ? `<div>
+      <div style="${MW_FIELD_LABEL}">Why</div>
+      <div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(structured.why)}</div>
+    </div>`
+    : "";
+  return whatRow + whyRow;
+}
+
+/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip,
+ *  and a summary body — labeled "What changed"/"Why" rows when pr.summary matches
+ *  the structured convention, else the raw markdown blob (legacy/excerpt fallback). */
 export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
   const chip = pr.merged
     ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
     : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
-  const body = pr.summary !== null
-    ? `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`
-    : `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`;
+  const structured = pr.summary !== null ? parseStructuredSummary(pr.summary) : null;
+  const body = pr.summary === null
+    ? `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`
+    : structured !== null
+      ? structuredSummaryBody(structured, markdownFn)
+      : `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`;
   return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin-bottom:10px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:9px;min-width:0">
@@ -1374,15 +1396,21 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
   </div>`;
 }
 
-/** An assigned-issue card — priority + #number + title + up-to-3 labels, no markdown. */
+/** An assigned-issue card — priority + #number + title (wraps up to 2 lines) on
+ *  row 1, labels (capped at 3) + relative updated-at on row 2. No markdown. */
 export function todoCard(t: MyWorkTodo): string {
   const prio = t.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(t.priority)}</span>` : "";
   const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
-  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
-    ${prio}
-    <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
-    <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
-    <span style="display:flex;gap:5px;flex:none">${labels}</span>
+  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
+    <div style="display:flex;align-items:baseline;gap:9px">
+      ${prio}
+      <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
+      <span style="font-size:13.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(t.title)}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:5px">
+      <span style="display:flex;gap:5px;flex:1;min-width:0">${labels}</span>
+      <span style="font-size:11px;color:var(--fg-40);flex:none">${relTime(t.updatedAt)}</span>
+    </div>
   </a>`;
 }
 
@@ -1413,7 +1441,7 @@ function myWorkView(s: AppState): string {
   const activity = mwSection("Previous activity", activityBody);
   const todo = mwSection("To-do", todoBody);
 
-  return wrapMyWork(`${hero}${activity}${todo}`);
+  return wrapMyWork(`${hero}${todo}${activity}`);
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────

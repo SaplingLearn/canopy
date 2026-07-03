@@ -482,7 +482,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "adminBackfill": {
       flash("Syncing GitHub&hellip;");
       adminBackfill()
-        .then((r) => { flash(`Synced: ${r.captured} captured, ${r.unchanged} unchanged`); loadMyWork(); })
+        .then((r) => { flash(`Synced: ${r.captured} captured, ${r.unchanged} unchanged, ${r.summarized} summaries updated`); loadMyWork(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Sync failed");

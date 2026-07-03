@@ -89,6 +89,32 @@ describe("prActivityCard", () => {
     expect(html).toContain('href="#"');
     expect(html).not.toContain("javascript:alert(1)");
   });
+
+  it("renders structured What changed + Why as separate labeled rows", () => {
+    const pr = makePr({ summary: "**What changed:** Fixed the login bug.\n**Why:** Users were logged out unexpectedly." });
+    const html = prActivityCard(pr, mockMd);
+    expect(html).toContain("What changed");
+    expect(html).toContain("Why");
+    expect(html).toContain("Fixed the login bug.");
+    expect(html).toContain("Users were logged out unexpectedly.");
+    expect(html).not.toContain("**What changed:**");
+    expect(html).not.toContain("**Why:**");
+  });
+
+  it("omits the Why row when the structured summary has no Why", () => {
+    const pr = makePr({ summary: "**What changed:** Fixed the login bug." });
+    const html = prActivityCard(pr, mockMd);
+    expect(html).toContain("What changed");
+    expect(html).not.toContain("Why");
+    expect(html).not.toContain("**What changed:**");
+  });
+
+  it("falls back to the raw prose block for a non-conforming summary (legacy/excerpt)", () => {
+    const pr = makePr({ summary: "Fixed the login bug that was affecting users." });
+    const html = prActivityCard(pr, mockMd);
+    expect(html).not.toContain("What changed");
+    expect(html).toContain("mock-md");
+  });
 });
 
 // ── todoCard ──────────────────────────────────────────────────────────────────
@@ -134,6 +160,18 @@ describe("todoCard", () => {
     expect(html).not.toContain("P1");
     expect(html).not.toContain("P2");
     expect(html).not.toContain("P3");
+  });
+
+  it("shows a relative 'updated' time derived from t.updatedAt", () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const html = todoCard(makeTodo({ updatedAt: threeDaysAgo }));
+    expect(html).toContain("3d ago");
+  });
+
+  it("wraps a long title across lines instead of truncating to one line", () => {
+    const html = todoCard(makeTodo({ title: "A very long issue title that should wrap across more than one line of text" }));
+    expect(html).toContain("-webkit-line-clamp:2");
+    expect(html).not.toContain("text-overflow:ellipsis");
   });
 });
 
@@ -216,5 +254,16 @@ describe("render() — My Work screen", () => {
     const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
     const html = render(stateWithDashboard(data, false));
     expect(html).not.toContain('data-act="adminBackfill"');
+  });
+
+  it("renders To-do before Previous activity", () => {
+    const data: DashboardData = {
+      person: "alice",
+      previousActivity: [makePr({ summary: null })],
+      todo: [makeTodo()],
+      degraded: false,
+    };
+    const html = render(stateWithDashboard(data));
+    expect(html.indexOf("To-do")).toBeLessThan(html.indexOf("Previous activity"));
   });
 });

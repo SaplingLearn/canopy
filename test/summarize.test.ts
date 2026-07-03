@@ -4,7 +4,7 @@ import { all, run, nowIso } from "../src/db";
 import type { PrSummaryRow } from "@shared/rows";
 import type { Env } from "../src/env";
 import type { Summarizer } from "../src/tools/summarize";
-import { storePrSummary, excerptSummary } from "../src/tools/summarize";
+import { storePrSummary, excerptSummary, SUMMARIZER_SYSTEM_PROMPT } from "../src/tools/summarize";
 import { handleGithubWebhook } from "../src/webhook";
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
@@ -189,5 +189,12 @@ describe("webhook → summarize wiring", () => {
     const rows = await all<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE semantic_key = ?`, "gh:pr:42:merged");
     expect(rows.length).toBe(1);
     expect(rows[0].model).toBe("excerpt");
+  });
+});
+
+describe("SUMMARIZER_SYSTEM_PROMPT", () => {
+  it("requires the structured What changed / Why convention", () => {
+    expect(SUMMARIZER_SYSTEM_PROMPT).toContain("**What changed:**");
+    expect(SUMMARIZER_SYSTEM_PROMPT).toContain("**Why:**");
   });
 });
