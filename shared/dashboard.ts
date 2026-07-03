@@ -22,7 +22,7 @@ export interface MyWorkTodo {
 
 export interface DashboardData {
   person: string | null; // identity-mapped name; null if unmapped
-  previousActivity: MyWorkPr[]; // summarized merged/closed PRs, last 14 days
+  previousActivity: MyWorkPr[]; // summarized merged/closed PRs, 5 most recent
   todo: MyWorkTodo[]; // open issues assigned to the person
   degraded: boolean; // D1 projection unavailable
 }

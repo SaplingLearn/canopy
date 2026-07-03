@@ -96,6 +96,7 @@ export interface ProposalRow {
   low_confidence: number;
   base_version: number | null;
   current_version: number;
+  created_at: string;    // doc_versions.created_at (when the proposal was staged)
   stagedBody: string;    // doc_versions.body (the proposed body)
   promotedBody: string;  // docs.body (the current live body)
 }
@@ -106,7 +107,8 @@ export async function list_proposals(db: DB): Promise<ProposalRow[]> {
     `SELECT v.slug AS slug, v.version AS version, d.title AS title, d.section AS section, d.space AS space,
             v.summary AS summary, v.created_by AS author, v.confidence AS confidence, v.status AS status,
             v.change_kind AS change_kind, v.low_confidence AS low_confidence, v.base_version AS base_version,
-            d.current_version AS current_version, v.body AS stagedBody, d.body AS promotedBody
+            d.current_version AS current_version, v.created_at AS created_at,
+            v.body AS stagedBody, d.body AS promotedBody
        FROM doc_versions v JOIN docs d ON d.slug = v.slug
       WHERE v.status = 'staged' AND v.version > d.current_version
       ORDER BY v.created_at DESC, v.id DESC`

@@ -72,7 +72,6 @@ describe("GET /me/dashboard (session-gated)", () => {
   });
 
   it("returns the two-list My Work projection for the principal", async () => {
-    // occurred_at recent (now) so the 14-day previous-activity window passes.
     const now = new Date().toISOString();
     const pr = mergedPrEvent(1, "AndresL230", now);
     await ingestEvent(env.DB, pr, "github-webhook");

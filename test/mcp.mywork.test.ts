@@ -6,9 +6,6 @@ import { buildCanopyMcpServer } from "../src/mcp";
 import { ingestEvent } from "../src/consumer";
 import type { CapturedEvent } from "@shared/contract";
 
-// Anchor recent events to the real wall clock so the 14-day window in
-// getMyWork (which defaults `now` to nowIso() when the MCP tool omits opts)
-// includes them regardless of when this suite runs.
 const NOW = new Date().toISOString();
 
 function prEvent(number: number, login: string): CapturedEvent {

@@ -1,6 +1,6 @@
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import type { EventRow, PersonRow } from "@shared/rows";
-import { type DB, all, first, nowIso } from "../db";
+import { type DB, all, first } from "../db";
 
 // My Work: a D1-only projection over captured GitHub events (Task 6). No live
 // GitHub reads — this is deliberately the "what already happened + what's
@@ -10,8 +10,7 @@ import { type DB, all, first, nowIso } from "../db";
 // single source of truth so the Worker and web build agree on the shape.
 export type MyWork = DashboardData;
 
-const WINDOW_DAYS = 14;
-const DAY_MS = 24 * 60 * 60 * 1000;
+const PR_LIMIT = 5;
 
 const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], degraded });
 
@@ -57,13 +56,10 @@ interface IssueSnapshotRow {
  * are never dropped). Any D1 failure degrades the whole projection to empty
  * with degraded:true rather than throwing.
  */
-export async function getMyWork(db: DB, login: string, opts?: { now?: string }): Promise<MyWork> {
+export async function getMyWork(db: DB, login: string): Promise<MyWork> {
   try {
     const personRow = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
     if (!personRow) return EMPTY(false);
-
-    const now = opts?.now ?? nowIso();
-    const cutoff = new Date(new Date(now).getTime() - WINDOW_DAYS * DAY_MS).toISOString();
 
     const prRows = await all<PrEventJoinRow>(
       db,
@@ -72,10 +68,9 @@ export async function getMyWork(db: DB, login: string, opts?: { now?: string }):
          LEFT JOIN pr_summaries s ON s.semantic_key = e.semantic_key
         WHERE e.event_type IN ('pr_merged', 'pr_closed')
           AND e.subject_login = ?
-          AND e.occurred_at >= ?
-        ORDER BY e.occurred_at DESC, e.id DESC`,
-      login,
-      cutoff
+        ORDER BY e.occurred_at DESC, e.id DESC
+        LIMIT ${PR_LIMIT}`,
+      login
     );
     const previousActivity: MyWorkPr[] = prRows.map((row) => {
       const parsed = JSON.parse(row.raw) as RawPr;

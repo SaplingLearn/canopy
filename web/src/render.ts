@@ -500,7 +500,7 @@ function triageView(s: AppState): string {
   const q = s.triageQueue;
 
   // Determine list pane contents + loading state per queue
-  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; author: string; badgeText: string; badgeColor: string; kindChip?: string };
+  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; author: string; time: string | null; badgeText: string; badgeColor: string; kindChip?: string };
   let listItems: ListItem[] = [];
   let listStatus: "idle" | "loading" | "ok" | "error" | "unauth" = "idle";
 
@@ -510,27 +510,27 @@ function triageView(s: AppState): string {
       const key = `${p.slug}@${p.version}`;
       const confColor = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
       const confLabel = p.confidence ? p.confidence.toUpperCase() : "?";
-      return { id: key, selected: key === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary ?? "", author: p.author, badgeText: confLabel, badgeColor: confColor, kindChip: changeKindChip(p.change_kind) };
+      return { id: key, selected: key === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary ?? "", author: p.author, time: p.created_at, badgeText: confLabel, badgeColor: confColor, kindChip: changeKindChip(p.change_kind) };
     });
   } else if (q === "decisions") {
     listStatus = s.decisions.status;
     listItems = s.decisions.data.map((d) => ({
       id: String(d.id), selected: d.id === s.selDecision,
       eyebrow: "ADR", title: d.title, summary: d.context ?? "",
-      author: d.created_by, badgeText: "DRAFT", badgeColor: "var(--blue)",
+      author: d.created_by, time: d.created_at, badgeText: "DRAFT", badgeColor: "var(--blue)",
     }));
   } else if (q === "triage") {
     listStatus = s.triageItems.status;
     listItems = s.triageItems.data.map((t) => {
       const firstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
-      return { id: String(t.id), selected: t.id === s.selTriage, eyebrow: "Unplaced", title: firstLine, summary: t.reason, author: t.source_author ?? "unknown", badgeText: "NEEDS-TRIAGE", badgeColor: "var(--red)" };
+      return { id: String(t.id), selected: t.id === s.selTriage, eyebrow: "Unplaced", title: firstLine, summary: t.reason, author: t.source_author ?? "unknown", time: t.created_at, badgeText: "NEEDS-TRIAGE", badgeColor: "var(--red)" };
     });
   } else {
     listStatus = s.milestoneProps.status;
     listItems = s.milestoneProps.data.map((m) => ({
       id: String(m.id), selected: m.id === s.selMilestoneProp,
       eyebrow: `Milestone · ${m.target_date}`, title: m.title, summary: m.change_summary ?? "",
-      author: m.created_by, badgeText: "STAGED", badgeColor: "var(--amber)",
+      author: m.created_by, time: m.created_at, badgeText: "STAGED", badgeColor: "var(--amber)",
     }));
   }
 
@@ -558,7 +558,7 @@ function triageView(s: AppState): string {
           </div>
           <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${esc(it.title)}</div>
           <div style="font-size:12.5px;color:var(--fg-55);line-height:1.5;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(it.author))}</div><span style="font-size:12px;color:var(--fg-55)">${esc(it.author)}</span></div>
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(it.author))}</div><span style="font-size:12px;color:var(--fg-55)">${esc(it.author)}</span>${it.time ? `<span style="margin-left:auto;font-size:11.5px;color:var(--fg-40);white-space:nowrap">${relTime(it.time)}</span>` : ""}</div>
         </div>
       </button>`).join("");
   }
@@ -745,6 +745,7 @@ function triageDetail(s: AppState): string {
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(p.author))}</div><span style="font-size:12.5px;color:var(--fg-55)">${esc(p.author)}</span></div>
           ${confLbl ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${esc(confLbl)}</span></div>` : ""}
+          <span style="font-size:12.5px;color:var(--fg-40)">Staged ${relTime(p.created_at)}</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
@@ -763,7 +764,7 @@ function triageDetail(s: AppState): string {
       <div style="min-width:0">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">ADR · Decision</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:5px;padding:2px 6px">DRAFT</span></div>
         <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${esc(d.title)}</h1>
-        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(d.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${esc(d.created_by)}</span></div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(d.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${esc(d.created_by)}</span><span style="font-size:12.5px;color:var(--fg-40)">· ${relTime(d.created_at)}</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
         <button data-act="dismiss" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
@@ -788,6 +789,7 @@ function triageDetail(s: AppState): string {
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(m.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Proposed by ${esc(m.created_by)}</span></div>
           <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${esc(m.confidence)} confidence</span></div>
+          <span style="font-size:12.5px;color:var(--fg-40)">Staged ${relTime(m.created_at)}</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">
@@ -810,7 +812,7 @@ function triageDetail(s: AppState): string {
   const tFirstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
   return `<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Unplaced item</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);background:color-mix(in srgb,var(--red) 12%,transparent);border-radius:5px;padding:2px 6px">NEEDS-TRIAGE</span></div>
     <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${esc(tFirstLine)}</h1>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(t.source_author ?? "unknown"))}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${esc(t.source_author ?? "unknown")}'s session</span></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(t.source_author ?? "unknown"))}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${esc(t.source_author ?? "unknown")}'s session</span><span style="font-size:12.5px;color:var(--fg-40)">· ${relTime(t.created_at)}</span></div>
     <div style="display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--red);border-radius:9px;margin-bottom:20px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg><div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:4px">Why it couldn't be placed</div><div style="font-size:13px;color:var(--fg-70);line-height:1.55">${esc(t.reason)}</div></div></div>
     <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Raw content</div>
     <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap">${esc(t.raw)}</div>
@@ -1399,7 +1401,7 @@ function myWorkView(s: AppState): string {
   const activityBody = d.degraded
     ? mwDegradedHint("Couldn't load your recent activity right now.")
     : d.previousActivity.length === 0
-      ? mwEmptyHint("No merged or closed PRs in the last 14 days.")
+      ? mwEmptyHint("No merged or closed PRs yet.")
       : d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("");
 
   const todoBody = d.degraded
@@ -1408,7 +1410,7 @@ function myWorkView(s: AppState): string {
       ? mwEmptyHint("No open issues assigned to you.")
       : `<div style="display:flex;flex-direction:column;gap:8px">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
 
-  const activity = mwSection("Previous activity — last 14 days", activityBody);
+  const activity = mwSection("Previous activity", activityBody);
   const todo = mwSection("To-do", todoBody);
 
   return wrapMyWork(`${hero}${activity}${todo}`);
