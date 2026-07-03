@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow, NeedsTriageRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow, NeedsTriageRow, PersonRow, IdentityTaskRow } from "@shared/rows";
 import { DocProposal, AdrDraft, MilestoneProposal, FeedEntry } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB, first, run, nowIso } from "../db";
@@ -147,6 +147,24 @@ export async function route_triage(
     created_at
   );
   return res.meta.last_row_id as number;
+}
+
+/**
+ * Identity intake (Maintenance group): ensure one pending identity task exists
+ * for an unmapped GitHub login. Called by ingestEvent AFTER the event row lands,
+ * so capture never depends on this. login is the PK — INSERT OR IGNORE collapses
+ * many events from one unknown person into one task and never re-raises a
+ * resolved one. A login already in `people` raises nothing.
+ */
+export async function ensure_identity_task(db: DB, login: string): Promise<void> {
+  const known = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
+  if (known) return;
+  await run(
+    db,
+    `INSERT OR IGNORE INTO identity_tasks (login, first_seen, status) VALUES (?, ?, 'pending')`,
+    login,
+    nowIso()
+  );
 }
 
 /**

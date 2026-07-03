@@ -6,7 +6,7 @@ import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal
 import { isSection, isTag } from "@shared/vocabulary";
 import type { DocRow, DocVersionRow, AdrRow, MilestoneProposalRow, ProcessedItemRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "./db";
-import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal } from "./tools/writes";
+import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal, ensure_identity_task } from "./tools/writes";
 import { contentHash } from "./hash";
 import { changeKind } from "./diff";
 import type { Principal } from "./auth/principal";
@@ -272,6 +272,12 @@ export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: stri
     event.raw, event.provenance, event.occurred_at ?? null, nowIso(), recordedBy
   );
   const written = (res.meta.changes ?? 0) > 0;
+  // Identity intake AFTER the event write: an unmapped subject_login raises one
+  // pending identity task (login PK, INSERT OR IGNORE). Runs on unchanged
+  // deliveries too, so events captured before the task store existed still
+  // surface on their next redelivery/backfill overlap. The event above has
+  // already landed either way — capture never depends on this.
+  await ensure_identity_task(db, event.subject_login);
   if (ledger) await ledgerRecord(db, ledger, "event", written ? "written" : "unchanged", event.semantic_key);
   return written ? { outcome: "written", id: res.meta.last_row_id as number } : { outcome: "unchanged" };
 }
