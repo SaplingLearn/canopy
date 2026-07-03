@@ -84,12 +84,30 @@ const prAsIssue = {
   milestone: null,
 };
 
+function makePr(number: number): typeof mergedPr {
+  return {
+    number,
+    title: `PR ${number}`,
+    body: `body ${number}`,
+    html_url: `https://github.com/o/r/pull/${number}`,
+    merged_at: threeDaysAgo,
+    closed_at: threeDaysAgo,
+    updated_at: threeDaysAgo,
+    user: { login: "octocat" },
+    milestone: null,
+  };
+}
+const prA = makePr(100);
+const prB = makePr(101);
+const prC = makePr(102);
+
 describe("runBackfill", () => {
   it("captures ALL closed PRs (full history, no recency window) + open issues, written by the admin principal", async () => {
     const summarizer = countingSummarizer("AI summary");
     const res = await runBackfill(envWith(), "admin-user", {
       fetchImpl: stubFetch([mergedPr, olderPr], [openIssue, prAsIssue]),
       summarizer,
+      summaryCallDelayMs: 0,
     });
 
     expect(res.ok).toBe(true);
@@ -98,6 +116,7 @@ describe("runBackfill", () => {
     expect(res.captured).toBe(3); // 2 PR events + 1 issue event
     expect(res.unchanged).toBe(0);
     expect(res.summarized).toBe(2); // one summary per newly-captured PR
+    expect(res.summaryBudgetExhausted).toBe(false); // well under the default batch limit
 
     const events = await all<EventRow>(env.DB, `SELECT * FROM events ORDER BY ref_number`);
     expect(events).toHaveLength(3);
@@ -119,10 +138,10 @@ describe("runBackfill", () => {
   it("is idempotent on event capture — a second run over the same GitHub state writes no new events", async () => {
     const summarizer = countingSummarizer("**What changed:** AI summary");
     const fetchImpl = stubFetch([mergedPr], [openIssue]);
-    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer });
+    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
     expect(firstRun.captured).toBe(2);
 
-    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer });
+    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
     expect(secondRun.ok).toBe(true);
     expect(secondRun.captured).toBe(0);
     expect(secondRun.unchanged).toBe(2);
@@ -132,13 +151,13 @@ describe("runBackfill", () => {
   it("retroactively re-summarizes a PR whose existing summary is NOT structured", async () => {
     const plainSummarizer = countingSummarizer("Plain prose summary, not structured.");
     const fetchImpl = stubFetch([mergedPr], []);
-    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: plainSummarizer });
+    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: plainSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.summarized).toBe(1);
     expect(plainSummarizer.calls).toBe(1);
 
     // Second run: the event is unchanged, but the stored summary is still
     // plain prose (doesn't match the structured convention) → re-summarized.
-    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: plainSummarizer });
+    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: plainSummarizer, summaryCallDelayMs: 0 });
     expect(secondRun.captured).toBe(0);
     expect(secondRun.unchanged).toBe(1);
     expect(secondRun.summarized).toBe(1);
@@ -148,13 +167,13 @@ describe("runBackfill", () => {
   it("skips re-summarizing a PR whose existing summary is already structured", async () => {
     const structuredSummarizer = countingSummarizer("**What changed:** Fixed the thing.");
     const fetchImpl = stubFetch([mergedPr], []);
-    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: structuredSummarizer });
+    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: structuredSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.summarized).toBe(1);
     expect(structuredSummarizer.calls).toBe(1);
 
     // Second run: the stored summary already matches the structured convention
     // → skipped, no second summarizer call.
-    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: structuredSummarizer });
+    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: structuredSummarizer, summaryCallDelayMs: 0 });
     expect(secondRun.summarized).toBe(0);
     expect(structuredSummarizer.calls).toBe(1);
 
@@ -169,7 +188,48 @@ describe("runBackfill", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.error).toContain("service token or repo");
-    expect(res).toMatchObject({ captured: 0, unchanged: 0, summarized: 0, prs: 0, issues: 0 });
+    expect(res).toMatchObject({ captured: 0, unchanged: 0, summarized: 0, summaryBudgetExhausted: false, prs: 0, issues: 0 });
     expect(await all(env.DB, `SELECT * FROM events`)).toHaveLength(0);
+  });
+
+  it("caps AI summarization at summaryBatchLimit per invocation; a follow-up run finishes the rest", async () => {
+    const summarizer = countingSummarizer("**What changed:** Summary.");
+    const fetchImpl = stubFetch([prA, prB, prC], []);
+
+    const firstRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl,
+      summarizer,
+      summaryBatchLimit: 2,
+      summaryCallDelayMs: 0,
+    });
+    expect(firstRun.summarized).toBe(2);
+    expect(firstRun.summaryBudgetExhausted).toBe(true);
+    expect(summarizer.calls).toBe(2);
+
+    const secondRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl,
+      summarizer,
+      summaryBatchLimit: 2,
+      summaryCallDelayMs: 0,
+    });
+    expect(secondRun.summarized).toBe(1); // only prC was left
+    expect(secondRun.summaryBudgetExhausted).toBe(false);
+    expect(summarizer.calls).toBe(3);
+
+    const rows = await all<PrSummaryRow>(env.DB, `SELECT pr_number FROM pr_summaries ORDER BY pr_number`);
+    expect(rows.map((r) => r.pr_number)).toEqual([100, 101, 102]);
+  });
+
+  it("waits summaryCallDelayMs between summarizer calls", async () => {
+    const summarizer = countingSummarizer("**What changed:** Summary.");
+    const start = Date.now();
+    await runBackfill(envWith(), "admin-user", {
+      fetchImpl: stubFetch([prA, prB], []),
+      summarizer,
+      summaryBatchLimit: 10,
+      summaryCallDelayMs: 40,
+    });
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(40); // one delay between the 2 summarizer calls
   });
 });

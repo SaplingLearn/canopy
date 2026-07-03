@@ -287,6 +287,39 @@ function flash(msg: string): void {
   setTimeout(() => { state.toast = null; rerender(); }, 2200);
 }
 
+// Drives a (possibly multi-batch) Sync GitHub run: the backend caps AI calls
+// per invocation (src/tools/backfill.ts's summaryBudgetExhausted), so this
+// keeps calling adminBackfill() while a budget was exhausted, updating
+// state.backfillSync after every batch so the button shows live progress.
+// MAX_BACKFILL_BATCHES is a client-side backstop against spinning forever if
+// summaries never converge (e.g. every AI call keeps falling back to excerpt).
+const MAX_BACKFILL_BATCHES = 10;
+
+async function runAdminBackfillLoop(): Promise<void> {
+  let summarizedSoFar = 0;
+  let batchesSoFar = 0;
+  let last: Awaited<ReturnType<typeof adminBackfill>> | null = null;
+  try {
+    do {
+      last = await adminBackfill();
+      batchesSoFar++;
+      summarizedSoFar += last.summarized;
+      state.backfillSync = { summarizedSoFar, batchesSoFar };
+      rerender();
+    } while (last.summaryBudgetExhausted && batchesSoFar < MAX_BACKFILL_BATCHES);
+
+    state.backfillSync = null;
+    const more = last.summaryBudgetExhausted ? " — more remain, click Sync again" : "";
+    flash(`Synced: ${last.captured} captured, ${last.unchanged} unchanged, ${summarizedSoFar} summaries updated${more}`);
+    loadMyWork();
+  } catch (e) {
+    state.backfillSync = null;
+    if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+    flash(e instanceof ApiError ? e.message : "Sync failed");
+    rerender();
+  }
+}
+
 // Copy text to the clipboard. Prefers the async Clipboard API (available on
 // localhost + https); falls back to a hidden-textarea execCommand for older or
 // non-secure contexts. Resolves to whether the copy succeeded.
@@ -480,13 +513,10 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // ADMIN action (My Work): trigger the server-side GitHub backfill, then
     // refresh My Work so newly-captured PRs/issues surface in the two lists.
     case "adminBackfill": {
-      flash("Syncing GitHub&hellip;");
-      adminBackfill()
-        .then((r) => { flash(`Synced: ${r.captured} captured, ${r.unchanged} unchanged, ${r.summarized} summaries updated`); loadMyWork(); })
-        .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Sync failed");
-        });
+      if (state.backfillSync) return; // already syncing — button is disabled, but guard duplicate dispatch too
+      state.backfillSync = { summarizedSoFar: 0, batchesSoFar: 0 };
+      rerender();
+      runAdminBackfillLoop();
       return;
     }
     // ── Phase 3 triage write-back (cookie-authed) ───────────────────────────

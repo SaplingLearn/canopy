@@ -256,6 +256,16 @@ describe("render() — My Work screen", () => {
     expect(html).not.toContain('data-act="adminBackfill"');
   });
 
+  it("shows a disabled, progress-labeled Sync button while backfillSync is set", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const s = { ...stateWithDashboard(data, true), backfillSync: { summarizedSoFar: 12, batchesSoFar: 2 } };
+    const html = render(s);
+    expect(html).toContain("disabled");
+    expect(html).toContain("Syncing");
+    expect(html).toContain("12 summarized");
+    expect(html).not.toContain("Sync GitHub");
+  });
+
   it("renders To-do before Previous activity", () => {
     const data: DashboardData = {
       person: "alice",

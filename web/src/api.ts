@@ -126,7 +126,15 @@ export function getMe(): Promise<Me> {
 
 // ADMIN action: trigger the server-side GitHub backfill (admin-only route). The
 // worker holds the service token and fetches GitHub directly — no webhook secret.
-export function adminBackfill(): Promise<{ ok: boolean; captured: number; unchanged: number; summarized: number; prs: number; issues: number }> {
+export function adminBackfill(): Promise<{
+  ok: boolean;
+  captured: number;
+  unchanged: number;
+  summarized: number;
+  summaryBudgetExhausted: boolean;
+  prs: number;
+  issues: number;
+}> {
   return postJson("/admin/backfill", {});
 }
 
