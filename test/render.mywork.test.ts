@@ -97,6 +97,8 @@ describe("prActivityCard", () => {
     expect(html).toContain("Why");
     expect(html).toContain("Fixed the login bug.");
     expect(html).toContain("Users were logged out unexpectedly.");
+    expect(html).not.toContain("**What changed:**");
+    expect(html).not.toContain("**Why:**");
   });
 
   it("omits the Why row when the structured summary has no Why", () => {
@@ -104,6 +106,7 @@ describe("prActivityCard", () => {
     const html = prActivityCard(pr, mockMd);
     expect(html).toContain("What changed");
     expect(html).not.toContain("Why");
+    expect(html).not.toContain("**What changed:**");
   });
 
   it("falls back to the raw prose block for a non-conforming summary (legacy/excerpt)", () => {
