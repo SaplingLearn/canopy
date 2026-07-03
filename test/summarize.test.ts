@@ -4,7 +4,7 @@ import { all, run, nowIso } from "../src/db";
 import type { PrSummaryRow } from "@shared/rows";
 import type { Env } from "../src/env";
 import type { Summarizer } from "../src/tools/summarize";
-import { storePrSummary, excerptSummary, SUMMARIZER_SYSTEM_PROMPT } from "../src/tools/summarize";
+import { storePrSummary, excerptSummary, SUMMARIZER_SYSTEM_PROMPT, workersAiSummarizer } from "../src/tools/summarize";
 import { handleGithubWebhook } from "../src/webhook";
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
@@ -196,5 +196,49 @@ describe("SUMMARIZER_SYSTEM_PROMPT", () => {
   it("requires the structured What changed / Why convention", () => {
     expect(SUMMARIZER_SYSTEM_PROMPT).toContain("**What changed:**");
     expect(SUMMARIZER_SYSTEM_PROMPT).toContain("**Why:**");
+  });
+});
+
+// Different Workers AI model families shape ai.run()'s resolved value
+// differently: some return the classic flat {response: string}, others
+// (e.g. gemma-4-26b-a4b-it) return an OpenAI-style Chat Completions shape
+// ({choices: [{message: {content: string}}]}). workersAiSummarizer must
+// handle both without throwing, since a mismatch here silently produces
+// model:'excerpt' forever — exactly the bug this test suite exists to catch.
+describe("workersAiSummarizer — response shape handling", () => {
+  it("extracts text from the classic flat {response} shape", async () => {
+    const fakeAi = { run: async () => ({ response: "**What changed:** Fixed the bug." }) } as unknown as Ai;
+    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBe("**What changed:** Fixed the bug.");
+  });
+
+  it("extracts text from the OpenAI-style {choices[0].message.content} shape", async () => {
+    const fakeAi = {
+      run: async () => ({ choices: [{ message: { role: "assistant", content: "**What changed:** Fixed the bug." } }] }),
+    } as unknown as Ai;
+    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBe("**What changed:** Fixed the bug.");
+  });
+
+  it("returns null when neither shape is present", async () => {
+    const fakeAi = { run: async () => ({ unexpected: "shape" }) } as unknown as Ai;
+    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  });
+
+  it("returns null when ai.run throws", async () => {
+    const fakeAi = {
+      run: async () => {
+        throw new Error("model not found");
+      },
+    } as unknown as Ai;
+    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  });
+
+  it("returns null for an empty/whitespace-only response", async () => {
+    const fakeAi = { run: async () => ({ response: "   " }) } as unknown as Ai;
+    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
   });
 });
