@@ -43,6 +43,7 @@ function makeProposal(overrides: Partial<StagedProposal> = {}): StagedProposal {
     low_confidence: 0,
     base_version: 1,
     current_version: 1,
+    created_at: "2026-07-01T10:00:00.000Z",
     stagedBody: "New content here",
     promotedBody: "Old content here",
     ...overrides,
@@ -384,6 +385,7 @@ describe("XSS: proposal slug in triage list and detail is attribute-escaped", ()
       low_confidence: 0,
       base_version: null,
       current_version: 0,
+      created_at: "2026-07-01T10:00:00.000Z",
       stagedBody: "body",
       promotedBody: "",
     };

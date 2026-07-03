@@ -76,22 +76,21 @@ function issueEvent(over: {
   };
 }
 
-describe("getMyWork — previous activity windowing", () => {
-  it("only includes merged/closed PR events within the last 14 days, with the stored summary joined", async () => {
-    const recent = prEvent({ number: 1, login: "AndresL230", occurred_at: daysBefore(NOW, 3) });
-    const old = prEvent({ number: 2, login: "AndresL230", occurred_at: daysBefore(NOW, 20) });
-    await ingestEvent(env.DB, recent, "github-webhook");
-    await ingestEvent(env.DB, old, "github-webhook");
-    await storePrSummary(env.DB, null, { semantic_key: recent.semantic_key, pr_number: 1, title: "PR 1", body: "some body" });
+describe("getMyWork — previous activity cap", () => {
+  it("returns only the 5 most recent merged/closed PR events, with the stored summary joined", async () => {
+    for (let n = 1; n <= 7; n++) {
+      await ingestEvent(env.DB, prEvent({ number: n, login: "AndresL230", occurred_at: daysBefore(NOW, 7 - n) }), "github-webhook");
+    }
+    await storePrSummary(env.DB, null, { semantic_key: "gh:pr:7:merged", pr_number: 7, title: "PR 7", body: "some body" });
 
-    const work = await getMyWork(env.DB, "AndresL230", { now: NOW });
+    const work = await getMyWork(env.DB, "AndresL230");
     expect(work.degraded).toBe(false);
     expect(work.person).toBe("Andres");
-    expect(work.previousActivity).toHaveLength(1);
+    expect(work.previousActivity.map((p) => p.number)).toEqual([7, 6, 5, 4, 3]); // newest first, oldest two cut
     expect(work.previousActivity[0]).toMatchObject({
-      number: 1,
-      title: "PR 1",
-      url: "https://github.com/o/r/pull/1",
+      number: 7,
+      title: "PR 7",
+      url: "https://github.com/o/r/pull/7",
       merged: true,
     });
     expect(work.previousActivity[0].summary).toBe("some body"); // excerpt fallback (no summarizer)
@@ -103,7 +102,7 @@ describe("getMyWork — previous activity windowing", () => {
     await ingestEvent(env.DB, mine, "github-webhook");
     await ingestEvent(env.DB, theirs, "github-webhook");
 
-    const work = await getMyWork(env.DB, "AndresL230", { now: NOW });
+    const work = await getMyWork(env.DB, "AndresL230");
     expect(work.previousActivity.map((p) => p.number)).toEqual([3]);
   });
 });
@@ -121,7 +120,7 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
     });
     await ingestEvent(env.DB, opened, "github-webhook");
 
-    let work = await getMyWork(env.DB, "AndresL230", { now: NOW });
+    let work = await getMyWork(env.DB, "AndresL230");
     expect(work.todo).toHaveLength(1);
     expect(work.todo[0]).toMatchObject({
       number: 7,
@@ -142,7 +141,7 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
     });
     await ingestEvent(env.DB, closed, "github-webhook");
 
-    work = await getMyWork(env.DB, "AndresL230", { now: NOW });
+    work = await getMyWork(env.DB, "AndresL230");
     expect(work.todo).toHaveLength(0);
 
     const reopened = issueEvent({
@@ -156,7 +155,7 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
     });
     await ingestEvent(env.DB, reopened, "github-webhook");
 
-    work = await getMyWork(env.DB, "AndresL230", { now: NOW });
+    work = await getMyWork(env.DB, "AndresL230");
     expect(work.todo).toHaveLength(1);
     expect(work.todo[0].number).toBe(7);
   });
@@ -167,7 +166,7 @@ describe("getMyWork — unmapped login", () => {
     const ev = prEvent({ number: 9, login: "stranger", occurred_at: daysBefore(NOW, 1) });
     await ingestEvent(env.DB, ev, "github-webhook");
 
-    const work = await getMyWork(env.DB, "stranger", { now: NOW });
+    const work = await getMyWork(env.DB, "stranger");
     expect(work).toEqual({ person: null, previousActivity: [], todo: [], degraded: false });
 
     const rows = await all<EventRow>(env.DB, `SELECT * FROM events`);

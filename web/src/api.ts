@@ -153,6 +153,7 @@ export interface StagedProposal {
   low_confidence: number;
   base_version: number | null;
   current_version: number;
+  created_at: string;
   stagedBody: string;
   promotedBody: string;
 }
