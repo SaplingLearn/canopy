@@ -18,6 +18,8 @@ database_id = "80386dc4-deef-461d-932a-0670d22ddf83"
 
 [vars]
 GITHUB_REPO = "SaplingLearn/sapling"
+# Comma-separated GitHub logins allowed to run admin actions (e.g. the server-side backfill).
+ADMIN_LOGINS = "AndresL230"
 
 [observability]
 enabled = true

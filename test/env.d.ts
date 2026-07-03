@@ -16,6 +16,7 @@ declare global {
       GITHUB_WEBHOOK_SECRET?: string;
       GITHUB_REPO?: string;
       GITHUB_SERVICE_TOKEN?: string;
+      ADMIN_LOGINS?: string;
     }
   }
 }

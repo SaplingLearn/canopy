@@ -392,7 +392,7 @@ describe("XSS: proposal slug in triage list and detail is attribute-escaped", ()
       view: "app",
       screen: "triage",
       triageQueue: "proposals",
-      me: { login: "reviewer", name: null, avatar_url: null, org: "SaplingLearn" },
+      me: { login: "reviewer", name: null, avatar_url: null, org: "SaplingLearn", admin: false },
       proposals: { status: "ok", data: [proposal] },
       selProposal: key,
     };

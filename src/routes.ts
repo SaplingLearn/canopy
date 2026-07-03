@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { IngestPayload } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
-import { sessionGate } from "./auth/principal";
+import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
+import { runBackfill } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals } from "./tools/reads";
 import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
 import { get_plan } from "./tools/plan";
@@ -217,6 +218,18 @@ app.post("/milestone-proposals/:id/reject", async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
+});
+
+// ADMIN action (session-gated + admin-gated): server-side GitHub backfill.
+// A computed/authored direct writer in the promote class — humans (admins)
+// trigger it — but every captured event still funnels through the ingestEvent
+// gate fn. Non-admins get 403; a missing service token/repo → 503 with the error.
+app.post("/admin/backfill", async (c) => {
+  const login = c.get("principal").login;
+  if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
+  const res = await runBackfill(c.env, login);
+  if (!res.ok) return c.json({ error: res.error }, 503);
+  return c.json(res);
 });
 
 // Human confirmation (session-gated): flip a live milestone to 'done'.

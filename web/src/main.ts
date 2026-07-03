@@ -10,7 +10,7 @@ import {
   listStagedProposals, listAdrs, listNeedsTriage, listMilestoneProposals,
   promoteDoc, ratifyAdr, completeMilestone, promoteMilestoneProposal,
   rejectDoc, rejectAdr, rejectMilestoneProposal, discardTriage, assignTriage,
-  getMe, logout, mintMcpToken,
+  getMe, logout, mintMcpToken, adminBackfill,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 
@@ -474,6 +474,18 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Could not complete milestone");
+        });
+      return;
+    }
+    // ADMIN action (My Work): trigger the server-side GitHub backfill, then
+    // refresh My Work so newly-captured PRs/issues surface in the two lists.
+    case "adminBackfill": {
+      flash("Syncing GitHub&hellip;");
+      adminBackfill()
+        .then((r) => { flash(`Synced: ${r.captured} captured, ${r.unchanged} unchanged`); loadMyWork(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Sync failed");
         });
       return;
     }
