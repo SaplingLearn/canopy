@@ -8,6 +8,7 @@ import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
+import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
@@ -1329,6 +1330,7 @@ function settingsView(s: AppState): string {
 
 // ── my work (personal dashboard) ──────────────────────────────────────────────
 const MW_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)";
+const MW_FIELD_LABEL = "font-size:10px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:3px";
 
 function wrapMyWork(inner: string): string {
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 32px 100px">${inner}</div>`;
@@ -1351,14 +1353,34 @@ function mwDegradedHint(text: string): string {
   return `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">${text}</div>`;
 }
 
-/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip, markdown summary. */
+/** Renders a structured {what, why} summary as labeled rows (small caption + markdown body each). */
+function structuredSummaryBody(structured: StructuredPrSummary, markdownFn: (body: string) => string): string {
+  const whatRow = `<div${structured.why ? ' style="margin-bottom:10px"' : ""}>
+      <div style="${MW_FIELD_LABEL}">What changed</div>
+      <div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(structured.what)}</div>
+    </div>`;
+  const whyRow = structured.why
+    ? `<div>
+      <div style="${MW_FIELD_LABEL}">Why</div>
+      <div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(structured.why)}</div>
+    </div>`
+    : "";
+  return whatRow + whyRow;
+}
+
+/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip,
+ *  and a summary body — labeled "What changed"/"Why" rows when pr.summary matches
+ *  the structured convention, else the raw markdown blob (legacy/excerpt fallback). */
 export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
   const chip = pr.merged
     ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
     : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
-  const body = pr.summary !== null
-    ? `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`
-    : `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`;
+  const structured = pr.summary !== null ? parseStructuredSummary(pr.summary) : null;
+  const body = pr.summary === null
+    ? `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`
+    : structured !== null
+      ? structuredSummaryBody(structured, markdownFn)
+      : `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`;
   return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin-bottom:10px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:9px;min-width:0">
