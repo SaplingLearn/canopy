@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, MilestoneRow, MilestoneProgressRow, PlanRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, MilestoneRow, MilestoneProgressRow, PlanRow, EventRow, IdentityTaskRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
 import { type DB, first, all } from "../db";
 import { getProgress } from "./progress";
@@ -115,6 +115,64 @@ export async function list_proposals(db: DB): Promise<ProposalRow[]> {
 
 export async function list_milestone_proposals(db: DB): Promise<MilestoneProposalRow[]> {
   return all<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE staged_status = 'staged' ORDER BY created_at DESC, id DESC`);
+}
+
+// ── Identity triage (Maintenance group) ───────────────────────────────────────
+
+// One sampled event on an identity task: enough for a human to recognize whose
+// work this login is. `title` comes from the event's own raw snapshot (PR or
+// issue); a malformed raw yields null rather than failing the list.
+export interface IdentitySample {
+  semantic_key: string;
+  event_type: string;
+  ref_number: number;
+  title: string | null;
+  occurred_at: string | null;
+}
+export interface IdentityTaskWithSample extends IdentityTaskRow {
+  sample: IdentitySample[];
+}
+
+const IDENTITY_SAMPLE_LIMIT = 3;
+
+function titleFromRaw(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { pr?: { title?: string }; issue?: { title?: string } };
+    return parsed.pr?.title ?? parsed.issue?.title ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pending identity tasks, each with a small LIVE activity sample. Activity is
+ * never copied onto the task — events are already stored by raw login, so the
+ * sample is just a per-login SELECT at read time (the queue is human-scale).
+ */
+export async function list_identity_tasks(db: DB): Promise<IdentityTaskWithSample[]> {
+  const tasks = await all<IdentityTaskRow>(
+    db,
+    `SELECT * FROM identity_tasks WHERE status = 'pending' ORDER BY first_seen DESC, login ASC`
+  );
+  const out: IdentityTaskWithSample[] = [];
+  for (const t of tasks) {
+    const rows = await all<EventRow>(
+      db,
+      `SELECT * FROM events WHERE subject_login = ? ORDER BY occurred_at DESC, id DESC LIMIT ${IDENTITY_SAMPLE_LIMIT}`,
+      t.login
+    );
+    out.push({
+      ...t,
+      sample: rows.map((e) => ({
+        semantic_key: e.semantic_key,
+        event_type: e.event_type,
+        ref_number: e.ref_number,
+        title: titleFromRaw(e.raw),
+        occurred_at: e.occurred_at,
+      })),
+    });
+  }
+  return out;
 }
 
 // ── query(): ranked, assembled FTS5 retrieval (Phase 1 read-side brain) ───────

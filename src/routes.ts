@@ -5,8 +5,8 @@ import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { runBackfill } from "./tools/backfill";
-import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals } from "./tools/reads";
-import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
+import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals, list_identity_tasks } from "./tools/reads";
+import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
@@ -83,6 +83,10 @@ app.get("/needs-triage", async (c) => c.json({ items: await list_needs_triage(c.
 app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.query("status")) }));
 
 app.get("/milestone-proposals", async (c) => c.json({ proposals: await list_milestone_proposals(c.env.DB) }));
+
+// ── Review group (session-cookie only, NEVER MCP): Proposals (staged doc
+// versions) + Decisions (ADR drafts) — GET /proposals, GET /adrs, and their
+// promote/ratify/reject resolves above. Agent produces, human confirms. ──────
 
 // The Proposals queue (Phase 3): staged doc versions newer than their live doc,
 // not rejected, server-joined with both bodies + reconciler metadata. Kills the
@@ -170,6 +174,29 @@ app.post("/needs-triage/:id/assign", async (c) => {
       space: body?.space,
       tags: body?.tags,
     });
+    return c.json({ ok: true, ...res });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// ── Maintenance group (session-cookie only, NEVER MCP): Unplaced items
+// (/needs-triage + assign/discard above) + Identity (below). ─────────────────
+
+// Pending unknown-login identity tasks, each with a small LIVE activity sample
+// pulled from `events` at read time — activity is never copied onto the task.
+app.get("/identity-tasks", async (c) => c.json({ tasks: await list_identity_tasks(c.env.DB) }));
+
+// Human placement (session-gated): map a login to a person. The `people`
+// table's ONLY runtime write (a direct authored write, not a gate re-run),
+// then a soft resolve of the task. My Work picks the mapping up at read time,
+// so every already-captured event for this login surfaces with no backfill.
+app.post("/identity-tasks/:login/map", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { person?: string } | null;
+  const person = typeof body?.person === "string" ? body.person.trim() : "";
+  if (!person) return c.json({ error: "person (non-empty string) required" }, 400);
+  try {
+    const res = await map_identity(c.env.DB, c.req.param("login"), person, c.get("principal").login);
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
