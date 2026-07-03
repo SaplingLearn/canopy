@@ -161,6 +161,18 @@ describe("todoCard", () => {
     expect(html).not.toContain("P2");
     expect(html).not.toContain("P3");
   });
+
+  it("shows a relative 'updated' time derived from t.updatedAt", () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const html = todoCard(makeTodo({ updatedAt: threeDaysAgo }));
+    expect(html).toContain("3d ago");
+  });
+
+  it("wraps a long title across lines instead of truncating to one line", () => {
+    const html = todoCard(makeTodo({ title: "A very long issue title that should wrap across more than one line of text" }));
+    expect(html).toContain("-webkit-line-clamp:2");
+    expect(html).not.toContain("text-overflow:ellipsis");
+  });
 });
 
 // ── full render() — My Work screen composition ──────────────────────────────
@@ -242,5 +254,16 @@ describe("render() — My Work screen", () => {
     const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
     const html = render(stateWithDashboard(data, false));
     expect(html).not.toContain('data-act="adminBackfill"');
+  });
+
+  it("renders To-do before Previous activity", () => {
+    const data: DashboardData = {
+      person: "alice",
+      previousActivity: [makePr({ summary: null })],
+      todo: [makeTodo()],
+      degraded: false,
+    };
+    const html = render(stateWithDashboard(data));
+    expect(html.indexOf("To-do")).toBeLessThan(html.indexOf("Previous activity"));
   });
 });

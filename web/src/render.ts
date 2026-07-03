@@ -1396,15 +1396,21 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
   </div>`;
 }
 
-/** An assigned-issue card — priority + #number + title + up-to-3 labels, no markdown. */
+/** An assigned-issue card — priority + #number + title (wraps up to 2 lines) on
+ *  row 1, labels (capped at 3) + relative updated-at on row 2. No markdown. */
 export function todoCard(t: MyWorkTodo): string {
   const prio = t.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(t.priority)}</span>` : "";
   const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
-  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
-    ${prio}
-    <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
-    <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
-    <span style="display:flex;gap:5px;flex:none">${labels}</span>
+  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
+    <div style="display:flex;align-items:baseline;gap:9px">
+      ${prio}
+      <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
+      <span style="font-size:13.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(t.title)}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:5px">
+      <span style="display:flex;gap:5px;flex:1;min-width:0">${labels}</span>
+      <span style="font-size:11px;color:var(--fg-40);flex:none">${relTime(t.updatedAt)}</span>
+    </div>
   </a>`;
 }
 
@@ -1435,7 +1441,7 @@ function myWorkView(s: AppState): string {
   const activity = mwSection("Previous activity", activityBody);
   const todo = mwSection("To-do", todoBody);
 
-  return wrapMyWork(`${hero}${activity}${todo}`);
+  return wrapMyWork(`${hero}${todo}${activity}`);
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
