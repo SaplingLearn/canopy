@@ -172,6 +172,17 @@ export interface PersonRow {
   person: string;
 }
 
+// Identity triage task (0016): one pending row per unknown GitHub login seen on
+// a captured event. Raised by ingestEvent after the event write; resolved by the
+// map-to-person route (the `people` table's only runtime writer). Soft resolve.
+export interface IdentityTaskRow {
+  login: string;
+  first_seen: string;
+  status: "pending" | "resolved";
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
 // The plan singleton (0012).
 export interface PlanRow {
   id: number;
