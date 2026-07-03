@@ -12,7 +12,7 @@ export interface StructuredPrSummary {
   why: string | null;
 }
 
-const STRUCTURED_RE = /^\s*\*\*What changed:\*\*\s*([\s\S]*?)(?:\s*\*\*Why:\*\*\s*([\s\S]*))?$/i;
+const STRUCTURED_RE = /\*\*What changed:\*\*\s*([\s\S]*?)(?:\s*\*\*Why:\*\*\s*([\s\S]*))?$/i;
 
 /** Parses "**What changed:** ... **Why:** ..." out of a PR summary's markdown.
  *  Returns null when the text doesn't match (old-style prose, the excerpt

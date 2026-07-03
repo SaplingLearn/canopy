@@ -43,4 +43,12 @@ describe("parseStructuredSummary", () => {
     const raw = "**What changed:** \n**Why:** something";
     expect(parseStructuredSummary(raw)).toBeNull();
   });
+
+  it("tolerates a leading preamble before the What changed marker (AI non-conformance)", () => {
+    const raw = "Here's the summary:\n\n**What changed:** Fixed the login bug.\n**Why:** Users were affected.";
+    expect(parseStructuredSummary(raw)).toEqual({
+      what: "Fixed the login bug.",
+      why: "Users were affected.",
+    });
+  });
 });
