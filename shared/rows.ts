@@ -77,7 +77,6 @@ export interface NeedsTriageRow {
 export interface UserRow {
   github_login: string;
   name: string | null;
-  github_token: string | null;   // AES-GCM sealed GitHub OAuth token, or null
   created_at: string;
 }
 
@@ -107,6 +106,7 @@ export interface MilestoneRow {
   created_at: string;
   created_by: string;
   updated_at: string | null;
+  phase: string | null;
 }
 
 export interface MilestoneProposalRow {
@@ -123,20 +123,69 @@ export interface MilestoneProposalRow {
   content_hash: string | null;   // SHA-256 of the proposed milestone fields — dedupe key (0009)
 }
 
-export interface FocusRow {
-  author: string;
-  working_on: string;
-  next_up: string | null;
-  updated_at: string;
-}
-
 // The replay ledger (0009). One row per (session_id, item_index) the worker has
 // seen; a re-POST of the same payload hits every row and drops as unchanged.
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "milestone" | "focus" | "triage";
+  item_type: "feed" | "doc" | "adr" | "milestone" | "triage" | "event";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;
+}
+
+// Captured GitHub event (0012). semantic_key is the dedupe identity.
+export interface EventRow {
+  id: number;
+  semantic_key: string;
+  event_type: "pr_merged" | "pr_closed" | "issue";
+  ref_number: number;
+  subject_login: string;
+  raw: string;             // JSON snapshot slice — the truth
+  provenance: "webhook" | "backfill";
+  occurred_at: string | null;
+  recorded_at: string;
+  recorded_by: string;
+}
+
+// Worker-generated completed-PR summary (0012). Derived, regenerable, never truth.
+export interface PrSummaryRow {
+  semantic_key: string;
+  pr_number: number;
+  summary: string;
+  model: string | null;    // 'excerpt' = deterministic fallback
+  created_at: string;
+}
+
+// Absolute per-milestone progress cache (0012).
+export interface MilestoneProgressRow {
+  milestone_id: number;
+  closed: number;
+  total: number;
+  source: "event" | "recompute";
+  computed_at: string;
+}
+
+// Identity map (0012): GitHub login → Canopy person. Admin-maintained.
+export interface PersonRow {
+  login: string;
+  person: string;
+}
+
+// The plan singleton (0012).
+export interface PlanRow {
+  id: number;
+  narrative: string;
+  current_version: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+// Non-destructive plan snapshot (0012).
+export interface PlanVersionRow {
+  version: number;
+  narrative: string;
+  milestones_json: string;
+  created_at: string;
+  created_by: string;
 }

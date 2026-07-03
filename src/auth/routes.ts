@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./principal";
-import { pkce, randomToken, hmacSeal, hmacUnseal, encryptSecret } from "./crypto";
+import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, isActiveOrgMember } from "./github";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
@@ -59,11 +59,10 @@ authApp.get("/callback", async (c) => {
   if (!ghUser) return c.json({ error: "identity_failed" }, 401);
   if (!(await isActiveOrgMember(token))) return c.redirect("/?denied=1", 302);
 
-  const sealedToken = await encryptSecret(token, c.env.COOKIE_SECRET);
   await run(c.env.DB,
-    `INSERT INTO users (github_login, name, avatar_url, github_token, created_at) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name, avatar_url = excluded.avatar_url, github_token = excluded.github_token`,
-    ghUser.login, ghUser.name, ghUser.avatar_url, sealedToken, nowIso());
+    `INSERT INTO users (github_login, name, avatar_url, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(github_login) DO UPDATE SET name = excluded.name, avatar_url = excluded.avatar_url`,
+    ghUser.login, ghUser.name, ghUser.avatar_url, nowIso());
 
   const { id } = await createSession(c.env.DB, ghUser.login);
   await setSessionCookie(c, id, c.env.COOKIE_SECRET);

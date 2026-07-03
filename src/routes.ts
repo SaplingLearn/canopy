@@ -6,11 +6,9 @@ import { authApp } from "./auth/routes";
 import { consume } from "./consumer";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals } from "./tools/reads";
 import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, type AssignType } from "./tools/writes";
-import { list_roadmap } from "./tools/roadmap";
-import { getMyDashboard } from "./tools/dashboard";
+import { get_plan } from "./tools/plan";
+import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
-import { nowIso } from "./db";
-import { getStoredToken } from "./auth/github";
 
 export const app = new Hono<AppEnv>();
 
@@ -60,8 +58,8 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" =>
-        t === "doc" || t === "decision" || t === "feed"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "milestone" =>
+        t === "doc" || t === "decision" || t === "feed" || t === "milestone"))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "sapling" || spaceRaw === "canopy" ? spaceRaw : undefined;
@@ -177,33 +175,21 @@ app.post("/needs-triage/:id/assign", async (c) => {
   }
 });
 
-// Roadmap read (session-gated): milestones in target-date order with live GitHub progress.
-app.get("/roadmap", async (c) => {
-  const token = await getStoredToken(c.env.DB, c.get("principal").login, c.env.COOKIE_SECRET);
-  const milestones = await list_roadmap(c.env.DB, { token, repo: c.env.GITHUB_REPO, devSynthesize: !!c.env.DEV_LOGIN });
-  return c.json({ milestones });
-});
+// Roadmap read (session-gated): admin narrative + milestones in target-date order,
+// merged with cached progress from the plan store. No live GitHub, no per-user token.
+app.get("/roadmap", async (c) => c.json(await get_plan(c.env.DB)));
 
-// Personal dashboard (session-gated): the signed-in user's focus, roadmap assignments,
-// assigned issues, and recent feed — assembled live, stored nowhere. Never 500s.
+// Personal dashboard (session-gated): the signed-in user's two-list My Work —
+// previous activity (summarized merged/closed PRs) + open assigned issues,
+// projected entirely from captured GitHub events. Stored nowhere; never 500s.
 app.get("/me/dashboard", async (c) => {
   const login = c.get("principal").login;
   try {
-    const token = await getStoredToken(c.env.DB, login, c.env.COOKIE_SECRET);
-    const data = await getMyDashboard({
-      db: c.env.DB,
-      login,
-      token,
-      repo: c.env.CONTENT_REPO ?? "SaplingLearn/sapling",
-      today: nowIso(),
-    });
+    const data: DashboardData = await getMyWork(c.env.DB, login);
     return c.json(data);
   } catch {
-    // Absolute backstop: never 500. Anything unexpected (token decrypt, D1) → empty degraded payload.
-    const empty: DashboardData = {
-      person: null, role: null, owns: null, focus: null,
-      workingNow: null, comingUp: [], assignedIssues: [], feed: [], degraded: true,
-    };
+    // Absolute backstop: never 500. Anything unexpected (D1) → empty degraded payload.
+    const empty: DashboardData = { person: null, previousActivity: [], todo: [], degraded: true };
     return c.json(empty);
   }
 });

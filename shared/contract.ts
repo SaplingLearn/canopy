@@ -52,9 +52,17 @@ export const MilestoneProposal = z.object({
   confidence: z.enum(["high", "low"]),
 });
 
-export const FocusUpdate = z.object({
-  working_on: z.string().min(1),
-  next_up: z.string().optional(),
+// A captured GitHub event (webhook/backfill). subject_login is who the event is
+// ABOUT — a second identity, distinct from the writer principal — and is trusted
+// only because the webhook branch verified the delivery's HMAC before the gate.
+export const CapturedEvent = z.object({
+  semantic_key: z.string().min(1),   // derived identity, e.g. 'gh:pr:42:merged'
+  event_type: z.enum(["pr_merged", "pr_closed", "issue"]),
+  ref_number: z.number().int(),
+  subject_login: z.string().min(1),
+  raw: z.string(),                   // JSON snapshot slice — the truth
+  provenance: z.enum(["webhook", "backfill"]),
+  occurred_at: z.string().optional(),
 });
 
 // ── Read-side query contract (Phase 1) ───────────────────────────────────────
@@ -63,7 +71,7 @@ export const FocusUpdate = z.object({
 // envelope does not change when that happens.
 export const QueryRequest = z.object({
   q: z.string().default(""),
-  types: z.array(z.enum(["doc", "decision", "feed"])).optional(), // default all
+  types: z.array(z.enum(["doc", "decision", "feed", "milestone"])).optional(), // default all
   section: z.string().optional(),
   space: z.enum(["sapling", "canopy"]).optional(),
   include_staged: z.boolean().optional(), // caller sets the default (MCP true, HTTP false)
@@ -74,7 +82,7 @@ export const QueryRequest = z.object({
 export const Authority = z.enum(["live", "staged_pending", "unpromoted", "draft"]);
 
 export const QueryPrimary = z.object({
-  type: z.enum(["doc", "decision", "feed"]),
+  type: z.enum(["doc", "decision", "feed", "milestone"]),
   id: z.string(),
   title: z.string(),
   section: z.string().nullable(),
@@ -91,7 +99,7 @@ export const QueryPrimary = z.object({
 });
 
 export const QueryPointer = z.object({
-  type: z.enum(["doc", "decision", "feed"]),
+  type: z.enum(["doc", "decision", "feed", "milestone"]),
   id: z.string(),
   title: z.string(),
   snippet: z.string(),
@@ -111,8 +119,6 @@ export const IngestPayload = z.object({
   doc_proposals: z.array(DocProposal).default([]),
   adr_drafts: z.array(AdrDraft).default([]),
   needs_triage: z.array(TriageItem).default([]),
-  milestone_proposals: z.array(MilestoneProposal).default([]),
-  focus: FocusUpdate.optional(),   // the writer's end-of-session focus, reconciled as an upsert
 });
 
 export type Session = z.infer<typeof Session>;
@@ -121,7 +127,7 @@ export type DocProposal = z.infer<typeof DocProposal>;
 export type AdrDraft = z.infer<typeof AdrDraft>;
 export type TriageItem = z.infer<typeof TriageItem>;
 export type MilestoneProposal = z.infer<typeof MilestoneProposal>;
-export type FocusUpdate = z.infer<typeof FocusUpdate>;
+export type CapturedEvent = z.infer<typeof CapturedEvent>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
 export type QueryRequest = z.infer<typeof QueryRequest>;
 export type Authority = z.infer<typeof Authority>;

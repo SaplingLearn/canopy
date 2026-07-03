@@ -17,8 +17,15 @@ database_name = "canopy"
 database_id = "80386dc4-deef-461d-932a-0670d22ddf83"
 
 [vars]
-GITHUB_REPO = "SaplingLearn/canopy"
-CONTENT_REPO = "SaplingLearn/sapling"
+GITHUB_REPO = "SaplingLearn/sapling"
 
 [observability]
 enabled = true
+
+# Workers AI: capture-time summaries of completed PR bodies (never at render).
+[ai]
+binding = "AI"
+
+# Scheduled backstop for the milestone progress cache (event-derived writes are primary).
+[triggers]
+crons = ["0 */6 * * *"]

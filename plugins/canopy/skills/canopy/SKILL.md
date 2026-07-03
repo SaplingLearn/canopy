@@ -51,15 +51,22 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
   `include_staged`). This is the tool `load-context` wraps; call it directly for ad-hoc exploration.
 - **`get_doc <slug>`** — one doc with all its versions (exact fetch).
 - **`get_feed`** — the activity feed (author / tags / since / limit filters).
-- **`get_roadmap`** — milestones with live GitHub progress merged at read time.
+- **`get_roadmap`** — the roadmap plan: an admin-authored narrative + milestones merged with cached,
+  event-derived progress (`closed/total`); no live GitHub at read time.
+- **`get_my_work`** — your captured-event My Work projection: previous-activity (summarized merged/closed
+  PRs from the last 14 days) + to-do (open assigned issues); built from captured GitHub events, no live
+  GitHub.
+- **`get_events`** — recent captured GitHub events, filterable by type/subject/limit.
 
 ## Writing (agents stage, humans confirm)
 
-Agents stage through the gate via MCP: **`append_feed`**, **`propose_doc_update`**,
-**`propose_milestone`**, **`set_focus`**. The gate reconciles every write — it de-duplicates no-op
-proposals, tags each doc change `new` / `edit` / `rewrite`, and routes out-of-vocab or low-confidence
-entries to Triage. **Confirming** (promote / ratify / reject / assign / discard) is done by a human in
-the web Triage desk over session-cookie routes — **never** MCP tools.
+Agents stage through the gate via MCP: **`append_feed`**, **`propose_doc_update`**. The gate reconciles
+every write — it de-duplicates no-op proposals, tags each doc change `new` / `edit` / `rewrite`, and
+routes out-of-vocab or low-confidence entries to Triage. **Confirming** (promote / ratify / reject /
+assign / discard) is done by a human in the web Triage desk over session-cookie routes — **never** MCP
+tools. The roadmap plan itself is **admin-authored**, not staged by agents: the `update-plan` skill
+wraps the `update_plan` MCP tool (direct, non-destructively versioned, promote-class) — agents do not
+propose milestones, and milestone `done` is admin-set.
 
 ## Connect an agent over MCP
 

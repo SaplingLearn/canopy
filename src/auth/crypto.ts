@@ -8,14 +8,6 @@ function toBase64Url(bytes: ArrayBuffer | Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function fromBase64Url(s: string): Uint8Array {
-  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4);
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
 function toHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -60,33 +52,4 @@ export async function hmacUnseal(sealed: string, secret: string): Promise<string
   const value = sealed.slice(0, i);
   const expected = await hmacSeal(value, secret);
   return expected === sealed ? value : null;
-}
-
-/** AES-256-GCM key derived from a secret (SHA-256 → 32-byte key). */
-async function aesKey(secret: string): Promise<CryptoKey> {
-  const raw = await crypto.subtle.digest("SHA-256", enc.encode(secret));
-  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
-}
-
-/** Seal a secret value at rest: base64url(iv ‖ AES-GCM ciphertext). */
-export async function encryptSecret(plaintext: string, secret: string): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(secret), enc.encode(plaintext));
-  const packed = new Uint8Array(iv.length + ct.byteLength);
-  packed.set(iv, 0);
-  packed.set(new Uint8Array(ct), iv.length);
-  return toBase64Url(packed);
-}
-
-/** Open a sealed secret; null if malformed, tampered, or sealed with another secret. */
-export async function decryptSecret(sealed: string, secret: string): Promise<string | null> {
-  try {
-    const packed = fromBase64Url(sealed);
-    const iv = packed.slice(0, 12);
-    const ct = packed.slice(12);
-    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await aesKey(secret), ct);
-    return new TextDecoder().decode(pt);
-  } catch {
-    return null;
-  }
 }

@@ -1,7 +1,7 @@
 ---
 name: load-context
 description: Orient against Canopy (the team's working memory) BEFORE working an existing area. Fire when you start work on a named/existing subsystem, pick up an issue that references an area, or when the person says things like "the X system", "how we do Y", "our approach to Z", "where is the … code/doc" — and ALWAYS before proposing a doc change. Do NOT fire on trivial one-off questions, on a brand-new area with no prior context, or just to chat. Read-only — this skill never writes.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work
 ---
 
 # Load Context ← Canopy
@@ -49,6 +49,9 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
    Never present `staged_pending` / `unpromoted` / `draft` content as established fact.
 4. **If you're about to write a doc,** note the doc's `current_version` from the query/`get_doc`
    result — that's the **base** the `record-session` writer should declare for its proposal.
+5. **At session start, also call `mcp__canopy__get_my_work`** (no args) so orientation includes the
+   person's own open work — recent shipped activity and their to-do — alongside the area context from
+   steps 1–3. This is still read-only: report it, don't act on it unprompted.
 
 ## Hard rules
 

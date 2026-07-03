@@ -5,9 +5,9 @@
 
 import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, StagedProposal } from "./api";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView, StagedProposal } from "./api";
 import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
-import type { DashboardData, RoadmapPhase } from "@shared/dashboard";
+import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
@@ -43,7 +43,7 @@ export interface AppState {
   docSpace: DocSpace;
   triageQueue: "proposals" | "decisions" | "triage" | "milestones";
   roadmapTab: "narrative" | "timeline";
-  roadmap: Loadable<MilestoneWithProgress[]>;
+  roadmap: Loadable<PlanView>;
   selProposal: string | null;
   selDecision: number | null;
   selTriage: number | null;
@@ -80,7 +80,7 @@ export function initialState(): AppState {
     docSpace: "sapling",
     triageQueue: "proposals",
     roadmapTab: "timeline",
-    roadmap: { status: "idle", data: [] },
+    roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
     selProposal: null, selDecision: null, selTriage: null, selMilestoneProp: null,
     showHistory: false,
     searchQuery: "token", searchType: "all",
@@ -110,6 +110,8 @@ function esc(v: string): string {
 function attr(v: string): string {
   return esc(v);
 }
+// Defense-in-depth: external URLs from captured payloads must be http(s) — never javascript:/data:/etc.
+const safeUrl = (u: string): string => (/^https?:\/\//i.test(u) ? u : "#");
 const AVATAR = "border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center";
 
 function logo(size: number): string {
@@ -327,7 +329,7 @@ function header(s: AppState): string {
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
   const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
-    ? roadmapEnriched(s.roadmap.data, s.confirmedMilestones).overdueCount
+    ? roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones).overdueCount
     : 0;
   const roadmapControls = s.screen === "roadmap" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
       <button data-act="roadmapNarrative" style="${rmTabStyle("narrative")}">Narrative</button>
@@ -829,7 +831,7 @@ function queueEmpty(): string {
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
 interface EnrichedMilestone {
-  id: number; title: string; about: string; github_ref: string | null;
+  id: number; title: string; about: string; github_ref: string | null; phase: string | null;
   closed: number | null; total: number | null; done: boolean; ready: boolean; overdue: boolean;
   pct: number; tgt: number; badge: { label: string; color: string; soft?: boolean };
   dateLabel: string; isNext: boolean;
@@ -855,7 +857,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
     const overdue = !done && !ready && tgt < now;
     const pct = total !== null && total > 0 && closed !== null ? Math.round((100 * closed) / total) : 0;
     return {
-      id: m.id, title: m.title, about: m.description ?? "", github_ref: m.github_ref,
+      id: m.id, title: m.title, about: m.description ?? "", github_ref: m.github_ref, phase: m.phase,
       closed, total, done, ready, overdue, pct, tgt,
       badge: badgeFor(done ? "done" : m.status), dateLabel: fmt(m.target_date),
       isNext: false,
@@ -877,7 +879,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
 }
 
 function roadmapNarrative(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
+  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones);
   const total = list.length;
 
   const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
@@ -896,6 +898,7 @@ function roadmapNarrative(s: AppState): string {
       ? `Next up · due ${m.dateLabel}`
       : `Due ${m.dateLabel}`;
     const barColor = m.done ? "var(--green)" : m.overdue ? "var(--red)" : "var(--accent)";
+    const phasePrefix = m.phase ? `${esc(m.phase)} · ` : "";
     const progressBar = m.total !== null && m.closed !== null
       ? `<div style="display:flex;align-items:center;gap:10px;margin-top:11px">
           <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
@@ -917,7 +920,7 @@ function roadmapNarrative(s: AppState): string {
           </div>
           ${m.about ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${linkifyRefs(m.about)}</p>` : ""}
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-            <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${dateNote}</span>
+            <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${phasePrefix}${dateNote}</span>
           </div>
           ${progressBar}
           ${refChips.length ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:10px">${refChips.map(ghChip).join("")}</div>` : ""}
@@ -936,7 +939,7 @@ function roadmapNarrative(s: AppState): string {
         ${total} milestone${total !== 1 ? "s" : ""} track the coarse goals above issue-level work.
         ${doneCount > 0 ? `<strong style="color:var(--fg);font-weight:600">${doneCount} ${doneCount === 1 ? "is" : "are"} done.</strong>` : ""}
         ${overdueCount > 0 ? `<span style="color:var(--red)">${overdueCount} overdue.</span>` : ""}
-        Progress is read live from GitHub at view time.
+        Progress reflects cached issue counts recorded from GitHub events.
       </p>`;
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
@@ -953,7 +956,7 @@ function roadmapNarrative(s: AppState): string {
 }
 
 function roadmapView(s: AppState): string {
-  if (s.roadmap.status === "loading" && s.roadmap.data.length === 0) {
+  if (s.roadmap.status === "loading" && s.roadmap.data.milestones.length === 0) {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Loading roadmap&hellip;")}</div>`;
   }
   if (s.roadmap.status === "error") {
@@ -963,38 +966,31 @@ function roadmapView(s: AppState): string {
   return roadmapNarrative(s);
 }
 
+/**
+ * The ADMIN-AUTHORED plan narrative (written via the update-plan skill), rendered as markdown
+ * inside the digest card idiom (mono "Narrative" label + h1, matching the rest of the app's
+ * section chrome). The narrative is the ONLY thing here that goes through markdownFn — it is
+ * DB-sourced prose, so it must be sanitized the same way doc bodies are (real callers pass
+ * renderMarkdown, i.e. DOMPurify); it is never additionally esc()'d (that would double-encode
+ * markdownFn's own escaping/output). Empty narrative → the existing dashed-card empty-state hint.
+ */
+export function planNarrativeBlock(narrative: string, markdownFn: (body: string) => string): string {
+  const body = narrative.trim()
+    ? `<div class="cnpy-md">${markdownFn(narrative)}</div>`
+    : `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">No plan narrative yet — write one with the update-plan skill</div>`;
+  return `<div style="margin-bottom:18px">
+    <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
+    <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px">What's happening</h1>
+    ${body}
+  </div>`;
+}
+
 function roadmapDigest(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data, s.confirmedMilestones);
-  const total = list.length;
+  const { list } = roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones);
   const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
-  const upcoming = list.filter((m) => !m.done && m.badge.label === "Upcoming");
   // What's "getting the attention" = something actively in progress first; only fall back
   // to the next upcoming goal when nothing is underway.
   const focus = inProgress[0] ?? list.find((m) => m.isNext) ?? list.find((m) => !m.done);
-
-  // ── State-of-repo summary (plain-English prose: the actual goals + what's been built) ──
-  const para = "font-size:15px;line-height:1.85;color:var(--fg-70);margin:0 0 14px";
-  const b = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
-  const done = list.filter((m) => m.done);
-  const recent = s.feed.data.slice(0, 3);
-  const goalLine = (m: EnrichedMilestone) => `${b(esc(m.title))}${m.about ? ` (${linkifyRefs(m.about.replace(/\s*\.\s*$/, ""))})` : ""}`;
-  const lower1 = (t: string) => (t ? t.charAt(0).toLowerCase() + t.slice(1) : t);
-  const semiJoin = (arr: string[]) =>
-    arr.length <= 1 ? (arr[0] ?? "") : `${arr.slice(0, -1).join("; ")}; and ${arr[arr.length - 1]}`;
-  const summary = total === 0
-    ? notice("There aren't any goals on the board yet, so there's nothing to describe just yet.")
-    : `<p style="${para}">
-        Here's what the project actually looks like right now, in plain terms. ${done.length ? `The groundwork is already built and shipped: ${semiJoin(done.map(goalLine))}.` : `Nothing has fully shipped yet, but there's plenty already in motion.`}
-      </p>
-      ${inProgress.length ? `<p style="${para}">
-        What the team is actively building right now: ${semiJoin(inProgress.map(goalLine))}.
-      </p>` : ""}
-      ${upcoming.length ? `<p style="${para}">
-        Still ahead on the roadmap: ${semiJoin(upcoming.map(goalLine))}.
-      </p>` : ""}
-      ${recent.length ? `<p style="font-size:15px;line-height:1.85;color:var(--fg-70);margin:0">
-        And most recently, the team ${semiJoin(recent.map((e) => lower1(esc(e.summary))))} — the full trail of work is just below.
-      </p>` : ""}`;
 
   // ── Current-focus spotlight (with progress bar + GitHub links) ──
   const spotlight = focus ? (() => {
@@ -1037,11 +1033,7 @@ function roadmapDigest(s: AppState): string {
     : `<table style="width:100%;border-collapse:collapse">${happenRows}</table>`;
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
-    <div style="margin-bottom:18px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
-      <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px">What's happening</h1>
-      ${summary}
-    </div>
+    ${planNarrativeBlock(s.roadmap.data.narrative, renderMarkdown)}
     ${spotlight}
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:28px 0 2px">
       <h2 style="font-size:12px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-55);margin:0">Recent happenings</h2>
@@ -1052,8 +1044,8 @@ function roadmapDigest(s: AppState): string {
 }
 
 // ── search ───────────────────────────────────────────────────────────────────
-const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4" };
-const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", milestone: "M5 3v18M5 4h11l-2 3 2 3H5" };
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", milestone: "Roadmap" };
 
 // Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
 // the others are mapped for completeness. Reuses the Triage badge styling.
@@ -1085,10 +1077,14 @@ function highlight(text: string, sq: string): string {
   return `${esc(pre)}<span style="background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 3px;font-weight:500">${esc(mid)}</span>${esc(post)}`;
 }
 
-// G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed.
+// G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed,
+// milestone → goRoadmap (the Roadmap screen — milestones have no standalone detail route
+// either, so this navigates to the screen that lists them, same idiom as goFeed).
 function searchOpenAttr(type: string, id: string): string | null {
   if (type === "decision") return null;
-  return type === "feed" ? `data-act="goFeed"` : `data-act="openDocFrom" data-arg="${attr(id)}"`;
+  if (type === "feed") return `data-act="goFeed"`;
+  if (type === "milestone") return `data-act="goRoadmap"`;
+  return `data-act="openDocFrom" data-arg="${attr(id)}"`;
 }
 
 function primaryCard(r: QueryPrimary, sq: string): string {
@@ -1182,7 +1178,7 @@ function guideView(s: AppState): string {
     ${gFig("/guide/docs.png", `The <strong style="color:var(--fg-55)">Docs</strong> reader — sections on the left, the live version in the middle, and a banner up top when a newer proposal is waiting.`)}
 
     <h3 style="${gH3}">Search &amp; My Work</h3>
-    <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what you're focused on, your open GitHub issues, and the team's latest activity.</p>
+    <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what shipped and what's on your plate — recently merged/closed PRs and your open assigned issues.</p>
 
     <h3 style="${gH3}">Triage</h3>
     <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. Four queues: ${gStrong("Proposals")} (doc updates), ${gStrong("Decisions")} (ADRs), ${gStrong("Triage")} (anything an agent couldn't confidently place), and ${gStrong("Milestones")} (proposed roadmap milestones). Proposals render to match the change — a brand-new doc as a full ${gStrong("preview")}, a small edit as a tight ${gStrong("diff")}, a large rewrite ${gStrong("side-by-side")} — and flag low-confidence or stale-base edits. On each item you make it live (${gStrong("Promote")} a doc or milestone, ${gStrong("Ratify")} a decision), ${gStrong("Reject")} it, or — for triage items — ${gStrong("Assign")} it to the right place or ${gStrong("Discard")} it. Nothing is ever hard-deleted.</p>
@@ -1209,7 +1205,7 @@ function guideView(s: AppState): string {
     }
   }
 }`)}
-    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")}, ${gStrong("propose_doc_update")}, and ${gStrong("propose_milestone")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
+    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")} and ${gStrong("propose_doc_update")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
 
     <h3 style="${gH3}">The living loop — how Canopy stays current</h3>
     <p style="${gP}">The thing that keeps Canopy alive isn't any one screen — it's a loop your agent runs every session: ${gStrong("orient → work → record")}. Three Claude Code skills (under <code style="font-family:var(--mono);font-size:13px">.claude/skills/</code>) drive it, and they're the real heart of the system.</p>
@@ -1336,14 +1332,48 @@ function greetingFor(): string {
 function mwSection(label: string, body: string): string {
   return `<section style="margin-top:26px"><div style="${MW_LABEL};margin-bottom:12px">${label}</div>${body}</section>`;
 }
-function mwRoadmapRow(label: string, p: RoadmapPhase): string {
-  return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px">
-      <span style="font-size:12.5px;font-weight:600;color:var(--fg-70)">${esc(label)}</span>
-      ${p.window ? `<span style="font-size:11px;color:var(--fg-40)">${esc(p.window)}</span>` : ""}
+/** Dashed-card empty-state hint (existing idiom, e.g. old "no focus set yet"). */
+function mwEmptyHint(text: string): string {
+  return `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">${text}</div>`;
+}
+/** Muted single-line hint for a degraded (D1 projection unavailable) section (existing idiom). */
+function mwDegradedHint(text: string): string {
+  return `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">${text}</div>`;
+}
+
+/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip, markdown summary. */
+export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
+  const chip = pr.merged
+    ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
+    : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
+  const body = pr.summary !== null
+    ? `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`
+    : `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`;
+  return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:9px;min-width:0">
+        <a href="${attr(safeUrl(pr.url))}" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:12px;color:var(--fg-40);text-decoration:none;flex:none">#${pr.number}</a>
+        <span style="font-size:14px;font-weight:500;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;flex:none">
+        ${chip}
+        <span style="font-size:11.5px;color:var(--fg-40)">${relTime(pr.occurredAt)}</span>
+      </div>
     </div>
-    <div style="font-size:13px;line-height:1.55;color:var(--fg-55)">${linkifyRefs(p.bullet)}</div>
+    ${body}
   </div>`;
+}
+
+/** An assigned-issue card — priority + #number + title + up-to-3 labels, no markdown. */
+export function todoCard(t: MyWorkTodo): string {
+  const prio = t.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(t.priority)}</span>` : "";
+  const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
+  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
+    ${prio}
+    <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
+    <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
+    <span style="display:flex;gap:5px;flex:none">${labels}</span>
+  </a>`;
 }
 
 function myWorkView(s: AppState): string {
@@ -1354,76 +1384,26 @@ function myWorkView(s: AppState): string {
   if (!d) return wrapMyWork(notice("Nothing to show yet."));
 
   const name = esc(s.displayName || s.me?.name || s.me?.login || "there");
-  const subParts: string[] = [];
-  if (d.role) subParts.push(`<span style="color:var(--fg-70);font-weight:500">${esc(d.role)}</span>`);
-  if (d.owns) subParts.push(`owns ${esc(d.owns)}`);
   const hero = `<div style="margin-bottom:24px">
     <h2 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0">${greetingFor()}, ${name}</h2>
-    ${subParts.length ? `<div style="font-size:13px;color:var(--fg-55);margin-top:5px">${subParts.join(" · ")}</div>` : ""}
   </div>`;
 
-  // headline: focus (preferred) → roadmap "now" (fallback) → empty hint
-  let headline: string;
-  if (d.focus) {
-    headline = `<div style="border:1px solid var(--accent);background:var(--accent-soft);border-radius:13px;padding:18px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
-        <span style="${MW_LABEL};color:var(--accent)">Working on now</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">updated ${relTime(d.focus.updatedAt)}</span>
-      </div>
-      <div style="font-size:15px;line-height:1.6;color:var(--fg)">${linkifyRefs(d.focus.workingOn)}</div>
-      ${d.focus.nextUp ? `<div style="margin-top:14px"><div style="${MW_LABEL};margin-bottom:6px">Next up</div><div style="font-size:14px;line-height:1.6;color:var(--fg-70)">${linkifyRefs(d.focus.nextUp)}</div></div>` : ""}
-    </div>`;
-  } else if (d.workingNow) {
-    headline = `<div style="border:1px solid var(--border-strong);border-radius:13px;padding:18px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px">
-        <span style="${MW_LABEL}">Working on now</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">${esc(d.workingNow.title)}${d.workingNow.window ? ` · ${esc(d.workingNow.window)}` : ""}</span>
-      </div>
-      <div style="font-size:15px;line-height:1.6;color:var(--fg)">${linkifyRefs(d.workingNow.bullet)}</div>
-    </div>`;
-  } else {
-    headline = `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">No focus set yet. Ask your coding agent to &ldquo;record this session&rdquo; to set what you're working on.</div>`;
-  }
+  const activityBody = d.degraded
+    ? mwDegradedHint("Couldn't load your recent activity right now.")
+    : d.previousActivity.length === 0
+      ? mwEmptyHint("No merged or closed PRs in the last 14 days.")
+      : d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("");
 
-  // roadmap context below the focus headline (or upcoming list when roadmap is the headline)
-  const rows: string[] = [];
-  if (d.focus && d.workingNow) rows.push(mwRoadmapRow(d.workingNow.title, d.workingNow));
-  for (const p of d.comingUp) rows.push(mwRoadmapRow(p.title, p));
-  const roadmap = rows.length ? mwSection("From the roadmap", `<div style="display:flex;flex-direction:column;gap:10px">${rows.join("")}</div>`) : "";
+  const todoBody = d.degraded
+    ? mwDegradedHint("Couldn't load your to-do list right now.")
+    : d.todo.length === 0
+      ? mwEmptyHint("No open issues assigned to you.")
+      : `<div style="display:flex;flex-direction:column;gap:8px">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
 
-  // assigned issues
-  let issues: string;
-  if (d.degraded) {
-    issues = mwSection("Assigned to you", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">Connect GitHub to see issues assigned to you.</div>`);
-  } else if (d.assignedIssues.length === 0) {
-    issues = mwSection("Assigned to you", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">No open issues assigned to you.</div>`);
-  } else {
-    const list = d.assignedIssues.map((it) => {
-      const pr = it.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(it.priority)}</span>` : "";
-      const labels = it.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
-      return `<a href="${attr(it.url)}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:11px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
-        ${pr}
-        <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${it.number}</span>
-        <span style="flex:1;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.title)}</span>
-        <span style="display:flex;gap:5px;flex:none">${labels}</span>
-      </a>`;
-    }).join("");
-    issues = mwSection(`Assigned to you <span style="color:var(--fg-40);font-weight:400">· ${d.assignedIssues.length} open</span>`, `<div style="display:flex;flex-direction:column;gap:8px">${list}</div>`);
-  }
+  const activity = mwSection("Previous activity — last 14 days", activityBody);
+  const todo = mwSection("To-do", todoBody);
 
-  // recent activity (feed)
-  let activity: string;
-  if (d.feed.length === 0) {
-    activity = mwSection("Your recent activity", `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">No feed entries yet.</div>`);
-  } else {
-    const items = d.feed.map((e) => `<div style="display:flex;gap:11px;padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="flex:1;min-width:0;font-size:13.5px;line-height:1.5">${linkifyRefs(e.summary)}</div>
-      <span style="font-size:11.5px;color:var(--fg-40);flex:none;white-space:nowrap">${relTime(e.created_at)}</span>
-    </div>`).join("");
-    activity = mwSection("Your recent activity", items);
-  }
-
-  return wrapMyWork(`${hero}${headline}${roadmap}${issues}${activity}`);
+  return wrapMyWork(`${hero}${activity}${todo}`);
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────

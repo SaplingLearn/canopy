@@ -4,7 +4,7 @@ import { app } from "../src/routes";
 import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
 import { all, first } from "../src/db";
-import type { DocRow, DocVersionRow, FeedRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, MilestoneProposalRow } from "@shared/rows";
 import type { IngestResult } from "../src/consumer";
 
 // Identical helper to triage-writeback.test.ts and query.mcp-route.test.ts.
@@ -159,5 +159,26 @@ describe("live POST /ingest route", () => {
     const body = (await res.json()) as { error: string; issues: unknown[] };
     expect(body.error).toBe("invalid payload");
     expect(Array.isArray(body.issues)).toBe(true);
+  });
+
+  it("narrows the contract: a payload still carrying milestone_proposals/focus (legacy keys, the latter's table now dropped entirely) is 200'd (stripped by zod), and writes zero rows to the milestone_proposals table", async () => {
+    const cookie = await authedCookie("agent-user");
+    const payload = {
+      session: {
+        id: "ingest-route-narrow-S1",
+        author: "agent",
+        ended_at: "2026-06-28T00:00:00Z",
+        skill_version: "2.0",
+      },
+      milestone_proposals: [
+        { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "ga", confidence: "high" },
+      ],
+      focus: { working_on: "narrow the contract", next_up: "ship it" },
+    };
+
+    const res = await postIngest(payload, cookie);
+    expect(res.status).toBe(200);
+
+    expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
   });
 });

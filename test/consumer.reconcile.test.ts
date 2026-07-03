@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { IngestPayload } from "@shared/contract";
-import { consume, ingestDocProposal, ingestFeedEntry } from "../src/consumer";
+import { consume, ingestDocProposal, ingestFeedEntry, ingestMilestoneProposal } from "../src/consumer";
 import { promote_doc } from "../src/tools/writes";
 import { all, first } from "../src/db";
 import type { DocRow, DocVersionRow, FeedRow, AdrRow, MilestoneProposalRow } from "@shared/rows";
@@ -16,8 +16,6 @@ function fullPayload(id: string) {
     feed_entries: [{ summary: "shipped X", body: "did the thing", tags: ["infra"], artifacts: { prs: ["9"], commits: ["abc"], issues: [1] } }],
     doc_proposals: [{ slug: "arch-note", section: "reference", title: "Arch Note", body: "line one\nline two", change_summary: "init", confidence: "high" }],
     adr_drafts: [{ title: "Use D1", context: "need storage", decision: "D1", rationale: "simple", confidence: "high" }],
-    milestone_proposals: [{ title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "ga", confidence: "high" }],
-    focus: { working_on: "reconciler", next_up: "tests" },
   });
 }
 
@@ -29,14 +27,11 @@ describe("reconciler — replay safety", () => {
     expect(firstRun.feed.written).toBe(1);
     expect(firstRun.docs.staged).toBe(1);
     expect(firstRun.adrs.staged).toBe(1);
-    expect(firstRun.milestones.staged).toBe(1);
-    expect(firstRun.focus.unchanged).toBe(1);
 
     const counts = async () => ({
       feed: (await all<FeedRow>(env.DB, `SELECT * FROM feed`)).length,
       versions: (await all<DocVersionRow>(env.DB, `SELECT * FROM doc_versions`)).length,
       adrs: (await all<AdrRow>(env.DB, `SELECT * FROM adrs`)).length,
-      miles: (await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).length,
     });
     const before = await counts();
 
@@ -45,7 +40,6 @@ describe("reconciler — replay safety", () => {
     expect(secondRun.feed).toEqual({ written: 0, unchanged: 1, triaged: 0 });
     expect(secondRun.docs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
     expect(secondRun.adrs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
-    expect(secondRun.milestones).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
 
     expect(await counts()).toEqual(before); // zero new rows of any kind
   });
@@ -146,13 +140,15 @@ describe("reconciler — ADR + milestone dedupe", () => {
   });
 
   it("drops a milestone with an already-staged title but stages a new one", async () => {
-    const a = IngestPayload.parse({ session: meta("M-1"), milestone_proposals: [{ title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" }] });
-    const b = IngestPayload.parse({ session: meta("M-2"), milestone_proposals: [{ title: "GA", target_date: "2026-10-01", status: "in_progress", change_summary: "s", confidence: "high" }] });
-    const c = IngestPayload.parse({ session: meta("M-3"), milestone_proposals: [{ title: "Beta", target_date: "2026-08-01", status: "upcoming", change_summary: "s", confidence: "high" }] });
+    // milestone_proposals is no longer an IngestPayload arm (Task 9) — the gate fn
+    // itself still enforces this dedupe, driven directly (as triage-assign does).
+    const a = await ingestMilestoneProposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" }, AUTHOR);
+    const b = await ingestMilestoneProposal(env.DB, { title: "GA", target_date: "2026-10-01", status: "in_progress", change_summary: "s", confidence: "high" }, AUTHOR);
+    const c = await ingestMilestoneProposal(env.DB, { title: "Beta", target_date: "2026-08-01", status: "upcoming", change_summary: "s", confidence: "high" }, AUTHOR);
 
-    expect((await consume(env.DB, a, { login: AUTHOR })).milestones.staged).toBe(1);
-    expect((await consume(env.DB, b, { login: AUTHOR })).milestones).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
-    expect((await consume(env.DB, c, { login: AUTHOR })).milestones.staged).toBe(1);
+    expect(a.outcome).toBe("written");
+    expect(b.outcome).toBe("unchanged");
+    expect(c.outcome).toBe("written");
     expect((await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).length).toBe(2);
   });
 });

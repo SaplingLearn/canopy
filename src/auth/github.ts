@@ -1,6 +1,4 @@
 import type { Env } from "../env";
-import { type DB, first, run } from "../db";
-import { encryptSecret, decryptSecret } from "./crypto";
 
 export const SAPLING_ORG = "SaplingLearn";
 const USER_AGENT = "canopy";
@@ -63,21 +61,4 @@ export async function isActiveOrgMember(token: string): Promise<boolean> {
   if (!res.ok) return false; // 404 => not a member
   const data = (await res.json()) as { state?: string };
   return data.state === "active"; // a pending invite does not count
-}
-
-/** Persist the principal's GitHub OAuth token, sealed at rest under `secret`. */
-export async function storeToken(db: DB, login: string, token: string, secret: string): Promise<void> {
-  const sealed = await encryptSecret(token, secret);
-  await run(db, `UPDATE users SET github_token = ? WHERE github_login = ?`, sealed, login);
-}
-
-/** Load + decrypt the principal's GitHub OAuth token; null if absent or undecryptable. */
-export async function getStoredToken(db: DB, login: string, secret: string): Promise<string | null> {
-  const row = await first<{ github_token: string | null }>(
-    db,
-    `SELECT github_token FROM users WHERE github_login = ?`,
-    login
-  );
-  if (!row?.github_token) return null;
-  return decryptSecret(row.github_token, secret);
 }

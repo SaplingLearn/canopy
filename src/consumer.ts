@@ -1,8 +1,12 @@
-import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, FocusUpdate } from "@shared/contract";
+import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, CapturedEvent } from "@shared/contract";
+// NOTE: CapturedEvent is imported for ingestEvent's signature only — the webhook
+// (src/webhook.ts) calls ingestEvent directly. There is no `events` arm on
+// IngestPayload: subject_login is trustworthy only once the webhook has verified
+// the delivery's HMAC, so no bearer/cookie payload may route events through here.
 import { isSection, isTag } from "@shared/vocabulary";
 import type { DocRow, DocVersionRow, AdrRow, MilestoneProposalRow, ProcessedItemRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "./db";
-import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal, set_focus } from "./tools/writes";
+import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal } from "./tools/writes";
 import { contentHash } from "./hash";
 import { changeKind } from "./diff";
 import type { Principal } from "./auth/principal";
@@ -13,8 +17,6 @@ export interface IngestResult {
   feed: { written: number; unchanged: number; triaged: number };
   docs: { staged: number; unchanged: number; triaged: number };
   adrs: { staged: number; unchanged: number; triaged: number };
-  milestones: { staged: number; unchanged: number; triaged: number };
-  focus: { unchanged: number };
   triage: { recorded: number; unchanged: number };
 }
 
@@ -44,6 +46,7 @@ export type MilestoneIngestResult =
   | { outcome: "written"; id: number }
   | { outcome: "unchanged"; id?: number }
   | { outcome: "triaged"; reason: string };
+export type EventIngestResult = { outcome: "written"; id: number } | { outcome: "unchanged" };
 
 // ---------------------------------------------------------------------------
 // The replay ledger. ledger-first per item: a (sessionId, itemIndex) already in
@@ -255,24 +258,33 @@ export async function ingestMilestoneProposal(
   return { outcome: "written", id };
 }
 
-/** Focus: a direct per-person upsert (like the feed, not staged — it is low-stakes
- *  self-report needing no human confirmation). Author is always the principal.
- *  Reconciled as an upsert: a re-run overwrites the one row, never stages anything. */
-export async function ingestFocusUpdate(
-  db: DB,
-  update: FocusUpdate,
-  author: string
-): Promise<{ outcome: "written" }> {
-  await set_focus(db, { author, working_on: update.working_on, next_up: update.next_up ?? null });
-  return { outcome: "written" };
+/** Captured events: dedupe is the UNIQUE semantic_key (INSERT OR IGNORE) — a
+ *  redelivery or backfill overlap drops as unchanged. No vocab/confidence checks:
+ *  the event is external fact, captured verbatim. The writer is the authenticated
+ *  principal; subject_login is the event's own identity (trusted post-HMAC). */
+export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: string, ledger?: LedgerRef): Promise<EventIngestResult> {
+  if (ledger && (await ledgerLookup(db, ledger))) return { outcome: "unchanged" };
+  const res = await run(
+    db,
+    `INSERT OR IGNORE INTO events (semantic_key, event_type, ref_number, subject_login, raw, provenance, occurred_at, recorded_at, recorded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    event.semantic_key, event.event_type, event.ref_number, event.subject_login,
+    event.raw, event.provenance, event.occurred_at ?? null, nowIso(), recordedBy
+  );
+  const written = (res.meta.changes ?? 0) > 0;
+  if (ledger) await ledgerRecord(db, ledger, "event", written ? "written" : "unchanged", event.semantic_key);
+  return written ? { outcome: "written", id: res.meta.last_row_id as number } : { outcome: "unchanged" };
 }
 
 /**
  * Validate-and-reconcile the (already structurally-validated) /ingest payload.
  * The Worker verifies structure; the gate functions above verify vocabulary,
  * confidence, content-hash identity, and the replay ledger. item_index is
- * assigned by stable enumeration across the typed arrays so a re-POST of the
- * same payload replays to all-`unchanged`.
+ * assigned by stable enumeration across the typed arrays — feed, docs, adrs,
+ * THEN needs_triage — so a re-POST of the same payload replays to all-`unchanged`
+ * and existing indices never shift. There is no events arm here: captured events
+ * only ever reach the gate via the HMAC-verified webhook calling ingestEvent
+ * directly (src/webhook.ts), never through this bearer/cookie-authenticated path.
  */
 export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
   const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
@@ -281,8 +293,6 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     feed: { written: 0, unchanged: 0, triaged: 0 },
     docs: { staged: 0, unchanged: 0, triaged: 0 },
     adrs: { staged: 0, unchanged: 0, triaged: 0 },
-    milestones: { staged: 0, unchanged: 0, triaged: 0 },
-    focus: { unchanged: 0 },
     triage: { recorded: 0, unchanged: 0 },
   };
   let idx = 0;
@@ -306,21 +316,6 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     if (r.outcome === "written") result.adrs.staged++;
     else if (r.outcome === "unchanged") result.adrs.unchanged++;
     else result.adrs.triaged++;
-  }
-
-  for (const proposal of payload.milestone_proposals) {
-    const r = await ingestMilestoneProposal(db, proposal, author, { sessionId, itemIndex: idx++ });
-    if (r.outcome === "written") result.milestones.staged++;
-    else if (r.outcome === "unchanged") result.milestones.unchanged++;
-    else result.milestones.triaged++;
-  }
-
-  // Focus (single, optional): an idempotent upsert, always "unchanged". Reserve
-  // an index slot so the explicit-triage items after it keep stable indices on replay.
-  if (payload.focus) {
-    await ingestFocusUpdate(db, payload.focus, author);
-    result.focus.unchanged++;
-    idx++;
   }
 
   // Explicit triage items: already a triage request — written directly, but

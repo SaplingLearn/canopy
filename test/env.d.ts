@@ -13,7 +13,9 @@ declare global {
       COOKIE_SECRET: string;
       GITHUB_CLIENT_ID: string;
       GITHUB_CLIENT_SECRET: string;
+      GITHUB_WEBHOOK_SECRET?: string;
       GITHUB_REPO?: string;
+      GITHUB_SERVICE_TOKEN?: string;
     }
   }
 }

@@ -123,4 +123,44 @@ describe("record_session MCP tool — the real bearer-only agent write path", ()
     const versionsAfter = (await all<DocVersionRow>(env.DB, `SELECT * FROM doc_versions`)).length;
     expect(versionsAfter).toBe(versionsBefore); // nothing new staged on replay
   });
+
+  it("propose_milestone and set_focus are retired: absent from tools/list, and calling them errors", async () => {
+    const raw = await seedUserWithBearer("bearer-agent-narrow");
+    const principal = await bearerPrincipal(raw);
+
+    const server = buildCanopyMcpServer(env as unknown as Env, principal);
+    const client = new Client({ name: "test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const { tools } = await client.listTools();
+      const names = tools.map((t) => t.name);
+      expect(names).not.toContain("propose_milestone");
+      expect(names).not.toContain("set_focus");
+
+      // An unregistered tool name resolves with isError (SDK -32602 "Tool not found"),
+      // rather than rejecting the call promise — assert on that, not a rejection.
+      const proposeMilestoneRes = (await client.callTool({
+        name: "propose_milestone",
+        arguments: {
+          title: "Should not register",
+          target_date: "2026-09-01",
+          status: "upcoming",
+          change_summary: "narrowing test",
+          confidence: "high",
+        },
+      })) as { isError?: boolean };
+      expect(proposeMilestoneRes.isError).toBe(true);
+
+      const setFocusRes = (await client.callTool({
+        name: "set_focus",
+        arguments: { working_on: "narrowing test" },
+      })) as { isError?: boolean };
+      expect(setFocusRes.isError).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });

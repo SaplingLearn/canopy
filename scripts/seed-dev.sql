@@ -12,8 +12,8 @@ DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;
 -- cross-references (entry_id '1'..'3') match the feed rows on every re-seed.
 DELETE FROM sqlite_sequence;
 
-INSERT INTO users (github_login, name, github_token, created_at) VALUES
-  ('devuser', 'Dev User', NULL, '2026-06-01T00:00:00Z');
+INSERT INTO users (github_login, name, created_at) VALUES
+  ('devuser', 'Dev User', '2026-06-01T00:00:00Z');
 INSERT INTO sessions (id, user, created_at, expires_at) VALUES
   ('devsession', 'devuser', '2026-06-01T00:00:00Z', '2099-01-01T00:00:00Z');
 

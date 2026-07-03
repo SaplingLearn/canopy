@@ -4,11 +4,11 @@ import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query } from "./tools/reads";
-import { list_roadmap } from "./tools/roadmap";
-import { getStoredToken } from "./auth/github";
-import { ingestFeedEntry, ingestDocProposal, ingestMilestoneProposal, ingestFocusUpdate, consume } from "./consumer";
+import { getMyWork, list_events } from "./tools/mywork";
+import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload } from "@shared/contract";
+import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -45,7 +45,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
     {
       q: z.string().optional(),
-      types: z.array(z.enum(["doc", "decision", "feed"])).optional(),
+      types: z.array(z.enum(["doc", "decision", "feed", "milestone"])).optional(),
       section: z.string().optional(),
       space: z.enum(["sapling", "canopy"]).optional(),
       include_staged: z.boolean().optional(),
@@ -113,44 +113,54 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login, ephemeralLedger()))
   );
 
-  server.tool("get_roadmap", "Read the roadmap: milestones in target-date order with live GitHub progress.", {}, async () =>
-    runTool(async () => {
-      const token = await getStoredToken(env.DB, principal.login, env.COOKIE_SECRET);
-      return list_roadmap(env.DB, { token, repo: env.GITHUB_REPO });
-    })
+  server.tool(
+    "get_roadmap",
+    "Read the roadmap plan: admin narrative + milestones in target-date order with cached progress (no live GitHub).",
+    {},
+    async () => runTool(() => get_plan(env.DB))
   );
 
   server.tool(
-    "propose_milestone",
-    "Propose a NEW roadmap milestone through the gate; staged for a human to promote into a live milestone. A 'done' status or low confidence routes to needs_triage.",
-    {
-      title: z.string(),
-      target_date: z.string(),
-      status: z.enum(["upcoming", "in_progress", "done"]),
-      github_ref: z.union([z.number(), z.array(z.number())]).optional(),
-      change_summary: z.string(),
-      confidence: z.enum(["high", "low"]),
-    },
-    async (proposal) => runTool(() => ingestMilestoneProposal(env.DB, proposal, principal.login, ephemeralLedger()))
+    "get_my_work",
+    "Your personal My Work projection from captured GitHub events (no live GitHub): previous-activity (summarized merged/closed PRs, last 14 days) and to-do (your open assigned issues). Read-only.",
+    {},
+    async () => runTool(() => getMyWork(env.DB, principal.login))
   );
 
   server.tool(
-    "set_focus",
-    "Set your current focus for the personal dashboard: what you're working on now and (optionally) what's next. Upserts one row per person — overwrites your previous focus.",
-    { working_on: z.string().min(1), next_up: z.string().optional() },
-    async ({ working_on, next_up }) =>
-      runTool(() => ingestFocusUpdate(env.DB, { working_on, next_up }, principal.login))
+    "get_events",
+    "Recent captured GitHub events (raw log behind My Work and roadmap progress). Filter by type/subject. Read-only.",
+    { type: z.enum(["pr_merged", "pr_closed", "issue"]).optional(), subject: z.string().optional(), limit: z.number().optional() },
+    async (args) => runTool(() => list_events(env.DB, args))
   );
 
   server.tool(
     "record_session",
-    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / milestone_proposals / focus). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
+    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
     IngestPayload.shape,
     // Same reconciling path as the cookie /ingest route: forward the full payload to
     // consume() under the bearer principal already in scope. Re-parse with the contract
     // so defaults (empty arrays) are applied and the type is exactly IngestPayload —
     // the SDK already validated against IngestPayload.shape, so this never throws.
     async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
+  );
+
+  server.tool(
+    "update_plan",
+    "ADMIN plan write: replace the roadmap narrative and create/update milestones (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Milestones not listed are untouched. Use via the update-plan skill.",
+    {
+      narrative: z.string(),
+      milestones: z.array(z.object({
+        id: z.number().int().optional(),
+        title: z.string(),
+        description: z.string().nullable().optional(),
+        phase: z.string().nullable().optional(),
+        target_date: z.string(),
+        status: z.enum(["upcoming", "in_progress", "done"]),
+        github_ref: z.union([z.number(), z.array(z.number())]).nullable().optional(),
+      })).default([]),
+    },
+    async (input) => runTool(() => write_plan(env.DB, input as PlanWrite, principal.login))
   );
 
   return server;

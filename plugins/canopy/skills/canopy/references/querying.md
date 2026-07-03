@@ -53,6 +53,8 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
 - **`query`** — you're searching/exploring/orienting by concept. Default choice.
 - **`get_doc <slug>`** — you already know the exact slug and want all its versions.
 - **`get_feed`** — you want the activity timeline (filter by author/tags/since).
-- **`get_roadmap`** — you want milestones + live GitHub progress.
+- **`get_roadmap`** — you want the roadmap plan: admin-authored narrative + milestones with cached,
+  event-derived progress (no live GitHub).
+- **`get_my_work`** — you want your own previous-activity + to-do projection from captured GitHub events.
 
 `query` is read-only and safe to call freely.
