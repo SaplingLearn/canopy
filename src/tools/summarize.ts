@@ -63,7 +63,10 @@ export function workersAiSummarizer(ai: Ai): Summarizer {
         if (response === null) return null;
         const trimmed = response.trim();
         return trimmed.length > 0 ? trimmed : null;
-      } catch {
+      } catch (err) {
+        // TEMPORARY diagnostic logging — remove once the production failure
+        // mode under sustained backfill load is identified (see tail output).
+        console.error("workersAiSummarizer failed:", err instanceof Error ? err.message : err);
         return null;
       }
     },
