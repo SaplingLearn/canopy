@@ -3,6 +3,7 @@ import { createMcpHandler } from "agents/mcp";
 import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
+import { isAdmin } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query } from "./tools/reads";
 import { getMyWork, list_events } from "./tools/mywork";
 import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
@@ -145,23 +146,29 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
   );
 
-  server.tool(
-    "update_plan",
-    "ADMIN plan write: replace the roadmap narrative and create/update milestones (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Milestones not listed are untouched. Use via the update-plan skill.",
-    {
-      narrative: z.string(),
-      milestones: z.array(z.object({
-        id: z.number().int().optional(),
-        title: z.string(),
-        description: z.string().nullable().optional(),
-        phase: z.string().nullable().optional(),
-        target_date: z.string(),
-        status: z.enum(["upcoming", "in_progress", "done"]),
-        github_ref: z.union([z.number(), z.array(z.number())]).nullable().optional(),
-      })).default([]),
-    },
-    async (input) => runTool(() => write_plan(env.DB, input as PlanWrite, principal.login))
-  );
+  // ADMIN-only: the plan write surface — non-admin principals don't even see the tool
+  // (conditional registration means it's absent from tools/list and calling it by
+  // name errors tool-not-found, since a fresh server is built per request with the
+  // principal already in scope).
+  if (isAdmin(env, principal.login)) {
+    server.tool(
+      "update_plan",
+      "ADMIN plan write: replace the roadmap narrative and create/update milestones (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Milestones not listed are untouched. Use via the update-plan skill.",
+      {
+        narrative: z.string(),
+        milestones: z.array(z.object({
+          id: z.number().int().optional(),
+          title: z.string(),
+          description: z.string().nullable().optional(),
+          phase: z.string().nullable().optional(),
+          target_date: z.string(),
+          status: z.enum(["upcoming", "in_progress", "done"]),
+          github_ref: z.union([z.number(), z.array(z.number())]).nullable().optional(),
+        })).default([]),
+      },
+      async (input) => runTool(() => write_plan(env.DB, input as PlanWrite, principal.login))
+    );
+  }
 
   return server;
 }

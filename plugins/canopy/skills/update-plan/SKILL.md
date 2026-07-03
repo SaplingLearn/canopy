@@ -69,6 +69,9 @@ Once confirmed, make **exactly one** call:
 
 ## Hard rules (invariants)
 
+- **Server-gated to `ADMIN_LOGINS`.** `update_plan` is only registered for admin principals — a
+  non-admin bearer doesn't have the tool at all (absent from `tools/list`, tool-not-found if called).
+  This skill's own instructions are a second layer, not the enforcement boundary.
 - **Explicit only.** Never fire without a direct admin ask.
 - **Read before write, every time** — step 1 is not optional, even for a small edit.
 - **Confirm the diff before writing** — no silent writes.

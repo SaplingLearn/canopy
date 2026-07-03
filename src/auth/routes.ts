@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./principal";
+import { isAdmin } from "./principal";
 import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, isActiveOrgMember } from "./github";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
@@ -73,7 +74,7 @@ authApp.get("/callback", async (c) => {
 authApp.get("/me", async (c) => {
   const login = c.get("principal").login;
   const row = await first<{ name: string | null; avatar_url: string | null }>(c.env.DB, `SELECT name, avatar_url FROM users WHERE github_login = ?`, login);
-  return c.json({ login, name: row?.name ?? null, avatar_url: row?.avatar_url ?? null, org: SAPLING_ORG });
+  return c.json({ login, name: row?.name ?? null, avatar_url: row?.avatar_url ?? null, org: SAPLING_ORG, admin: isAdmin(c.env, login) });
 });
 
 // GATED (by sessionGate in src/routes.ts): revoke this session.

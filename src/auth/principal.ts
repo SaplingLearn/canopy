@@ -9,6 +9,16 @@ export interface Principal {
 
 export type AppEnv = { Bindings: Env; Variables: { principal: Principal } };
 
+/**
+ * Is this login an admin? ADMIN_LOGINS is a comma-separated allowlist of GitHub
+ * logins permitted to run admin actions (e.g. the server-side backfill). An
+ * absent/empty var means nobody is an admin — fails closed.
+ */
+export function isAdmin(env: Env, login: string): boolean {
+  const allow = (env.ADMIN_LOGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return allow.includes(login);
+}
+
 // The only routes reachable without a session. Everything else is gated.
 const PUBLIC_PATHS = new Set(["/auth/login", "/auth/callback"]);
 

@@ -119,9 +119,15 @@ export function listMilestoneProposals(): Promise<MilestoneProposalRow[]> {
   return getJson<{ proposals: MilestoneProposalRow[] }>("/milestone-proposals").then((r) => r.proposals);
 }
 
-export interface Me { login: string; name: string | null; avatar_url: string | null; org: string; }
+export interface Me { login: string; name: string | null; avatar_url: string | null; org: string; admin: boolean; }
 export function getMe(): Promise<Me> {
   return getJson<Me>("/auth/me");
+}
+
+// ADMIN action: trigger the server-side GitHub backfill (admin-only route). The
+// worker holds the service token and fetches GitHub directly — no webhook secret.
+export function adminBackfill(): Promise<{ ok: boolean; captured: number; unchanged: number; prs: number; issues: number }> {
+  return postJson("/admin/backfill", {});
 }
 
 export function getMyDashboard(): Promise<DashboardData> {

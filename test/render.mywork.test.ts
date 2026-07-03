@@ -140,13 +140,13 @@ describe("todoCard", () => {
 // ── full render() — My Work screen composition ──────────────────────────────
 
 describe("render() — My Work screen", () => {
-  function stateWithDashboard(data: DashboardData): ReturnType<typeof initialState> {
+  function stateWithDashboard(data: DashboardData, admin = false): ReturnType<typeof initialState> {
     const s = initialState();
     return {
       ...s,
       view: "app",
       screen: "mywork",
-      me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn" },
+      me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn", admin },
       mywork: { status: "ok", data },
     };
   }
@@ -202,5 +202,19 @@ describe("render() — My Work screen", () => {
     const html = render(stateWithDashboard(data));
     expect(html).toContain("Previous activity");
     expect(html).toContain("To-do");
+  });
+
+  // ── admin-only Sync GitHub button (server-side backfill trigger) ────────────
+  it("renders the Sync GitHub backfill button for an admin me", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const html = render(stateWithDashboard(data, true));
+    expect(html).toContain('data-act="adminBackfill"');
+    expect(html).toContain("Sync GitHub");
+  });
+
+  it("does NOT render the Sync GitHub button for a non-admin me", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const html = render(stateWithDashboard(data, false));
+    expect(html).not.toContain('data-act="adminBackfill"');
   });
 });
