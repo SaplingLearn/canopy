@@ -1,9 +1,11 @@
 import type { Env } from "../env";
-import { nowIso } from "../db";
+import type { PrSummaryRow } from "@shared/rows";
+import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
 import { type Summarizer, workersAiSummarizer, storePrSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
+import { parseStructuredSummary } from "@shared/prSummary";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
 // (which signs synthetic webhook deliveries with the webhook secret), this runs
@@ -19,13 +21,13 @@ import { applyEventProgress } from "./progress";
 
 const GH_API = "application/vnd.github+json";
 const USER_AGENT = "canopy";
-const DAYS_BACK = 14;
 
 export interface BackfillResult {
   ok: boolean;
   error?: string;
   captured: number;
   unchanged: number;
+  summarized: number;
   prs: number;
   issues: number;
 }
@@ -120,12 +122,12 @@ function issueDelivery(issue: GhIssueListItem) {
 export async function runBackfill(
   env: Env,
   principalLogin: string,
-  opts?: { fetchImpl?: typeof fetch; summarizer?: Summarizer | null; now?: string }
+  opts?: { fetchImpl?: typeof fetch; summarizer?: Summarizer | null }
 ): Promise<BackfillResult> {
   const token = env.GITHUB_SERVICE_TOKEN;
   const repo = env.GITHUB_REPO;
   if (!token || !repo) {
-    return { ok: false, error: "service token or repo not configured", captured: 0, unchanged: 0, prs: 0, issues: 0 };
+    return { ok: false, error: "service token or repo not configured", captured: 0, unchanged: 0, summarized: 0, prs: 0, issues: 0 };
   }
 
   const doFetch = opts?.fetchImpl ?? fetch;
@@ -136,26 +138,18 @@ export async function runBackfill(
     "user-agent": USER_AGENT,
     "x-github-api-version": "2022-11-28",
   };
-  const cutoffMs = new Date(opts?.now ?? nowIso()).getTime() - DAYS_BACK * 24 * 60 * 60 * 1000;
 
-  // (a) Closed PRs updated in the last 14 days. Sorted updated-desc, so we stop
-  //     paginating at the first item whose updated_at predates the cutoff.
+  // (a) All closed PRs, fully paginated — full history, not just recent
+  //     activity, so a Sync also surfaces PRs merged before this route existed.
   const prList: GhPrListItem[] = [];
   {
     let url: string | null = `https://api.github.com/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
-    let done = false;
-    while (url && !done) {
+    while (url) {
       const res: Response = await doFetch(url, { headers });
       if (!res.ok) break;
       const page = (await res.json()) as GhPrListItem[];
-      for (const pr of page) {
-        if (pr.updated_at && new Date(pr.updated_at).getTime() < cutoffMs) {
-          done = true;
-          break;
-        }
-        prList.push(pr);
-      }
-      url = done ? null : nextLink(res);
+      prList.push(...page);
+      url = nextLink(res);
     }
   }
 
@@ -178,6 +172,7 @@ export async function runBackfill(
 
   let captured = 0;
   let unchanged = 0;
+  let summarized = 0;
 
   for (const pr of prList) {
     const payload = prClosedDelivery(pr);
@@ -186,8 +181,20 @@ export async function runBackfill(
       const res = await ingestEvent(env.DB, ev, principalLogin);
       if (res.outcome === "written") {
         captured++;
-        // Mirror handleGithubWebhook's summary seam: parse THIS PR's own raw and
-        // store a capture-time summary (storePrSummary never throws).
+      } else {
+        unchanged++;
+      }
+
+      // (Re)summarize unless it's already in the structured format — decoupled
+      // from the event-capture outcome so a Sync also migrates PRs captured
+      // before the structured format existed, not just brand-new ones.
+      const existing = await first<PrSummaryRow>(
+        env.DB,
+        `SELECT summary FROM pr_summaries WHERE semantic_key = ?`,
+        ev.semantic_key
+      );
+      const alreadyStructured = existing !== null && parseStructuredSummary(existing.summary) !== null;
+      if (!alreadyStructured) {
         const parsed = JSON.parse(ev.raw) as { pr: { number: number; title: string; body: string | null } };
         await storePrSummary(env.DB, summarizer, {
           semantic_key: ev.semantic_key,
@@ -195,8 +202,7 @@ export async function runBackfill(
           title: parsed.pr.title,
           body: parsed.pr.body ?? "",
         });
-      } else {
-        unchanged++;
+        summarized++;
       }
     }
   }
@@ -216,5 +222,5 @@ export async function runBackfill(
     }
   }
 
-  return { ok: true, captured, unchanged, prs: prList.length, issues: issueList.length };
+  return { ok: true, captured, unchanged, summarized, prs: prList.length, issues: issueList.length };
 }

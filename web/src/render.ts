@@ -340,7 +340,7 @@ function header(s: AppState): string {
   // ADMIN-only, My Work screen: trigger the server-side GitHub backfill. Rendered
   // only when /auth/me returned admin:true (outline button, promote-class action).
   const myworkControls = s.screen === "mywork" && s.me?.admin
-    ? `<button data-act="adminBackfill" title="Fetch recent GitHub PRs + issues" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">
+    ? `<button data-act="adminBackfill" title="Fetch all GitHub PRs + issues" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
       Sync GitHub
     </button>` : "";
