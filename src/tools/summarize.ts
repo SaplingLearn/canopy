@@ -15,6 +15,17 @@ export interface Summarizer {
 
 const WORKERS_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
+// Exported for a content assertion in test/summarize.test.ts — the two-field
+// shape here is exactly what shared/prSummary.ts's parseStructuredSummary
+// recognizes; keep them in sync if either changes.
+export const SUMMARIZER_SYSTEM_PROMPT =
+  "Summarize this one pull request's description for a team activity feed. " +
+  "Respond with ONLY this exact markdown structure, nothing else:\n" +
+  "**What changed:** <1-2 short factual sentences>\n" +
+  "**Why:** <1 short sentence stating the description's own stated rationale>\n" +
+  'If the description states no rationale, omit the "**Why:**" line entirely. ' +
+  "Do not speculate beyond the text.";
+
 /** Workers AI-backed summarizer. Bounded to THAT PR's own title+body — no other
  *  context is sent. Never throws: any failure (network, empty output, malformed
  *  response) resolves to null so the caller falls back to excerptSummary. */
@@ -25,11 +36,7 @@ export function workersAiSummarizer(ai: Ai): Summarizer {
       try {
         const result = await ai.run(WORKERS_AI_MODEL, {
           messages: [
-            {
-              role: "system",
-              content:
-                "Summarize this one pull request's description in 2-3 short markdown sentences for a team activity feed. Do not speculate beyond the text.",
-            },
+            { role: "system", content: SUMMARIZER_SYSTEM_PROMPT },
             { role: "user", content: `Title: ${title}\n\nBody: ${body}` },
           ],
         });
