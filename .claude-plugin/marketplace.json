@@ -9,7 +9,7 @@
     {
       "name": "canopy",
       "source": "./plugins/canopy",
-      "description": "orient→work→record skills (canopy, load-context, record-session) + the auto-wired Canopy MCP server. Set $CANOPY_MCP_TOKEN to your personal bearer (minted in Canopy → Settings → MCP access tokens).",
+      "description": "orient→work→record skills (canopy, load-context, record-session) + my-work + the admin plan skills (read-plan, update-plan) + the auto-wired Canopy MCP server. Set $CANOPY_MCP_TOKEN to your personal bearer (minted in Canopy → Settings → MCP access tokens).",
       "keywords": ["canopy", "context", "mcp", "team-memory"]
     }
   ]

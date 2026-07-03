@@ -1,7 +1,7 @@
 {
   "name": "canopy",
-  "description": "Canopy — the team's shared context store. Bundles the orient→work→record skills (canopy, load-context, record-session) and auto-wires the Canopy MCP server (read tools + the session-end writer). Requires a personal bearer token in $CANOPY_MCP_TOKEN.",
-  "version": "0.1.0",
+  "description": "Canopy — the team's shared context store. Bundles the orient→work→record skills (canopy, load-context, record-session), the personal my-work view, and the admin plan skills (read-plan, update-plan), and auto-wires the Canopy MCP server. Requires a personal bearer token in $CANOPY_MCP_TOKEN.",
+  "version": "0.2.0",
   "author": {
     "name": "SaplingLearn",
     "url": "https://github.com/SaplingLearn"
