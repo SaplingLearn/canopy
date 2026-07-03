@@ -13,6 +13,8 @@ beforeEach(async () => {
   await env.DB.exec(
     // pr_summaries.semantic_key REFERENCES events(semantic_key) — delete the
     // child before its parent, or the FK constraint rejects the parent delete.
-    "DELETE FROM processed_items; DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;"
+    // people gains a runtime write path (identity resolve), so it is reset to
+    // the 0012 seed each test rather than left to accumulate mappings.
+    "DELETE FROM processed_items; DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM identity_tasks; DELETE FROM people; INSERT INTO people (login, person) VALUES ('AndresL230', 'Andres'), ('Jose-Gael-Cruz-Lopez', 'Jose'), ('lpcooper-arch', 'Luke'), ('Darkest-Teddy', 'Jack'); DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;"
   );
 });
