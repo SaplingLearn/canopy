@@ -168,6 +168,46 @@ export async function ensure_identity_task(db: DB, login: string): Promise<void>
 }
 
 /**
+ * Human placement (Maintenance group): resolve an identity task by mapping the
+ * login to a person. Performs the `people` table's ONLY runtime write (an
+ * upsert over the 0012 seed), then soft-resolves the task with the audit
+ * columns. A direct authored write in the human-placement class — never a gate
+ * re-run. My Work resolves login→person at read time, so the mapping
+ * retroactively surfaces every already-captured event for this login with no
+ * backfill. Idempotent-safe: mapping an already-resolved task surfaces the
+ * recorded mapping without re-writing anything.
+ */
+export async function map_identity(
+  db: DB,
+  login: string,
+  person: string,
+  by: string
+): Promise<{ login: string; person: string; status: "resolved" }> {
+  const task = await first<IdentityTaskRow>(db, `SELECT * FROM identity_tasks WHERE login = ?`, login);
+  if (!task) throw new Error(`no such identity task: ${login}`);
+  if (task.status === "resolved") {
+    // Already resolved — idempotent no-op, surface the recorded mapping.
+    const existing = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
+    return { login, person: existing?.person ?? person, status: "resolved" };
+  }
+  await run(
+    db,
+    `INSERT INTO people (login, person) VALUES (?, ?)
+     ON CONFLICT(login) DO UPDATE SET person = excluded.person`,
+    login,
+    person
+  );
+  await run(
+    db,
+    `UPDATE identity_tasks SET status = 'resolved', resolved_at = ?, resolved_by = ? WHERE login = ?`,
+    nowIso(),
+    by,
+    login
+  );
+  return { login, person, status: "resolved" };
+}
+
+/**
  * Human confirmation: promote a staged doc version into the live doc.
  * Non-destructive — prior versions remain. Rejects if the version is missing or not staged.
  */
