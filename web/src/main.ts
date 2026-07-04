@@ -9,14 +9,11 @@ import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   completeMilestone,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
+  listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
-// The Maintenance surface is mock-driven until the backend reads land: its
-// actions below mutate UI state over the mock module — no fetches. Review is
-// wired to real reads/writes above.
-import { MOCK_UNPLACED } from "./triage-mock";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -233,6 +230,38 @@ function loadDraftAdrsIfNeeded(): void {
   else rerender();
 }
 
+function loadNeedsTriage(): void {
+  state.needsTriage = { status: "loading", data: state.needsTriage.data };
+  rerender();
+  listNeedsTriage()
+    .then((rows) => { state.needsTriage = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.needsTriage = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadNeedsTriageIfNeeded(): void {
+  if (state.needsTriage.status === "idle") loadNeedsTriage();
+  else rerender();
+}
+
+function loadIdentityTasks(): void {
+  state.identityTasks = { status: "loading", data: state.identityTasks.data };
+  rerender();
+  listIdentityTasks()
+    .then((rows) => { state.identityTasks = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.identityTasks = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadIdentityTasksIfNeeded(): void {
+  if (state.identityTasks.status === "idle") loadIdentityTasks();
+  else rerender();
+}
+
 function flash(msg: string): void {
   state.toast = msg;
   rerender();
@@ -330,7 +359,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
     case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
-    case "goMaintenance": state.screen = "maintenance"; break;
+    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
     case "goGuide": state.screen = "guide"; break;
@@ -469,22 +498,43 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       if (arg) state.assignTags = state.assignTags.includes(arg) ? state.assignTags.filter((t) => t !== arg) : [...state.assignTags, arg];
       break;
     case "maintFile": {
-      // Interim (mock-fed until Task 8 posts assignTriage): validate + close + flash.
       if (!arg || state.assignOpen !== arg || !state.assignKind) return;
       if (state.assignKind === "doc" && !state.assignSection) return;
-      if (state.unplacedDone.includes(arg)) return;
-      state.unplacedDone.push(arg);
-      state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = [];
-      flash("Filed (mock)");
+      const id = Number(arg);
+      if (!Number.isInteger(id)) return;
+      const kind = state.assignKind;
+      const target: AssignTarget = { type: kind };
+      if (kind === "doc") {
+        target.section = state.assignSection ?? undefined;
+        target.space = state.assignSpace === "sapling" || state.assignSpace === "canopy" ? state.assignSpace : undefined;
+      }
+      if (kind === "feed") target.tags = state.assignTags;
+      assignTriage(id, target)
+        .then(() => {
+          state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = [];
+          flash("Filed — placed through the gate and resolved");
+          loadNeedsTriage();
+          if (kind === "doc") loadProposals();   // an assigned doc lands as a staged proposal
+          if (kind === "adr") loadDraftAdrs();   // an assigned decision lands as a draft
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          // e.g. "cannot assign a free-form triage item; discard it instead" — verbatim from the gate
+          flash(e instanceof ApiError ? e.message : "Could not file this item");
+        });
       return;
     }
     case "maintDiscard": {
       if (!arg) return;
-      const item = MOCK_UNPLACED.find((u) => u.id === arg);
-      if (!item || state.unplacedDone.includes(arg)) return;
-      state.unplacedDone.push(arg);
+      const id = Number(arg);
+      if (!Number.isInteger(id)) return;
       if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = []; }
-      flash(`Discarded — “${item.title}”`);
+      discardTriage(id)
+        .then(() => { flash("Discarded — parked, nothing changed"); loadNeedsTriage(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not discard");
+        });
       return;
     }
     case "identityPick": {
@@ -497,13 +547,20 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       break;
     }
     case "identityMap": {
-      if (!arg || !state.mapPicks[arg]) return;            // no auto-select: a person must be picked
-      if (state.mapConfirm !== arg) { state.mapConfirm = arg; break; } // step 1: show the concrete effect
+      if (!arg) return;
+      const person = state.mapPicks[arg];
+      if (!person) return;                                              // no auto-select: a person must be picked
+      if (state.mapConfirm !== arg) { state.mapConfirm = arg; break; }  // step 1: show the concrete effect
       state.mapConfirm = null;
-      // Interim (mock-fed until Task 8 posts mapIdentity):
-      if (state.identityDone.includes(arg)) return;
-      state.identityDone.push(arg);
-      flash("Mapped (mock)");
+      mapIdentity(arg, person)
+        .then(() => {
+          flash(`Mapped — ${arg} → ${person}; their captured activity is now attributed`);
+          loadIdentityTasks();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not map login");
+        });
       return;
     }
     // ── Settings ─────────────────────────────────────────────────────────────
@@ -580,6 +637,12 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
       state.displayName = me.name ?? me.login;
       state.view = "app";
       loadMyWork();
+      // Boot-time loads for the sidebar triage badges — the counts must be
+      // right on every screen, not just after visiting Review/Maintenance.
+      loadProposals();
+      loadDraftAdrs();
+      loadNeedsTriage();
+      loadIdentityTasks();
     })
     .catch(() => {
       // Unauthorized or any error → show login

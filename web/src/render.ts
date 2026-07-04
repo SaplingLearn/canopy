@@ -3,8 +3,8 @@
 // `.map().join('')`, `sc-if` to ternaries, and `onClick="{{ fn }}"` to
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
-import type { Me, StagedProposal } from "./api";
-import type { FeedRow, DocRow, DocVersionRow, AdrRow } from "@shared/rows";
+import type { Me, StagedProposal, IdentityTask } from "./api";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
@@ -14,8 +14,7 @@ import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
-import { reviewItemsFromReads, ASSIGN_OPTIONS } from "./triage-map";
-import { MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromLogins } from "./triage-map";
 
 export type DocSpace = "canopy" | "sapling";
 
@@ -48,15 +47,15 @@ export interface AppState {
   docSpace: DocSpace;
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<PlanView>;
-  // Triage surfaces (Review + Maintenance). Review is wired: two Loadable
-  // slices below; *Done arrays remain only for the still-mock Maintenance.
+  // Triage surfaces (Review + Maintenance) — four Loadable slices, one per
+  // list read; each surface's counts/props derive straight from these.
   proposals: Loadable<StagedProposal[]>;
   draftAdrs: Loadable<AdrRow[]>;
+  needsTriage: Loadable<NeedsTriageRow[]>;
+  identityTasks: Loadable<IdentityTask[]>;
   reviewFilter: ReviewFilter;
   reviewSel: string | null;
   reviewDiffView: DiffViewMode;
-  unplacedDone: string[];
-  identityDone: string[];
   assignOpen: string | null;
   assignKind: AssignKind | null;
   assignSection: string | null;
@@ -97,8 +96,9 @@ export function initialState(): AppState {
     roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
     proposals: { status: "idle", data: [] },
     draftAdrs: { status: "idle", data: [] },
+    needsTriage: { status: "idle", data: [] },
+    identityTasks: { status: "idle", data: [] },
     reviewFilter: "all", reviewSel: null, reviewDiffView: "unified",
-    unplacedDone: [], identityDone: [],
     assignOpen: null, assignKind: null, assignSection: null, assignSpace: null, assignTags: [],
     mapConfirm: null,
     mapPicks: {},
@@ -114,9 +114,7 @@ export function initialState(): AppState {
   };
 }
 
-// ── triage surface data (mock-fed until the backend reads land) ──────────────
-// The ONLY place the mock module meets the render tree: swap these builders to
-// real reads at wire time and the components underneath stay untouched.
+// ── triage surface data (real reads — the mapping layer lives in triage-map.ts) ──
 export function reviewProps(s: AppState): ReviewProps {
   return {
     items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data),
@@ -128,27 +126,25 @@ export function reviewProps(s: AppState): ReviewProps {
 
 export function maintenanceProps(s: AppState): MaintenanceProps {
   return {
-    unplaced: MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)),
+    unplaced: s.needsTriage.data.map(unplacedFromRow),
     assign: ASSIGN_OPTIONS,
     assignOpen: s.assignOpen,
     assignKind: s.assignKind,
     assignSection: s.assignSection,
     assignSpace: s.assignSpace,
     assignTags: s.assignTags,
-    identity: MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)),
-    people: MOCK_PEOPLE,
+    identity: s.identityTasks.data.map(identityFromTask),
+    people: peopleFromLogins([...s.feedAuthors, ...(s.me ? [s.me.login] : [])]),
     mapPicks: s.mapPicks,
     mapConfirm: s.mapConfirm,
   };
 }
 
-/** Sidebar counts for the two triage entries — the lengths of the list reads. */
+/** Sidebar counts for the two triage entries — the lengths of the four list reads. */
 export function triageCounts(s: AppState): { review: number; maintenance: number } {
   return {
     review: s.proposals.data.length + s.draftAdrs.data.length,
-    maintenance:
-      MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)).length +
-      MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)).length,
+    maintenance: s.needsTriage.data.length + s.identityTasks.data.length,
   };
 }
 
@@ -1157,6 +1153,13 @@ function reviewScreen(s: AppState): string {
   return reviewView(reviewProps(s));
 }
 
+/** Maintenance screen with slice-level loading/error states around the pure view. */
+function maintenanceScreen(s: AppState): string {
+  if (s.needsTriage.status === "error" || s.identityTasks.status === "error") return notice("Couldn't load maintenance.");
+  if (slicePending(s.needsTriage) || slicePending(s.identityTasks)) return notice("Loading maintenance&hellip;");
+  return maintenanceView(maintenanceProps(s));
+}
+
 // ── root ─────────────────────────────────────────────────────────────────────
 function screenBody(s: AppState): string {
   switch (s.screen) {
@@ -1165,7 +1168,7 @@ function screenBody(s: AppState): string {
     case "docs": return docsView(s);
     case "roadmap": return roadmapView(s);
     case "review": return reviewScreen(s);
-    case "maintenance": return maintenanceView(maintenanceProps(s));
+    case "maintenance": return maintenanceScreen(s);
     case "search": return searchView(s);
     case "settings": return settingsView(s);
     case "guide": return guideView(s);
