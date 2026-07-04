@@ -56,7 +56,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
-  `0015_drop_user_token` [drops `users.github_token`]).
+  `0015_drop_user_token` [drops `users.github_token`], `0016_identity_tasks`, then
+  `0017_issue_summaries` [assigned-issue summaries]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started) served via the ASSETS binding; `web/src/markdown.ts` renders PR summaries and the
   roadmap narrative as styled HTML.

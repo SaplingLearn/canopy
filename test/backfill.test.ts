@@ -283,6 +283,19 @@ describe("runBackfill — issue summarization", () => {
     expect(rows[0].summary).toBe("What the issue is and what to do.");
   });
 
+  it("does not count an issue toward issueSummarizedCount when the AI call fails and falls back to excerpt", async () => {
+    const nullSummarizer: Summarizer = { model: "stub", summarize: async () => null }; // forces the excerpt fallback
+    const fetchImpl = stubFetch([], [openIssue]);
+    const firstRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl, summarizer: countingSummarizer("unused"), issueSummarizer: nullSummarizer, summaryCallDelayMs: 0,
+    });
+    expect(firstRun.summarized).toBe(1); // the AI call was attempted
+    expect(firstRun.issueSummarizedCount).toBe(0); // but excerpt fallback never counts as "done"
+
+    const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 20);
+    expect(rows[0].model).toBe("excerpt");
+  });
+
   it("never summarizes an unassigned open issue", async () => {
     const issueSummarizer = countingSummarizer("should never be called");
     const res = await runBackfill(envWith(), "admin-user", {

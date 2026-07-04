@@ -26,8 +26,8 @@ const USER_AGENT = "canopy";
 // instantly) — a rate limit or per-request ceiling, not a code defect. Cap
 // how many summarizer calls one invocation makes, and pace them, so a single
 // Sync stays comfortably under whatever that limit is; a backlog beyond the
-// cap is picked up by the next Sync click (skip-if-structured already makes
-// that safe — nothing already summarized is redone).
+// cap is picked up by the next Sync click (the model≠excerpt skip-check
+// already makes that safe — nothing already summarized is redone).
 const SUMMARY_BATCH_LIMIT = 20;
 const SUMMARY_CALL_DELAY_MS = 500;
 
@@ -308,13 +308,15 @@ export async function runBackfill(
         continue;
       }
 
-      await storeIssueSummary(env.DB, issueSummarizer, {
+      const stored = await storeIssueSummary(env.DB, issueSummarizer, {
         issue_number: issue.number,
         title: issue.title,
         body: issue.body ?? "",
       });
       summarized++;
-      issueSummarizedCount++;
+      // storeIssueSummary can still fall back to excerpt if the AI call failed —
+      // only count it toward "done" if it actually got a real summary.
+      if (stored.model !== "excerpt") issueSummarizedCount++;
 
       if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));

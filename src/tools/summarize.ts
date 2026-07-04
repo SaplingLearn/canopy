@@ -82,7 +82,8 @@ function makeWorkersAiSummarizer(ai: Ai, systemPrompt: string): Summarizer {
       } catch (err) {
         // TEMPORARY diagnostic logging — remove once the production failure
         // mode under sustained backfill load is identified (see tail output).
-        console.error("workersAiSummarizer failed:", err instanceof Error ? err.message : err);
+        const kind = systemPrompt === SUMMARIZER_SYSTEM_PROMPT ? "pr" : "issue";
+        console.error(`workersAiSummarizer (${kind}) failed:`, err instanceof Error ? err.message : err);
         return null;
       }
     },
