@@ -117,6 +117,7 @@ describe("runBackfill", () => {
     expect(res.unchanged).toBe(0);
     expect(res.summarized).toBe(2); // one summary per newly-captured PR
     expect(res.summaryBudgetExhausted).toBe(false); // well under the default batch limit
+    expect(res.structuredCount).toBe(0); // "AI summary" isn't structured — neither counts toward "done"
 
     const events = await all<EventRow>(env.DB, `SELECT * FROM events ORDER BY ref_number`);
     expect(events).toHaveLength(3);
@@ -153,6 +154,7 @@ describe("runBackfill", () => {
     const fetchImpl = stubFetch([mergedPr], []);
     const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: plainSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.summarized).toBe(1);
+    expect(firstRun.structuredCount).toBe(0); // plain prose never counts as "done"
     expect(plainSummarizer.calls).toBe(1);
 
     // Second run: the event is unchanged, but the stored summary is still
@@ -161,6 +163,7 @@ describe("runBackfill", () => {
     expect(secondRun.captured).toBe(0);
     expect(secondRun.unchanged).toBe(1);
     expect(secondRun.summarized).toBe(1);
+    expect(secondRun.structuredCount).toBe(0);
     expect(plainSummarizer.calls).toBe(2);
   });
 
@@ -169,12 +172,14 @@ describe("runBackfill", () => {
     const fetchImpl = stubFetch([mergedPr], []);
     const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: structuredSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.summarized).toBe(1);
+    expect(firstRun.structuredCount).toBe(1);
     expect(structuredSummarizer.calls).toBe(1);
 
     // Second run: the stored summary already matches the structured convention
     // → skipped, no second summarizer call.
     const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: structuredSummarizer, summaryCallDelayMs: 0 });
     expect(secondRun.summarized).toBe(0);
+    expect(secondRun.structuredCount).toBe(1); // already-structured PR still counts toward "done"
     expect(structuredSummarizer.calls).toBe(1);
 
     const summary = await first<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE pr_number = ?`, 10);
@@ -188,7 +193,7 @@ describe("runBackfill", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.error).toContain("service token or repo");
-    expect(res).toMatchObject({ captured: 0, unchanged: 0, summarized: 0, summaryBudgetExhausted: false, prs: 0, issues: 0 });
+    expect(res).toMatchObject({ captured: 0, unchanged: 0, summarized: 0, summaryBudgetExhausted: false, structuredCount: 0, prs: 0, issues: 0 });
     expect(await all(env.DB, `SELECT * FROM events`)).toHaveLength(0);
   });
 
@@ -204,6 +209,7 @@ describe("runBackfill", () => {
     });
     expect(firstRun.summarized).toBe(2);
     expect(firstRun.summaryBudgetExhausted).toBe(true);
+    expect(firstRun.structuredCount).toBe(2); // 2 of 3 done so far — the "X of Y" progress bar's numerator
     expect(summarizer.calls).toBe(2);
 
     const secondRun = await runBackfill(envWith(), "admin-user", {
@@ -214,6 +220,7 @@ describe("runBackfill", () => {
     });
     expect(secondRun.summarized).toBe(1); // only prC was left
     expect(secondRun.summaryBudgetExhausted).toBe(false);
+    expect(secondRun.structuredCount).toBe(3); // all 3 now done
     expect(summarizer.calls).toBe(3);
 
     const rows = await all<PrSummaryRow>(env.DB, `SELECT pr_number FROM pr_summaries ORDER BY pr_number`);

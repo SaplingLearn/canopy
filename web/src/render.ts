@@ -64,7 +64,7 @@ export interface AppState {
   milestoneProps: Loadable<MilestoneProposalRow[]>;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
-  backfillSync: { summarizedSoFar: number; batchesSoFar: number } | null;
+  backfillSync: { structuredCount: number; prsTotal: number } | null;
 }
 
 export function initialState(): AppState {
@@ -343,14 +343,15 @@ function header(s: AppState): string {
 
   // ADMIN-only, My Work screen: trigger the server-side GitHub backfill. Rendered
   // only when /auth/me returned admin:true (outline button, promote-class action).
-  // While s.backfillSync is set, the button is disabled and shows a running
-  // summarized-so-far count — a sync can span multiple batched requests
-  // (src/tools/backfill.ts caps AI calls per invocation), driven by main.ts.
+  // While s.backfillSync is set, the button is disabled (progress itself shows
+  // in the modal below — see backfillSyncModal) — a sync can span multiple
+  // batched requests (src/tools/backfill.ts caps AI calls per invocation),
+  // driven by main.ts.
   const syncing = s.backfillSync !== null;
   const myworkControls = s.screen === "mywork" && s.me?.admin
     ? `<button data-act="adminBackfill" title="${syncing ? "Sync in progress" : "Fetch all GitHub PRs + issues"}" class="cnpy-outlinebtn" ${syncing ? "disabled" : ""} style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);${syncing ? "opacity:.65;cursor:default" : ""}">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ${syncing ? 'style="animation:cnpy-spin .8s linear infinite"' : ""}><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
-      ${syncing ? `Syncing&hellip; ${s.backfillSync!.summarizedSoFar} summarized` : "Sync GitHub"}
+      ${syncing ? "Syncing&hellip;" : "Sync GitHub"}
     </button>` : "";
 
   const themeBtn = `<button data-act="cycleTheme" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
@@ -1483,10 +1484,30 @@ function toastBlock(msg: string): string {
   </div>`;
 }
 
+// Centered modal shown for the duration of an admin Sync GitHub run (possibly
+// several batched requests — src/tools/backfill.ts caps AI calls per
+// invocation). structuredCount/prsTotal are absolute snapshots from the most
+// recent batch, not accumulated client-side, so the bar always reflects real
+// server-side state.
+function backfillSyncModal(sync: { structuredCount: number; prsTotal: number }): string {
+  const pct = sync.prsTotal > 0 ? Math.round((sync.structuredCount / sync.prsTotal) * 100) : 0;
+  return `<div style="position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55)">
+    <div style="width:360px;border:1px solid var(--border-strong);border-radius:14px;padding:28px 30px;background:var(--bg);box-shadow:0 20px 60px rgba(0,0,0,.45);text-align:center">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="animation:cnpy-spin .8s linear infinite;margin-bottom:14px"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">Syncing GitHub PR summaries</div>
+      <div style="font-size:12.5px;color:var(--fg-55);margin-bottom:16px">${sync.structuredCount} of ${sync.prsTotal} PRs summarized</div>
+      <div style="height:8px;border-radius:999px;background:var(--hover);overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:999px;transition:width .3s ease"></div>
+      </div>
+    </div>
+  </div>`;
+}
+
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
   return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" data-tq="${s.triageQueue}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
     ${s.view === "auth" ? authView(s) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
+    ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
   </div>`;
 }

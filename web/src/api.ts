@@ -132,6 +132,7 @@ export function adminBackfill(): Promise<{
   unchanged: number;
   summarized: number;
   summaryBudgetExhausted: boolean;
+  structuredCount: number;
   prs: number;
   issues: number;
 }> {

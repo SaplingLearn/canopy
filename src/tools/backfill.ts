@@ -39,6 +39,8 @@ export interface BackfillResult {
   unchanged: number;
   summarized: number;
   summaryBudgetExhausted: boolean;
+  /** How many of `prs` currently have a structured summary — the "X of Y" the frontend shows. */
+  structuredCount: number;
   prs: number;
   issues: number;
 }
@@ -150,6 +152,7 @@ export async function runBackfill(
       unchanged: 0,
       summarized: 0,
       summaryBudgetExhausted: false,
+      structuredCount: 0,
       prs: 0,
       issues: 0,
     };
@@ -201,6 +204,10 @@ export async function runBackfill(
   let unchanged = 0;
   let summarized = 0;
   let summaryBudgetExhausted = false;
+  // Running count of PRs that end this call with a structured summary — either
+  // already had one, or got one just now. Paired with prList.length, this is
+  // the "X of Y" progress the frontend shows across a multi-batch sync.
+  let structuredCount = 0;
 
   for (const pr of prList) {
     const payload = prClosedDelivery(pr);
@@ -222,7 +229,10 @@ export async function runBackfill(
         ev.semantic_key
       );
       const alreadyStructured = existing !== null && parseStructuredSummary(existing.summary) !== null;
-      if (alreadyStructured) continue;
+      if (alreadyStructured) {
+        structuredCount++;
+        continue;
+      }
 
       if (summarized >= summaryBatchLimit) {
         summaryBudgetExhausted = true;
@@ -230,13 +240,16 @@ export async function runBackfill(
       }
 
       const parsed = JSON.parse(ev.raw) as { pr: { number: number; title: string; body: string | null } };
-      await storePrSummary(env.DB, summarizer, {
+      const stored = await storePrSummary(env.DB, summarizer, {
         semantic_key: ev.semantic_key,
         pr_number: parsed.pr.number,
         title: parsed.pr.title,
         body: parsed.pr.body ?? "",
       });
       summarized++;
+      // storePrSummary can still fall back to excerpt if the AI call failed —
+      // only count it toward "done" if it actually landed in structured form.
+      if (parseStructuredSummary(stored.summary) !== null) structuredCount++;
 
       // Pace summarizer calls so one invocation doesn't burst past whatever
       // limit caused the wall above — skip the trailing delay once the batch
@@ -262,5 +275,14 @@ export async function runBackfill(
     }
   }
 
-  return { ok: true, captured, unchanged, summarized, summaryBudgetExhausted, prs: prList.length, issues: issueList.length };
+  return {
+    ok: true,
+    captured,
+    unchanged,
+    summarized,
+    summaryBudgetExhausted,
+    structuredCount,
+    prs: prList.length,
+    issues: issueList.length,
+  };
 }
