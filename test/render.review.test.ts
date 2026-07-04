@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { lineDiff, collapsedLineDiff } from "../web/src/diff";
-import { reviewView, unifiedDiff, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
+import { reviewView, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
 import { maintenanceView, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
 
 // ── lineDiff ──────────────────────────────────────────────────────────────────
@@ -199,6 +199,33 @@ describe("splitDiffRows", () => {
     const rows = splitDiffRows([{ t: "ctx", s: "same" }]);
     expect(rows[0].left.text).toBe("same");
     expect(rows[0].right.text).toBe("same");
+  });
+});
+
+describe("diff viewer — ellipsis rows (collapsed unchanged runs)", () => {
+  it("unifiedDiff renders an ellipsis row as a muted marker", () => {
+    const html = unifiedDiff([{ t: "add", s: "new" }, { t: "ellipsis", s: "12 unchanged lines" }]);
+    expect(html).toContain("12 unchanged lines");
+  });
+
+  it("splitDiffRows spans an ellipsis across both columns", () => {
+    const rows = splitDiffRows([{ t: "ellipsis", s: "5 unchanged lines" }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].left.text).toBe("5 unchanged lines");
+    expect(rows[0].right.text).toBe("5 unchanged lines");
+  });
+
+  it("renderedPreview omits ellipsis rows", () => {
+    const html = renderedPreview([{ t: "add", s: "kept" }, { t: "ellipsis", s: "9 unchanged lines" }]);
+    expect(html).toContain("kept");
+    expect(html).not.toContain("9 unchanged lines");
+  });
+});
+
+describe("reviewView — flagged marker (low-confidence scrutiny signal)", () => {
+  it("renders FLAGGED only for flagged items", () => {
+    expect(reviewView(makeReviewProps({ items: [makeItem({ flagged: true })] }))).toContain("FLAGGED");
+    expect(reviewView(makeReviewProps())).not.toContain("FLAGGED");
   });
 });
 

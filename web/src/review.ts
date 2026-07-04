@@ -64,7 +64,7 @@ export function reviewCard(it: ReviewItem, selected: boolean): string {
     <div style="position:relative">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
         <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</div>
-        ${statusBadge(it.badge, it.badgeColor)}
+        ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED", "var(--amber)") : ""}
       </div>
       <div style="font-size:14px;font-weight:600;letter-spacing:-0.005em;margin-top:6px;color:var(--fg)">${esc(it.title)}</div>
       <div style="font-size:12.5px;color:var(--fg-55);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
@@ -98,6 +98,7 @@ function diffLineStyle(t: DiffEntryKind): string {
   return base;
 }
 const GAP_STYLE = "height:14px;border-bottom:1px solid var(--border);margin-bottom:14px";
+const ELLIPSIS_STYLE = "font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--fg-40);text-align:center;padding:6px 16px;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:6px 0";
 
 function diffPrefix(t: DiffEntryKind): string {
   const color = t === "del" ? "var(--red)" : t === "add" ? "var(--green)" : "var(--fg-40)";
@@ -108,6 +109,7 @@ function diffPrefix(t: DiffEntryKind): string {
 export function unifiedDiff(entries: DiffEntry[]): string {
   const lines = entries.map((e) => {
     if (e.t === "gap") return `<div style="${GAP_STYLE}"></div>`;
+    if (e.t === "ellipsis") return `<div style="${ELLIPSIS_STYLE}">${esc(e.s ?? "")}</div>`;
     return `<div style="${diffLineStyle(e.t)}">${diffPrefix(e.t)}${esc(e.s ?? "")}</div>`;
   }).join("");
   return `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;padding:8px 0">${lines}</div>`;
@@ -122,7 +124,7 @@ export function splitDiffRows(entries: DiffEntry[]): { left: SplitCell; right: S
   while (i < entries.length) {
     const e = entries[i];
     if (e.t === "gap") { rows.push({ left: { t: "gap", text: "" }, right: { t: "gap", text: "" } }); i++; continue; }
-    if (e.t === "ctx" || e.t === "h") {
+    if (e.t === "ctx" || e.t === "h" || e.t === "ellipsis") {
       const text = e.s ?? "";
       rows.push({ left: { t: e.t, text }, right: { t: e.t, text } });
       i++; continue;
@@ -144,6 +146,7 @@ export function splitDiffRows(entries: DiffEntry[]): { left: SplitCell; right: S
 function splitCellHtml(c: SplitCell, isLeft: boolean): string {
   const borderRight = isLeft ? ";border-right:1px solid var(--border)" : "";
   if (c.t === "gap") return `<div style="${GAP_STYLE}${borderRight}"></div>`;
+  if (c.t === "ellipsis") return `<div style="${ELLIPSIS_STYLE}${borderRight}">${esc(c.text)}</div>`;
   if (c.t === "empty") return `<div style="font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;border-left:2px solid transparent;color:transparent${borderRight}">·</div>`;
   return `<div style="${diffLineStyle(c.t)}${borderRight}">${esc(c.text)}</div>`;
 }
@@ -162,7 +165,7 @@ export function splitDiff(entries: DiffEntry[], liveLabel: string): string {
 }
 
 export function renderedPreview(entries: DiffEntry[]): string {
-  const blocks = entries.filter((e) => e.t !== "gap").map((e) => {
+  const blocks = entries.filter((e) => e.t !== "gap" && e.t !== "ellipsis").map((e) => {
     const text = e.s ?? "";
     if (e.t === "h") return `<div style="font-size:18px;font-weight:600;letter-spacing:-0.01em;color:var(--fg);margin:18px 0 10px">${esc(text.replace(/^#+\s*/, ""))}</div>`;
     const base = "font-size:15px;line-height:1.72;margin:0 0 10px";
@@ -217,7 +220,7 @@ export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
       <div style="min-width:0">
         <div style="display:flex;align-items:center;gap:9px">
           <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</div>
-          ${statusBadge(it.badge, it.badgeColor)}
+          ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)") : ""}
         </div>
         <h2 style="margin:8px 0 0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(it.title)}</h2>
         <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
