@@ -60,3 +60,23 @@ export function dashedCard(title: string, sub: string, wide = false): string {
     <div style="font-size:12.5px;color:var(--fg-40);margin-top:${wide ? "6px" : "4px"}">${esc(sub)}</div>
   </div>`;
 }
+
+/** Two-letter avatar initials from a github login, e.g. "jose-a" → "JO". */
+export function initialsOf(login: string): string {
+  const letters = login.replace(/[^a-zA-Z]/g, "");
+  return (letters.slice(0, 2) || login.slice(0, 2) || "?").toUpperCase();
+}
+/** Relative time from an ISO timestamp, e.g. "32m ago" / "2d ago". */
+export function relTime(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}

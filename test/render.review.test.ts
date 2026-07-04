@@ -12,7 +12,7 @@
  * pool-workers harness as the backend tests; nothing here touches the DOM.
  */
 import { describe, it, expect } from "vitest";
-import { lineDiff, collapsedLineDiff } from "../web/src/render";
+import { lineDiff, collapsedLineDiff } from "../web/src/diff";
 import { reviewView, unifiedDiff, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
 import { maintenanceView, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
 
