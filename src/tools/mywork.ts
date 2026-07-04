@@ -47,6 +47,7 @@ interface RawIssue {
 interface IssueSnapshotRow {
   ref_number: number;
   raw: string;
+  summary: string | null;
 }
 
 /**
@@ -88,11 +89,14 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
     // known set of numbers — every issue ever captured is a todo candidate).
     const issueRows = await all<IssueSnapshotRow>(
       db,
-      `SELECT ref_number, raw FROM (
+      `SELECT e.ref_number, e.raw, s.summary AS summary
+       FROM (
          SELECT ref_number, raw, ROW_NUMBER() OVER (PARTITION BY ref_number ORDER BY occurred_at DESC, id DESC) rn
          FROM events WHERE event_type = 'issue'
-       ) WHERE rn = 1
-       ORDER BY ref_number ASC`
+       ) e
+       LEFT JOIN issue_summaries s ON s.issue_number = e.ref_number
+       WHERE e.rn = 1
+       ORDER BY e.ref_number ASC`
     );
     const todo: MyWorkTodo[] = [];
     for (const row of issueRows) {
@@ -107,6 +111,7 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         labels: issue.labels,
         url: issue.html_url,
         updatedAt: issue.updated_at,
+        summary: row.summary,
       });
     }
 

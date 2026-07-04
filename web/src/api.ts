@@ -132,9 +132,11 @@ export function adminBackfill(): Promise<{
   unchanged: number;
   summarized: number;
   summaryBudgetExhausted: boolean;
-  structuredCount: number;
+  prSummarizedCount: number;
+  issueSummarizedCount: number;
   prs: number;
   issues: number;
+  issuesToSummarize: number;
 }> {
   return postJson("/admin/backfill", {});
 }

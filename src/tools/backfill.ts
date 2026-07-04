@@ -1,11 +1,10 @@
 import type { Env } from "../env";
-import type { PrSummaryRow } from "@shared/rows";
+import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
-import { type Summarizer, workersAiSummarizer, storePrSummary } from "./summarize";
+import { type Summarizer, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
-import { parseStructuredSummary } from "@shared/prSummary";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
 // (which signs synthetic webhook deliveries with the webhook secret), this runs
@@ -27,8 +26,8 @@ const USER_AGENT = "canopy";
 // instantly) — a rate limit or per-request ceiling, not a code defect. Cap
 // how many summarizer calls one invocation makes, and pace them, so a single
 // Sync stays comfortably under whatever that limit is; a backlog beyond the
-// cap is picked up by the next Sync click (skip-if-structured already makes
-// that safe — nothing already summarized is redone).
+// cap is picked up by the next Sync click (the model≠excerpt skip-check
+// already makes that safe — nothing already summarized is redone).
 const SUMMARY_BATCH_LIMIT = 20;
 const SUMMARY_CALL_DELAY_MS = 500;
 
@@ -39,10 +38,14 @@ export interface BackfillResult {
   unchanged: number;
   summarized: number;
   summaryBudgetExhausted: boolean;
-  /** How many of `prs` currently have a structured summary — the "X of Y" the frontend shows. */
-  structuredCount: number;
+  /** How many of `prs` already have a real (non-excerpt) summary — the "X of Y" the frontend shows. */
+  prSummarizedCount: number;
+  /** How many assigned issues already have a real (non-excerpt) summary. */
+  issueSummarizedCount: number;
   prs: number;
   issues: number;
+  /** Denominator: assigned issues found this run — the "X of Y" the frontend shows. */
+  issuesToSummarize: number;
 }
 
 // Minimal typed views over the GitHub REST list items — only the fields the
@@ -69,6 +72,7 @@ interface GhPrListItem {
 interface GhIssueListItem {
   number: number;
   title: string;
+  body: string | null;
   html_url: string;
   state: string;
   updated_at: string;
@@ -119,6 +123,7 @@ function issueDelivery(issue: GhIssueListItem) {
     issue: {
       number: issue.number,
       title: issue.title,
+      body: issue.body,
       html_url: issue.html_url,
       state: issue.state,
       updated_at: issue.updated_at,
@@ -138,6 +143,7 @@ export async function runBackfill(
   opts?: {
     fetchImpl?: typeof fetch;
     summarizer?: Summarizer | null;
+    issueSummarizer?: Summarizer | null;
     summaryBatchLimit?: number;
     summaryCallDelayMs?: number;
   }
@@ -152,14 +158,17 @@ export async function runBackfill(
       unchanged: 0,
       summarized: 0,
       summaryBudgetExhausted: false,
-      structuredCount: 0,
+      prSummarizedCount: 0,
+      issueSummarizedCount: 0,
       prs: 0,
       issues: 0,
+      issuesToSummarize: 0,
     };
   }
 
   const doFetch = opts?.fetchImpl ?? fetch;
-  const summarizer = opts?.summarizer ?? (env.AI ? workersAiSummarizer(env.AI) : null);
+  const summarizer = opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null);
+  const issueSummarizer = opts?.issueSummarizer ?? (env.AI ? workersAiIssueSummarizer(env.AI) : null);
   const summaryBatchLimit = opts?.summaryBatchLimit ?? SUMMARY_BATCH_LIMIT;
   const summaryCallDelayMs = opts?.summaryCallDelayMs ?? SUMMARY_CALL_DELAY_MS;
   const headers = {
@@ -204,10 +213,10 @@ export async function runBackfill(
   let unchanged = 0;
   let summarized = 0;
   let summaryBudgetExhausted = false;
-  // Running count of PRs that end this call with a structured summary — either
-  // already had one, or got one just now. Paired with prList.length, this is
-  // the "X of Y" progress the frontend shows across a multi-batch sync.
-  let structuredCount = 0;
+  // Running count of PRs that end this call with a real (non-excerpt) summary —
+  // either already had one, or got one just now. Paired with prList.length, this
+  // is the "X of Y" progress the frontend shows across a multi-batch sync.
+  let prSummarizedCount = 0;
 
   for (const pr of prList) {
     const payload = prClosedDelivery(pr);
@@ -220,17 +229,17 @@ export async function runBackfill(
         unchanged++;
       }
 
-      // (Re)summarize unless it's already in the structured format — decoupled
-      // from the event-capture outcome so a Sync also migrates PRs captured
-      // before the structured format existed, not just brand-new ones.
+      // (Re)summarize unless it already has a real summary — decoupled from the
+      // event-capture outcome so a Sync also migrates PRs that fell back to the
+      // excerpt summary, not just brand-new ones.
       const existing = await first<PrSummaryRow>(
         env.DB,
-        `SELECT summary FROM pr_summaries WHERE semantic_key = ?`,
+        `SELECT model FROM pr_summaries WHERE semantic_key = ?`,
         ev.semantic_key
       );
-      const alreadyStructured = existing !== null && parseStructuredSummary(existing.summary) !== null;
-      if (alreadyStructured) {
-        structuredCount++;
+      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      if (alreadySummarized) {
+        prSummarizedCount++;
         continue;
       }
 
@@ -248,8 +257,8 @@ export async function runBackfill(
       });
       summarized++;
       // storePrSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually landed in structured form.
-      if (parseStructuredSummary(stored.summary) !== null) structuredCount++;
+      // only count it toward "done" if it actually got a real summary.
+      if (stored.model !== "excerpt") prSummarizedCount++;
 
       // Pace summarizer calls so one invocation doesn't burst past whatever
       // limit caused the wall above — skip the trailing delay once the batch
@@ -260,8 +269,14 @@ export async function runBackfill(
     }
   }
 
+  let issueSummarizedCount = 0;
+  let issuesToSummarize = 0; // denominator: assigned issues found this run
+
   for (const issue of issueList) {
     const payload = issueDelivery(issue);
+    const isAssigned = payload.action === "assigned";
+    if (isAssigned) issuesToSummarize++;
+
     for (const base of eventsFromDelivery("issues", payload)) {
       const ev = { ...base, provenance: "backfill" as const };
       const res = await ingestEvent(env.DB, ev, principalLogin);
@@ -272,6 +287,40 @@ export async function runBackfill(
       } else {
         unchanged++;
       }
+
+      if (!isAssigned) continue; // unassigned issues never appear in anyone's to-do
+
+      const existing = await first<IssueSummaryRow>(
+        env.DB,
+        `SELECT model FROM issue_summaries WHERE issue_number = ?`,
+        issue.number
+      );
+      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      if (alreadySummarized) {
+        issueSummarizedCount++;
+        continue;
+      }
+
+      // Shares the SAME summarized/summaryBatchLimit budget as the PR loop
+      // above — not a separate allowance. See Global Constraints.
+      if (summarized >= summaryBatchLimit) {
+        summaryBudgetExhausted = true;
+        continue;
+      }
+
+      const stored = await storeIssueSummary(env.DB, issueSummarizer, {
+        issue_number: issue.number,
+        title: issue.title,
+        body: issue.body ?? "",
+      });
+      summarized++;
+      // storeIssueSummary can still fall back to excerpt if the AI call failed —
+      // only count it toward "done" if it actually got a real summary.
+      if (stored.model !== "excerpt") issueSummarizedCount++;
+
+      if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
+      }
     }
   }
 
@@ -281,8 +330,10 @@ export async function runBackfill(
     unchanged,
     summarized,
     summaryBudgetExhausted,
-    structuredCount,
+    prSummarizedCount,
+    issueSummarizedCount,
     prs: prList.length,
     issues: issueList.length,
+    issuesToSummarize,
   };
 }

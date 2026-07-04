@@ -207,9 +207,9 @@ function flash(msg: string): void {
 // Drives a (possibly multi-batch) Sync GitHub run: the backend caps AI calls
 // per invocation (src/tools/backfill.ts's summaryBudgetExhausted), so this
 // keeps calling adminBackfill() while a budget was exhausted, updating
-// state.backfillSync after every batch — structuredCount/prsTotal are
+// state.backfillSync after every batch — both PR and issue counts are
 // absolute snapshots from the response, not accumulated here, so the modal's
-// progress bar always reflects real server-side state. MAX_BACKFILL_BATCHES
+// progress bars always reflect real server-side state. MAX_BACKFILL_BATCHES
 // is a client-side backstop against spinning forever if summaries never
 // converge (e.g. every AI call keeps falling back to excerpt).
 const MAX_BACKFILL_BATCHES = 10;
@@ -223,7 +223,12 @@ async function runAdminBackfillLoop(): Promise<void> {
       last = await adminBackfill();
       batchesSoFar++;
       summarizedSoFar += last.summarized;
-      state.backfillSync = { structuredCount: last.structuredCount, prsTotal: last.prs };
+      state.backfillSync = {
+        prSummarizedCount: last.prSummarizedCount,
+        prsTotal: last.prs,
+        issueSummarizedCount: last.issueSummarizedCount,
+        issuesTotal: last.issuesToSummarize,
+      };
       rerender();
     } while (last.summaryBudgetExhausted && batchesSoFar < MAX_BACKFILL_BATCHES);
 
@@ -397,7 +402,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // refresh My Work so newly-captured PRs/issues surface in the two lists.
     case "adminBackfill": {
       if (state.backfillSync) return; // already syncing — button is disabled, but guard duplicate dispatch too
-      state.backfillSync = { structuredCount: 0, prsTotal: 0 }; // real counts land after the first batch resolves
+      state.backfillSync = { prSummarizedCount: 0, prsTotal: 0, issueSummarizedCount: 0, issuesTotal: 0 }; // real counts land after the first batch resolves
       rerender();
       runAdminBackfillLoop();
       return;

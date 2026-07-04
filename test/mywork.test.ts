@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { ingestEvent } from "../src/consumer";
-import { storePrSummary } from "../src/tools/summarize";
+import { storePrSummary, storeIssueSummary } from "../src/tools/summarize";
 import { getMyWork } from "../src/tools/mywork";
 import type { EventRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
@@ -171,5 +171,25 @@ describe("getMyWork — unmapped login", () => {
 
     const rows = await all<EventRow>(env.DB, `SELECT * FROM events`);
     expect(rows).toHaveLength(1); // captured, never dropped
+  });
+});
+
+describe("getMyWork — todo carries the issue summary", () => {
+  it("joins issue_summaries by issue number; null until a summary exists", async () => {
+    const assigned = issueEvent({
+      number: 8,
+      login: "AndresL230",
+      action: "assigned",
+      state: "open",
+      updatedAt: "2026-07-01T10:00:00.000Z",
+    });
+    await ingestEvent(env.DB, assigned, "github-webhook");
+
+    let work = await getMyWork(env.DB, "AndresL230");
+    expect(work.todo.find((t) => t.number === 8)?.summary).toBeNull();
+
+    await storeIssueSummary(env.DB, null, { issue_number: 8, title: "Issue 8", body: "some body" });
+    work = await getMyWork(env.DB, "AndresL230");
+    expect(work.todo.find((t) => t.number === 8)?.summary).toBe("some body"); // excerpt fallback (no summarizer)
   });
 });
