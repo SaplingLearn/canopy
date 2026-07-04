@@ -1148,16 +1148,22 @@ function slicePending(l: Loadable<unknown[]>): boolean {
 
 /** Review screen with slice-level loading/error states around the pure view. */
 function reviewScreen(s: AppState): string {
-  if (s.proposals.status === "error" || s.draftAdrs.status === "error") return notice("Couldn't load the review queue.");
-  if (slicePending(s.proposals) || slicePending(s.draftAdrs)) return notice("Loading review queue&hellip;");
-  return reviewView(reviewProps(s));
+  if (slicePending(s.proposals) && slicePending(s.draftAdrs)) return notice("Loading review queue&hellip;");
+  if (s.proposals.status === "error" && s.draftAdrs.status === "error") return notice("Couldn't load the review queue.");
+  const hint = s.proposals.status === "error" ? mwDegradedHint("Couldn't load doc/decision proposals.")
+    : s.draftAdrs.status === "error" ? mwDegradedHint("Couldn't load draft ADRs.")
+    : "";
+  return `${hint}${reviewView(reviewProps(s))}`;
 }
 
 /** Maintenance screen with slice-level loading/error states around the pure view. */
 function maintenanceScreen(s: AppState): string {
-  if (s.needsTriage.status === "error" || s.identityTasks.status === "error") return notice("Couldn't load maintenance.");
-  if (slicePending(s.needsTriage) || slicePending(s.identityTasks)) return notice("Loading maintenance&hellip;");
-  return maintenanceView(maintenanceProps(s));
+  if (slicePending(s.needsTriage) && slicePending(s.identityTasks)) return notice("Loading maintenance&hellip;");
+  if (s.needsTriage.status === "error" && s.identityTasks.status === "error") return notice("Couldn't load maintenance.");
+  const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
+    : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
+    : "";
+  return `${hint}${maintenanceView(maintenanceProps(s))}`;
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
