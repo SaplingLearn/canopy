@@ -4,7 +4,7 @@ import { all, first } from "../src/db";
 import { runBackfill } from "../src/tools/backfill";
 import type { Env } from "../src/env";
 import type { Summarizer } from "../src/tools/summarize";
-import type { EventRow, PrSummaryRow } from "@shared/rows";
+import type { EventRow, PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 
 const threeDaysAgo = "2026-06-28T00:00:00Z";
 const twentyDaysAgo = "2026-06-11T00:00:00Z";
@@ -85,6 +85,19 @@ const prAsIssue = {
   milestone: null,
 };
 
+const unassignedIssue = {
+  number: 30,
+  title: "Untriaged bug",
+  html_url: "https://github.com/o/r/issues/30",
+  state: "open",
+  updated_at: threeDaysAgo,
+  user: { login: "octocat" },
+  assignees: [], // no assignee → "opened", never summarized
+  labels: [],
+  milestone: null,
+  body: "Nobody has looked at this yet.",
+};
+
 function makePr(number: number): typeof mergedPr {
   return {
     number,
@@ -105,9 +118,11 @@ const prC = makePr(102);
 describe("runBackfill", () => {
   it("captures ALL closed PRs (full history, no recency window) + open issues, written by the admin principal", async () => {
     const summarizer = countingSummarizer("AI summary");
+    const issueSummarizer = countingSummarizer("Issue AI summary");
     const res = await runBackfill(envWith(), "admin-user", {
       fetchImpl: stubFetch([mergedPr, olderPr], [openIssue, prAsIssue]),
       summarizer,
+      issueSummarizer,
       summaryCallDelayMs: 0,
     });
 
@@ -116,9 +131,11 @@ describe("runBackfill", () => {
     expect(res.issues).toBe(1); // prAsIssue excluded (pull_request present)
     expect(res.captured).toBe(3); // 2 PR events + 1 issue event
     expect(res.unchanged).toBe(0);
-    expect(res.summarized).toBe(2); // one summary per newly-captured PR
+    expect(res.summarized).toBe(3); // one summary per newly-captured PR + the assigned issue (shared budget)
     expect(res.summaryBudgetExhausted).toBe(false); // well under the default batch limit
     expect(res.prSummarizedCount).toBe(2); // both newly-summarized PRs count toward "done" (model !== 'excerpt')
+    expect(res.issueSummarizedCount).toBe(1); // openIssue is assigned → summarized
+    expect(res.issuesToSummarize).toBe(1);
 
     const events = await all<EventRow>(env.DB, `SELECT * FROM events ORDER BY ref_number`);
     expect(events).toHaveLength(3);
@@ -139,11 +156,12 @@ describe("runBackfill", () => {
 
   it("is idempotent on event capture — a second run over the same GitHub state writes no new events", async () => {
     const summarizer = countingSummarizer("**What changed:** AI summary");
+    const issueSummarizer = countingSummarizer("Issue summary.");
     const fetchImpl = stubFetch([mergedPr], [openIssue]);
-    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, issueSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.captured).toBe(2);
 
-    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, issueSummarizer, summaryCallDelayMs: 0 });
     expect(secondRun.ok).toBe(true);
     expect(secondRun.captured).toBe(0);
     expect(secondRun.unchanged).toBe(2);
@@ -239,5 +257,67 @@ describe("runBackfill", () => {
     });
     const elapsed = Date.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(40); // one delay between the 2 summarizer calls
+  });
+});
+
+describe("runBackfill — issue summarization", () => {
+  it("summarizes an assigned issue and skips it on a second run once done", async () => {
+    const summarizer = countingSummarizer("PR summary."); // unused here (no PRs in this fixture set)
+    const issueSummarizer = countingSummarizer("What the issue is and what to do.");
+    const fetchImpl = stubFetch([], [openIssue]);
+
+    const firstRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl, summarizer, issueSummarizer, summaryCallDelayMs: 0,
+    });
+    expect(firstRun.issuesToSummarize).toBe(1);
+    expect(firstRun.issueSummarizedCount).toBe(1);
+    expect(issueSummarizer.calls).toBe(1);
+
+    const secondRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl, summarizer, issueSummarizer, summaryCallDelayMs: 0,
+    });
+    expect(secondRun.issueSummarizedCount).toBe(1); // already has a real summary → skipped
+    expect(issueSummarizer.calls).toBe(1); // no second call
+
+    const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 20);
+    expect(rows[0].summary).toBe("What the issue is and what to do.");
+  });
+
+  it("never summarizes an unassigned open issue", async () => {
+    const issueSummarizer = countingSummarizer("should never be called");
+    const res = await runBackfill(envWith(), "admin-user", {
+      fetchImpl: stubFetch([], [unassignedIssue]),
+      summarizer: countingSummarizer("x"),
+      issueSummarizer,
+      summaryCallDelayMs: 0,
+    });
+    expect(res.issuesToSummarize).toBe(0);
+    expect(res.issueSummarizedCount).toBe(0);
+    expect(issueSummarizer.calls).toBe(0);
+    const rows = await all(env.DB, `SELECT * FROM issue_summaries`);
+    expect(rows.length).toBe(0);
+  });
+
+  it("shares one AI-call budget across PRs and issues — PRs consume it first", async () => {
+    const summarizer = countingSummarizer("PR summary.");
+    const issueSummarizer = countingSummarizer("Issue summary.");
+    const fetchImpl = stubFetch([prA, prB], [openIssue]);
+
+    const firstRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl, summarizer, issueSummarizer, summaryBatchLimit: 2, summaryCallDelayMs: 0,
+    });
+    expect(firstRun.summarized).toBe(2); // budget fully spent on the 2 PRs
+    expect(firstRun.summaryBudgetExhausted).toBe(true);
+    expect(summarizer.calls).toBe(2);
+    expect(issueSummarizer.calls).toBe(0); // no budget left for the issue this run
+    expect(firstRun.issueSummarizedCount).toBe(0);
+
+    // A follow-up run finishes the issue now that the PR backlog is clear.
+    const secondRun = await runBackfill(envWith(), "admin-user", {
+      fetchImpl, summarizer, issueSummarizer, summaryBatchLimit: 2, summaryCallDelayMs: 0,
+    });
+    expect(secondRun.summarized).toBe(1); // just the issue — both PRs already summarized
+    expect(issueSummarizer.calls).toBe(1);
+    expect(secondRun.issueSummarizedCount).toBe(1);
   });
 });

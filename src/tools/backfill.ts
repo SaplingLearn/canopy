@@ -1,9 +1,9 @@
 import type { Env } from "../env";
-import type { PrSummaryRow } from "@shared/rows";
+import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
-import { type Summarizer, workersAiPrSummarizer, storePrSummary } from "./summarize";
+import { type Summarizer, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
@@ -40,8 +40,12 @@ export interface BackfillResult {
   summaryBudgetExhausted: boolean;
   /** How many of `prs` already have a real (non-excerpt) summary — the "X of Y" the frontend shows. */
   prSummarizedCount: number;
+  /** How many assigned issues already have a real (non-excerpt) summary. */
+  issueSummarizedCount: number;
   prs: number;
   issues: number;
+  /** Denominator: assigned issues found this run — the "X of Y" the frontend shows. */
+  issuesToSummarize: number;
 }
 
 // Minimal typed views over the GitHub REST list items — only the fields the
@@ -139,6 +143,7 @@ export async function runBackfill(
   opts?: {
     fetchImpl?: typeof fetch;
     summarizer?: Summarizer | null;
+    issueSummarizer?: Summarizer | null;
     summaryBatchLimit?: number;
     summaryCallDelayMs?: number;
   }
@@ -154,13 +159,16 @@ export async function runBackfill(
       summarized: 0,
       summaryBudgetExhausted: false,
       prSummarizedCount: 0,
+      issueSummarizedCount: 0,
       prs: 0,
       issues: 0,
+      issuesToSummarize: 0,
     };
   }
 
   const doFetch = opts?.fetchImpl ?? fetch;
   const summarizer = opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null);
+  const issueSummarizer = opts?.issueSummarizer ?? (env.AI ? workersAiIssueSummarizer(env.AI) : null);
   const summaryBatchLimit = opts?.summaryBatchLimit ?? SUMMARY_BATCH_LIMIT;
   const summaryCallDelayMs = opts?.summaryCallDelayMs ?? SUMMARY_CALL_DELAY_MS;
   const headers = {
@@ -261,8 +269,14 @@ export async function runBackfill(
     }
   }
 
+  let issueSummarizedCount = 0;
+  let issuesToSummarize = 0; // denominator: assigned issues found this run
+
   for (const issue of issueList) {
     const payload = issueDelivery(issue);
+    const isAssigned = payload.action === "assigned";
+    if (isAssigned) issuesToSummarize++;
+
     for (const base of eventsFromDelivery("issues", payload)) {
       const ev = { ...base, provenance: "backfill" as const };
       const res = await ingestEvent(env.DB, ev, principalLogin);
@@ -272,6 +286,38 @@ export async function runBackfill(
         await applyEventProgress(env.DB, payload);
       } else {
         unchanged++;
+      }
+
+      if (!isAssigned) continue; // unassigned issues never appear in anyone's to-do
+
+      const existing = await first<IssueSummaryRow>(
+        env.DB,
+        `SELECT model FROM issue_summaries WHERE issue_number = ?`,
+        issue.number
+      );
+      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      if (alreadySummarized) {
+        issueSummarizedCount++;
+        continue;
+      }
+
+      // Shares the SAME summarized/summaryBatchLimit budget as the PR loop
+      // above — not a separate allowance. See Global Constraints.
+      if (summarized >= summaryBatchLimit) {
+        summaryBudgetExhausted = true;
+        continue;
+      }
+
+      await storeIssueSummary(env.DB, issueSummarizer, {
+        issue_number: issue.number,
+        title: issue.title,
+        body: issue.body ?? "",
+      });
+      summarized++;
+      issueSummarizedCount++;
+
+      if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
       }
     }
   }
@@ -283,7 +329,9 @@ export async function runBackfill(
     summarized,
     summaryBudgetExhausted,
     prSummarizedCount,
+    issueSummarizedCount,
     prs: prList.length,
     issues: issueList.length,
+    issuesToSummarize,
   };
 }
