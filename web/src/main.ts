@@ -7,12 +7,13 @@ import "./canopy.css";
 import { render, initialState, type AppState } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
-  listStagedProposals, listAdrs, listNeedsTriage, listMilestoneProposals,
-  promoteDoc, ratifyAdr, completeMilestone, promoteMilestoneProposal,
-  rejectDoc, rejectAdr, rejectMilestoneProposal, discardTriage, assignTriage,
+  completeMilestone,
   getMe, logout, mintMcpToken, adminBackfill,
   Unauthorized, NotFound, ApiError,
 } from "./api";
+// The Review + Maintenance surfaces are mock-driven until the backend reads
+// land: their actions below mutate UI state over the mock module — no fetches.
+import { MOCK_REVIEW_ITEMS, MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -197,90 +198,6 @@ function loadRoadmapIfNeeded(): void {
   else rerender();
 }
 
-function loadProposals(): void {
-  state.proposals = { status: "loading", data: state.proposals.data };
-  rerender();
-  listStagedProposals()
-    .then((rows) => {
-      state.proposals = { status: "ok", data: rows };
-      if (state.triageQueue === "proposals" && (state.selProposal === null || !rows.some((r) => `${r.slug}@${r.version}` === state.selProposal))) {
-        state.selProposal = rows.length > 0 ? `${rows[0].slug}@${rows[0].version}` : null;
-      }
-      rerender();
-    })
-    .catch((e) => {
-      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.proposals = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
-      rerender();
-    });
-}
-
-function loadDecisions(): void {
-  state.decisions = { status: "loading", data: state.decisions.data };
-  rerender();
-  listAdrs("draft")
-    .then((rows) => {
-      state.decisions = { status: "ok", data: rows };
-      if (state.triageQueue === "decisions" && (state.selDecision === null || !rows.some((r) => r.id === state.selDecision))) {
-        state.selDecision = rows.length > 0 ? rows[0].id : null;
-      }
-      rerender();
-    })
-    .catch((e) => {
-      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.decisions = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
-      rerender();
-    });
-}
-
-function loadTriageItems(): void {
-  state.triageItems = { status: "loading", data: state.triageItems.data };
-  rerender();
-  listNeedsTriage()
-    .then((rows) => {
-      state.triageItems = { status: "ok", data: rows };
-      if (state.triageQueue === "triage" && (state.selTriage === null || !rows.some((r) => r.id === state.selTriage))) {
-        state.selTriage = rows.length > 0 ? rows[0].id : null;
-      }
-      rerender();
-    })
-    .catch((e) => {
-      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.triageItems = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
-      rerender();
-    });
-}
-
-function loadMilestoneProposals(): void {
-  state.milestoneProps = { status: "loading", data: state.milestoneProps.data };
-  rerender();
-  listMilestoneProposals()
-    .then((rows) => {
-      state.milestoneProps = { status: "ok", data: rows };
-      if (state.triageQueue === "milestones" && (state.selMilestoneProp === null || !rows.some((r) => r.id === state.selMilestoneProp))) {
-        state.selMilestoneProp = rows.length > 0 ? rows[0].id : null;
-      }
-      rerender();
-    })
-    .catch((e) => {
-      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-      state.milestoneProps = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
-      rerender();
-    });
-}
-
-// Load all four queues on entering Triage so the tab counts + sidebar badge are
-// accurate immediately (not just for the active queue). Each loader re-renders as it
-// resolves; tab switches afterward find their queue already loaded.
-function loadCurrentTriageQueue(): void {
-  let started = false;
-  if (state.proposals.status === "idle") { loadProposals(); started = true; }
-  if (state.decisions.status === "idle") { loadDecisions(); started = true; }
-  if (state.triageItems.status === "idle") { loadTriageItems(); started = true; }
-  if (state.milestoneProps.status === "idle") { loadMilestoneProposals(); started = true; }
-  if (!started) rerender();
-}
-
 function flash(msg: string): void {
   state.toast = msg;
   rerender();
@@ -377,7 +294,8 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // roadmap tab toggle
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
-    case "goTriage": state.screen = "triage"; loadCurrentTriageQueue(); return;
+    case "goReview": state.screen = "review"; break;
+    case "goMaintenance": state.screen = "maintenance"; break;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
     case "goGuide": state.screen = "guide"; break;
@@ -408,31 +326,30 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "setTag": state.feedTag = value ?? "all"; loadFeed(); return;
     case "setRange": state.feedRange = value ?? "all"; break;
 
-    // triage navigation (browse the queues — no writes)
-    case "queueProposals":
-      state.triageQueue = "proposals";
-      if (state.proposals.status === "idle") { loadProposals(); return; }
+    // ── Review (mock-driven until the backend reads land — no writes) ────────
+    case "reviewSelect": if (arg) state.reviewSel = arg; break;
+    case "reviewFilter":
+      if (arg === "all" || arg === "proposal" || arg === "decision") state.reviewFilter = arg;
       break;
-    case "queueDecisions":
-      state.triageQueue = "decisions";
-      if (state.decisions.status === "idle") { loadDecisions(); return; }
+    case "reviewDiffView":
+      if (arg === "unified" || arg === "split" || arg === "rendered") state.reviewDiffView = arg;
       break;
-    case "queueTriage":
-      state.triageQueue = "triage";
-      if (state.triageItems.status === "idle") { loadTriageItems(); return; }
-      break;
-    case "queueMilestones":
-      state.triageQueue = "milestones";
-      if (state.milestoneProps.status === "idle") { loadMilestoneProposals(); return; }
-      break;
-    case "selectItem":
-      if (arg) {
-        if (state.triageQueue === "proposals") state.selProposal = arg;
-        else if (state.triageQueue === "decisions") state.selDecision = Number(arg);
-        else if (state.triageQueue === "triage") state.selTriage = Number(arg);
-        else state.selMilestoneProp = Number(arg);
+    case "reviewAccept":
+    case "reviewReject": {
+      if (!arg) return;
+      const item = MOCK_REVIEW_ITEMS.find((it) => it.id === arg);
+      if (!item || state.reviewDone.includes(arg)) return;
+      state.reviewDone.push(arg);
+      state.reviewSel = null; // fall back to the first visible item
+      if (act === "reviewAccept") {
+        flash(item.kind === "decision"
+          ? `Ratified — ${item.eyebrow.split(" · ")[1] ?? item.title} is now accepted`
+          : `Promoted — “${item.title}” is live; previous version kept`);
+      } else {
+        flash("Rejected — parked, nothing changed");
       }
-      break;
+      return;
+    }
 
     // docs navigation
     case "openDoc":
@@ -451,7 +368,6 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "toggleHistory": state.showHistory = !state.showHistory; break;
-    case "gotoTriage": state.screen = "triage"; state.triageQueue = "proposals"; break;
 
     // search
     case "setSearch":
@@ -467,41 +383,6 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // settings — display name echoes live; everything else is Phase 2
     case "setDisplayName": state.displayName = value ?? ""; break;
 
-    // ── Phase 2 confirm actions (cookie-authed) ──────────────────────────────
-    case "promote": {
-      if (!arg) return;
-      const atIdx = arg.indexOf("@");
-      if (atIdx < 0) return;
-      const slug = arg.slice(0, atIdx);
-      const version = Number(arg.slice(atIdx + 1));
-      promoteDoc(slug, version)
-        .then(() => { flash("Promoted — now the live version"); loadProposals(); })
-        .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Promote failed");
-        });
-      return;
-    }
-    case "ratify": {
-      if (!arg) return;
-      ratifyAdr(Number(arg))
-        .then(() => { flash("Decision ratified"); loadDecisions(); })
-        .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Ratify failed");
-        });
-      return;
-    }
-    case "promoteMilestone": {
-      if (!arg) return;
-      promoteMilestoneProposal(Number(arg))
-        .then(() => { flash("Milestone promoted — now live on the roadmap"); loadMilestoneProposals(); })
-        .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Promote failed");
-        });
-      return;
-    }
     case "confirmMilestone": {
       if (!arg) return;
       completeMilestone(Number(arg))
@@ -521,70 +402,52 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       runAdminBackfillLoop();
       return;
     }
-    // ── Phase 3 triage write-back (cookie-authed) ───────────────────────────
-    // Dismiss = reject. Shared by the Proposals queue (arg "slug@version" → reject
-    // the staged doc version), the Decisions queue (arg id → reject the ADR), and
-    // the Milestones queue (arg id → reject the staged proposal); the active queue
-    // disambiguates.
-    case "dismiss": {
+    // ── Maintenance (mock-driven until the backend reads land — no writes) ───
+    case "maintAssignToggle": {
       if (!arg) return;
-      if (state.triageQueue === "proposals") {
-        const atIdx = arg.indexOf("@");
-        if (atIdx < 0) return;
-        const slug = arg.slice(0, atIdx);
-        const version = Number(arg.slice(atIdx + 1));
-        rejectDoc(slug, version)
-          .then(() => { flash("Proposal rejected"); loadProposals(); })
-          .catch((e) => {
-            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-            flash(e instanceof ApiError ? e.message : "Reject failed");
-          });
-      } else if (state.triageQueue === "milestones") {
-        rejectMilestoneProposal(Number(arg))
-          .then(() => { flash("Milestone proposal rejected"); loadMilestoneProposals(); })
-          .catch((e) => {
-            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-            flash(e instanceof ApiError ? e.message : "Reject failed");
-          });
-      } else {
-        rejectAdr(Number(arg))
-          .then(() => { flash("Decision rejected"); loadDecisions(); })
-          .catch((e) => {
-            if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-            flash(e instanceof ApiError ? e.message : "Reject failed");
-          });
-      }
+      state.assignOpen = state.assignOpen === arg ? null : arg;
+      state.assignKind = null;
+      state.assignTarget = null;
+      break;
+    }
+    case "maintAssignKind": if (arg) { state.assignKind = arg; state.assignTarget = null; } break;
+    case "maintAssignTarget": if (arg) state.assignTarget = arg; break;
+    case "maintFile": {
+      if (!arg || state.assignOpen !== arg || !state.assignKind || !state.assignTarget) return;
+      const item = MOCK_UNPLACED.find((u) => u.id === arg);
+      if (!item || state.unplacedDone.includes(arg)) return;
+      state.unplacedDone.push(arg);
+      const { assignKind, assignTarget } = state;
+      state.assignOpen = null; state.assignKind = null; state.assignTarget = null;
+      flash(`Filed — “${item.title}” → ${assignKind} · ${assignTarget}`);
       return;
     }
-    // Assign-materialize a triaged item through the gate. Minimal wiring: targets a
-    // doc (the section picker is Phase 4 — until then the gate uses the raw item's
-    // own section and surfaces "valid section required" when it can't place it).
-    case "assignItem": {
+    case "maintDiscard": {
       if (!arg) return;
-      // arg = "<id>:<type>:<section>" — encode the full target so render.ts can be pure
-      const parts = arg.split(":");
-      const id = Number(parts[0]);
-      const type = (parts[1] || "doc") as "doc" | "adr" | "milestone" | "feed";
-      const section = parts[2] || undefined;
-      const target: { type?: "doc" | "adr" | "milestone" | "feed"; section?: string } = { type };
-      if (section) target.section = section;
-      assignTriage(id, target)
-        .then(() => { flash("Assigned — staged for review"); loadTriageItems(); loadProposals(); })
-        .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Assign failed");
-        });
+      const item = MOCK_UNPLACED.find((u) => u.id === arg);
+      if (!item || state.unplacedDone.includes(arg)) return;
+      state.unplacedDone.push(arg);
+      if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignTarget = null; }
+      flash(`Discarded — “${item.title}”`);
       return;
     }
-    case "discardItem":
+    case "identityPick": {
       if (!arg) return;
-      discardTriage(Number(arg))
-        .then(() => { flash("Item discarded"); loadTriageItems(); })
-        .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Discard failed");
-        });
+      const sep = arg.indexOf(":");
+      if (sep < 0) return;
+      state.mapPicks = { ...state.mapPicks, [arg.slice(0, sep)]: arg.slice(sep + 1) };
+      break;
+    }
+    case "identityMap": {
+      if (!arg) return;
+      const group = MOCK_IDENTITY.find((g) => g.id === arg);
+      const pick = state.mapPicks[arg];
+      const person = MOCK_PEOPLE.find((p) => p.id === pick);
+      if (!group || !person || state.identityDone.includes(arg)) return;
+      state.identityDone.push(arg);
+      flash(`Mapped — ${group.login} → ${person.name}; ${group.countNum} captured events now flow into their view`);
       return;
+    }
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()

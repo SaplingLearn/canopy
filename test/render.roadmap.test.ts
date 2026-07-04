@@ -3,7 +3,7 @@
  *
  * Tests pure helper functions exported from web/src/render.ts:
  *  • planNarrativeBlock — the ADMIN-authored plan narrative rendered via an injected
- *    markdown fn (mirrors renderProposalContent's pattern); empty → dashed-card hint.
+ *    markdown fn (the injected-markdownFn pattern); empty → dashed-card hint.
  *  • render() over a roadmap-populated AppState — narrative tab shows the narrative,
  *    timeline tab shows cached progress ("4/6 closed"), phase mono suffix, and the
  *    Confirm-done button; search results of type "milestone" navigate via goRoadmap.

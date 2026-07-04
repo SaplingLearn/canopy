@@ -5,17 +5,20 @@
 
 import type { Me } from "./api";
 import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
-import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView, StagedProposal } from "./api";
-import type { AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
+import { esc, attr } from "./ui";
+import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
+import { maintenanceView, type MaintenanceProps } from "./maintenance";
+import { MOCK_REVIEW_ITEMS, MOCK_UNPLACED, MOCK_ASSIGN, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
 
 export type DocSpace = "canopy" | "sapling";
 
-export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "triage" | "search" | "settings" | "guide";
+export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -42,13 +45,21 @@ export interface AppState {
   docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
   docSlug: string | null;
   docSpace: DocSpace;
-  triageQueue: "proposals" | "decisions" | "triage" | "milestones";
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<PlanView>;
-  selProposal: string | null;
-  selDecision: number | null;
-  selTriage: number | null;
-  selMilestoneProp: number | null;
+  // Triage surfaces (Review + Maintenance) — UI state only; the data itself is
+  // mock-fed from triage-mock.ts until the backend reads land. The *Done lists
+  // track mock items already acted on this session.
+  reviewFilter: ReviewFilter;
+  reviewSel: string | null;
+  reviewDiffView: DiffViewMode;
+  reviewDone: string[];
+  unplacedDone: string[];
+  identityDone: string[];
+  assignOpen: string | null;
+  assignKind: string | null;
+  assignTarget: string | null;
+  mapPicks: Record<string, string>;
   showHistory: boolean;
   searchQuery: string;
   searchType: "all" | "doc" | "feed" | "decision";
@@ -58,10 +69,6 @@ export interface AppState {
   tokenCopied: boolean;
   confirmedMilestones: Record<string, boolean>;
   toast: string | null;
-  proposals: Loadable<StagedProposal[]>;
-  decisions: Loadable<AdrRow[]>;
-  triageItems: Loadable<NeedsTriageRow[]>;
-  milestoneProps: Loadable<MilestoneProposalRow[]>;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
   backfillSync: { structuredCount: number; prsTotal: number } | null;
@@ -82,10 +89,12 @@ export function initialState(): AppState {
     docDetail: { status: "idle", data: null },
     docSlug: null,
     docSpace: "sapling",
-    triageQueue: "proposals",
     roadmapTab: "timeline",
     roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
-    selProposal: null, selDecision: null, selTriage: null, selMilestoneProp: null,
+    reviewFilter: "all", reviewSel: null, reviewDiffView: "unified",
+    reviewDone: [], unplacedDone: [], identityDone: [],
+    assignOpen: null, assignKind: null, assignTarget: null,
+    mapPicks: {},
     showHistory: false,
     searchQuery: "token", searchType: "all",
     searchResults: { status: "idle", data: { primary: [], pointers: [], meta: { engine: "fts5", total: 0 } } },
@@ -94,11 +103,42 @@ export function initialState(): AppState {
     tokenCopied: false,
     confirmedMilestones: {},
     toast: null,
-    proposals: { status: "idle", data: [] },
-    decisions: { status: "idle", data: [] },
-    triageItems: { status: "idle", data: [] },
-    milestoneProps: { status: "idle", data: [] },
     backfillSync: null,
+  };
+}
+
+// ── triage surface data (mock-fed until the backend reads land) ──────────────
+// The ONLY place the mock module meets the render tree: swap these builders to
+// real reads at wire time and the components underneath stay untouched.
+export function reviewProps(s: AppState): ReviewProps {
+  return {
+    items: MOCK_REVIEW_ITEMS.filter((it) => !s.reviewDone.includes(it.id)),
+    filter: s.reviewFilter,
+    selectedId: s.reviewSel,
+    diffView: s.reviewDiffView,
+  };
+}
+
+export function maintenanceProps(s: AppState): MaintenanceProps {
+  return {
+    unplaced: MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)),
+    assign: MOCK_ASSIGN,
+    assignOpen: s.assignOpen,
+    assignKind: s.assignKind,
+    assignTarget: s.assignTarget,
+    identity: MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)),
+    people: MOCK_PEOPLE,
+    mapPicks: s.mapPicks,
+  };
+}
+
+/** Sidebar counts for the two triage entries (pending mock items). */
+export function triageCounts(s: AppState): { review: number; maintenance: number } {
+  return {
+    review: MOCK_REVIEW_ITEMS.filter((it) => !s.reviewDone.includes(it.id)).length,
+    maintenance:
+      MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)).length +
+      MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)).length,
   };
 }
 
@@ -106,15 +146,7 @@ export function initialState(): AppState {
 function resolved(s: AppState): "dark" | "light" | "midnight" {
   return s.theme === "system" ? (s.systemDark ? "dark" : "light") : s.theme;
 }
-/** Escape text content for safe insertion into innerHTML. */
-function esc(v: string): string {
-  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-/** Escape a value for use inside an HTML attribute (delegates to esc for full safety). */
-function attr(v: string): string {
-  return esc(v);
-}
+// esc / attr live in ./ui (shared with the componentized surfaces).
 // Defense-in-depth: external URLs from captured payloads must be http(s) — never javascript:/data:/etc.
 const safeUrl = (u: string): string => (/^https?:\/\//i.test(u) ? u : "#");
 const AVATAR = "border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center";
@@ -244,10 +276,24 @@ function sidebar(s: AppState): string {
   const navItem = (act: string, cls: string, title: string, svg: string, extra = ""): string =>
     `<button data-act="${act}" title="${title}" class="cnpy-nav ${cls}">${svg}${expanded ? `<span style="white-space:nowrap;flex:1;text-align:left">${title}</span>` : ""}${extra}</button>`;
 
-  const counts = s.proposals.data.length + s.decisions.data.length + s.triageItems.data.length + s.milestoneProps.data.length;
-  const triageExtra = expanded
-    ? `<span style="font-size:11px;font-weight:600;font-family:var(--mono);min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--accent);color:var(--accent-fg);display:inline-flex;align-items:center;justify-content:center;flex:none">${counts}</span>`
-    : `<span style="position:absolute;top:7px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--accent)"></span>`;
+  const counts = triageCounts(s);
+  // Section label (WORKSPACE / TRIAGE) — a header, not a destination. Collapsed
+  // sidebar shows a hairline divider instead.
+  const sectionLabel = (label: string): string => expanded
+    ? `<div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);padding:12px 11px 7px">${label}</div>`
+    : `<div style="height:1px;background:var(--border);margin:12px 8px 9px"></div>`;
+  const collapsedDot = `<span style="position:absolute;top:7px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--accent)"></span>`;
+  const onReview = s.screen === "review";
+  const reviewExtra = expanded
+    ? (counts.review > 0
+      ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;height:16px;line-height:16px;padding:0 6px;border-radius:999px;flex:none;color:${onReview ? "var(--accent)" : "var(--fg-40)"};border:1px solid ${onReview ? "var(--accent)" : "var(--border)"};background:${onReview ? "var(--accent-soft)" : "transparent"}">${counts.review}</span>`
+      : "")
+    : (counts.review > 0 ? collapsedDot : "");
+  const maintExtra = expanded
+    ? (counts.maintenance > 0
+      ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;flex:none;color:var(--fg-40)">${counts.maintenance}</span>`
+      : "")
+    : (counts.maintenance > 0 ? collapsedDot : "");
 
   return `<aside class="cnpy-aside">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 14px 14px 16px;min-height:58px">
@@ -266,16 +312,22 @@ function sidebar(s: AppState): string {
       </button>
     </div>` : ""}
 
-    <nav style="display:flex;flex-direction:column;gap:3px;padding:6px 10px;flex:1">
+    <nav style="display:flex;flex-direction:column;gap:3px;padding:0 10px 6px;flex:1">
+      ${sectionLabel("Workspace")}
       ${navItem("goMyWork", "n-mywork", "My Work", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M3 12 12 3l9 9"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg>`)}
       ${navItem("goRoadmap", "n-roadmap", "Roadmap", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg>`)}
       ${navItem("goFeed", "n-feed", "Feed", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path></svg>`)}
+      ${sectionLabel("Knowledge")}
       ${navItem("goDocs", "n-docs", "Docs", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path></svg>`)}
-      ${navItem("goTriage", "n-triage", "Triage", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M4 13h4l2 3h4l2-3h4"></path><path d="M5 13 7 5h10l2 8"></path><path d="M4 13v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"></path></svg>`, triageExtra)}
       ${navItem("goSearch", "n-search", "Search", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>`)}
+      ${sectionLabel("Triage")}
+      ${navItem("goReview", "n-review", "Review", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m9 12.5 2 2 4-5"></path></svg>`, reviewExtra)}
+      ${navItem("goMaintenance", "n-maintenance", "Maintenance", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`, maintExtra)}
+      ${sectionLabel("Help")}
       ${navItem("goGuide", "n-guide", "Get Started", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M2 4h7a3 3 0 0 1 3 3v14a2.5 2.5 0 0 0-2.5-2.5H2z"></path><path d="M22 4h-7a3 3 0 0 0-3 3v14a2.5 2.5 0 0 1 2.5-2.5H22z"></path></svg>`)}
     </nav>
 
+    ${expanded ? `<div style="padding:0 21px 8px;font-size:11px;color:var(--fg-40)">agents produce · humans confirm</div>` : ""}
     <div style="padding:10px;border-top:1px solid var(--border)">
       <button data-act="goSettings" title="Settings" class="cnpy-chip">
         <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="30" height="30" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(s.me?.login ?? "?"))}</div>
@@ -287,7 +339,7 @@ function sidebar(s: AppState): string {
 }
 
 function header(s: AppState): string {
-  const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", triage: "Triage", search: "Search", settings: "Settings", guide: "Get Started" };
+  const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", review: "Review", maintenance: "Maintenance", search: "Search", settings: "Settings", guide: "Get Started" };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
 
@@ -319,13 +371,6 @@ function header(s: AppState): string {
       <select data-act="setRange" class="cnpy-select">
         ${["all:All time", "24h:Last 24h", "7d:Last 7 days"].map((o) => { const [v, l] = o.split(":"); return `<option value="${v}"${s.feedRange === v ? " selected" : ""}>${l}</option>`; }).join("")}
       </select>
-    </div>` : "";
-
-  const triageControls = s.screen === "triage" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
-      <button data-act="queueProposals" class="cnpy-qtab q-proposals">Proposals<span class="cnpy-qcount">${s.proposals.data.length}</span></button>
-      <button data-act="queueDecisions" class="cnpy-qtab q-decisions">Decisions<span class="cnpy-qcount">${s.decisions.data.length}</span></button>
-      <button data-act="queueTriage" class="cnpy-qtab q-triage">Triage<span class="cnpy-qcount">${s.triageItems.data.length}</span></button>
-      <button data-act="queueMilestones" class="cnpy-qtab q-milestones">Milestones<span class="cnpy-qcount">${s.milestoneProps.data.length}</span></button>
     </div>` : "";
 
   const spaceTab = (k: DocSpace, label: string) =>
@@ -366,7 +411,7 @@ function header(s: AppState): string {
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${triageControls}${docsControls}${roadmapControls}${myworkControls}${themeBtn}
+      ${feedControls}${docsControls}${roadmapControls}${myworkControls}${themeBtn}
     </div>
   </header>`;
 }
@@ -467,7 +512,7 @@ function docsView(s: AppState): string {
     const stagedBanner = hasStaged ? `<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--amber);border-radius:9px;margin-bottom:26px">
       <span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:3px 7px;flex:none">STAGED</span>
       <div style="flex:1;font-size:12.5px;color:var(--fg-70);line-height:1.45">You're viewing the <strong style="font-weight:600;color:var(--fg)">promoted</strong> version. A newer proposal is awaiting review.</div>
-      <button data-act="gotoTriage" class="cnpy-link" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--accent);white-space:nowrap;flex:none">Review in Triage<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+      <button data-act="goReview" class="cnpy-link" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--accent);white-space:nowrap;flex:none">Review proposal<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
     </div>` : "";
 
     const history = s.showHistory ? `<div style="border:1px solid var(--border);border-radius:10px;padding:6px;margin-top:18px">
@@ -505,95 +550,7 @@ function docsView(s: AppState): string {
   </div>`;
 }
 
-// ── triage ───────────────────────────────────────────────────────────────────
-function triageView(s: AppState): string {
-  const q = s.triageQueue;
-
-  // Determine list pane contents + loading state per queue
-  type ListItem = { id: string; selected: boolean; eyebrow: string; title: string; summary: string; author: string; time: string | null; badgeText: string; badgeColor: string; kindChip?: string };
-  let listItems: ListItem[] = [];
-  let listStatus: "idle" | "loading" | "ok" | "error" | "unauth" = "idle";
-
-  if (q === "proposals") {
-    listStatus = s.proposals.status;
-    listItems = s.proposals.data.map((p) => {
-      const key = `${p.slug}@${p.version}`;
-      const confColor = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
-      const confLabel = p.confidence ? p.confidence.toUpperCase() : "?";
-      return { id: key, selected: key === s.selProposal, eyebrow: p.section, title: p.title, summary: p.summary ?? "", author: p.author, time: p.created_at, badgeText: confLabel, badgeColor: confColor, kindChip: changeKindChip(p.change_kind) };
-    });
-  } else if (q === "decisions") {
-    listStatus = s.decisions.status;
-    listItems = s.decisions.data.map((d) => ({
-      id: String(d.id), selected: d.id === s.selDecision,
-      eyebrow: "ADR", title: d.title, summary: d.context ?? "",
-      author: d.created_by, time: d.created_at, badgeText: "DRAFT", badgeColor: "var(--blue)",
-    }));
-  } else if (q === "triage") {
-    listStatus = s.triageItems.status;
-    listItems = s.triageItems.data.map((t) => {
-      const firstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
-      return { id: String(t.id), selected: t.id === s.selTriage, eyebrow: "Unplaced", title: firstLine, summary: t.reason, author: t.source_author ?? "unknown", time: t.created_at, badgeText: "NEEDS-TRIAGE", badgeColor: "var(--red)" };
-    });
-  } else {
-    listStatus = s.milestoneProps.status;
-    listItems = s.milestoneProps.data.map((m) => ({
-      id: String(m.id), selected: m.id === s.selMilestoneProp,
-      eyebrow: `Milestone · ${m.target_date}`, title: m.title, summary: m.change_summary ?? "",
-      author: m.created_by, time: m.created_at, badgeText: "STAGED", badgeColor: "var(--amber)",
-    }));
-  }
-
-  let listHtml: string;
-  if (listStatus === "loading" && listItems.length === 0) {
-    listHtml = notice("Loading&hellip;");
-  } else if (listStatus === "error") {
-    listHtml = notice("Couldn't load queue.");
-  } else if (listItems.length === 0) {
-    listHtml = `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:70px 20px;text-align:center">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7"><path d="M20 6 9 17l-5-5"></path></svg>
-      <div style="font-size:13.5px;font-weight:500">Queue clear</div>
-      <div style="font-size:12.5px;color:var(--fg-40)">Nothing waiting for review here.</div>
-    </div>`;
-  } else {
-    listHtml = listItems.map((it) => `<button data-act="selectItem" data-arg="${attr(it.id)}" class="cnpy-titem">
-        ${it.selected ? `<span class="cnpy-selbar"></span>` : ""}
-        <div style="position:relative">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</span>
-              ${it.kindChip ?? ""}
-            </div>
-            <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${it.badgeColor};border:1px solid color-mix(in srgb,${it.badgeColor} 45%,transparent);background:color-mix(in srgb,${it.badgeColor} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${esc(it.badgeText)}</span>
-          </div>
-          <div style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;margin-bottom:5px">${esc(it.title)}</div>
-          <div style="font-size:12.5px;color:var(--fg-55);line-height:1.5;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:20px;height:20px;border-radius:50%;${AVATAR};font-size:8.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(it.author))}</div><span style="font-size:12px;color:var(--fg-55)">${esc(it.author)}</span>${it.time ? `<span style="margin-left:auto;font-size:11.5px;color:var(--fg-40);white-space:nowrap">${relTime(it.time)}</span>` : ""}</div>
-        </div>
-      </button>`).join("");
-  }
-
-  return `<div style="display:flex;height:100%">
-    <div class="cnpy-scroll" style="width:392px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 16px">${listHtml}</div>
-    <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">
-      <div style="max-width:720px;margin:0 auto;padding:24px 36px 100px">${triageDetail(s)}</div>
-    </div>
-  </div>`;
-}
-
 export type DiffKind = "ctx" | "add" | "del" | "ellipsis";
-
-function diffLineStyle(t: DiffKind): string {
-  if (t === "ellipsis") return `font-family:var(--mono);font-size:11px;line-height:1.85;padding:4px 12px;color:var(--fg-40);background:transparent;border-left:2px solid transparent;text-align:center;font-style:italic`;
-  const border = t === "add" ? "var(--green)" : t === "del" ? "var(--red)" : "transparent";
-  const bg = t === "add" ? "color-mix(in srgb,var(--green) 12%,transparent)" : t === "del" ? "color-mix(in srgb,var(--red) 11%,transparent)" : "transparent";
-  const color = t === "ctx" ? "var(--fg-55)" : "var(--fg)";
-  return `font-family:var(--mono);font-size:12.5px;line-height:1.85;padding:0 12px;white-space:pre-wrap;word-break:break-word;border-left:2px solid ${border};background:${bg};color:${color}`;
-}
-function signStyle(t: DiffKind): string {
-  const color = t === "add" ? "var(--green)" : t === "del" ? "var(--red)" : "var(--fg-40)";
-  return `color:${color};margin-right:10px;user-select:none;font-weight:600`;
-}
 
 export type DiffRow = { t: DiffKind; text: string };
 export function lineDiff(oldText: string, newText: string): DiffRow[] {
@@ -612,18 +569,6 @@ export function lineDiff(oldText: string, newText: string): DiffRow[] {
   while (i < n) out.push({ t: "del", text: a[i++] });
   while (j < m) out.push({ t: "add", text: b[j++] });
   return out;
-}
-
-/** Chip showing the change shape: NEW / EDIT / REWRITE. Phase 4 list and detail. */
-export function changeKindChip(kind: string | null): string {
-  if (!kind) return "";
-  const map: Record<string, { label: string; color: string }> = {
-    new: { label: "NEW", color: "var(--green)" },
-    edit: { label: "EDIT", color: "var(--accent)" },
-    rewrite: { label: "REWRITE", color: "var(--amber)" },
-  };
-  const { label, color } = map[kind] ?? { label: kind.toUpperCase(), color: "var(--fg-40)" };
-  return `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${color};border:1px solid color-mix(in srgb,${color} 45%,transparent);background:color-mix(in srgb,${color} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${label}</span>`;
 }
 
 /**
@@ -652,201 +597,6 @@ export function collapsedLineDiff(oldText: string, newText: string, ctx = 3): Di
     }
   }
   return out;
-}
-
-/**
- * Render the content pane of a staged proposal, branching by change_kind.
- * markdownFn is injected so tests can pass a no-op renderer instead of the real DOMPurify path.
- *
- * - new    → markdown preview of staged body (no diff — avoids the green wall)
- * - edit   → collapsed line diff with context
- * - rewrite → side-by-side rendered previews (live vs staged)
- * - null   → full line diff (fallback for pre-Phase-2 rows)
- */
-export function renderProposalContent(p: StagedProposal, markdownFn: (body: string) => string): string {
-  const kind = p.change_kind;
-
-  if (kind === "new") {
-    return `<div style="margin-top:20px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--green);margin-bottom:10px">New page — staged preview</div>
-      <div class="cnpy-md" style="border:1px solid var(--border);border-radius:10px;padding:20px 24px;margin-top:6px;background:color-mix(in srgb,var(--green) 5%,transparent)">${markdownFn(p.stagedBody)}</div>
-    </div>`;
-  }
-
-  if (kind === "edit") {
-    const rows = collapsedLineDiff(p.promotedBody, p.stagedBody);
-    const add = rows.filter((r) => r.t === "add").length;
-    const del = rows.filter((r) => r.t === "del").length;
-    const lines = rows.map((r) => {
-      if (r.t === "ellipsis") {
-        return `<div style="${diffLineStyle("ellipsis")}">↕ ${esc(r.text)}</div>`;
-      }
-      const sign = r.t === "add" ? "+" : r.t === "del" ? "−" : " ";
-      return `<div style="${diffLineStyle(r.t)}"><span style="${signStyle(r.t)}">${sign}</span>${esc(r.text) || " "}</div>`;
-    }).join("");
-    return `<div style="margin:24px 0 0">
-      <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border);border-bottom:none;border-radius:11px 11px 0 0;background:var(--bg)">
-        <span style="font-size:11.5px;font-weight:600;letter-spacing:.02em">Changes (collapsed context)</span>
-        <div style="flex:1"></div>
-        <span style="font-size:11px;font-family:var(--mono);color:var(--green)">+${add}</span>
-        <span style="font-size:11px;font-family:var(--mono);color:var(--red)">&minus;${del}</span>
-      </div>
-      <div style="border:1px solid var(--border);border-radius:0 0 11px 11px;padding:12px 0;overflow-x:auto">${lines}</div>
-    </div>`;
-  }
-
-  if (kind === "rewrite") {
-    return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px">
-      <div>
-        <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Live (v${p.current_version})</div>
-        <div class="cnpy-md cnpy-rewrite-pane" style="border:1px solid var(--border);border-radius:10px;padding:16px 18px;font-size:13.5px;line-height:1.7;overflow:hidden">${markdownFn(p.promotedBody)}</div>
-      </div>
-      <div>
-        <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Staged</div>
-        <div class="cnpy-md cnpy-rewrite-pane" style="border:1px solid var(--border);border-radius:10px;padding:16px 18px;font-size:13.5px;line-height:1.7;overflow:hidden;border-color:color-mix(in srgb,var(--accent) 40%,transparent)">${markdownFn(p.stagedBody)}</div>
-      </div>
-    </div>`;
-  }
-
-  // Fallback: full line diff (pre-Phase-2 rows with no change_kind)
-  const diff = lineDiff(p.promotedBody, p.stagedBody);
-  const add = diff.filter((l) => l.t === "add").length;
-  const del = diff.filter((l) => l.t === "del").length;
-  const lines = diff.map((l) => {
-    const sign = l.t === "add" ? "+" : l.t === "del" ? "−" : " ";
-    return `<div style="${diffLineStyle(l.t)}"><span style="${signStyle(l.t)}">${sign}</span>${esc(l.text) || " "}</div>`;
-  }).join("");
-  return `<div style="margin:24px 0 0">
-    <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border);border-bottom:none;border-radius:11px 11px 0 0;background:var(--bg)">
-      <span style="font-size:11.5px;font-weight:600;letter-spacing:.02em">Diff against promoted version</span>
-      <div style="flex:1"></div>
-      <span style="font-size:11px;font-family:var(--mono);color:var(--green)">+${add}</span>
-      <span style="font-size:11px;font-family:var(--mono);color:var(--red)">&minus;${del}</span>
-    </div>
-    <div style="border:1px solid var(--border);border-radius:0 0 11px 11px;padding:12px 0;overflow-x:auto">${lines}</div>
-  </div>`;
-}
-
-function triageDetail(s: AppState): string {
-  const q = s.triageQueue;
-  if (q === "proposals") {
-    const p = s.proposals.data.find((x) => `${x.slug}@${x.version}` === s.selProposal);
-    if (!p) return queueEmpty();
-    const key = `${p.slug}@${p.version}`;
-    const confClr = p.confidence === "high" ? "var(--green)" : p.confidence === "low" ? "var(--red)" : "var(--amber)";
-    const confLbl = p.confidence ? `${p.confidence} confidence` : "";
-    // Phase 4 flags
-    const lowConfBadge = p.low_confidence
-      ? `<span class="cnpy-flag-lowconf" style="display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 7px;white-space:nowrap"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 9v4M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>LOW CONFIDENCE</span>`
-      : "";
-    const staleBanner = p.base_version !== null && p.base_version < p.current_version
-      ? `<div class="cnpy-stale-base" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);border-left:2px solid var(--amber);border-radius:9px;margin-top:16px;background:color-mix(in srgb,var(--amber) 7%,transparent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.9" style="flex:none"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path></svg><span style="font-size:12.5px;color:var(--fg-70)">Edited from <strong style="color:var(--fg);font-weight:600">v${p.base_version}</strong>; live is now <strong style="color:var(--fg);font-weight:600">v${p.current_version}</strong> — conflict possible</span></div>`
-      : "";
-    return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
-      <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">
-          <span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Proposal · ${esc(p.section)}</span>
-          <span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span>
-          ${changeKindChip(p.change_kind)}
-          ${lowConfBadge}
-        </div>
-        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${esc(p.title)}</h1>
-        <p style="font-size:14px;color:var(--fg-70);line-height:1.6;margin:0 0 12px;max-width:540px">${esc(p.summary ?? "")}</p>
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(p.author))}</div><span style="font-size:12.5px;color:var(--fg-55)">${esc(p.author)}</span></div>
-          ${confLbl ? `<div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${esc(confLbl)}</span></div>` : ""}
-          <span style="font-size:12.5px;color:var(--fg-40)">Staged ${relTime(p.created_at)}</span>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismiss" data-arg="${attr(key)}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
-        <button data-act="promote" data-arg="${attr(key)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
-      </div>
-    </div>
-    ${staleBanner}
-    ${renderProposalContent(p, renderMarkdown)}`;
-  }
-
-  if (q === "decisions") {
-    const d = s.decisions.data.find((x) => x.id === s.selDecision);
-    if (!d) return queueEmpty();
-    return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
-      <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">ADR · Decision</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:5px;padding:2px 6px">DRAFT</span></div>
-        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${esc(d.title)}</h1>
-        <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(d.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Drafted by ${esc(d.created_by)}</span><span style="font-size:12.5px;color:var(--fg-40)">· ${relTime(d.created_at)}</span></div>
-      </div>
-      <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismiss" data-arg="${d.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
-        <button data-act="ratify" data-arg="${String(d.id)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Ratify</button>
-      </div>
-    </div>
-    <div style="margin-top:26px;display:flex;flex-direction:column;gap:22px">
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Context</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(d.context ?? "")}</p></div>
-      <div style="border-left:2px solid var(--accent);padding-left:18px"><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:8px">Decision</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg);margin:0">${esc(d.decision ?? "")}</p></div>
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Rationale</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(d.rationale ?? "")}</p></div>
-    </div>`;
-  }
-
-  if (q === "milestones") {
-    const m = s.milestoneProps.data.find((x) => x.id === s.selMilestoneProp);
-    if (!m) return queueEmpty();
-    const confClr = m.confidence === "high" ? "var(--green)" : m.confidence === "low" ? "var(--red)" : "var(--amber)";
-    return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
-      <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Milestone proposal</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:2px 6px">STAGED</span></div>
-        <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 10px">${esc(m.title)}</h1>
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:8px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(m.created_by))}</div><span style="font-size:12.5px;color:var(--fg-55)">Proposed by ${esc(m.created_by)}</span></div>
-          <div style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:${confClr}"></span><span style="font-size:12.5px;color:var(--fg-55)">${esc(m.confidence)} confidence</span></div>
-          <span style="font-size:12.5px;color:var(--fg-40)">Staged ${relTime(m.created_at)}</span>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:9px;flex:none">
-        <button data-act="dismiss" data-arg="${m.id}" class="cnpy-outlinebtn" style="padding:9px 15px;border-radius:8px;border:1px solid color-mix(in srgb,var(--red) 50%,var(--border-strong));font-size:13px;font-weight:500;color:var(--red)">Reject</button>
-        <button data-act="promoteMilestone" data-arg="${String(m.id)}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:9px 17px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"></path></svg>Promote</button>
-      </div>
-    </div>
-    <div style="margin-top:26px;display:flex;flex-direction:column;gap:22px">
-      <div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap">
-        <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:6px">Target date</div><div style="font-size:14.5px;color:var(--fg)">${esc(m.target_date)}</div></div>
-        <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:6px">Proposed status</div><div style="font-size:14.5px;color:var(--fg)">${esc(m.status)}</div></div>
-        ${m.github_ref ? `<div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:6px">GitHub ref</div><div style="font-size:14.5px;color:var(--fg);font-family:var(--mono)">${esc(m.github_ref)}</div></div>` : ""}
-      </div>
-      <div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Change summary</div><p style="font-size:14.5px;line-height:1.7;color:var(--fg-70);margin:0">${esc(m.change_summary ?? "")}</p></div>
-    </div>`;
-  }
-
-  const t = s.triageItems.data.find((x) => x.id === s.selTriage);
-  if (!t) return queueEmpty();
-  const tFirstLine = t.raw.split("\n")[0].slice(0, 80) + (t.raw.split("\n")[0].length > 80 ? "…" : "");
-  return `<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span style="font-size:11px;font-family:var(--mono);color:var(--fg-40)">Unplaced item</span><span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);background:color-mix(in srgb,var(--red) 12%,transparent);border-radius:5px;padding:2px 6px">NEEDS-TRIAGE</span></div>
-    <h1 style="font-size:23px;font-weight:600;letter-spacing:-0.015em;margin:0 0 12px">${esc(tFirstLine)}</h1>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:22px"><div style="width:22px;height:22px;border-radius:50%;${AVATAR};font-size:9px;font-weight:600;color:var(--fg)">${esc(initialsOf(t.source_author ?? "unknown"))}</div><span style="font-size:12.5px;color:var(--fg-55)">From ${esc(t.source_author ?? "unknown")}'s session</span><span style="font-size:12.5px;color:var(--fg-40)">· ${relTime(t.created_at)}</span></div>
-    <div style="display:flex;align-items:flex-start;gap:11px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--red);border-radius:9px;margin-bottom:20px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg><div><div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--red);margin-bottom:4px">Why it couldn't be placed</div><div style="font-size:13px;color:var(--fg-70);line-height:1.55">${esc(t.reason)}</div></div></div>
-    <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">Raw content</div>
-    <div style="border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:26px;font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap">${esc(t.raw)}</div>
-    <div style="padding-top:18px;border-top:1px solid var(--border)">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:10px">Assign to</div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-        <button data-act="assignItem" data-arg="${t.id}:doc:reference" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Reference doc</button>
-        <button data-act="assignItem" data-arg="${t.id}:doc:context" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Context doc</button>
-        <button data-act="assignItem" data-arg="${t.id}:doc:decisions" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Decision doc</button>
-        <button data-act="assignItem" data-arg="${t.id}:adr:" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">ADR</button>
-        <button data-act="assignItem" data-arg="${t.id}:feed:" class="cnpy-assignbtn" style="padding:7px 13px;border-radius:7px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Feed entry</button>
-      </div>
-      <div style="display:flex;justify-content:flex-end">
-        <button data-act="discardItem" data-arg="${t.id}" class="cnpy-discard" style="font-size:12.5px;font-weight:500;color:var(--fg-40)">Discard</button>
-      </div>
-    </div>`;
-}
-
-function queueEmpty(): string {
-  return `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:120px 20px;text-align:center">
-    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.6"><path d="M20 6 9 17l-5-5"></path></svg>
-    <div style="font-size:15px;font-weight:600">All caught up</div>
-    <div style="font-size:13px;color:var(--fg-40);max-width:280px;line-height:1.5">Every item in this queue has been reviewed. New agent output will appear here.</div>
-  </div>`;
 }
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
@@ -1068,7 +818,7 @@ const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h1
 const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", milestone: "Roadmap" };
 
 // Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
-// the others are mapped for completeness. Reuses the Triage badge styling.
+// the others are mapped for completeness. Reuses the status badge styling.
 function authorityBadge(a: Authority): string {
   const map: Record<Authority, { label: string; color: string }> = {
     live: { label: "LIVE", color: "var(--green)" },
@@ -1200,9 +950,9 @@ function guideView(s: AppState): string {
     <h3 style="${gH3}">Search &amp; My Work</h3>
     <p style="${gP}">${gStrong("Search")} runs full-text across everything — docs, decisions, and the feed — ranking by relevance and returning whole entries plus pointers to related ones, each tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from proposals not yet promoted. And Canopy opens on ${gStrong("My Work")}: your personal dashboard of what shipped and what's on your plate — recently merged/closed PRs and your open assigned issues.</p>
 
-    <h3 style="${gH3}">Triage</h3>
-    <p style="${gP}">Triage is the human's desk — where staged changes wait for a yes or no. Four queues: ${gStrong("Proposals")} (doc updates), ${gStrong("Decisions")} (ADRs), ${gStrong("Triage")} (anything an agent couldn't confidently place), and ${gStrong("Milestones")} (proposed roadmap milestones). Proposals render to match the change — a brand-new doc as a full ${gStrong("preview")}, a small edit as a tight ${gStrong("diff")}, a large rewrite ${gStrong("side-by-side")} — and flag low-confidence or stale-base edits. On each item you make it live (${gStrong("Promote")} a doc or milestone, ${gStrong("Ratify")} a decision), ${gStrong("Reject")} it, or — for triage items — ${gStrong("Assign")} it to the right place or ${gStrong("Discard")} it. Nothing is ever hard-deleted.</p>
-    ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Triage</strong> — a staged doc version shown against the live one, ready to Promote or Reject.`)}
+    <h3 style="${gH3}">Review &amp; Maintenance</h3>
+    <p style="${gP}">The ${gStrong("Triage")} section of the sidebar is the human's desk, split into two surfaces. ${gStrong("Review")} is one queue for everything that needs a verdict: staged doc ${gStrong("proposals")} shown as a diff against the live version (unified, side-by-side, or rendered), and drafted ${gStrong("decisions")} (ADRs) shown as the proposed record. On each item you ${gStrong("Promote")} the doc (or ${gStrong("Ratify")} the decision) or ${gStrong("Reject")} it; stale-base edits are flagged. ${gStrong("Maintenance")} is occasional housekeeping: ${gStrong("Unplaced")} holds anything an agent couldn't confidently place — read it, then route it where it belongs or ${gStrong("Discard")} it — and ${gStrong("Identity")} matches unrecognized activity logins to people. Nothing is ever hard-deleted.</p>
+    ${gFig("/guide/triage.png", `<strong style="color:var(--fg-55)">Review</strong> — a staged doc version shown against the live one, ready to Promote or Reject.`)}
 
     <h3 style="${gH3}">Connect your agent over MCP</h3>
     <p style="${gP}">Your coding agent talks to Canopy over the Model Context Protocol. First, get a token:</p>
@@ -1225,16 +975,16 @@ function guideView(s: AppState): string {
     }
   }
 }`)}
-    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")} and ${gStrong("propose_doc_update")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Triage for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
+    <p style="${gP};margin-top:14px">Once connected, your agent can read everything — ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")} — and add new context with ${gStrong("append_feed")} and ${gStrong("propose_doc_update")}. Exactly like the UI, those writes are ${gStrong("staged")} — they land in Review for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
 
     <h3 style="${gH3}">The living loop — how Canopy stays current</h3>
     <p style="${gP}">The thing that keeps Canopy alive isn't any one screen — it's a loop your agent runs every session: ${gStrong("orient → work → record")}. Three Claude Code skills (under <code style="font-family:var(--mono);font-size:13px">.claude/skills/</code>) drive it, and they're the real heart of the system.</p>
     <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
       <li>${gStrong("Orient — load-context.")} Fires on its own before your agent works an area it has touched before, and always before it proposes a doc change. It calls the read-only ${gStrong("query")} tool, reads the assembled authoritative bodies, and respects each result's authority flag — so the agent builds on what the team already knows instead of re-deriving it. It never writes.</li>
       <li>${gStrong("Work.")} The agent does the task, now grounded in real context rather than guesses.</li>
-      <li>${gStrong("Record — record-session.")} You ask for it explicitly at the end ("record this session" — it never fires on its own). It observes what actually shipped from <code style="font-family:var(--mono);font-size:13px">git</code>/<code style="font-family:var(--mono);font-size:13px">gh</code>, reads the docs it touched back from Canopy so it writes a true delta from a known base, and stages one reconciled batch through the ${gStrong("record_session")} MCP tool — over the same bearer connection you set up above, no extra auth. The gate drops no-ops, tags each doc change new/edit/rewrite, and routes anything low-confidence or out-of-vocab to Triage.</li>
+      <li>${gStrong("Record — record-session.")} You ask for it explicitly at the end ("record this session" — it never fires on its own). It observes what actually shipped from <code style="font-family:var(--mono);font-size:13px">git</code>/<code style="font-family:var(--mono);font-size:13px">gh</code>, reads the docs it touched back from Canopy so it writes a true delta from a known base, and stages one reconciled batch through the ${gStrong("record_session")} MCP tool — over the same bearer connection you set up above, no extra auth. The gate drops no-ops, tags each doc change new/edit/rewrite, and routes anything low-confidence or out-of-vocab to Maintenance.</li>
     </ol>
-    <p style="${gP};margin-top:12px">Then you ${gStrong("confirm")} in Triage. That's the whole point: agents feed the store continuously, a human curates what matters, and because nothing goes live unreviewed — and every session writes back what it learned — the context stays trustworthy and current instead of going stale. This loop is the difference between a wiki that rots and a memory that grows.</p>
+    <p style="${gP};margin-top:12px">Then you ${gStrong("confirm")} in Review. That's the whole point: agents feed the store continuously, a human curates what matters, and because nothing goes live unreviewed — and every session writes back what it learned — the context stays trustworthy and current instead of going stale. This loop is the difference between a wiki that rots and a memory that grows.</p>
     <p style="${gP}">${gStrong("canopy")} is the umbrella skill that maps all of this and carries the full ${gStrong("query")} reference; ${gStrong("load-context")} and ${gStrong("record-session")} are the two halves it composes — kept separate because one must fire on its own and the other must never. The Canopy plugin (above) ships all three, so installing it is all it takes to get them in any project — no copying by hand.</p>
   </div>`;
 }
@@ -1460,7 +1210,8 @@ function screenBody(s: AppState): string {
     case "feed": return feedView(s);
     case "docs": return docsView(s);
     case "roadmap": return roadmapView(s);
-    case "triage": return triageView(s);
+    case "review": return reviewView(reviewProps(s));
+    case "maintenance": return maintenanceView(maintenanceProps(s));
     case "search": return searchView(s);
     case "settings": return settingsView(s);
     case "guide": return guideView(s);
@@ -1505,7 +1256,7 @@ function backfillSyncModal(sync: { structuredCount: number; prsTotal: number }):
 
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
-  return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" data-tq="${s.triageQueue}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
+  return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
     ${s.view === "auth" ? authView(s) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
