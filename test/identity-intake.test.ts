@@ -64,6 +64,12 @@ describe("ingestEvent identity intake", () => {
     expect(tasks[0].status).toBe("resolved"); // untouched, not flipped back to pending
   });
 
+  it("a bot login ([bot] suffix) never raises an identity task; the event still lands", async () => {
+    await ingestEvent(env.DB, ev({ subject_login: "dependabot[bot]" }), "github-webhook");
+    expect((await all<IdentityTaskRow>(env.DB, `SELECT * FROM identity_tasks`)).length).toBe(0);
+    expect((await all<EventRow>(env.DB, `SELECT * FROM events`)).length).toBe(1); // event still captured
+  });
+
   it("intake failure never breaks event capture (identity_tasks table missing)", async () => {
     await run(env.DB, `DROP TABLE identity_tasks`);
     try {

@@ -161,6 +161,9 @@ export async function route_triage(
  */
 export async function ensure_identity_task(db: DB, login: string): Promise<void> {
   try {
+    // GitHub reserves the "[bot]" suffix for app identities — bot activity is
+    // captured in events but never raises an identity task (nobody maps a bot).
+    if (login.endsWith("[bot]")) return;
     const known = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
     if (known) return;
     await run(
