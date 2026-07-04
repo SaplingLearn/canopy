@@ -22,12 +22,25 @@ import { parseStructuredSummary } from "@shared/prSummary";
 const GH_API = "application/vnd.github+json";
 const USER_AGENT = "canopy";
 
+// A long unbroken run of sequential AI calls has been observed to hit a hard
+// wall partway through (many successes, then every subsequent call fails
+// instantly) — a rate limit or per-request ceiling, not a code defect. Cap
+// how many summarizer calls one invocation makes, and pace them, so a single
+// Sync stays comfortably under whatever that limit is; a backlog beyond the
+// cap is picked up by the next Sync click (skip-if-structured already makes
+// that safe — nothing already summarized is redone).
+const SUMMARY_BATCH_LIMIT = 20;
+const SUMMARY_CALL_DELAY_MS = 500;
+
 export interface BackfillResult {
   ok: boolean;
   error?: string;
   captured: number;
   unchanged: number;
   summarized: number;
+  summaryBudgetExhausted: boolean;
+  /** How many of `prs` currently have a structured summary — the "X of Y" the frontend shows. */
+  structuredCount: number;
   prs: number;
   issues: number;
 }
@@ -122,16 +135,33 @@ function issueDelivery(issue: GhIssueListItem) {
 export async function runBackfill(
   env: Env,
   principalLogin: string,
-  opts?: { fetchImpl?: typeof fetch; summarizer?: Summarizer | null }
+  opts?: {
+    fetchImpl?: typeof fetch;
+    summarizer?: Summarizer | null;
+    summaryBatchLimit?: number;
+    summaryCallDelayMs?: number;
+  }
 ): Promise<BackfillResult> {
   const token = env.GITHUB_SERVICE_TOKEN;
   const repo = env.GITHUB_REPO;
   if (!token || !repo) {
-    return { ok: false, error: "service token or repo not configured", captured: 0, unchanged: 0, summarized: 0, prs: 0, issues: 0 };
+    return {
+      ok: false,
+      error: "service token or repo not configured",
+      captured: 0,
+      unchanged: 0,
+      summarized: 0,
+      summaryBudgetExhausted: false,
+      structuredCount: 0,
+      prs: 0,
+      issues: 0,
+    };
   }
 
   const doFetch = opts?.fetchImpl ?? fetch;
   const summarizer = opts?.summarizer ?? (env.AI ? workersAiSummarizer(env.AI) : null);
+  const summaryBatchLimit = opts?.summaryBatchLimit ?? SUMMARY_BATCH_LIMIT;
+  const summaryCallDelayMs = opts?.summaryCallDelayMs ?? SUMMARY_CALL_DELAY_MS;
   const headers = {
     authorization: `Bearer ${token}`,
     accept: GH_API,
@@ -173,6 +203,11 @@ export async function runBackfill(
   let captured = 0;
   let unchanged = 0;
   let summarized = 0;
+  let summaryBudgetExhausted = false;
+  // Running count of PRs that end this call with a structured summary — either
+  // already had one, or got one just now. Paired with prList.length, this is
+  // the "X of Y" progress the frontend shows across a multi-batch sync.
+  let structuredCount = 0;
 
   for (const pr of prList) {
     const payload = prClosedDelivery(pr);
@@ -194,15 +229,33 @@ export async function runBackfill(
         ev.semantic_key
       );
       const alreadyStructured = existing !== null && parseStructuredSummary(existing.summary) !== null;
-      if (!alreadyStructured) {
-        const parsed = JSON.parse(ev.raw) as { pr: { number: number; title: string; body: string | null } };
-        await storePrSummary(env.DB, summarizer, {
-          semantic_key: ev.semantic_key,
-          pr_number: parsed.pr.number,
-          title: parsed.pr.title,
-          body: parsed.pr.body ?? "",
-        });
-        summarized++;
+      if (alreadyStructured) {
+        structuredCount++;
+        continue;
+      }
+
+      if (summarized >= summaryBatchLimit) {
+        summaryBudgetExhausted = true;
+        continue;
+      }
+
+      const parsed = JSON.parse(ev.raw) as { pr: { number: number; title: string; body: string | null } };
+      const stored = await storePrSummary(env.DB, summarizer, {
+        semantic_key: ev.semantic_key,
+        pr_number: parsed.pr.number,
+        title: parsed.pr.title,
+        body: parsed.pr.body ?? "",
+      });
+      summarized++;
+      // storePrSummary can still fall back to excerpt if the AI call failed —
+      // only count it toward "done" if it actually landed in structured form.
+      if (parseStructuredSummary(stored.summary) !== null) structuredCount++;
+
+      // Pace summarizer calls so one invocation doesn't burst past whatever
+      // limit caused the wall above — skip the trailing delay once the batch
+      // is done, nothing follows it.
+      if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
       }
     }
   }
@@ -222,5 +275,14 @@ export async function runBackfill(
     }
   }
 
-  return { ok: true, captured, unchanged, summarized, prs: prList.length, issues: issueList.length };
+  return {
+    ok: true,
+    captured,
+    unchanged,
+    summarized,
+    summaryBudgetExhausted,
+    structuredCount,
+    prs: prList.length,
+    issues: issueList.length,
+  };
 }

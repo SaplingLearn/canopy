@@ -256,6 +256,29 @@ describe("render() — My Work screen", () => {
     expect(html).not.toContain('data-act="adminBackfill"');
   });
 
+  it("shows a disabled Sync button while backfillSync is set", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const s = { ...stateWithDashboard(data, true), backfillSync: { structuredCount: 66, prsTotal: 146 } };
+    const html = render(s);
+    expect(html).toContain("disabled");
+    expect(html).toContain("Syncing");
+    expect(html).not.toContain("Sync GitHub");
+  });
+
+  it("renders a centered progress modal with the current X of Y count while backfillSync is set", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const s = { ...stateWithDashboard(data, true), backfillSync: { structuredCount: 66, prsTotal: 146 } };
+    const html = render(s);
+    expect(html).toContain("66 of 146 PRs summarized");
+    expect(html).toContain("width:45%"); // Math.round(66/146*100)
+  });
+
+  it("renders no progress modal when backfillSync is null", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const html = render(stateWithDashboard(data, true));
+    expect(html).not.toContain("Syncing GitHub PR summaries");
+  });
+
   it("renders To-do before Previous activity", () => {
     const data: DashboardData = {
       person: "alice",
