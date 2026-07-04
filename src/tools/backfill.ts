@@ -5,7 +5,6 @@ import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
 import { type Summarizer, workersAiPrSummarizer, storePrSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
-import { parseStructuredSummary } from "@shared/prSummary";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
 // (which signs synthetic webhook deliveries with the webhook secret), this runs
@@ -39,8 +38,8 @@ export interface BackfillResult {
   unchanged: number;
   summarized: number;
   summaryBudgetExhausted: boolean;
-  /** How many of `prs` currently have a structured summary — the "X of Y" the frontend shows. */
-  structuredCount: number;
+  /** How many of `prs` already have a real (non-excerpt) summary — the "X of Y" the frontend shows. */
+  prSummarizedCount: number;
   prs: number;
   issues: number;
 }
@@ -154,7 +153,7 @@ export async function runBackfill(
       unchanged: 0,
       summarized: 0,
       summaryBudgetExhausted: false,
-      structuredCount: 0,
+      prSummarizedCount: 0,
       prs: 0,
       issues: 0,
     };
@@ -206,10 +205,10 @@ export async function runBackfill(
   let unchanged = 0;
   let summarized = 0;
   let summaryBudgetExhausted = false;
-  // Running count of PRs that end this call with a structured summary — either
-  // already had one, or got one just now. Paired with prList.length, this is
-  // the "X of Y" progress the frontend shows across a multi-batch sync.
-  let structuredCount = 0;
+  // Running count of PRs that end this call with a real (non-excerpt) summary —
+  // either already had one, or got one just now. Paired with prList.length, this
+  // is the "X of Y" progress the frontend shows across a multi-batch sync.
+  let prSummarizedCount = 0;
 
   for (const pr of prList) {
     const payload = prClosedDelivery(pr);
@@ -222,17 +221,17 @@ export async function runBackfill(
         unchanged++;
       }
 
-      // (Re)summarize unless it's already in the structured format — decoupled
-      // from the event-capture outcome so a Sync also migrates PRs captured
-      // before the structured format existed, not just brand-new ones.
+      // (Re)summarize unless it already has a real summary — decoupled from the
+      // event-capture outcome so a Sync also migrates PRs that fell back to the
+      // excerpt summary, not just brand-new ones.
       const existing = await first<PrSummaryRow>(
         env.DB,
-        `SELECT summary FROM pr_summaries WHERE semantic_key = ?`,
+        `SELECT model FROM pr_summaries WHERE semantic_key = ?`,
         ev.semantic_key
       );
-      const alreadyStructured = existing !== null && parseStructuredSummary(existing.summary) !== null;
-      if (alreadyStructured) {
-        structuredCount++;
+      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      if (alreadySummarized) {
+        prSummarizedCount++;
         continue;
       }
 
@@ -250,8 +249,8 @@ export async function runBackfill(
       });
       summarized++;
       // storePrSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually landed in structured form.
-      if (parseStructuredSummary(stored.summary) !== null) structuredCount++;
+      // only count it toward "done" if it actually got a real summary.
+      if (stored.model !== "excerpt") prSummarizedCount++;
 
       // Pace summarizer calls so one invocation doesn't burst past whatever
       // limit caused the wall above — skip the trailing delay once the batch
@@ -283,7 +282,7 @@ export async function runBackfill(
     unchanged,
     summarized,
     summaryBudgetExhausted,
-    structuredCount,
+    prSummarizedCount,
     prs: prList.length,
     issues: issueList.length,
   };
