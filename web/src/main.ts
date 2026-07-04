@@ -8,12 +8,12 @@ import { render, initialState, type AppState } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   completeMilestone,
+  listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
+  listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
   Unauthorized, NotFound, ApiError,
 } from "./api";
-// The Review + Maintenance surfaces are mock-driven until the backend reads
-// land: their actions below mutate UI state over the mock module — no fetches.
-import { MOCK_REVIEW_ITEMS, MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { decodeReviewId } from "./triage-map";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -198,6 +198,86 @@ function loadRoadmapIfNeeded(): void {
   else rerender();
 }
 
+// Write-completion handlers refetch the triage slices directly (not via
+// IfNeeded), so two loads of the same slice can overlap; the seq guard lets
+// only the newest in-flight request commit, so a slow earlier response can't
+// overwrite fresher data.
+let proposalsSeq = 0;
+function loadProposals(): void {
+  const seq = ++proposalsSeq;
+  state.proposals = { status: "loading", data: state.proposals.data };
+  rerender();
+  listStagedProposals()
+    .then((rows) => { if (seq !== proposalsSeq) return; state.proposals = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== proposalsSeq) return;
+      state.proposals = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadProposalsIfNeeded(): void {
+  if (state.proposals.status === "idle" || state.proposals.status === "error") loadProposals();
+  else rerender();
+}
+
+let draftAdrsSeq = 0;
+function loadDraftAdrs(): void {
+  const seq = ++draftAdrsSeq;
+  state.draftAdrs = { status: "loading", data: state.draftAdrs.data };
+  rerender();
+  listAdrs("draft")
+    .then((rows) => { if (seq !== draftAdrsSeq) return; state.draftAdrs = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== draftAdrsSeq) return;
+      state.draftAdrs = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadDraftAdrsIfNeeded(): void {
+  if (state.draftAdrs.status === "idle" || state.draftAdrs.status === "error") loadDraftAdrs();
+  else rerender();
+}
+
+let needsTriageSeq = 0;
+function loadNeedsTriage(): void {
+  const seq = ++needsTriageSeq;
+  state.needsTriage = { status: "loading", data: state.needsTriage.data };
+  rerender();
+  listNeedsTriage()
+    .then((rows) => { if (seq !== needsTriageSeq) return; state.needsTriage = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== needsTriageSeq) return;
+      state.needsTriage = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadNeedsTriageIfNeeded(): void {
+  if (state.needsTriage.status === "idle" || state.needsTriage.status === "error") loadNeedsTriage();
+  else rerender();
+}
+
+let identityTasksSeq = 0;
+function loadIdentityTasks(): void {
+  const seq = ++identityTasksSeq;
+  state.identityTasks = { status: "loading", data: state.identityTasks.data };
+  rerender();
+  listIdentityTasks()
+    .then((rows) => { if (seq !== identityTasksSeq) return; state.identityTasks = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== identityTasksSeq) return;
+      state.identityTasks = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadIdentityTasksIfNeeded(): void {
+  if (state.identityTasks.status === "idle" || state.identityTasks.status === "error") loadIdentityTasks();
+  else rerender();
+}
+
 function flash(msg: string): void {
   state.toast = msg;
   rerender();
@@ -299,8 +379,8 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // roadmap tab toggle
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
-    case "goReview": state.screen = "review"; break;
-    case "goMaintenance": state.screen = "maintenance"; break;
+    case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
+    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
     case "goGuide": state.screen = "guide"; break;
@@ -331,7 +411,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "setTag": state.feedTag = value ?? "all"; loadFeed(); return;
     case "setRange": state.feedRange = value ?? "all"; break;
 
-    // ── Review (mock-driven until the backend reads land — no writes) ────────
+    // ── Review (wired: real proposals + draft ADR reads, real verdict writes) ──
     case "reviewSelect": if (arg) state.reviewSel = arg; break;
     case "reviewFilter":
       if (arg === "all" || arg === "proposal" || arg === "decision") state.reviewFilter = arg;
@@ -342,17 +422,25 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "reviewAccept":
     case "reviewReject": {
       if (!arg) return;
-      const item = MOCK_REVIEW_ITEMS.find((it) => it.id === arg);
-      if (!item || state.reviewDone.includes(arg)) return;
-      state.reviewDone.push(arg);
-      state.reviewSel = null; // fall back to the first visible item
-      if (act === "reviewAccept") {
-        flash(item.kind === "decision"
-          ? `Ratified — ${item.eyebrow.split(" · ")[1] ?? item.title} is now accepted`
-          : `Promoted — “${item.title}” is live; previous version kept`);
-      } else {
-        flash("Rejected — parked, nothing changed");
-      }
+      const ref = decodeReviewId(arg);
+      if (!ref) return;
+      const accept = act === "reviewAccept";
+      const op = ref.kind === "doc"
+        ? (accept ? promoteDoc(ref.slug, ref.version) : rejectDoc(ref.slug, ref.version))
+        : (accept ? ratifyAdr(ref.id) : rejectAdr(ref.id));
+      op.then(() => {
+          state.reviewSel = null; // fall back to the first visible item
+          flash(accept
+            ? (ref.kind === "adr" ? "Ratified — the decision is now accepted" : "Promoted — the proposal is live; previous version kept")
+            : "Rejected — parked, nothing changed");
+          // Refetch the affected list — never locally decrement (badge drift is worse).
+          if (ref.kind === "doc") loadProposals();
+          else loadDraftAdrs();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Action failed");
+        });
       return;
     }
 
@@ -412,45 +500,89 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       if (!arg) return;
       state.assignOpen = state.assignOpen === arg ? null : arg;
       state.assignKind = null;
-      state.assignTarget = null;
+      state.assignSection = null;
+      state.assignSpace = null;
+      state.assignTags = [];
       break;
     }
-    case "maintAssignKind": if (arg) { state.assignKind = arg; state.assignTarget = null; } break;
-    case "maintAssignTarget": if (arg) state.assignTarget = arg; break;
+    case "maintAssignKind":
+      if (arg === "doc" || arg === "adr" || arg === "milestone" || arg === "feed") {
+        state.assignKind = arg;
+        state.assignSection = null;
+        state.assignSpace = null;
+        state.assignTags = [];
+      }
+      break;
+    case "maintAssignSection": if (arg) state.assignSection = arg; break;
+    case "maintAssignSpace": if (arg) state.assignSpace = state.assignSpace === arg ? null : arg; break;
+    case "maintAssignTag":
+      if (arg) state.assignTags = state.assignTags.includes(arg) ? state.assignTags.filter((t) => t !== arg) : [...state.assignTags, arg];
+      break;
     case "maintFile": {
-      if (!arg || state.assignOpen !== arg || !state.assignKind || !state.assignTarget) return;
-      const item = MOCK_UNPLACED.find((u) => u.id === arg);
-      if (!item || state.unplacedDone.includes(arg)) return;
-      state.unplacedDone.push(arg);
-      const { assignKind, assignTarget } = state;
-      state.assignOpen = null; state.assignKind = null; state.assignTarget = null;
-      flash(`Filed — “${item.title}” → ${assignKind} · ${assignTarget}`);
+      if (!arg || state.assignOpen !== arg || !state.assignKind) return;
+      if (state.assignKind === "doc" && !state.assignSection) return;
+      const id = Number(arg);
+      if (!Number.isInteger(id)) return;
+      const kind = state.assignKind;
+      const target: AssignTarget = { type: kind };
+      if (kind === "doc") {
+        target.section = state.assignSection ?? undefined;
+        target.space = state.assignSpace === "sapling" || state.assignSpace === "canopy" ? state.assignSpace : undefined;
+      }
+      if (kind === "feed") target.tags = state.assignTags;
+      assignTriage(id, target)
+        .then(() => {
+          state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = [];
+          flash("Filed — placed through the gate and resolved");
+          loadNeedsTriage();
+          if (kind === "doc") loadProposals();   // an assigned doc lands as a staged proposal
+          if (kind === "adr") loadDraftAdrs();   // an assigned decision lands as a draft
+          if (kind === "feed") loadFeed();   // a filed feed entry lands live on the Feed screen
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          // e.g. "cannot assign a free-form triage item; discard it instead" — verbatim from the gate
+          flash(e instanceof ApiError ? e.message : "Could not file this item");
+        });
       return;
     }
     case "maintDiscard": {
       if (!arg) return;
-      const item = MOCK_UNPLACED.find((u) => u.id === arg);
-      if (!item || state.unplacedDone.includes(arg)) return;
-      state.unplacedDone.push(arg);
-      if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignTarget = null; }
-      flash(`Discarded — “${item.title}”`);
+      const id = Number(arg);
+      if (!Number.isInteger(id)) return;
+      if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = []; }
+      discardTriage(id)
+        .then(() => { flash("Discarded — parked, nothing changed"); loadNeedsTriage(); })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not discard");
+        });
       return;
     }
     case "identityPick": {
       if (!arg) return;
       const sep = arg.indexOf(":");
       if (sep < 0) return;
-      state.mapPicks = { ...state.mapPicks, [arg.slice(0, sep)]: arg.slice(sep + 1) };
+      const login = arg.slice(0, sep);
+      state.mapPicks = { ...state.mapPicks, [login]: arg.slice(sep + 1) };
+      if (state.mapConfirm === login) state.mapConfirm = null; // changing the pick re-arms the confirm
       break;
     }
     case "identityMap": {
       if (!arg) return;
-      const group = MOCK_IDENTITY.find((g) => g.id === arg);
-      const pick = state.mapPicks[arg];
-      const person = MOCK_PEOPLE.find((p) => p.id === pick);
-      if (!group || !person || state.identityDone.includes(arg)) return;
-      state.identityDone.push(arg);
-      flash(`Mapped — ${group.login} → ${person.name}; ${group.countNum} captured events now flow into their view`);
+      const person = state.mapPicks[arg];
+      if (!person) return;                                              // no auto-select: a person must be picked
+      if (state.mapConfirm !== arg) { state.mapConfirm = arg; break; }  // step 1: show the concrete effect
+      state.mapConfirm = null;
+      mapIdentity(arg, person)
+        .then(() => {
+          flash(`Mapped — ${arg} → ${person}; their captured activity is now attributed`);
+          loadIdentityTasks();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not map login");
+        });
       return;
     }
     // ── Settings ─────────────────────────────────────────────────────────────
@@ -527,6 +659,12 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
       state.displayName = me.name ?? me.login;
       state.view = "app";
       loadMyWork();
+      // Boot-time loads for the sidebar triage badges — the counts must be
+      // right on every screen, not just after visiting Review/Maintenance.
+      loadProposals();
+      loadDraftAdrs();
+      loadNeedsTriage();
+      loadIdentityTasks();
     })
     .catch(() => {
       // Unauthorized or any error → show login

@@ -3,18 +3,18 @@
 // `.map().join('')`, `sc-if` to ternaries, and `onClick="{{ fn }}"` to
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
-import type { Me } from "./api";
-import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
+import type { Me, StagedProposal, IdentityTask } from "./api";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
-import { esc, attr } from "./ui";
+import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
-import { maintenanceView, type MaintenanceProps } from "./maintenance";
-import { MOCK_REVIEW_ITEMS, MOCK_UNPLACED, MOCK_ASSIGN, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromLogins } from "./triage-map";
 
 export type DocSpace = "canopy" | "sapling";
 
@@ -47,18 +47,21 @@ export interface AppState {
   docSpace: DocSpace;
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<PlanView>;
-  // Triage surfaces (Review + Maintenance) — UI state only; the data itself is
-  // mock-fed from triage-mock.ts until the backend reads land. The *Done lists
-  // track mock items already acted on this session.
+  // Triage surfaces (Review + Maintenance) — four Loadable slices, one per
+  // list read; each surface's counts/props derive straight from these.
+  proposals: Loadable<StagedProposal[]>;
+  draftAdrs: Loadable<AdrRow[]>;
+  needsTriage: Loadable<NeedsTriageRow[]>;
+  identityTasks: Loadable<IdentityTask[]>;
   reviewFilter: ReviewFilter;
   reviewSel: string | null;
   reviewDiffView: DiffViewMode;
-  reviewDone: string[];
-  unplacedDone: string[];
-  identityDone: string[];
   assignOpen: string | null;
-  assignKind: string | null;
-  assignTarget: string | null;
+  assignKind: AssignKind | null;
+  assignSection: string | null;
+  assignSpace: string | null;
+  assignTags: string[];
+  mapConfirm: string | null;
   mapPicks: Record<string, string>;
   showHistory: boolean;
   searchQuery: string;
@@ -91,9 +94,13 @@ export function initialState(): AppState {
     docSpace: "sapling",
     roadmapTab: "timeline",
     roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
+    proposals: { status: "idle", data: [] },
+    draftAdrs: { status: "idle", data: [] },
+    needsTriage: { status: "idle", data: [] },
+    identityTasks: { status: "idle", data: [] },
     reviewFilter: "all", reviewSel: null, reviewDiffView: "unified",
-    reviewDone: [], unplacedDone: [], identityDone: [],
-    assignOpen: null, assignKind: null, assignTarget: null,
+    assignOpen: null, assignKind: null, assignSection: null, assignSpace: null, assignTags: [],
+    mapConfirm: null,
     mapPicks: {},
     showHistory: false,
     searchQuery: "token", searchType: "all",
@@ -107,12 +114,10 @@ export function initialState(): AppState {
   };
 }
 
-// ── triage surface data (mock-fed until the backend reads land) ──────────────
-// The ONLY place the mock module meets the render tree: swap these builders to
-// real reads at wire time and the components underneath stay untouched.
+// ── triage surface data (real reads — the mapping layer lives in triage-map.ts) ──
 export function reviewProps(s: AppState): ReviewProps {
   return {
-    items: MOCK_REVIEW_ITEMS.filter((it) => !s.reviewDone.includes(it.id)),
+    items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data),
     filter: s.reviewFilter,
     selectedId: s.reviewSel,
     diffView: s.reviewDiffView,
@@ -121,24 +126,25 @@ export function reviewProps(s: AppState): ReviewProps {
 
 export function maintenanceProps(s: AppState): MaintenanceProps {
   return {
-    unplaced: MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)),
-    assign: MOCK_ASSIGN,
+    unplaced: s.needsTriage.data.map(unplacedFromRow),
+    assign: ASSIGN_OPTIONS,
     assignOpen: s.assignOpen,
     assignKind: s.assignKind,
-    assignTarget: s.assignTarget,
-    identity: MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)),
-    people: MOCK_PEOPLE,
+    assignSection: s.assignSection,
+    assignSpace: s.assignSpace,
+    assignTags: s.assignTags,
+    identity: s.identityTasks.data.map(identityFromTask),
+    people: peopleFromLogins([...s.feedAuthors, ...(s.me ? [s.me.login] : [])]),
     mapPicks: s.mapPicks,
+    mapConfirm: s.mapConfirm,
   };
 }
 
-/** Sidebar counts for the two triage entries (pending mock items). */
+/** Sidebar counts for the two triage entries — the lengths of the four list reads. */
 export function triageCounts(s: AppState): { review: number; maintenance: number } {
   return {
-    review: MOCK_REVIEW_ITEMS.filter((it) => !s.reviewDone.includes(it.id)).length,
-    maintenance:
-      MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)).length +
-      MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)).length,
+    review: s.proposals.data.length + s.draftAdrs.data.length,
+    maintenance: s.needsTriage.data.length + s.identityTasks.data.length,
   };
 }
 
@@ -156,25 +162,6 @@ function logo(size: number): string {
 }
 
 // ── real-data helpers (authors are github logins; no curated display map) ─────
-/** Two-letter avatar initials from a github login, e.g. "jose-a" → "JO". */
-function initialsOf(login: string): string {
-  const letters = login.replace(/[^a-zA-Z]/g, "");
-  return (letters.slice(0, 2) || login.slice(0, 2) || "?").toUpperCase();
-}
-/** Relative time from an ISO timestamp, e.g. "32m ago" / "2d ago". */
-function relTime(iso: string | null): string {
-  if (!iso) return "";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const mins = Math.round((Date.now() - then) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 /** Parse the feed row's artifacts JSON ({prs,commits,issues}) into render-ready chips. */
 function feedArtifacts(json: string | null): { kind: string; label: string; href: string }[] {
   if (!json) return [];
@@ -548,55 +535,6 @@ function docsView(s: AppState): string {
     <div class="cnpy-scroll" style="width:252px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 12px">${treeHtml}</div>
     <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">${readerHtml}</div>
   </div>`;
-}
-
-export type DiffKind = "ctx" | "add" | "del" | "ellipsis";
-
-export type DiffRow = { t: DiffKind; text: string };
-export function lineDiff(oldText: string, newText: string): DiffRow[] {
-  const a = oldText.split("\n"), b = newText.split("\n");
-  const n = a.length, m = b.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
-    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out: DiffRow[] = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { out.push({ t: "ctx", text: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "del", text: a[i] }); i++; }
-    else { out.push({ t: "add", text: b[j] }); j++; }
-  }
-  while (i < n) out.push({ t: "del", text: a[i++] });
-  while (j < m) out.push({ t: "add", text: b[j++] });
-  return out;
-}
-
-/**
- * Line diff with large unchanged runs collapsed to "N unchanged lines" ellipsis markers.
- * ctx = how many context lines to show around each changed hunk (default 3).
- */
-export function collapsedLineDiff(oldText: string, newText: string, ctx = 3): DiffRow[] {
-  const rows = lineDiff(oldText, newText);
-  if (rows.length === 0) return [];
-  const changed = new Set<number>();
-  rows.forEach((r, i) => { if (r.t !== "ctx") changed.add(i); });
-  if (changed.size === 0) return rows; // nothing changed — return as-is (or callers can skip)
-  const visible = new Set<number>();
-  changed.forEach((idx) => {
-    for (let j = Math.max(0, idx - ctx); j <= Math.min(rows.length - 1, idx + ctx); j++) visible.add(j);
-  });
-  const out: DiffRow[] = [];
-  let i = 0;
-  while (i < rows.length) {
-    if (visible.has(i)) { out.push(rows[i]); i++; }
-    else {
-      let j = i;
-      while (j < rows.length && !visible.has(j)) j++;
-      out.push({ t: "ellipsis", text: `${j - i} unchanged line${j - i !== 1 ? "s" : ""}` });
-      i = j;
-    }
-  }
-  return out;
 }
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
@@ -1203,6 +1141,31 @@ function myWorkView(s: AppState): string {
   return wrapMyWork(`${hero}${todo}${activity}`);
 }
 
+/** A list slice that hasn't produced data yet (idle/loading with nothing cached). */
+function slicePending(l: Loadable<unknown[]>): boolean {
+  return (l.status === "idle" || l.status === "loading") && l.data.length === 0;
+}
+
+/** Review screen with slice-level loading/error states around the pure view. */
+function reviewScreen(s: AppState): string {
+  if (slicePending(s.proposals) && slicePending(s.draftAdrs)) return notice("Loading review queue&hellip;");
+  if (s.proposals.status === "error" && s.draftAdrs.status === "error") return notice("Couldn't load the review queue.");
+  const hint = s.proposals.status === "error" ? mwDegradedHint("Couldn't load doc/decision proposals.")
+    : s.draftAdrs.status === "error" ? mwDegradedHint("Couldn't load draft ADRs.")
+    : "";
+  return `${hint}${reviewView(reviewProps(s))}`;
+}
+
+/** Maintenance screen with slice-level loading/error states around the pure view. */
+function maintenanceScreen(s: AppState): string {
+  if (slicePending(s.needsTriage) && slicePending(s.identityTasks)) return notice("Loading maintenance&hellip;");
+  if (s.needsTriage.status === "error" && s.identityTasks.status === "error") return notice("Couldn't load maintenance.");
+  const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
+    : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
+    : "";
+  return `${hint}${maintenanceView(maintenanceProps(s))}`;
+}
+
 // ── root ─────────────────────────────────────────────────────────────────────
 function screenBody(s: AppState): string {
   switch (s.screen) {
@@ -1210,8 +1173,8 @@ function screenBody(s: AppState): string {
     case "feed": return feedView(s);
     case "docs": return docsView(s);
     case "roadmap": return roadmapView(s);
-    case "review": return reviewView(reviewProps(s));
-    case "maintenance": return maintenanceView(maintenanceProps(s));
+    case "review": return reviewScreen(s);
+    case "maintenance": return maintenanceScreen(s);
     case "search": return searchView(s);
     case "settings": return settingsView(s);
     case "guide": return guideView(s);
@@ -1231,7 +1194,7 @@ function appView(s: AppState): string {
 
 function toastBlock(msg: string): string {
   return `<div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:9px;padding:10px 16px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);box-shadow:0 8px 30px rgba(0,0,0,.35);font-size:13px;animation:cnpy-pop .25s ease both">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>${msg}
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>${esc(msg)}
   </div>`;
 }
 

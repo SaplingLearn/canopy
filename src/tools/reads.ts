@@ -126,7 +126,7 @@ export async function list_milestone_proposals(db: DB): Promise<MilestoneProposa
 // issue); a malformed raw yields null rather than failing the list.
 export interface IdentitySample {
   semantic_key: string;
-  event_type: string;
+  event_type: EventRow["event_type"];
   ref_number: number;
   title: string | null;
   occurred_at: string | null;

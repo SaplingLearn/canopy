@@ -5,7 +5,7 @@
 // @shared rows. All requests carry the session cookie (credentials:"same-origin");
 // the MCP bearer is for /mcp only and never appears here.
 import type {
-  FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow,
+  FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, EventRow,
 } from "@shared/rows";
 import type { DashboardData } from "@shared/dashboard";
 
@@ -172,6 +172,29 @@ export function listStagedProposals(): Promise<StagedProposal[]> {
   return getJson<{ proposals: StagedProposal[] }>("/proposals").then((r) => r.proposals);
 }
 
+// Maintenance · Identity: pending unknown-login tasks, each with a small LIVE
+// activity sample. Mirrors src/tools/reads.ts IdentityTaskWithSample exactly
+// (web/ can't import src/, so it's re-declared here atop @shared/rows's
+// IdentityTaskRow shape). Envelope: { tasks }.
+export interface IdentitySample {
+  semantic_key: string;
+  event_type: EventRow["event_type"];
+  ref_number: number;
+  title: string | null;    // null when the event's raw snapshot is malformed
+  occurred_at: string | null;
+}
+export interface IdentityTask {
+  login: string;
+  first_seen: string;
+  status: "pending" | "resolved";
+  resolved_at: string | null;
+  resolved_by: string | null;
+  sample: IdentitySample[];
+}
+export function listIdentityTasks(): Promise<IdentityTask[]> {
+  return getJson<{ tasks: IdentityTask[] }>("/identity-tasks").then((r) => r.tasks);
+}
+
 // ── confirms (cookie-authed) ─────────────────────────────────────────────────
 export function promoteDoc(slug: string, version: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/doc/${encodeURIComponent(slug)}/promote`, { version });
@@ -203,6 +226,14 @@ export interface AssignTarget { type?: "doc" | "adr" | "milestone" | "feed"; sec
 export function assignTriage(id: number, target: AssignTarget): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/needs-triage/${id}/assign`, target);
 }
+
+// Maintenance · Identity: map a login to a person — the `people` table's only
+// runtime write. `person` is a free non-empty string; the picker posts a
+// teammate's GitHub login as that value.
+export function mapIdentity(login: string, person: string): Promise<{ ok: true; login: string; person: string; status: "resolved" }> {
+  return postJson(`/identity-tasks/${encodeURIComponent(login)}/map`, { person });
+}
+
 export function logout(): Promise<{ ok: true }> {
   return postJson<{ ok: true }>("/auth/logout");
 }
