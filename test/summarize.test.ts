@@ -1,10 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all, run, nowIso } from "../src/db";
-import type { PrSummaryRow } from "@shared/rows";
+import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import type { Env } from "../src/env";
 import type { Summarizer } from "../src/tools/summarize";
-import { storePrSummary, excerptSummary, SUMMARIZER_SYSTEM_PROMPT, workersAiSummarizer } from "../src/tools/summarize";
+import {
+  storePrSummary,
+  storeIssueSummary,
+  excerptSummary,
+  SUMMARIZER_SYSTEM_PROMPT,
+  ISSUE_SUMMARIZER_SYSTEM_PROMPT,
+  workersAiPrSummarizer,
+  workersAiIssueSummarizer,
+} from "../src/tools/summarize";
 import { handleGithubWebhook } from "../src/webhook";
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
@@ -183,7 +191,7 @@ describe("webhook → summarize wiring", () => {
     expect(rows.length).toBe(0);
   });
 
-  it("with no explicit summarizer, falls back through workersAiSummarizer(env.AI) to excerpt (no remote AI session in tests, never throws)", async () => {
+  it("with no explicit summarizer, falls back through workersAiPrSummarizer(env.AI) to excerpt (no remote AI session in tests, never throws)", async () => {
     const res = await postWebhook("pull_request", prMerged);
     expect(res.status).toBe(200);
     const rows = await all<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE semantic_key = ?`, "gh:pr:42:merged");
@@ -193,22 +201,31 @@ describe("webhook → summarize wiring", () => {
 });
 
 describe("SUMMARIZER_SYSTEM_PROMPT", () => {
-  it("requires the structured What changed / Why convention", () => {
-    expect(SUMMARIZER_SYSTEM_PROMPT).toContain("**What changed:**");
-    expect(SUMMARIZER_SYSTEM_PROMPT).toContain("**Why:**");
+  it("asks for 2-3 sentences of plain prose, not the old structured What changed/Why convention", () => {
+    expect(SUMMARIZER_SYSTEM_PROMPT).not.toContain("**What changed:**");
+    expect(SUMMARIZER_SYSTEM_PROMPT).not.toContain("**Why:**");
+    expect(SUMMARIZER_SYSTEM_PROMPT).toContain("2 to 3 sentences");
+    expect(SUMMARIZER_SYSTEM_PROMPT).toContain("no headings");
+  });
+});
+
+describe("ISSUE_SUMMARIZER_SYSTEM_PROMPT", () => {
+  it("asks for a plain restatement plus what needs doing only when the issue supports it", () => {
+    expect(ISSUE_SUMMARIZER_SYSTEM_PROMPT).toContain("2 to 3 sentences");
+    expect(ISSUE_SUMMARIZER_SYSTEM_PROMPT).toContain("never invent a next step");
   });
 });
 
 // Different Workers AI model families shape ai.run()'s resolved value
 // differently: some return the classic flat {response: string}, others
 // (e.g. gemma-4-26b-a4b-it) return an OpenAI-style Chat Completions shape
-// ({choices: [{message: {content: string}}]}). workersAiSummarizer must
+// ({choices: [{message: {content: string}}]}). workersAiPrSummarizer must
 // handle both without throwing, since a mismatch here silently produces
 // model:'excerpt' forever — exactly the bug this test suite exists to catch.
-describe("workersAiSummarizer — response shape handling", () => {
+describe("workersAiPrSummarizer — response shape handling", () => {
   it("extracts text from the classic flat {response} shape", async () => {
     const fakeAi = { run: async () => ({ response: "**What changed:** Fixed the bug." }) } as unknown as Ai;
-    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBe("**What changed:** Fixed the bug.");
   });
 
@@ -216,13 +233,13 @@ describe("workersAiSummarizer — response shape handling", () => {
     const fakeAi = {
       run: async () => ({ choices: [{ message: { role: "assistant", content: "**What changed:** Fixed the bug." } }] }),
     } as unknown as Ai;
-    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBe("**What changed:** Fixed the bug.");
   });
 
   it("returns null when neither shape is present", async () => {
     const fakeAi = { run: async () => ({ unexpected: "shape" }) } as unknown as Ai;
-    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   });
 
@@ -232,13 +249,66 @@ describe("workersAiSummarizer — response shape handling", () => {
         throw new Error("model not found");
       },
     } as unknown as Ai;
-    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   });
 
   it("returns null for an empty/whitespace-only response", async () => {
     const fakeAi = { run: async () => ({ response: "   " }) } as unknown as Ai;
-    const result = await workersAiSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
+  });
+});
+
+describe("storeIssueSummary", () => {
+  it("stores the stub summarizer's summary under its own model id", async () => {
+    const stub: Summarizer = { model: "stub", summarize: async () => "What it is and what to do." };
+    const row = await storeIssueSummary(env.DB, stub, { issue_number: 1, title: "Some issue", body: "Some body" });
+    expect(row.summary).toBe("What it is and what to do.");
+    expect(row.model).toBe("stub");
+    expect(row.issue_number).toBe(1);
+
+    const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 1);
+    expect(rows.length).toBe(1);
+    expect(rows[0].summary).toBe("What it is and what to do.");
+  });
+
+  it("falls back to excerptSummary (model:'excerpt') when the summarizer returns null, and never throws", async () => {
+    const nullStub: Summarizer = { model: "stub", summarize: async () => null };
+    const row = await storeIssueSummary(env.DB, nullStub, { issue_number: 2, title: "Another issue", body: "Body text here" });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe(excerptSummary("Another issue", "Body text here"));
+  });
+
+  it("falls back to excerptSummary when the summarizer throws, and never throws", async () => {
+    const throwingStub: Summarizer = {
+      model: "stub",
+      summarize: async () => {
+        throw new Error("boom");
+      },
+    };
+    await expect(
+      storeIssueSummary(env.DB, throwingStub, { issue_number: 3, title: "Third issue", body: "" })
+    ).resolves.not.toThrow();
+    const row = await storeIssueSummary(env.DB, throwingStub, { issue_number: 3, title: "Third issue", body: "" });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe("Third issue"); // empty body → title
+  });
+
+  it("falls back to excerptSummary when no summarizer is provided (null)", async () => {
+    const row = await storeIssueSummary(env.DB, null, { issue_number: 4, title: "Fourth issue", body: "   " });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe("Fourth issue"); // whitespace-only body collapses to empty → title
+  });
+
+  it("INSERT OR REPLACE overwrites the prior summary for the same issue_number", async () => {
+    const s1: Summarizer = { model: "m1", summarize: async () => "First summary" };
+    await storeIssueSummary(env.DB, s1, { issue_number: 5, title: "Issue", body: "body" });
+    const s2: Summarizer = { model: "m2", summarize: async () => "Second summary" };
+    await storeIssueSummary(env.DB, s2, { issue_number: 5, title: "Issue", body: "body" });
+    const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 5);
+    expect(rows.length).toBe(1);
+    expect(rows[0].summary).toBe("Second summary");
+    expect(rows[0].model).toBe("m2");
   });
 });

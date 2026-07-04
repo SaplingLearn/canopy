@@ -3,7 +3,7 @@ import type { PrSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
-import { type Summarizer, workersAiSummarizer, storePrSummary } from "./summarize";
+import { type Summarizer, workersAiPrSummarizer, storePrSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
 import { parseStructuredSummary } from "@shared/prSummary";
 
@@ -161,7 +161,7 @@ export async function runBackfill(
   }
 
   const doFetch = opts?.fetchImpl ?? fetch;
-  const summarizer = opts?.summarizer ?? (env.AI ? workersAiSummarizer(env.AI) : null);
+  const summarizer = opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null);
   const summaryBatchLimit = opts?.summaryBatchLimit ?? SUMMARY_BATCH_LIMIT;
   const summaryCallDelayMs = opts?.summaryCallDelayMs ?? SUMMARY_CALL_DELAY_MS;
   const headers = {
