@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all } from "../src/db";
+import { all, run, nowIso } from "../src/db";
 import type { EventRow } from "@shared/rows";
 import type { Env } from "../src/env";
 import worker from "../src/index";
@@ -13,6 +13,8 @@ import {
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
 import issueClosed from "./fixtures/gh-issue-closed.json";
+import type { Summarizer } from "../src/tools/summarize";
+import type { IssueSummaryRow } from "@shared/rows";
 
 const SECRET = "test-webhook-secret"; // matches vitest.config.ts binding
 
@@ -34,12 +36,18 @@ function req(body: string, headers: Record<string, string>): Request {
 }
 
 // A correctly-signed delivery to the handler (the common happy path).
-async function postWebhook(eventName: string, payload: unknown, e: Env = env): Promise<Response> {
+async function postWebhook(
+  eventName: string,
+  payload: unknown,
+  e: Env = env,
+  opts?: { summarizer?: Summarizer | null; issueSummarizer?: Summarizer | null }
+): Promise<Response> {
   const body = JSON.stringify(payload);
   const sig = await sign(SECRET, body);
   return handleGithubWebhook(
     req(body, { "x-github-event": eventName, "x-hub-signature-256": sig, "content-type": "application/json" }),
-    e
+    e,
+    opts
   );
 }
 
@@ -182,5 +190,45 @@ describe("progressFromIssueEvent — pure derivation", () => {
   it("null when there is no milestone on the issue", () => {
     expect(progressFromIssueEvent({ issue: { number: 1 } })).toBeNull();
     expect(progressFromIssueEvent(null)).toBeNull();
+  });
+});
+
+describe("webhook → issue summarize wiring", () => {
+  it("an assigned issue event → one issue_summaries row keyed by issue number", async () => {
+    const stub: Summarizer = { model: "stub", summarize: async () => "What it is and what to do." };
+    const res = await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
+    expect(res.status).toBe(200);
+    const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 17);
+    expect(rows.length).toBe(1);
+    expect(rows[0].summary).toBe("What it is and what to do.");
+  });
+
+  it("a non-assigned issue action (closed) never reaches storeIssueSummary — zero issue_summaries rows", async () => {
+    const stub: Summarizer = { model: "stub", summarize: async () => "should never be called" };
+    const res = await postWebhook("issues", issueClosed, env, { issueSummarizer: stub });
+    expect(res.status).toBe(200);
+    const rows = await all(env.DB, `SELECT * FROM issue_summaries`);
+    expect(rows.length).toBe(0);
+  });
+
+  it("still runs progressSeam for an assigned issue event (both seams fire, not either/or)", async () => {
+    // progressSeam only writes a milestone_progress row for a milestone that
+    // already exists with a matching github_ref (see test/progress.test.ts's
+    // seedMilestone pattern) — seed one matching issueAssigned's milestone (3)
+    // so the assertion below actually exercises applyEventProgress.
+    await run(
+      env.DB,
+      `INSERT INTO milestones (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+      "M",
+      "2026-08-01",
+      "in_progress",
+      "3",
+      nowIso(),
+      "andres"
+    );
+    const stub: Summarizer = { model: "stub", summarize: async () => "summary" };
+    await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
+    const progress = await all(env.DB, `SELECT * FROM milestone_progress`);
+    expect(progress.length).toBe(1); // issueAssigned carries a milestone — progressSeam still wrote it
   });
 });

@@ -2,7 +2,7 @@ import type { CapturedEvent } from "@shared/contract";
 import type { Env } from "./env";
 import { type DB } from "./db";
 import { ingestEvent } from "./consumer";
-import { type Summarizer, workersAiPrSummarizer, storePrSummary } from "./tools/summarize";
+import { type Summarizer, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./tools/summarize";
 import { applyEventProgress } from "./tools/progress";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
@@ -253,6 +253,21 @@ async function summarizePrSeam(db: DB, summarizer: Summarizer | null, event: Cap
   });
 }
 
+// Task 4: mirror summarizePrSeam for issues, but ONLY on the "assigned" action —
+// unassigned/opened/closed issue events never need a summary (they never
+// appear in anyone's to-do). Action isn't distinguishable from event_type
+// alone (every issue action is captured as event_type:"issue"), so it's read
+// back off the event's own raw JSON.
+async function summarizeIssueSeam(db: DB, summarizer: Summarizer | null, event: CapturedEvent): Promise<void> {
+  const parsed = JSON.parse(event.raw) as { action: string; issue: { number: number; title: string; body: string | null } };
+  if (parsed.action !== "assigned") return;
+  await storeIssueSummary(db, summarizer, {
+    issue_number: parsed.issue.number,
+    title: parsed.issue.title,
+    body: parsed.issue.body ?? "",
+  });
+}
+
 // Task 5: apply this newly-captured issue event's implication(s) to the
 // milestone_progress cache (absolute overwrite — see applyEventProgress).
 async function progressSeam(db: DB, payload: unknown): Promise<void> {
@@ -268,7 +283,7 @@ async function progressSeam(db: DB, payload: unknown): Promise<void> {
 export async function handleGithubWebhook(
   request: Request,
   env: Env,
-  opts?: { summarizer?: Summarizer | null }
+  opts?: { summarizer?: Summarizer | null; issueSummarizer?: Summarizer | null }
 ): Promise<Response> {
   const rawBody = await request.text();
   const sig = request.headers.get("x-hub-signature-256");
@@ -302,6 +317,8 @@ export async function handleGithubWebhook(
         await summarizePrSeam(env.DB, summarizer, ev);
       } else {
         await progressSeam(env.DB, payload);
+        const issueSummarizer = opts?.issueSummarizer ?? (env.AI ? workersAiIssueSummarizer(env.AI) : null);
+        await summarizeIssueSeam(env.DB, issueSummarizer, ev);
       }
     } else {
       unchanged++;
