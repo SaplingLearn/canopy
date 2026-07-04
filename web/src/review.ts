@@ -15,7 +15,7 @@ export type ReviewFilter = "all" | ReviewKind;
 export type DiffViewMode = "unified" | "split" | "rendered";
 
 /** One line of a proposal's diff: ctx / add / del, `h` = heading context, `gap` = hunk separator. */
-export type DiffEntryKind = "ctx" | "add" | "del" | "gap" | "h";
+export type DiffEntryKind = "ctx" | "add" | "del" | "gap" | "h" | "ellipsis";
 export interface DiffEntry { t: DiffEntryKind; s?: string }
 
 export interface AdrSection { h: string; p: string }
@@ -31,6 +31,8 @@ export interface ReviewItem {
   agent: string;
   agentInitials: string;
   time: string;
+  /** Gate's scrutinize signal: staged with low_confidence = 1. Rendered as a small marker. */
+  flagged?: boolean;
   stale?: boolean;
   staleNote?: string;
   liveVersion?: string; // split-view left header, e.g. "LIVE (v8)"
