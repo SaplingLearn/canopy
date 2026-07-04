@@ -116,8 +116,16 @@ describe("POST /identity-tasks/:login/map", () => {
   // login's already-captured events with no backfill job.
   it("retroactively surfaces already-captured events in My Work — no backfill", async () => {
     const cookie = await authedCookie("andres");
-    await ingestEvent(env.DB, prEvent(1, "mystery-dev", "First PR", "2026-07-01T10:00:00Z"), "github-webhook");
-    await ingestEvent(env.DB, prEvent(2, "mystery-dev", "Second PR", "2026-07-02T10:00:00Z"), "github-webhook");
+    // Computed relative to the real clock (not fixed 2026-07-01/02 dates) so this
+    // test never goes red once the real date passes getMyWork's 14-day recency
+    // window. Do not pass getMyWork's opts.now here — that parameter is being
+    // removed on another in-flight branch, so relative event dates are the only
+    // form valid under both implementations.
+    const dayMs = 24 * 60 * 60 * 1000;
+    const twoDaysAgo = new Date(Date.now() - 2 * dayMs).toISOString();
+    const oneDayAgo = new Date(Date.now() - 1 * dayMs).toISOString();
+    await ingestEvent(env.DB, prEvent(1, "mystery-dev", "First PR", twoDaysAgo), "github-webhook");
+    await ingestEvent(env.DB, prEvent(2, "mystery-dev", "Second PR", oneDayAgo), "github-webhook");
 
     // Before mapping: captured but unsurfaced (empty projection, degraded:false).
     const before = await getMyWork(env.DB, "mystery-dev");
