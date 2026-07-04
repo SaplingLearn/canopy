@@ -86,7 +86,7 @@ app.get("/milestone-proposals", async (c) => c.json({ proposals: await list_mile
 
 // ── Review group (session-cookie only, NEVER MCP): Proposals (staged doc
 // versions) + Decisions (ADR drafts) — GET /proposals, GET /adrs, and their
-// promote/ratify/reject resolves above. Agent produces, human confirms. ──────
+// promote/ratify/reject resolves. Agent produces, human confirms. ──────────
 
 // The Proposals queue (Phase 3): staged doc versions newer than their live doc,
 // not rejected, server-joined with both bodies + reconciler metadata. Kills the
