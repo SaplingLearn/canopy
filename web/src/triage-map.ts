@@ -122,9 +122,9 @@ function clip(text: string, max: number): string {
 }
 
 /** Derive the card fields from the stored gate payload: JSON of the gated item
- *  (DocProposal / AdrDraft / MilestoneProposal / FeedEntry) OR a free-form
- *  string for agent-flagged batch items. The two-bucket chip is a lossy
- *  convenience — the verbatim gate reason always rides in reasonNote. */
+ *  (DocProposal / AdrDraft / FeedEntry) OR a free-form string for agent-flagged
+ *  batch items. The two-bucket chip is a lossy convenience — the verbatim gate
+ *  reason always rides in reasonNote. */
 export function unplacedFromRow(r: NeedsTriageRow): UnplacedItem {
   let parsed: Record<string, unknown> | null = null;
   try {

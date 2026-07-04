@@ -3,9 +3,9 @@
 // doc proposals (diff against live) and drafted decisions (ADR record).
 //
 // Every component here is purely presentational: data arrives through props
-// (fed from triage-mock.ts until the backend reads land) and renders to an
-// HTML string in the app's template-string idiom. Interactions dispatch via
-// data-act / data-arg handled in main.ts. No fetching, no inline data.
+// and renders to an HTML string in the app's template-string idiom.
+// Interactions dispatch via data-act / data-arg handled in main.ts. No fetching,
+// no inline data.
 
 import { esc, attr, statusBadge, avatarCircle, selectChip, dashedCard, MONO_LABEL } from "./ui";
 

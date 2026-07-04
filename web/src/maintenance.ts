@@ -3,10 +3,9 @@
 // discard the loose things agents couldn't place) and IDENTITY (match unmapped
 // activity logins to people). Empty is the normal state.
 //
-// Purely presentational: data arrives through props (fed from triage-mock.ts
-// until the backend reads land) and renders to HTML strings; interactions
-// dispatch via data-act / data-arg handled in main.ts. No fetching, no inline
-// data.
+// Purely presentational: data arrives through props and renders to HTML strings;
+// interactions dispatch via data-act / data-arg handled in main.ts. No fetching,
+// no inline data.
 
 import { esc, attr, avatarCircle, pickRow, primaryBtn, MONO_LABEL } from "./ui";
 
