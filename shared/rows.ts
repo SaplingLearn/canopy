@@ -157,6 +157,16 @@ export interface PrSummaryRow {
   created_at: string;
 }
 
+// Worker-generated summary of ONE assigned issue's own body (0017). Derived,
+// regenerable, never truth — keyed by issue number (not semantic_key), since
+// only the current summary matters across reassignments/edits.
+export interface IssueSummaryRow {
+  issue_number: number;
+  summary: string;
+  model: string | null;    // 'excerpt' = deterministic fallback
+  created_at: string;
+}
+
 // Absolute per-milestone progress cache (0012).
 export interface MilestoneProgressRow {
   milestone_id: number;
