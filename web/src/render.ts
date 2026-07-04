@@ -3,8 +3,8 @@
 // `.map().join('')`, `sc-if` to ternaries, and `onClick="{{ fn }}"` to
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
-import type { Me } from "./api";
-import type { FeedRow, DocRow, DocVersionRow } from "@shared/rows";
+import type { Me, StagedProposal } from "./api";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
@@ -14,7 +14,8 @@ import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, type MaintenanceProps } from "./maintenance";
-import { MOCK_REVIEW_ITEMS, MOCK_UNPLACED, MOCK_ASSIGN, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { reviewItemsFromReads } from "./triage-map";
+import { MOCK_UNPLACED, MOCK_ASSIGN, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
 
 export type DocSpace = "canopy" | "sapling";
 
@@ -47,13 +48,13 @@ export interface AppState {
   docSpace: DocSpace;
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<PlanView>;
-  // Triage surfaces (Review + Maintenance) — UI state only; the data itself is
-  // mock-fed from triage-mock.ts until the backend reads land. The *Done lists
-  // track mock items already acted on this session.
+  // Triage surfaces (Review + Maintenance). Review is wired: two Loadable
+  // slices below; *Done arrays remain only for the still-mock Maintenance.
+  proposals: Loadable<StagedProposal[]>;
+  draftAdrs: Loadable<AdrRow[]>;
   reviewFilter: ReviewFilter;
   reviewSel: string | null;
   reviewDiffView: DiffViewMode;
-  reviewDone: string[];
   unplacedDone: string[];
   identityDone: string[];
   assignOpen: string | null;
@@ -91,8 +92,10 @@ export function initialState(): AppState {
     docSpace: "sapling",
     roadmapTab: "timeline",
     roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
+    proposals: { status: "idle", data: [] },
+    draftAdrs: { status: "idle", data: [] },
     reviewFilter: "all", reviewSel: null, reviewDiffView: "unified",
-    reviewDone: [], unplacedDone: [], identityDone: [],
+    unplacedDone: [], identityDone: [],
     assignOpen: null, assignKind: null, assignTarget: null,
     mapPicks: {},
     showHistory: false,
@@ -112,7 +115,7 @@ export function initialState(): AppState {
 // real reads at wire time and the components underneath stay untouched.
 export function reviewProps(s: AppState): ReviewProps {
   return {
-    items: MOCK_REVIEW_ITEMS.filter((it) => !s.reviewDone.includes(it.id)),
+    items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data),
     filter: s.reviewFilter,
     selectedId: s.reviewSel,
     diffView: s.reviewDiffView,
@@ -132,10 +135,10 @@ export function maintenanceProps(s: AppState): MaintenanceProps {
   };
 }
 
-/** Sidebar counts for the two triage entries (pending mock items). */
+/** Sidebar counts for the two triage entries — the lengths of the list reads. */
 export function triageCounts(s: AppState): { review: number; maintenance: number } {
   return {
-    review: MOCK_REVIEW_ITEMS.filter((it) => !s.reviewDone.includes(it.id)).length,
+    review: s.proposals.data.length + s.draftAdrs.data.length,
     maintenance:
       MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)).length +
       MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)).length,
@@ -1135,6 +1138,18 @@ function myWorkView(s: AppState): string {
   return wrapMyWork(`${hero}${todo}${activity}`);
 }
 
+/** A list slice that hasn't produced data yet (idle/loading with nothing cached). */
+function slicePending(l: Loadable<unknown[]>): boolean {
+  return (l.status === "idle" || l.status === "loading") && l.data.length === 0;
+}
+
+/** Review screen with slice-level loading/error states around the pure view. */
+function reviewScreen(s: AppState): string {
+  if (s.proposals.status === "error" || s.draftAdrs.status === "error") return notice("Couldn't load the review queue.");
+  if (slicePending(s.proposals) || slicePending(s.draftAdrs)) return notice("Loading review queue&hellip;");
+  return reviewView(reviewProps(s));
+}
+
 // ── root ─────────────────────────────────────────────────────────────────────
 function screenBody(s: AppState): string {
   switch (s.screen) {
@@ -1142,7 +1157,7 @@ function screenBody(s: AppState): string {
     case "feed": return feedView(s);
     case "docs": return docsView(s);
     case "roadmap": return roadmapView(s);
-    case "review": return reviewView(reviewProps(s));
+    case "review": return reviewScreen(s);
     case "maintenance": return maintenanceView(maintenanceProps(s));
     case "search": return searchView(s);
     case "settings": return settingsView(s);

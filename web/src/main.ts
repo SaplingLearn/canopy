@@ -8,12 +8,15 @@ import { render, initialState, type AppState } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   completeMilestone,
+  listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   getMe, logout, mintMcpToken, adminBackfill,
   Unauthorized, NotFound, ApiError,
 } from "./api";
-// The Review + Maintenance surfaces are mock-driven until the backend reads
-// land: their actions below mutate UI state over the mock module — no fetches.
-import { MOCK_REVIEW_ITEMS, MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { decodeReviewId } from "./triage-map";
+// The Maintenance surface is mock-driven until the backend reads land: its
+// actions below mutate UI state over the mock module — no fetches. Review is
+// wired to real reads/writes above.
+import { MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -198,6 +201,38 @@ function loadRoadmapIfNeeded(): void {
   else rerender();
 }
 
+function loadProposals(): void {
+  state.proposals = { status: "loading", data: state.proposals.data };
+  rerender();
+  listStagedProposals()
+    .then((rows) => { state.proposals = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.proposals = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadProposalsIfNeeded(): void {
+  if (state.proposals.status === "idle") loadProposals();
+  else rerender();
+}
+
+function loadDraftAdrs(): void {
+  state.draftAdrs = { status: "loading", data: state.draftAdrs.data };
+  rerender();
+  listAdrs("draft")
+    .then((rows) => { state.draftAdrs = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.draftAdrs = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadDraftAdrsIfNeeded(): void {
+  if (state.draftAdrs.status === "idle") loadDraftAdrs();
+  else rerender();
+}
+
 function flash(msg: string): void {
   state.toast = msg;
   rerender();
@@ -294,7 +329,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // roadmap tab toggle
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
-    case "goReview": state.screen = "review"; break;
+    case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
     case "goMaintenance": state.screen = "maintenance"; break;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; break;
@@ -326,7 +361,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "setTag": state.feedTag = value ?? "all"; loadFeed(); return;
     case "setRange": state.feedRange = value ?? "all"; break;
 
-    // ── Review (mock-driven until the backend reads land — no writes) ────────
+    // ── Review (wired: real proposals + draft ADR reads, real verdict writes) ──
     case "reviewSelect": if (arg) state.reviewSel = arg; break;
     case "reviewFilter":
       if (arg === "all" || arg === "proposal" || arg === "decision") state.reviewFilter = arg;
@@ -337,17 +372,25 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "reviewAccept":
     case "reviewReject": {
       if (!arg) return;
-      const item = MOCK_REVIEW_ITEMS.find((it) => it.id === arg);
-      if (!item || state.reviewDone.includes(arg)) return;
-      state.reviewDone.push(arg);
-      state.reviewSel = null; // fall back to the first visible item
-      if (act === "reviewAccept") {
-        flash(item.kind === "decision"
-          ? `Ratified — ${item.eyebrow.split(" · ")[1] ?? item.title} is now accepted`
-          : `Promoted — “${item.title}” is live; previous version kept`);
-      } else {
-        flash("Rejected — parked, nothing changed");
-      }
+      const ref = decodeReviewId(arg);
+      if (!ref) return;
+      const accept = act === "reviewAccept";
+      const op = ref.kind === "doc"
+        ? (accept ? promoteDoc(ref.slug, ref.version) : rejectDoc(ref.slug, ref.version))
+        : (accept ? ratifyAdr(ref.id) : rejectAdr(ref.id));
+      op.then(() => {
+          state.reviewSel = null; // fall back to the first visible item
+          flash(accept
+            ? (ref.kind === "adr" ? "Ratified — the decision is now accepted" : "Promoted — the proposal is live; previous version kept")
+            : "Rejected — parked, nothing changed");
+          // Refetch the affected list — never locally decrement (badge drift is worse).
+          if (ref.kind === "doc") loadProposals();
+          else loadDraftAdrs();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Action failed");
+        });
       return;
     }
 
