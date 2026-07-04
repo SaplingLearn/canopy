@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow, NeedsTriageRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow, NeedsTriageRow, PersonRow, IdentityTaskRow } from "@shared/rows";
 import { DocProposal, AdrDraft, MilestoneProposal, FeedEntry } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB, first, run, nowIso } from "../db";
@@ -147,6 +147,74 @@ export async function route_triage(
     created_at
   );
   return res.meta.last_row_id as number;
+}
+
+/**
+ * Identity intake (Maintenance group): ensure one pending identity task exists
+ * for an unmapped GitHub login. Called by ingestEvent AFTER the event row lands,
+ * so capture never depends on this. login is the PK — INSERT OR IGNORE collapses
+ * many events from one unknown person into one task and never re-raises a
+ * resolved one. A login already in `people` raises nothing. NEVER throws: like
+ * storePrSummary, this is a post-capture side-task, and a failure here (e.g.
+ * migration 0016 not yet applied) must not break event capture or the caller's
+ * downstream summary/progress seams.
+ */
+export async function ensure_identity_task(db: DB, login: string): Promise<void> {
+  try {
+    // GitHub reserves the "[bot]" suffix for app identities — bot activity is
+    // captured in events but never raises an identity task (nobody maps a bot).
+    if (login.endsWith("[bot]")) return;
+    const known = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
+    if (known) return;
+    await run(
+      db,
+      `INSERT OR IGNORE INTO identity_tasks (login, first_seen, status) VALUES (?, ?, 'pending')`,
+      login,
+      nowIso()
+    );
+  } catch {
+    // Never throw — see doc comment.
+  }
+}
+
+/**
+ * Human placement (Maintenance group): resolve an identity task by mapping the
+ * login to a person. Performs the `people` table's ONLY runtime write (an
+ * upsert over the 0012 seed), then soft-resolves the task with the audit
+ * columns. A direct authored write in the human-placement class — never a gate
+ * re-run. My Work resolves login→person at read time, so the mapping
+ * retroactively surfaces every already-captured event for this login with no
+ * backfill. Idempotent-safe: mapping an already-resolved task surfaces the
+ * recorded mapping without re-writing anything.
+ */
+export async function map_identity(
+  db: DB,
+  login: string,
+  person: string,
+  by: string
+): Promise<{ login: string; person: string; status: "resolved" }> {
+  const task = await first<IdentityTaskRow>(db, `SELECT * FROM identity_tasks WHERE login = ?`, login);
+  if (!task) throw new Error(`no such identity task: ${login}`);
+  if (task.status === "resolved") {
+    // Already resolved — idempotent no-op, surface the recorded mapping.
+    const existing = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
+    return { login, person: existing?.person ?? person, status: "resolved" };
+  }
+  await run(
+    db,
+    `INSERT INTO people (login, person) VALUES (?, ?)
+     ON CONFLICT(login) DO UPDATE SET person = excluded.person`,
+    login,
+    person
+  );
+  await run(
+    db,
+    `UPDATE identity_tasks SET status = 'resolved', resolved_at = ?, resolved_by = ? WHERE login = ?`,
+    nowIso(),
+    by,
+    login
+  );
+  return { login, person, status: "resolved" };
 }
 
 /**
