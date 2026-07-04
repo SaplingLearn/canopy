@@ -3,9 +3,9 @@
 // reshape deferred during componentization — it lives HERE, in one place per
 // surface, never inside components. Pure functions, no fetching, no state.
 
-import type { StagedProposal, AdrRow } from "./api";
+import type { StagedProposal, AdrRow, NeedsTriageRow, IdentityTask } from "./api";
 import type { ReviewItem } from "./review";
-import type { AssignOptions } from "./maintenance";
+import type { AssignOptions, UnplacedItem, IdentityGroup, Person } from "./maintenance";
 import { collapsedLineDiff } from "./diff";
 import { initialsOf, relTime } from "./ui";
 import { SECTIONS, TAGS } from "@shared/vocabulary";
@@ -115,3 +115,65 @@ export const ASSIGN_OPTIONS: AssignOptions = {
   spaces: ["sapling", "canopy"],
   tags: [...TAGS],
 };
+
+// ── Maintenance · Unplaced ───────────────────────────────────────────────────
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** Derive the card fields from the stored gate payload: JSON of the gated item
+ *  (DocProposal / AdrDraft / MilestoneProposal / FeedEntry) OR a free-form
+ *  string for agent-flagged batch items. The two-bucket chip is a lossy
+ *  convenience — the verbatim gate reason always rides in reasonNote. */
+export function unplacedFromRow(r: NeedsTriageRow): UnplacedItem {
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const p: unknown = JSON.parse(r.raw);
+    if (p !== null && typeof p === "object" && !Array.isArray(p)) parsed = p as Record<string, unknown>;
+  } catch { /* free-form string raw — stays null */ }
+  const str = (k: string): string | null => {
+    const v = parsed?.[k];
+    return typeof v === "string" && v.trim() !== "" ? v : null;
+  };
+  const title = parsed
+    ? str("title") ?? str("summary") ?? str("slug") ?? "Untitled item"
+    : clip(r.raw, 80);
+  const snippet = parsed
+    ? str("body") ?? str("summary") ?? str("decision") ?? str("change_summary") ?? r.raw
+    : r.raw;
+  return {
+    id: String(r.id),
+    title,
+    snippet: clip(snippet, 280),
+    reason: r.reason.toLowerCase().startsWith("low confidence") ? "LOW CONFIDENCE" : "AGENT FLAGGED",
+    meta: `${r.source_author ?? "unknown"} · ${relTime(r.created_at)}`,
+    reasonNote: r.reason,
+  };
+}
+
+// ── Maintenance · Identity ───────────────────────────────────────────────────
+/** Real sample kinds are only pr_merged / pr_closed / issue — commits are never
+ *  captured events. The read returns samples, not a total, so the accent line
+ *  says "recent activity" instead of fabricating a count. */
+export function identityFromTask(t: IdentityTask): IdentityGroup {
+  return {
+    id: t.login,
+    login: t.login,
+    meta: `first seen ${relTime(t.first_seen)}`,
+    countLabel: "recent activity",
+    sample: t.sample.map((s) => ({
+      kind: s.event_type === "issue" ? "ISSUE" : "PR",
+      text: `#${s.ref_number} ${s.title ?? "(no title)"}`,
+      when: relTime(s.occurred_at),
+    })),
+  };
+}
+
+/** The person picker's source: the logins the app already knows (feed authors +
+ *  the signed-in user). The picked value — a GitHub login — is posted as the map
+ *  route's free-string `person`. */
+export function peopleFromLogins(logins: string[]): Person[] {
+  return [...new Set(logins.filter((l) => l.trim() !== ""))]
+    .sort()
+    .map((l) => ({ id: l, name: l, initials: initialsOf(l) }));
+}

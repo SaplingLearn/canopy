@@ -5,8 +5,11 @@
 import { describe, it, expect } from "vitest";
 import {
   proposalReviewItem, adrReviewItem, reviewItemsFromReads, decodeReviewId, diffEntries,
+  unplacedFromRow, identityFromTask, peopleFromLogins, ASSIGN_OPTIONS,
 } from "../web/src/triage-map";
 import type { StagedProposal, AdrRow } from "../web/src/api";
+import type { NeedsTriageRow } from "@shared/rows";
+import type { IdentityTask } from "../web/src/api";
 
 function makeProposal(overrides: Partial<StagedProposal> = {}): StagedProposal {
   return {
@@ -138,5 +141,90 @@ describe("decodeReviewId — invalid inputs", () => {
     expect(decodeReviewId("doc:no-version")).toBeNull();
     expect(decodeReviewId("doc:slug@abc")).toBeNull();
     expect(decodeReviewId("adr:abc")).toBeNull();
+  });
+});
+
+function makeTriageRow(overrides: Partial<NeedsTriageRow> = {}): NeedsTriageRow {
+  return {
+    id: 7,
+    raw: JSON.stringify({ slug: "pool-sizing", title: "Notes on connection pool sizing", body: "Pool exhaustion under load traces to the reporting service.", section: "runbooks" }),
+    reason: "out-of-vocab section: runbooks",
+    source_author: "octo-agent",
+    resolved: 0, created_at: "2026-07-03T10:00:00Z",
+    resolved_at: null, resolved_by: null, resolution: null, assigned_ref: null,
+    ...overrides,
+  };
+}
+
+describe("unplacedFromRow", () => {
+  it("derives title and snippet from JSON raw and keeps the verbatim reason in the note", () => {
+    const u = unplacedFromRow(makeTriageRow());
+    expect(u.id).toBe("7");
+    expect(u.title).toBe("Notes on connection pool sizing");
+    expect(u.snippet).toContain("Pool exhaustion");
+    expect(u.reason).toBe("AGENT FLAGGED");
+    expect(u.reasonNote).toBe("out-of-vocab section: runbooks");
+  });
+
+  it("buckets low-confidence gate reasons into the LOW CONFIDENCE chip", () => {
+    const u = unplacedFromRow(makeTriageRow({ reason: "low confidence doc proposal" }));
+    expect(u.reason).toBe("LOW CONFIDENCE");
+    expect(u.reasonNote).toBe("low confidence doc proposal");
+  });
+
+  it("falls back to the raw string itself for free-form items", () => {
+    const u = unplacedFromRow(makeTriageRow({ raw: "remember to cap per-service pools" }));
+    expect(u.title).toBe("remember to cap per-service pools");
+    expect(u.snippet).toBe("remember to cap per-service pools");
+  });
+
+  it("builds meta from source_author + relative time, with an unknown fallback", () => {
+    expect(unplacedFromRow(makeTriageRow()).meta).toContain("octo-agent");
+    expect(unplacedFromRow(makeTriageRow({ source_author: null })).meta).toContain("unknown");
+  });
+});
+
+function makeIdentityTask(overrides: Partial<IdentityTask> = {}): IdentityTask {
+  return {
+    login: "mk-dev2", first_seen: "2026-06-15T10:00:00Z",
+    status: "pending", resolved_at: null, resolved_by: null,
+    sample: [
+      { semantic_key: "gh:pr:412:merged", event_type: "pr_merged", ref_number: 412, title: "Fix pagination", occurred_at: "2026-07-01T10:00:00Z" },
+      { semantic_key: "gh:issue:398", event_type: "issue", ref_number: 398, title: null, occurred_at: null },
+    ],
+    ...overrides,
+  };
+}
+
+describe("identityFromTask", () => {
+  it("keys the group by login and uses the no-count copy", () => {
+    const g = identityFromTask(makeIdentityTask());
+    expect(g.id).toBe("mk-dev2");
+    expect(g.login).toBe("mk-dev2");
+    expect(g.countLabel).toBe("recent activity");
+    expect(g.meta).toContain("first seen");
+  });
+
+  it("maps event kinds (pr_* → PR, issue → ISSUE) and composes #ref + title with a null fallback", () => {
+    const g = identityFromTask(makeIdentityTask());
+    expect(g.sample[0]).toMatchObject({ kind: "PR", text: "#412 Fix pagination" });
+    expect(g.sample[1]).toMatchObject({ kind: "ISSUE", text: "#398 (no title)" });
+  });
+});
+
+describe("ASSIGN_OPTIONS", () => {
+  it("offers the four gate kinds and only real assignable sections", () => {
+    expect(ASSIGN_OPTIONS.kinds.map((k) => k.key)).toEqual(["doc", "adr", "milestone", "feed"]);
+    expect(ASSIGN_OPTIONS.sections).toEqual(["reference", "context", "decisions"]); // never needs-triage
+    expect(ASSIGN_OPTIONS.spaces).toEqual(["sapling", "canopy"]);
+    expect(ASSIGN_OPTIONS.tags).toContain("auth");
+  });
+});
+
+describe("peopleFromLogins", () => {
+  it("dedupes, drops empties, sorts, and derives initials", () => {
+    const people = peopleFromLogins(["maya-k", "jonas-w", "maya-k", ""]);
+    expect(people.map((p) => p.id)).toEqual(["jonas-w", "maya-k"]);
+    expect(people[1]).toEqual({ id: "maya-k", name: "maya-k", initials: "MA" });
   });
 });
