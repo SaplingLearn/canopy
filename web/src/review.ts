@@ -165,8 +165,9 @@ export function splitDiff(entries: DiffEntry[], liveLabel: string): string {
 }
 
 export function renderedPreview(entries: DiffEntry[]): string {
-  const blocks = entries.filter((e) => e.t !== "gap" && e.t !== "ellipsis").map((e) => {
+  const blocks = entries.filter((e) => e.t !== "gap").map((e) => {
     const text = e.s ?? "";
+    if (e.t === "ellipsis") return `<div style="border-top:1px dashed var(--border);margin:16px 0"></div>`;
     if (e.t === "h") return `<div style="font-size:18px;font-weight:600;letter-spacing:-0.01em;color:var(--fg);margin:18px 0 10px">${esc(text.replace(/^#+\s*/, ""))}</div>`;
     const base = "font-size:15px;line-height:1.72;margin:0 0 10px";
     if (e.t === "del") return `<div style="${base};text-decoration:line-through;color:color-mix(in srgb,var(--red) 75%,transparent);background:color-mix(in srgb,var(--red) 6%,transparent);border-radius:4px;padding:2px 6px">${esc(text)}</div>`;

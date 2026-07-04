@@ -215,10 +215,11 @@ describe("diff viewer — ellipsis rows (collapsed unchanged runs)", () => {
     expect(rows[0].right.text).toBe("5 unchanged lines");
   });
 
-  it("renderedPreview omits ellipsis rows", () => {
+  it("renderedPreview replaces an ellipsis row with a divider (no count text)", () => {
     const html = renderedPreview([{ t: "add", s: "kept" }, { t: "ellipsis", s: "9 unchanged lines" }]);
     expect(html).toContain("kept");
     expect(html).not.toContain("9 unchanged lines");
+    expect(html).toContain("border-top:1px dashed");
   });
 });
 

@@ -5,7 +5,7 @@
 // @shared rows. All requests carry the session cookie (credentials:"same-origin");
 // the MCP bearer is for /mcp only and never appears here.
 import type {
-  FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow,
+  FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, EventRow,
 } from "@shared/rows";
 import type { DashboardData } from "@shared/dashboard";
 
@@ -176,7 +176,7 @@ export function listStagedProposals(): Promise<StagedProposal[]> {
 // IdentityTaskRow shape). Envelope: { tasks }.
 export interface IdentitySample {
   semantic_key: string;
-  event_type: string;      // 'pr_merged' | 'pr_closed' | 'issue'
+  event_type: EventRow["event_type"];
   ref_number: number;
   title: string | null;    // null when the event's raw snapshot is malformed
   occurred_at: string | null;

@@ -198,13 +198,20 @@ function loadRoadmapIfNeeded(): void {
   else rerender();
 }
 
+// Write-completion handlers refetch the triage slices directly (not via
+// IfNeeded), so two loads of the same slice can overlap; the seq guard lets
+// only the newest in-flight request commit, so a slow earlier response can't
+// overwrite fresher data.
+let proposalsSeq = 0;
 function loadProposals(): void {
+  const seq = ++proposalsSeq;
   state.proposals = { status: "loading", data: state.proposals.data };
   rerender();
   listStagedProposals()
-    .then((rows) => { state.proposals = { status: "ok", data: rows }; rerender(); })
+    .then((rows) => { if (seq !== proposalsSeq) return; state.proposals = { status: "ok", data: rows }; rerender(); })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== proposalsSeq) return;
       state.proposals = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
@@ -214,13 +221,16 @@ function loadProposalsIfNeeded(): void {
   else rerender();
 }
 
+let draftAdrsSeq = 0;
 function loadDraftAdrs(): void {
+  const seq = ++draftAdrsSeq;
   state.draftAdrs = { status: "loading", data: state.draftAdrs.data };
   rerender();
   listAdrs("draft")
-    .then((rows) => { state.draftAdrs = { status: "ok", data: rows }; rerender(); })
+    .then((rows) => { if (seq !== draftAdrsSeq) return; state.draftAdrs = { status: "ok", data: rows }; rerender(); })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== draftAdrsSeq) return;
       state.draftAdrs = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
@@ -230,13 +240,16 @@ function loadDraftAdrsIfNeeded(): void {
   else rerender();
 }
 
+let needsTriageSeq = 0;
 function loadNeedsTriage(): void {
+  const seq = ++needsTriageSeq;
   state.needsTriage = { status: "loading", data: state.needsTriage.data };
   rerender();
   listNeedsTriage()
-    .then((rows) => { state.needsTriage = { status: "ok", data: rows }; rerender(); })
+    .then((rows) => { if (seq !== needsTriageSeq) return; state.needsTriage = { status: "ok", data: rows }; rerender(); })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== needsTriageSeq) return;
       state.needsTriage = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
@@ -246,13 +259,16 @@ function loadNeedsTriageIfNeeded(): void {
   else rerender();
 }
 
+let identityTasksSeq = 0;
 function loadIdentityTasks(): void {
+  const seq = ++identityTasksSeq;
   state.identityTasks = { status: "loading", data: state.identityTasks.data };
   rerender();
   listIdentityTasks()
-    .then((rows) => { state.identityTasks = { status: "ok", data: rows }; rerender(); })
+    .then((rows) => { if (seq !== identityTasksSeq) return; state.identityTasks = { status: "ok", data: rows }; rerender(); })
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== identityTasksSeq) return;
       state.identityTasks = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
