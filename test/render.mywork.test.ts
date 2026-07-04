@@ -39,6 +39,7 @@ function makeTodo(overrides: Partial<MyWorkTodo> = {}): MyWorkTodo {
     labels: ["bug", "flaky", "ci", "extra"],
     url: "https://github.com/SaplingLearn/sapling/issues/7",
     updatedAt: new Date().toISOString(),
+    summary: null,
     ...overrides,
   };
 }

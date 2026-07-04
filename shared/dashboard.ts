@@ -18,6 +18,7 @@ export interface MyWorkTodo {
   labels: string[];
   url: string;
   updatedAt: string;
+  summary: string | null;
 }
 
 export interface DashboardData {
