@@ -63,4 +63,26 @@ describe("ingestEvent identity intake", () => {
     expect(tasks.length).toBe(1);
     expect(tasks[0].status).toBe("resolved"); // untouched, not flipped back to pending
   });
+
+  it("intake failure never breaks event capture (identity_tasks table missing)", async () => {
+    await run(env.DB, `DROP TABLE identity_tasks`);
+    try {
+      const res = await ingestEvent(env.DB, ev(), "github-webhook");
+      expect(res.outcome).toBe("written");
+      expect((await all<EventRow>(env.DB, `SELECT * FROM events`)).length).toBe(1);
+    } finally {
+      // Restore the 0016 schema so the harness beforeEach (DELETE FROM identity_tasks)
+      // and later tests keep working. DDL identical to migrations/0016_identity_tasks.sql.
+      await run(
+        env.DB,
+        `CREATE TABLE identity_tasks (
+           login TEXT PRIMARY KEY,
+           first_seen TEXT NOT NULL,
+           status TEXT NOT NULL DEFAULT 'pending',
+           resolved_at TEXT,
+           resolved_by TEXT
+         )`
+      );
+    }
+  });
 });

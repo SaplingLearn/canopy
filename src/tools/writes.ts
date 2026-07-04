@@ -154,17 +154,24 @@ export async function route_triage(
  * for an unmapped GitHub login. Called by ingestEvent AFTER the event row lands,
  * so capture never depends on this. login is the PK — INSERT OR IGNORE collapses
  * many events from one unknown person into one task and never re-raises a
- * resolved one. A login already in `people` raises nothing.
+ * resolved one. A login already in `people` raises nothing. NEVER throws: like
+ * storePrSummary, this is a post-capture side-task, and a failure here (e.g.
+ * migration 0016 not yet applied) must not break event capture or the caller's
+ * downstream summary/progress seams.
  */
 export async function ensure_identity_task(db: DB, login: string): Promise<void> {
-  const known = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
-  if (known) return;
-  await run(
-    db,
-    `INSERT OR IGNORE INTO identity_tasks (login, first_seen, status) VALUES (?, ?, 'pending')`,
-    login,
-    nowIso()
-  );
+  try {
+    const known = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
+    if (known) return;
+    await run(
+      db,
+      `INSERT OR IGNORE INTO identity_tasks (login, first_seen, status) VALUES (?, ?, 'pending')`,
+      login,
+      nowIso()
+    );
+  } catch {
+    // Never throw — see doc comment.
+  }
 }
 
 /**
