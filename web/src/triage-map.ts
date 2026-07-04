@@ -5,8 +5,10 @@
 
 import type { StagedProposal, AdrRow } from "./api";
 import type { ReviewItem } from "./review";
+import type { AssignOptions } from "./maintenance";
 import { collapsedLineDiff } from "./diff";
 import { initialsOf, relTime } from "./ui";
+import { SECTIONS, TAGS } from "@shared/vocabulary";
 
 // ── shared derivations ───────────────────────────────────────────────────────
 /** First non-empty line of a body — the card-summary fallback. */
@@ -98,3 +100,18 @@ export function decodeReviewId(id: string): ReviewRef | null {
   }
   return null;
 }
+
+// ── Maintenance · assign vocabulary ──────────────────────────────────────────
+/** The real assign options: gate types × @shared/vocabulary targets.
+ *  'needs-triage' is the queue itself, never an assignable section. */
+export const ASSIGN_OPTIONS: AssignOptions = {
+  kinds: [
+    { key: "doc", label: "Doc section" },
+    { key: "adr", label: "Decision record" },
+    { key: "milestone", label: "Roadmap note" },
+    { key: "feed", label: "Feed update" },
+  ],
+  sections: SECTIONS.filter((s) => s !== "needs-triage"),
+  spaces: ["sapling", "canopy"],
+  tags: [...TAGS],
+};

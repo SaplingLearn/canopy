@@ -5,7 +5,7 @@
 // adjusted; nothing structural changes.
 
 import type { ReviewItem } from "./review";
-import type { UnplacedItem, AssignOptions, IdentityGroup, Person } from "./maintenance";
+import type { UnplacedItem, IdentityGroup, Person } from "./maintenance";
 
 export const MOCK_REVIEW_ITEMS: ReviewItem[] = [
   {
@@ -91,19 +91,9 @@ export const MOCK_UNPLACED: UnplacedItem[] = [
   },
 ];
 
-export const MOCK_ASSIGN: AssignOptions = {
-  kinds: ["Doc section", "Decision record", "Roadmap note", "Feed update"],
-  targets: {
-    "Doc section": ["Runbooks / Deployment", "Architecture / Data layer", "Policies / Retry & Backoff", "Onboarding"],
-    "Decision record": ["Decision log — file as new ADR draft"],
-    "Roadmap note": ["Q3 — Reliability", "Q3 — Platform", "Backlog"],
-    "Feed update": ["Team feed"],
-  },
-};
-
 export const MOCK_IDENTITY: IdentityGroup[] = [
   {
-    id: "g1", login: "mk-dev2", meta: "first seen 3w ago", countNum: 14, countLabel: "14 events waiting on this match",
+    id: "g1", login: "mk-dev2", meta: "first seen 3w ago", countLabel: "recent activity",
     sample: [
       { kind: "PR", text: "#412 Fix pagination cursor drift in activity feed", when: "2d ago" },
       { kind: "COMMIT", text: "a41f9c — chore: bump redis client to 5.2", when: "4d ago" },
@@ -111,7 +101,7 @@ export const MOCK_IDENTITY: IdentityGroup[] = [
     ],
   },
   {
-    id: "g2", login: "jonas-laptop", meta: "first seen 5d ago", countNum: 3, countLabel: "3 events waiting on this match",
+    id: "g2", login: "jonas-laptop", meta: "first seen 5d ago", countLabel: "recent activity",
     sample: [
       { kind: "COMMIT", text: "8c02de — wip: local docker compose for the relay", when: "2d ago" },
       { kind: "COMMIT", text: "f7a311 — fix: relay backoff config typo", when: "5d ago" },

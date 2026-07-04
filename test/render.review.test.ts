@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { lineDiff, collapsedLineDiff } from "../web/src/diff";
 import { reviewView, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
-import { maintenanceView, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
+import { maintenanceView, assignPanel, personPicker, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
 
 // ── lineDiff ──────────────────────────────────────────────────────────────────
 
@@ -285,8 +285,8 @@ function makeUnplaced(overrides: Partial<UnplacedItem> = {}): UnplacedItem {
 
 function makeGroup(overrides: Partial<IdentityGroup> = {}): IdentityGroup {
   return {
-    id: "g1", login: "mk-dev2", meta: "first seen 3w ago", countNum: 14,
-    countLabel: "14 events waiting on this match",
+    id: "mk-dev2", login: "mk-dev2", meta: "first seen 3w ago",
+    countLabel: "recent activity",
     sample: [{ kind: "PR", text: "#412 Fix a thing", when: "2d ago" }],
     ...overrides,
   };
@@ -295,11 +295,22 @@ function makeGroup(overrides: Partial<IdentityGroup> = {}): IdentityGroup {
 function makeMaintProps(overrides: Partial<MaintenanceProps> = {}): MaintenanceProps {
   return {
     unplaced: [makeUnplaced()],
-    assign: { kinds: ["Doc section", "Feed update"], targets: { "Doc section": ["Runbooks"], "Feed update": ["Team feed"] } },
-    assignOpen: null, assignKind: null, assignTarget: null,
+    assign: {
+      kinds: [
+        { key: "doc", label: "Doc section" },
+        { key: "adr", label: "Decision record" },
+        { key: "milestone", label: "Roadmap note" },
+        { key: "feed", label: "Feed update" },
+      ],
+      sections: ["reference", "context", "decisions"],
+      spaces: ["sapling", "canopy"],
+      tags: ["auth", "infra"],
+    },
+    assignOpen: null, assignKind: null, assignSection: null, assignSpace: null, assignTags: [],
     identity: [makeGroup()],
-    people: [{ id: "maya", name: "Maya Krishnan", initials: "MK" }],
+    people: [{ id: "maya-k", name: "maya-k", initials: "MA" }],
     mapPicks: {},
+    mapConfirm: null,
     ...overrides,
   };
 }
@@ -310,7 +321,7 @@ describe("maintenanceView — populated", () => {
     expect(html).toContain("UNPLACED");
     expect(html).toContain("IDENTITY");
     expect(html).toContain("1 item");
-    expect(html).toContain("1 login · 14 events waiting");
+    expect(html).toContain("1 login to match");
   });
 
   it("renders the unplaced row with its assign/discard affordances (panel closed)", () => {
@@ -321,12 +332,12 @@ describe("maintenanceView — populated", () => {
     expect(html).not.toContain("WHAT IS IT");
   });
 
-  it("opens the assign panel with kinds, and targets gated on a kind pick", () => {
+  it("opens the assign panel and gates targets on a kind pick", () => {
     const closed = maintenanceView(makeMaintProps({ assignOpen: "u1" }));
     expect(closed).toContain("WHAT IS IT");
     expect(closed).toContain("Pick what kind of thing it is first.");
-    const picked = maintenanceView(makeMaintProps({ assignOpen: "u1", assignKind: "Doc section" }));
-    expect(picked).toContain("Runbooks");
+    const picked = maintenanceView(makeMaintProps({ assignOpen: "u1", assignKind: "doc" }));
+    expect(picked).toContain("reference");
     expect(picked).not.toContain("Pick what kind of thing it is first.");
   });
 
@@ -334,8 +345,9 @@ describe("maintenanceView — populated", () => {
     const html = maintenanceView(makeMaintProps());
     expect(html).toContain("mk-dev2");
     expect(html).toContain("#412 Fix a thing");
+    expect(html).toContain("recent activity");
     expect(html).toContain("WHO IS THIS");
-    expect(html).toContain("Maya Krishnan");
+    expect(html).toContain("maya-k");
     expect(html).toContain("Map login");
   });
 });
@@ -367,5 +379,52 @@ describe("XSS: maintenance fields are escaped in text and attributes", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<svg onload");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("assignPanel — per-type targets from the real vocabulary", () => {
+  const assign = makeMaintProps().assign;
+
+  it("prompts for a kind first", () => {
+    expect(assignPanel("7", assign, null, null, null, [])).toContain("Pick what kind of thing it is first.");
+  });
+
+  it("doc kind offers sections plus an optional space, File it gated on section", () => {
+    const noSection = assignPanel("7", assign, "doc", null, null, []);
+    expect(noSection).toContain("reference");
+    expect(noSection).toContain("decisions");
+    expect(noSection).toContain("SPACE (OPTIONAL)");
+    expect(noSection).not.toContain("cnpy-accentbtn"); // File it disabled
+    const withSection = assignPanel("7", assign, "doc", "reference", null, []);
+    expect(withSection).toContain("cnpy-accentbtn"); // File it enabled
+  });
+
+  it("feed kind offers multi-select tags and can file without one", () => {
+    const html = assignPanel("7", assign, "feed", null, null, ["auth"]);
+    expect(html).toContain("auth");
+    expect(html).toContain("Tags are optional");
+    expect(html).toContain("cnpy-accentbtn");
+  });
+
+  it("adr and milestone kinds need no target", () => {
+    expect(assignPanel("7", assign, "adr", null, null, [])).toContain("No target needed");
+    expect(assignPanel("7", assign, "milestone", null, null, [])).toContain("No target needed");
+  });
+});
+
+describe("personPicker — two-step confirm guard", () => {
+  const people = [{ id: "maya-k", name: "maya-k", initials: "MA" }];
+
+  it("shows Map login and no effect-note before the first click", () => {
+    const html = personPicker("mk-dev2", people, "maya-k", false);
+    expect(html).toContain("Map login");
+    expect(html).not.toContain("This attributes");
+  });
+
+  it("states the concrete effect and switches to Confirm mapping when confirming", () => {
+    const html = personPicker("mk-dev2", people, "maya-k", true);
+    expect(html).toContain("This attributes");
+    expect(html).toContain("mk-dev2");
+    expect(html).toContain("Confirm mapping");
   });
 });

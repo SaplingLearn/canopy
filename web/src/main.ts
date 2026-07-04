@@ -16,7 +16,7 @@ import { decodeReviewId } from "./triage-map";
 // The Maintenance surface is mock-driven until the backend reads land: its
 // actions below mutate UI state over the mock module — no fetches. Review is
 // wired to real reads/writes above.
-import { MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { MOCK_UNPLACED } from "./triage-mock";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -450,19 +450,32 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       if (!arg) return;
       state.assignOpen = state.assignOpen === arg ? null : arg;
       state.assignKind = null;
-      state.assignTarget = null;
+      state.assignSection = null;
+      state.assignSpace = null;
+      state.assignTags = [];
       break;
     }
-    case "maintAssignKind": if (arg) { state.assignKind = arg; state.assignTarget = null; } break;
-    case "maintAssignTarget": if (arg) state.assignTarget = arg; break;
+    case "maintAssignKind":
+      if (arg === "doc" || arg === "adr" || arg === "milestone" || arg === "feed") {
+        state.assignKind = arg;
+        state.assignSection = null;
+        state.assignSpace = null;
+        state.assignTags = [];
+      }
+      break;
+    case "maintAssignSection": if (arg) state.assignSection = arg; break;
+    case "maintAssignSpace": if (arg) state.assignSpace = state.assignSpace === arg ? null : arg; break;
+    case "maintAssignTag":
+      if (arg) state.assignTags = state.assignTags.includes(arg) ? state.assignTags.filter((t) => t !== arg) : [...state.assignTags, arg];
+      break;
     case "maintFile": {
-      if (!arg || state.assignOpen !== arg || !state.assignKind || !state.assignTarget) return;
-      const item = MOCK_UNPLACED.find((u) => u.id === arg);
-      if (!item || state.unplacedDone.includes(arg)) return;
+      // Interim (mock-fed until Task 8 posts assignTriage): validate + close + flash.
+      if (!arg || state.assignOpen !== arg || !state.assignKind) return;
+      if (state.assignKind === "doc" && !state.assignSection) return;
+      if (state.unplacedDone.includes(arg)) return;
       state.unplacedDone.push(arg);
-      const { assignKind, assignTarget } = state;
-      state.assignOpen = null; state.assignKind = null; state.assignTarget = null;
-      flash(`Filed — “${item.title}” → ${assignKind} · ${assignTarget}`);
+      state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = [];
+      flash("Filed (mock)");
       return;
     }
     case "maintDiscard": {
@@ -470,7 +483,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const item = MOCK_UNPLACED.find((u) => u.id === arg);
       if (!item || state.unplacedDone.includes(arg)) return;
       state.unplacedDone.push(arg);
-      if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignTarget = null; }
+      if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = []; }
       flash(`Discarded — “${item.title}”`);
       return;
     }
@@ -478,17 +491,19 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       if (!arg) return;
       const sep = arg.indexOf(":");
       if (sep < 0) return;
-      state.mapPicks = { ...state.mapPicks, [arg.slice(0, sep)]: arg.slice(sep + 1) };
+      const login = arg.slice(0, sep);
+      state.mapPicks = { ...state.mapPicks, [login]: arg.slice(sep + 1) };
+      if (state.mapConfirm === login) state.mapConfirm = null; // changing the pick re-arms the confirm
       break;
     }
     case "identityMap": {
-      if (!arg) return;
-      const group = MOCK_IDENTITY.find((g) => g.id === arg);
-      const pick = state.mapPicks[arg];
-      const person = MOCK_PEOPLE.find((p) => p.id === pick);
-      if (!group || !person || state.identityDone.includes(arg)) return;
+      if (!arg || !state.mapPicks[arg]) return;            // no auto-select: a person must be picked
+      if (state.mapConfirm !== arg) { state.mapConfirm = arg; break; } // step 1: show the concrete effect
+      state.mapConfirm = null;
+      // Interim (mock-fed until Task 8 posts mapIdentity):
+      if (state.identityDone.includes(arg)) return;
       state.identityDone.push(arg);
-      flash(`Mapped — ${group.login} → ${person.name}; ${group.countNum} captured events now flow into their view`);
+      flash("Mapped (mock)");
       return;
     }
     // ── Settings ─────────────────────────────────────────────────────────────

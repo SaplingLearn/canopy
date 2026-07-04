@@ -13,9 +13,9 @@ import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
-import { maintenanceView, type MaintenanceProps } from "./maintenance";
-import { reviewItemsFromReads } from "./triage-map";
-import { MOCK_UNPLACED, MOCK_ASSIGN, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
+import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { reviewItemsFromReads, ASSIGN_OPTIONS } from "./triage-map";
+import { MOCK_UNPLACED, MOCK_IDENTITY, MOCK_PEOPLE } from "./triage-mock";
 
 export type DocSpace = "canopy" | "sapling";
 
@@ -58,8 +58,11 @@ export interface AppState {
   unplacedDone: string[];
   identityDone: string[];
   assignOpen: string | null;
-  assignKind: string | null;
-  assignTarget: string | null;
+  assignKind: AssignKind | null;
+  assignSection: string | null;
+  assignSpace: string | null;
+  assignTags: string[];
+  mapConfirm: string | null;
   mapPicks: Record<string, string>;
   showHistory: boolean;
   searchQuery: string;
@@ -96,7 +99,8 @@ export function initialState(): AppState {
     draftAdrs: { status: "idle", data: [] },
     reviewFilter: "all", reviewSel: null, reviewDiffView: "unified",
     unplacedDone: [], identityDone: [],
-    assignOpen: null, assignKind: null, assignTarget: null,
+    assignOpen: null, assignKind: null, assignSection: null, assignSpace: null, assignTags: [],
+    mapConfirm: null,
     mapPicks: {},
     showHistory: false,
     searchQuery: "token", searchType: "all",
@@ -125,13 +129,16 @@ export function reviewProps(s: AppState): ReviewProps {
 export function maintenanceProps(s: AppState): MaintenanceProps {
   return {
     unplaced: MOCK_UNPLACED.filter((u) => !s.unplacedDone.includes(u.id)),
-    assign: MOCK_ASSIGN,
+    assign: ASSIGN_OPTIONS,
     assignOpen: s.assignOpen,
     assignKind: s.assignKind,
-    assignTarget: s.assignTarget,
+    assignSection: s.assignSection,
+    assignSpace: s.assignSpace,
+    assignTags: s.assignTags,
     identity: MOCK_IDENTITY.filter((g) => !s.identityDone.includes(g.id)),
     people: MOCK_PEOPLE,
     mapPicks: s.mapPicks,
+    mapConfirm: s.mapConfirm,
   };
 }
 
