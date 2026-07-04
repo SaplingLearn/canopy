@@ -69,6 +69,7 @@ interface GhPrListItem {
 interface GhIssueListItem {
   number: number;
   title: string;
+  body: string | null;
   html_url: string;
   state: string;
   updated_at: string;
@@ -119,6 +120,7 @@ function issueDelivery(issue: GhIssueListItem) {
     issue: {
       number: issue.number,
       title: issue.title,
+      body: issue.body,
       html_url: issue.html_url,
       state: issue.state,
       updated_at: issue.updated_at,

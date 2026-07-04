@@ -63,6 +63,7 @@ const olderPr = {
 const openIssue = {
   number: 20,
   title: "Fix bug",
+  body: "Full description of the bug.",
   html_url: "https://github.com/o/r/issues/20",
   state: "open",
   updated_at: threeDaysAgo,

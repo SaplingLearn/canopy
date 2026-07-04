@@ -148,6 +148,7 @@ describe("eventsFromDelivery — pure derivation", () => {
     expect(raw.action).toBe("assigned");
     expect(raw.issue.labels).toEqual(["P1", "backend"]); // label objects flattened to names
     expect(raw.issue.milestone).toEqual({ number: 3, open_issues: 2, closed_issues: 4 });
+    expect(raw.issue.body).toBe("Full description of what needs wiring."); // NEW: needed by the issue summarizer
   });
 
   it("pr closed+merged → pr_merged with the merged key and merged_at as occurred_at", () => {

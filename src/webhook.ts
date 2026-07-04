@@ -75,6 +75,7 @@ interface GhPullRequest {
 interface GhIssue {
   number: number;
   title: string;
+  body: string | null;
   html_url: string;
   state: string;
   updated_at: string;
@@ -177,6 +178,7 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
       issue: {
         number: issue.number,
         title: issue.title,
+        body: issue.body,
         html_url: issue.html_url,
         state: issue.state,
         updated_at: updatedAt,

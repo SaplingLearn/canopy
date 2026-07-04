@@ -3,6 +3,7 @@
   "issue": {
     "number": 17,
     "title": "[P1] Wire the milestone progress cache",
+    "body": "Full description of what needs wiring.",
     "html_url": "https://github.com/SaplingLearn/canopy/issues/17",
     "state": "closed",
     "updated_at": "2026-07-01T19:40:00Z",
