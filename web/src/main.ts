@@ -210,7 +210,7 @@ function loadProposals(): void {
     });
 }
 function loadProposalsIfNeeded(): void {
-  if (state.proposals.status === "idle") loadProposals();
+  if (state.proposals.status === "idle" || state.proposals.status === "error") loadProposals();
   else rerender();
 }
 
@@ -226,7 +226,7 @@ function loadDraftAdrs(): void {
     });
 }
 function loadDraftAdrsIfNeeded(): void {
-  if (state.draftAdrs.status === "idle") loadDraftAdrs();
+  if (state.draftAdrs.status === "idle" || state.draftAdrs.status === "error") loadDraftAdrs();
   else rerender();
 }
 
@@ -242,7 +242,7 @@ function loadNeedsTriage(): void {
     });
 }
 function loadNeedsTriageIfNeeded(): void {
-  if (state.needsTriage.status === "idle") loadNeedsTriage();
+  if (state.needsTriage.status === "idle" || state.needsTriage.status === "error") loadNeedsTriage();
   else rerender();
 }
 
@@ -258,7 +258,7 @@ function loadIdentityTasks(): void {
     });
 }
 function loadIdentityTasksIfNeeded(): void {
-  if (state.identityTasks.status === "idle") loadIdentityTasks();
+  if (state.identityTasks.status === "idle" || state.identityTasks.status === "error") loadIdentityTasks();
   else rerender();
 }
 
@@ -516,6 +516,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
           loadNeedsTriage();
           if (kind === "doc") loadProposals();   // an assigned doc lands as a staged proposal
           if (kind === "adr") loadDraftAdrs();   // an assigned decision lands as a draft
+          if (kind === "feed") loadFeed();   // a filed feed entry lands live on the Feed screen
         })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }

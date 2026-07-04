@@ -90,8 +90,9 @@ export function decodeReviewId(id: string): ReviewRef | null {
   if (id.startsWith("doc:")) {
     const at = id.lastIndexOf("@");
     if (at < 4) return null;
-    const version = Number(id.slice(at + 1));
-    if (!Number.isInteger(version)) return null;
+    const seg = id.slice(at + 1);
+    if (!/^\d+$/.test(seg)) return null;
+    const version = Number(seg);
     return { kind: "doc", slug: id.slice(4, at), version };
   }
   if (id.startsWith("adr:")) {

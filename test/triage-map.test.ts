@@ -7,9 +7,8 @@ import {
   proposalReviewItem, adrReviewItem, reviewItemsFromReads, decodeReviewId, diffEntries,
   unplacedFromRow, identityFromTask, peopleFromLogins, ASSIGN_OPTIONS,
 } from "../web/src/triage-map";
-import type { StagedProposal, AdrRow } from "../web/src/api";
+import type { StagedProposal, AdrRow, IdentityTask } from "../web/src/api";
 import type { NeedsTriageRow } from "@shared/rows";
-import type { IdentityTask } from "../web/src/api";
 
 function makeProposal(overrides: Partial<StagedProposal> = {}): StagedProposal {
   return {
@@ -140,6 +139,7 @@ describe("decodeReviewId — invalid inputs", () => {
     expect(decodeReviewId("p1")).toBeNull();
     expect(decodeReviewId("doc:no-version")).toBeNull();
     expect(decodeReviewId("doc:slug@abc")).toBeNull();
+    expect(decodeReviewId("doc:slug@")).toBeNull();
     expect(decodeReviewId("adr:abc")).toBeNull();
   });
 });
