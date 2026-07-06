@@ -45,6 +45,7 @@ describe("dev seed lights up every surface", () => {
 
   it("Feed: tagged entries present", async () => {
     expect((await get_feed(env.DB, {})).length).toBeGreaterThan(0);
+    expect((await get_feed(env.DB, { tags: ["auth"] })).length).toBeGreaterThan(0);
   });
 
   it("Triage: all four queues populated", async () => {

@@ -1,6 +1,7 @@
-// Canonical local-D1 reset. MUST mirror the beforeEach truncation in
-// test/apply-migrations.ts (same FK-safe delete order, same people re-seed).
-// If a migration adds a table to that truncation, add it here too.
+// Canonical data-table reset for Canopy, shared by the test harness
+// (test/apply-migrations.ts) and the dev seed loader. FK-safe delete order;
+// re-seeds the people identity map. When a migration adds a data table, add
+// its DELETE here.
 export const RESET_STATEMENTS = [
   "DELETE FROM processed_items",
   "DELETE FROM pr_summaries",
