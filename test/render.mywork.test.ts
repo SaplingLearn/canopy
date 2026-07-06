@@ -28,6 +28,8 @@ function makePr(overrides: Partial<MyWorkPr> = {}): MyWorkPr {
     merged: true,
     occurredAt: new Date().toISOString(),
     summary: "Fixed **the thing** that was broken.",
+    what: null,
+    why: null,
     impact: null,
     baseRef: null,
     ...overrides,

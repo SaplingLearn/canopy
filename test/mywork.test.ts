@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all } from "../src/db";
+import { all, run } from "../src/db";
 import { ingestEvent } from "../src/consumer";
-import { storePrSummary, storeIssueSummary } from "../src/tools/summarize";
+import { storePrSummary, storeIssueSummary, type Summarizer, type PrSummary, type IssueSummary } from "../src/tools/summarize";
 import { getMyWork } from "../src/tools/mywork";
 import type { EventRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
@@ -13,8 +13,8 @@ function daysBefore(iso: string, days: number): string {
   return new Date(new Date(iso).getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function prEvent(over: Partial<CapturedEvent> & { number: number; login: string; merged?: boolean }): CapturedEvent {
-  const { number, login, merged = true, ...rest } = over;
+function prEvent(over: Partial<CapturedEvent> & { number: number; login: string; merged?: boolean; baseRef?: string | null }): CapturedEvent {
+  const { number, login, merged = true, baseRef = null, ...rest } = over;
   const raw = JSON.stringify({
     pr: {
       number,
@@ -26,6 +26,7 @@ function prEvent(over: Partial<CapturedEvent> & { number: number; login: string;
       closed_at: NOW,
       user: { login },
       milestone: null,
+      base: baseRef ? { ref: baseRef } : null,
     },
   });
   return {
@@ -49,8 +50,9 @@ function issueEvent(over: {
   title?: string;
   labels?: string[];
   assigneeLogin?: string;
+  milestone?: { title?: string | null; due_on?: string | null; number?: number } | null;
 }): CapturedEvent {
-  const { number, login, action, state, updatedAt, title = `Issue ${number}`, labels = [], assigneeLogin = login } = over;
+  const { number, login, action, state, updatedAt, title = `Issue ${number}`, labels = [], assigneeLogin = login, milestone = null } = over;
   const raw = JSON.stringify({
     action,
     issue: {
@@ -62,7 +64,7 @@ function issueEvent(over: {
       user: { login },
       assignees: [{ login: assigneeLogin }],
       labels,
-      milestone: null,
+      milestone: milestone ?? null,
     },
   });
   return {
@@ -220,5 +222,64 @@ describe("getMyWork — todo carries the issue summary", () => {
     await storeIssueSummary(env.DB, null, { issue_number: 8, title: "Issue 8", body: "some body" });
     work = await getMyWork(env.DB, "AndresL230");
     expect(work.todo.find((t) => t.number === 8)?.summary).toBe("some body"); // excerpt fallback (no summarizer)
+  });
+});
+
+describe("getMyWork — structured fields", () => {
+  it("projects the structured PR summary columns and base.ref into the DTO", async () => {
+    await run(env.DB, `INSERT INTO people (login, person) VALUES ('dev', 'Dev')`);
+    await ingestEvent(env.DB, prEvent({ number: 7, login: "dev", baseRef: "main" }), "github-webhook");
+    const stub: Summarizer<PrSummary> = {
+      model: "stub-model",
+      summarize: async () => ({ title: "Humanized seven", what: "Did the thing.", why: "It was broken.", impact: "Users can log in." }),
+    };
+    await storePrSummary(env.DB, stub, { semantic_key: "gh:pr:7:merged", pr_number: 7, title: "t", body: "b" });
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.previousActivity[0]).toMatchObject({
+      number: 7,
+      displayTitle: "Humanized seven",
+      what: "Did the thing.",
+      why: "It was broken.",
+      impact: "Users can log in.",
+      summary: "Did the thing.",
+      baseRef: "main",
+    });
+  });
+
+  it("projects the structured issue summary columns and the milestone into the todo", async () => {
+    await run(env.DB, `INSERT INTO people (login, person) VALUES ('dev', 'Dev')`);
+    await ingestEvent(
+      env.DB,
+      issueEvent({ number: 9, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" } }),
+      "github-webhook"
+    );
+    const stub: Summarizer<IssueSummary> = {
+      model: "stub-model",
+      summarize: async () => ({ title: "Humanized nine", summary: "What it is.", next_step: "Do the fix." }),
+    };
+    await storeIssueSummary(env.DB, stub, { issue_number: 9, title: "t", body: "b" });
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.todo[0]).toMatchObject({
+      number: 9,
+      displayTitle: "Humanized nine",
+      summary: "What it is.",
+      nextStep: "Do the fix.",
+      milestone: { title: "Reliable event capture", dueOn: "2026-07-20T07:00:00Z" },
+    });
+  });
+
+  it("yields nulls for a legacy raw (no base, milestone without title) and a prose-era summary row", async () => {
+    await run(env.DB, `INSERT INTO people (login, person) VALUES ('dev', 'Dev')`);
+    await ingestEvent(env.DB, prEvent({ number: 8, login: "dev" }), "github-webhook");
+    await ingestEvent(
+      env.DB,
+      issueEvent({ number: 10, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3 } }),
+      "github-webhook"
+    );
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.previousActivity[0]).toMatchObject({ number: 8, displayTitle: null, what: null, why: null, impact: null, baseRef: null });
+    expect(work.todo[0]).toMatchObject({ number: 10, displayTitle: null, nextStep: null, milestone: null });
   });
 });

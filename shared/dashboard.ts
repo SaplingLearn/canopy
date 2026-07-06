@@ -10,6 +10,8 @@ export interface MyWorkPr {
   merged: boolean;
   occurredAt: string;
   summary: string | null;
+  what: string | null; // structured "What changed" (null → render falls back to summary prose)
+  why: string | null; // motivation, only when the PR body stated one
   impact: string | null; // plain-language outcome sentence (never a file list)
   baseRef: string | null; // PR base branch (footer "into main" suffix; hidden when null)
 }
