@@ -17,8 +17,9 @@ describe("buildSeedStatements", () => {
   it("serializes event raw as a JSON string literal with no literal newline", () => {
     const out = buildSeedStatements({ events: { events: [{ semantic_key: "k", event_type: "pr_merged", ref_number: 1, subject_login: "AndresL230", provenance: "backfill", occurred_at: "t", recorded_at: "t", raw: { pr: { body: "line1\nline2" } } }] } });
     const insert = out.find((s) => s.startsWith("INSERT INTO events"));
+    expect(insert).toBeDefined();
     expect(insert).toContain("line1\\nline2");
-    expect(insert.includes("\n")).toBe(false);
+    expect(insert!.includes("\n")).toBe(false);
   });
 
   it("emits a milestone_progress insert only when progress is present", () => {
