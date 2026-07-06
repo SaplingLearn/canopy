@@ -92,6 +92,10 @@ describe("getMyWork — previous activity cap", () => {
       title: "PR 7",
       url: "https://github.com/o/r/pull/7",
       merged: true,
+      // Not yet populated by capture/summarize — null until the follow-up lands.
+      displayTitle: null,
+      impact: null,
+      baseRef: null,
     });
     expect(work.previousActivity[0].summary).toBe("some body"); // excerpt fallback (no summarizer)
   });
@@ -128,6 +132,10 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
       priority: "P1",
       labels: ["bug"],
       url: "https://github.com/o/r/issues/7",
+      // Not yet populated by capture/summarize — null until the follow-up lands.
+      displayTitle: null,
+      milestone: null,
+      nextStep: null,
     });
 
     const closed = issueEvent({

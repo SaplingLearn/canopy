@@ -7,7 +7,7 @@ import type { Me, StagedProposal, IdentityTask } from "./api";
 import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
-import { parseStructuredSummary, type StructuredPrSummary } from "@shared/prSummary";
+import { parseStructuredSummary } from "@shared/prSummary";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
@@ -1035,7 +1035,16 @@ function settingsView(s: AppState): string {
 
 // ── my work (personal dashboard) ──────────────────────────────────────────────
 const MW_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)";
-const MW_FIELD_LABEL = "font-size:10px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);margin-bottom:3px";
+
+// Option-2a card anatomy (design_handoff_mywork_cards): roomy card, title +
+// number pill row, then hairline-separated 96px-label section rows, footer meta.
+const MW_CARD = "border:1px solid var(--border);border-radius:16px;padding:20px 22px 14px;background:color-mix(in srgb,var(--fg) 2.5%,transparent)";
+const MW_ROW = "display:grid;grid-template-columns:96px 1fr;gap:12px;padding:11px 0;border-top:1px solid var(--border)";
+const MW_ROW_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);padding-top:2px";
+const MW_ROW_BODY = "font-size:13.5px;line-height:1.6;color:var(--fg-70)";
+const MW_CODE = "font-family:var(--mono);font-size:12.5px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 4px";
+const MW_ARROW_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17 17 7"></path><path d="M9 7h8v8"></path></svg>`;
+const MW_FLAG_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="flex:none"><path d="M12 2v20"></path><path d="M12 4h7l-2 3 2 3h-7"></path></svg>`;
 
 function wrapMyWork(inner: string): string {
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 32px 100px">${inner}</div>`;
@@ -1058,72 +1067,86 @@ function mwDegradedHint(text: string): string {
   return `<div style="font-size:13px;color:var(--fg-40);padding:2px 0">${text}</div>`;
 }
 
-/** Renders a structured {what, why} summary as labeled rows (small caption + markdown body each). */
-function structuredSummaryBody(structured: StructuredPrSummary, markdownFn: (body: string) => string): string {
-  const whatRow = `<div${structured.why ? ' style="margin-bottom:10px"' : ""}>
-      <div style="${MW_FIELD_LABEL}">What changed</div>
-      <div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(structured.what)}</div>
+/** Card title row: title left, number pill (the card's ONLY link) far right. */
+function mwTitleRow(title: string, number: number, url: string): string {
+  return `<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px">
+      <span style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:var(--fg);flex:1;min-width:0">${esc(title)}</span>
+      <a href="${attr(safeUrl(url))}" target="_blank" rel="noopener" class="cnpy-numpill" style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:3px 8px;display:flex;align-items:center;gap:5px;margin-top:2px;text-decoration:none;flex:none">#${number}${MW_ARROW_SVG}</a>
     </div>`;
-  const whyRow = structured.why
-    ? `<div>
-      <div style="${MW_FIELD_LABEL}">Why</div>
-      <div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(structured.why)}</div>
-    </div>`
-    : "";
-  return whatRow + whyRow;
+}
+/** One hairline-separated section row: 96px mono label + a pre-built body cell.
+ *  Callers skip the call entirely for null data — no empty labels. */
+function mwRow(label: string, bodyCell: string, labelExtra = ""): string {
+  return `<div style="${MW_ROW}"><div style="${MW_ROW_LABEL}${labelExtra}">${label}</div>${bodyCell}</div>`;
+}
+/** Escaped prose body cell; backtick spans become styled <code> AFTER escaping,
+ *  so bodies never inject unescaped HTML. */
+function mwProseBody(text: string): string {
+  const prose = esc(text).replace(/`([^`]+)`/g, `<code style="${MW_CODE}">$1</code>`);
+  return `<div style="${MW_ROW_BODY}">${prose}</div>`;
+}
+/** Markdown-rendered body cell (PR summaries/impact only; todo bodies stay prose). */
+function mwMdBody(body: string, markdownFn: (body: string) => string): string {
+  return `<div class="cnpy-md" style="${MW_ROW_BODY}">${markdownFn(body)}</div>`;
+}
+/** Footer meta row closing a card (chips left, timestamp right via margin-left:auto). */
+function mwFooter(inner: string, gap: number): string {
+  return `<div style="padding:12px 0 2px;border-top:1px solid var(--border);display:flex;align-items:center;gap:${gap}px">${inner}</div>`;
+}
+/** Human-short date for a milestone due date, e.g. "Jul 20" (the same short
+ *  format relTime falls back to; date-only ISO pinned to noon to dodge TZ shift). */
+function mwDueDate(iso: string): string {
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** A merged/closed PR card: #number → pr.url, title, relTime, MERGED/CLOSED chip,
- *  and a summary body — labeled "What changed"/"Why" rows when pr.summary matches
- *  the structured convention, else the raw markdown blob (legacy/excerpt fallback). */
+/** A merged/closed PR card (option 2a): title + number pill, then labeled rows —
+ *  "What changed"/"Why" when pr.summary matches the structured convention, a
+ *  single "Summary" row for prose/absent summaries, "Impact" when present — and
+ *  a footer with the MERGED/CLOSED chip + time ("· into <base>" when known). */
 export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
+  const structured = pr.summary !== null ? parseStructuredSummary(pr.summary) : null;
+  const rows: string[] = [];
+  if (pr.summary === null) {
+    rows.push(mwRow("Summary", `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`));
+  } else if (structured !== null) {
+    rows.push(mwRow("What changed", mwMdBody(structured.what, markdownFn)));
+    if (structured.why) rows.push(mwRow("Why", mwMdBody(structured.why, markdownFn)));
+  } else {
+    rows.push(mwRow("Summary", mwMdBody(pr.summary, markdownFn)));
+  }
+  if (pr.impact) rows.push(mwRow("Impact", mwMdBody(pr.impact, markdownFn)));
   const chip = pr.merged
     ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
     : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
-  const structured = pr.summary !== null ? parseStructuredSummary(pr.summary) : null;
-  const body = pr.summary === null
-    ? `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`
-    : structured !== null
-      ? structuredSummaryBody(structured, markdownFn)
-      : `<div class="cnpy-md" style="font-size:13.5px;color:var(--fg-70)">${markdownFn(pr.summary)}</div>`;
-  return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin-bottom:10px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:9px;min-width:0">
-        <a href="${attr(safeUrl(pr.url))}" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:12px;color:var(--fg-40);text-decoration:none;flex:none">#${pr.number}</a>
-        <span style="font-size:14px;font-weight:500;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pr.title)}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:9px;flex:none">
-        ${chip}
-        <span style="font-size:11.5px;color:var(--fg-40)">${relTime(pr.occurredAt)}</span>
-      </div>
-    </div>
-    ${body}
+  const into = pr.baseRef ? ` · into <span style="font-family:var(--mono)">${esc(pr.baseRef)}</span>` : "";
+  const footer = mwFooter(`${chip}<span style="font-size:11.5px;color:var(--fg-40)">${relTime(pr.occurredAt)}${into}</span>`, 9);
+  return `<div class="cnpy-card" style="${MW_CARD};margin-bottom:10px">
+    ${mwTitleRow(pr.displayTitle ?? pr.title, pr.number, pr.url)}
+    <div style="display:flex;flex-direction:column">${rows.join("")}${footer}</div>
   </div>`;
 }
 
-/** An assigned-issue card — priority + #number + title (wraps up to 2 lines) on
- *  row 1, the stored issue summary (plain text, clamped to 2 lines) when one
- *  exists, labels (capped at 3) + relative updated-at on the last row. The
- *  summary is escaped prose, never markdown — the whole card is one <a>, so no
- *  nested links. */
+/** An assigned-issue card (option 2a): title + number pill, then labeled rows —
+ *  Summary (escaped prose, backtick code spans styled), Milestone (flag + title
+ *  + "· due <date>"), Next step (the one accent label) — null rows collapse —
+ *  and a footer with the priority chip, labels (capped at 3, existing
+ *  convention) and "updated <relTime>". Only the number pill links out. */
 export function todoCard(t: MyWorkTodo): string {
-  const prio = t.priority ? `<span style="font-size:10.5px;font-weight:700;font-family:var(--mono);color:var(--amber);flex:none">${esc(t.priority)}</span>` : "";
+  const rows: string[] = [];
+  if (t.summary) rows.push(mwRow("Summary", mwProseBody(t.summary)));
+  if (t.milestone) {
+    const due = t.milestone.dueOn ? `<span style="font-size:11.5px;color:var(--fg-40)">· due ${esc(mwDueDate(t.milestone.dueOn))}</span>` : "";
+    rows.push(mwRow("Milestone", `<div style="${MW_ROW_BODY};display:flex;align-items:center;gap:8px">${MW_FLAG_SVG}<span>${esc(t.milestone.title)}</span>${due}</div>`));
+  }
+  if (t.nextStep) rows.push(mwRow("Next step", mwProseBody(t.nextStep), ";color:var(--accent)"));
+  const prio = t.priority ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 6px">${esc(t.priority)}</span>` : "";
   const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
-  const summary = t.summary
-    ? `<div style="font-size:12.5px;color:var(--fg-55);line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(t.summary)}</div>`
-    : "";
-  return `<a href="${attr(safeUrl(t.url))}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:11px 14px;text-decoration:none;color:var(--fg)">
-    <div style="display:flex;align-items:baseline;gap:9px">
-      ${prio}
-      <span style="font-family:var(--mono);font-size:12px;color:var(--fg-40);flex:none">#${t.number}</span>
-      <span style="font-size:13.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(t.title)}</span>
-    </div>
-    ${summary}
-    <div style="display:flex;align-items:center;gap:5px">
-      <span style="display:flex;gap:5px;flex:1;min-width:0">${labels}</span>
-      <span style="font-size:11px;color:var(--fg-40);flex:none">${relTime(t.updatedAt)}</span>
-    </div>
-  </a>`;
+  const footer = mwFooter(`${prio}${labels}<span style="font-size:11px;color:var(--fg-40);margin-left:auto">updated ${relTime(t.updatedAt)}</span>`, 6);
+  return `<div class="cnpy-card" style="${MW_CARD}">
+    ${mwTitleRow(t.displayTitle ?? t.title, t.number, t.url)}
+    <div style="display:flex;flex-direction:column">${rows.join("")}${footer}</div>
+  </div>`;
 }
 
 function myWorkView(s: AppState): string {

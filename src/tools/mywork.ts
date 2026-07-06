@@ -83,6 +83,11 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         merged: parsed.pr.merged,
         occurredAt: row.occurred_at ?? row.recorded_at,
         summary: row.summary,
+        // displayTitle / impact / baseRef land with the summarizer/capture
+        // follow-up; null until then (the cards hide null rows).
+        displayTitle: null,
+        impact: null,
+        baseRef: null,
       };
     });
 
@@ -113,6 +118,11 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         url: issue.html_url,
         updatedAt: issue.updated_at,
         summary: row.summary,
+        // displayTitle / milestone / nextStep land with the summarizer/capture
+        // follow-up; null until then (the cards hide null rows).
+        displayTitle: null,
+        milestone: null,
+        nextStep: null,
       });
     }
     // Same cap as previousActivity: the 5 most recently updated, newest first
