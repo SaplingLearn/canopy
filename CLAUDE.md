@@ -168,7 +168,7 @@ render path). `github_ref` is bare (a milestone number OR a JSON array of issue 
 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events: two separate lists — `previousActivity` (summarized merged/closed PRs where the person is the
-subject, 5 most recent) and `todo` (their open assigned issues, each carrying its own stored summary) —
+subject, 5 most recent) and `todo` (their open assigned issues, 5 most recently updated, each carrying its own stored summary) —
 built from `events` (+ `pr_summaries`, `issue_summaries`, `people`), no live GitHub. `person` resolves via
 the `people` identity map; an unmapped login yields an empty projection (`degraded:false`); any D1 failure
 yields empty `degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at

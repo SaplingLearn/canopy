@@ -161,6 +161,27 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
   });
 });
 
+describe("getMyWork — todo cap", () => {
+  it("returns only the 5 most recently updated open assigned issues, newest first", async () => {
+    for (let n = 1; n <= 7; n++) {
+      await ingestEvent(
+        env.DB,
+        issueEvent({
+          number: n,
+          login: "AndresL230",
+          action: "assigned",
+          state: "open",
+          updatedAt: daysBefore(NOW, 7 - n), // issue 7 is the freshest
+        }),
+        "github-webhook"
+      );
+    }
+
+    const work = await getMyWork(env.DB, "AndresL230");
+    expect(work.todo.map((t) => t.number)).toEqual([7, 6, 5, 4, 3]); // newest first, oldest two cut — mirrors the PR cap
+  });
+});
+
 describe("getMyWork — unmapped login", () => {
   it("returns an empty, non-degraded projection but leaves captured events in place", async () => {
     const ev = prEvent({ number: 9, login: "stranger", occurred_at: daysBefore(NOW, 1) });

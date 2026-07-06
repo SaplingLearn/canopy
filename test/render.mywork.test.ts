@@ -291,6 +291,16 @@ describe("render() — My Work screen", () => {
     expect(html).not.toContain("Syncing GitHub");
   });
 
+  it("renders the stored summary on a todo card when one exists", () => {
+    const html = todoCard(makeTodo({ summary: "Fix the OAuth consent fallback on Edge." }));
+    expect(html).toContain("Fix the OAuth consent fallback on Edge.");
+  });
+
+  it("renders no summary block on a todo card without a summary", () => {
+    const html = todoCard(makeTodo({ summary: null }));
+    expect(html).not.toContain("font-size:12.5px"); // the summary line's size — absent when summary is null
+  });
+
   it("renders To-do before Previous activity", () => {
     const data: DashboardData = {
       person: "alice",
