@@ -55,6 +55,8 @@ interface GhUserLite {
 }
 interface GhMilestoneLite {
   number: number;
+  title?: string | null;
+  due_on?: string | null;
   open_issues?: number;
   closed_issues?: number;
 }
@@ -68,6 +70,7 @@ interface GhPrListItem {
   updated_at: string;
   user: GhUserLite;
   milestone?: GhMilestoneLite | null;
+  base?: { ref: string } | null;
 }
 interface GhIssueListItem {
   number: number;
@@ -107,6 +110,7 @@ function prClosedDelivery(pr: GhPrListItem) {
       merged_at: pr.merged_at,
       closed_at: pr.closed_at,
       user: { login: pr.user.login },
+      base: pr.base ? { ref: pr.base.ref } : null,
       milestone: pr.milestone
         ? { number: pr.milestone.number, open_issues: pr.milestone.open_issues, closed_issues: pr.milestone.closed_issues }
         : null,
@@ -131,7 +135,13 @@ function issueDelivery(issue: GhIssueListItem) {
       assignees: (issue.assignees ?? []).map((a) => ({ login: a.login })),
       labels: issue.labels ?? [],
       milestone: issue.milestone
-        ? { number: issue.milestone.number, open_issues: issue.milestone.open_issues, closed_issues: issue.milestone.closed_issues }
+        ? {
+            number: issue.milestone.number,
+            title: issue.milestone.title ?? null,
+            due_on: issue.milestone.due_on ?? null,
+            open_issues: issue.milestone.open_issues,
+            closed_issues: issue.milestone.closed_issues,
+          }
         : null,
     },
   };

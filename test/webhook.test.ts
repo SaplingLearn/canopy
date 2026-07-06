@@ -126,6 +126,20 @@ describe("handleGithubWebhook — the third auth class", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].event_type).toBe("pr_merged");
   });
+
+  it("captures the PR base branch in raw (footer 'into <base>' source)", async () => {
+    await postWebhook("pull_request", prMerged, env);
+    const rows = await all<EventRow>(env.DB, `SELECT * FROM events WHERE semantic_key = 'gh:pr:42:merged'`);
+    const raw = JSON.parse(rows[0].raw) as { pr: { base: { ref: string } | null } };
+    expect(raw.pr.base).toEqual({ ref: "main" });
+  });
+
+  it("captures the issue milestone title and due date in raw (Milestone row source)", async () => {
+    await postWebhook("issues", issueAssigned, env);
+    const rows = await all<EventRow>(env.DB, `SELECT * FROM events WHERE event_type = 'issue'`);
+    const raw = JSON.parse(rows[0].raw) as { issue: { milestone: { number: number; title: string | null; due_on: string | null } } };
+    expect(raw.issue.milestone).toMatchObject({ number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" });
+  });
 });
 
 describe("verifyGithubSignature", () => {
@@ -155,7 +169,13 @@ describe("eventsFromDelivery — pure derivation", () => {
     const raw = JSON.parse(e.raw);
     expect(raw.action).toBe("assigned");
     expect(raw.issue.labels).toEqual(["P1", "backend"]); // label objects flattened to names
-    expect(raw.issue.milestone).toEqual({ number: 3, open_issues: 2, closed_issues: 4 });
+    expect(raw.issue.milestone).toEqual({
+      number: 3,
+      title: "Reliable event capture",
+      due_on: "2026-07-20T07:00:00Z",
+      open_issues: 2,
+      closed_issues: 4,
+    });
     expect(raw.issue.body).toBe("Full description of what needs wiring."); // NEW: needed by the issue summarizer
   });
 

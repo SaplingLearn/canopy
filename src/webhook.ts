@@ -55,6 +55,8 @@ interface GhUser {
 }
 interface GhMilestone {
   number: number;
+  title?: string | null;
+  due_on?: string | null;
   open_issues?: number;
   closed_issues?: number;
 }
@@ -71,6 +73,7 @@ interface GhPullRequest {
   closed_at: string | null;
   user: GhUser;
   milestone?: GhMilestone | null;
+  base?: { ref: string } | null;
 }
 interface GhIssue {
   number: number;
@@ -132,6 +135,7 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
         closed_at: pr.closed_at,
         user: { login: pr.user.login },
         milestone: pr.milestone ? { number: pr.milestone.number } : null,
+        base: pr.base ? { ref: pr.base.ref } : null,
       },
     });
     return [
@@ -190,6 +194,8 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
         milestone: issue.milestone
           ? {
               number: issue.milestone.number,
+              title: issue.milestone.title ?? null,
+              due_on: issue.milestone.due_on ?? null,
               open_issues: issue.milestone.open_issues,
               closed_issues: issue.milestone.closed_issues,
             }

@@ -10,6 +10,6 @@
     "user": { "login": "AndresL230" },
     "assignees": [{ "login": "Jose-Gael-Cruz-Lopez" }],
     "labels": [{ "name": "P1" }, { "name": "backend" }],
-    "milestone": { "number": 3, "open_issues": 1, "closed_issues": 5 }
+    "milestone": { "number": 3, "title": "Reliable event capture", "due_on": "2026-07-20T07:00:00Z", "open_issues": 1, "closed_issues": 5 }
   }
 }
