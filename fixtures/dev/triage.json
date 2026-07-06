@@ -1,0 +1,9 @@
+{
+  "needs_triage": [
+    { "raw": "The MCP server should rate-limit per token. Proposed 60 writes/min burst, 600/hour sustained.", "reason": "No clear section. Mixes a Reference description with an unmade Decision about limits.", "source_author": "jose-a", "resolved": 0, "created_at": "2026-06-25T09:00:00Z" },
+    { "raw": "Onboarding: 1) get added to the org, 2) sign in to Canopy, 3) mint an MCP token in Settings.", "reason": "Ambiguous between Context (team process) and Reference (how-to). Needs a human to choose.", "source_author": "meilin", "resolved": 0, "created_at": "2026-06-24T00:00:00Z" }
+  ],
+  "milestone_proposals": [
+    { "title": "Self-host & deploy guide", "target_date": "2026-09-20", "status": "upcoming", "github_ref": null, "change_summary": "Run the whole store on your own infrastructure.", "confidence": "high", "staged_status": "staged", "created_at": "2026-06-25T00:00:00Z", "created_by": "devraj" }
+  ]
+}

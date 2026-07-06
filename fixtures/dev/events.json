@@ -1,0 +1,34 @@
+{
+  "events": [
+    {
+      "semantic_key": "gh:pr:145:merged", "event_type": "pr_merged", "ref_number": 145, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-25T11:30:00Z", "recorded_at": "2026-06-25T11:31:00Z",
+      "raw": { "pr": { "number": 145, "title": "Render Mermaid + D2 in the Docs reader", "body": "## What\n\nFenced mermaid/d2 blocks render to inline SVG client-side.\n\nCloses #133.", "html_url": "https://github.com/SaplingLearn/sapling/pull/145", "merged": true, "merged_at": "2026-06-25T11:30:00Z", "closed_at": "2026-06-25T11:30:00Z", "user": { "login": "AndresL230" }, "milestone": null } },
+      "pr_summary": "Renders fenced mermaid and d2 diagram blocks to inline SVG in the Docs reader, with the source block as a fallback."
+    },
+    {
+      "semantic_key": "gh:pr:142:merged", "event_type": "pr_merged", "ref_number": 142, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-25T10:00:00Z", "recorded_at": "2026-06-25T10:01:00Z",
+      "raw": { "pr": { "number": 142, "title": "Constant-time MCP token comparison", "body": "Replaces the early-return string compare flagged in #138. Adds a timing test.", "html_url": "https://github.com/SaplingLearn/sapling/pull/142", "merged": true, "merged_at": "2026-06-25T10:00:00Z", "closed_at": "2026-06-25T10:00:00Z", "user": { "login": "AndresL230" }, "milestone": null } },
+      "pr_summary": "Switches MCP bearer-token comparison to a constant-time check and adds a timing test that fails on the old implementation."
+    },
+    {
+      "semantic_key": "gh:issue:160:assigned:AndresL230:2026-06-24T14:00:00Z", "event_type": "issue", "ref_number": 160, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-24T14:00:00Z", "recorded_at": "2026-06-24T14:01:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 160, "title": "[P1] Add token revoke endpoint", "body": "Revoke a bearer token from Settings; hash-match then soft-delete.", "html_url": "https://github.com/SaplingLearn/sapling/issues/160", "state": "open", "updated_at": "2026-06-24T14:00:00Z", "user": { "login": "sanaok" }, "assignees": [{ "login": "AndresL230" }], "labels": ["auth"], "milestone": { "number": 2, "open_issues": 1, "closed_issues": 2 } } },
+      "issue_summary": "Build the Settings action that revokes a bearer token by hash-match then soft-delete."
+    },
+    {
+      "semantic_key": "gh:issue:175:assigned:AndresL230:2026-06-25T09:30:00Z", "event_type": "issue", "ref_number": 175, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-25T09:30:00Z", "recorded_at": "2026-06-25T09:31:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 175, "title": "[P2] Roadmap progress cache backstop", "body": "Scheduled recompute of milestone progress in case a webhook delivery is missed.", "html_url": "https://github.com/SaplingLearn/sapling/issues/175", "state": "open", "updated_at": "2026-06-25T09:30:00Z", "user": { "login": "meilin" }, "assignees": [{ "login": "AndresL230" }], "labels": ["infra"], "milestone": { "number": 2, "open_issues": 1, "closed_issues": 2 } } },
+      "issue_summary": "Add a scheduled recompute backstop for the milestone progress cache."
+    },
+    {
+      "semantic_key": "gh:pr:151:merged", "event_type": "pr_merged", "ref_number": 151, "subject_login": "octo-drifter",
+      "provenance": "backfill", "occurred_at": "2026-06-22T16:00:00Z", "recorded_at": "2026-06-22T16:01:00Z",
+      "raw": { "pr": { "number": 151, "title": "Fix typo in onboarding doc", "body": "One-line copy fix.", "html_url": "https://github.com/SaplingLearn/sapling/pull/151", "merged": true, "merged_at": "2026-06-22T16:00:00Z", "closed_at": "2026-06-22T16:00:00Z", "user": { "login": "octo-drifter" }, "milestone": null } },
+      "pr_summary": "Fixes a one-line typo in the onboarding doc."
+    }
+  ]
+}

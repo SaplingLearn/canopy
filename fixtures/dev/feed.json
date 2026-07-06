@@ -1,0 +1,7 @@
+{
+  "feed": [
+    { "id": 1, "author": "meilin", "summary": "Implemented Mermaid + D2 rendering in the Docs reader", "body": "Fenced mermaid and d2 blocks now render to inline SVG on the client, with the source block as a fallback.", "artifacts": { "prs": ["145"], "commits": ["7b1e004"], "issues": [] }, "created_at": "2026-06-25T11:30:00Z", "tags": ["ui", "architecture"] },
+    { "id": 2, "author": "AndresL230", "summary": "Switched MCP token comparison to constant-time", "body": "Replaces the early-return string compare flagged in #138. Adds a timing test that fails on the old implementation.", "artifacts": { "prs": ["142"], "commits": ["a3f9c21"], "issues": [138] }, "created_at": "2026-06-25T10:00:00Z", "tags": ["auth"] },
+    { "id": 3, "author": "sanaok", "summary": "Drafted ADR: append-only feed as the system of record", "body": null, "artifacts": { "prs": [], "commits": [], "issues": [150] }, "created_at": "2026-06-25T08:00:00Z", "tags": ["architecture", "data"] }
+  ]
+}

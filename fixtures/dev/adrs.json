@@ -1,0 +1,6 @@
+{
+  "adrs": [
+    { "id": 1, "title": "Agent write contract", "context": "Agents post to Canopy at the end of a session over MCP. Without a fixed contract, writes arrived in inconsistent shapes.", "decision": "Agents write through a typed contract; every write lands STAGED and unplaceable writes go to Triage.", "rationale": "Keeping every agent write non-destructive and staged preserves the human review gate.", "status": "draft", "confidence": "high", "created_at": "2026-06-24T00:00:00Z", "created_by": "devraj" },
+    { "id": 2, "title": "Single-accent color system", "context": "Early mocks used several accent colors and gray surfaces.", "decision": "One electric-green accent with two tuned values; no gray surfaces.", "rationale": "A single accent keeps live and active state unambiguous.", "status": "ratified", "confidence": "high", "created_at": "2026-06-12T00:00:00Z", "created_by": "devraj" }
+  ]
+}
