@@ -14,9 +14,6 @@ import {
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
-// TEMPORARY design-preview mocks — delete this import (and web/src/mock.ts)
-// when the structured-summary backend lands.
-import { MYWORK_MOCKS_ENABLED, applyMyWorkMocks } from "./mock";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -96,9 +93,7 @@ function loadMyWork(): void {
   rerender();
   getMyDashboard()
     .then((data) => {
-      // TEMPORARY: decorate with design-preview mocks (web/src/mock.ts) — the
-      // ONE call site to delete when the structured-summary backend lands.
-      state.mywork = { status: "ok", data: MYWORK_MOCKS_ENABLED ? applyMyWorkMocks(data) : data };
+      state.mywork = { status: "ok", data };
       rerender();
     })
     .catch((e) => {
