@@ -74,8 +74,16 @@ export interface AppState {
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
-  backfillSync: { prSummarizedCount: number; prsTotal: number; issueSummarizedCount: number; issuesTotal: number } | null;
+  backfillSync: BackfillSyncState | null;
 }
+
+/** Sync GitHub modal state: "starting" from the click until the first batch
+ *  resolves (the server is paginating GitHub + ingesting — there are no real
+ *  counts yet, and rendering "0 of 0" reads as a broken sync), then "progress"
+ *  with absolute counts snapshotted from the most recent batch response. */
+export type BackfillSyncState =
+  | { phase: "starting" }
+  | { phase: "progress"; prSummarizedCount: number; prsTotal: number; issueSummarizedCount: number; issuesTotal: number };
 
 export function initialState(): AppState {
   return {
@@ -1203,20 +1211,24 @@ function toastBlock(msg: string): string {
 // invocation, shared across PRs and issues). Both counts are absolute
 // snapshots from the most recent batch, not accumulated client-side, so the
 // bars always reflect real server-side state.
-function backfillSyncModal(sync: { prSummarizedCount: number; prsTotal: number; issueSummarizedCount: number; issuesTotal: number }): string {
-  const prPct = sync.prsTotal > 0 ? Math.round((sync.prSummarizedCount / sync.prsTotal) * 100) : 0;
-  const issuePct = sync.issuesTotal > 0 ? Math.round((sync.issueSummarizedCount / sync.issuesTotal) * 100) : 0;
-  const bar = (label: string, count: number, total: number, pct: number) => `
+function backfillSyncModal(sync: BackfillSyncState): string {
+  const bar = (label: string, count: number, total: number) => {
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    return `
       <div style="font-size:12.5px;color:var(--fg-55);margin:0 0 6px">${count} of ${total} ${label}</div>
       <div style="height:8px;border-radius:999px;background:var(--hover);overflow:hidden;margin-bottom:14px">
         <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:999px;transition:width .3s ease"></div>
       </div>`;
+  };
+  const body = sync.phase === "starting"
+    ? `<div style="font-size:12.5px;color:var(--fg-55);line-height:1.6">Contacting GitHub — taking inventory of PRs and issues&hellip;</div>`
+    : `${bar("PRs summarized", sync.prSummarizedCount, sync.prsTotal)}
+      ${bar("issues summarized", sync.issueSummarizedCount, sync.issuesTotal)}`;
   return `<div style="position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55)">
     <div style="width:360px;border:1px solid var(--border-strong);border-radius:14px;padding:28px 30px;background:var(--bg);box-shadow:0 20px 60px rgba(0,0,0,.45);text-align:center">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="animation:cnpy-spin .8s linear infinite;margin-bottom:14px"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
       <div style="font-size:15px;font-weight:600;margin-bottom:14px">Syncing GitHub</div>
-      ${bar("PRs summarized", sync.prSummarizedCount, sync.prsTotal, prPct)}
-      ${bar("issues summarized", sync.issueSummarizedCount, sync.issuesTotal, issuePct)}
+      ${body}
     </div>
   </div>`;
 }

@@ -259,21 +259,30 @@ describe("render() — My Work screen", () => {
 
   it("shows a disabled Sync button while backfillSync is set", () => {
     const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
-    const s = { ...stateWithDashboard(data, true), backfillSync: { prSummarizedCount: 66, prsTotal: 146, issueSummarizedCount: 3, issuesTotal: 10 } };
+    const s = { ...stateWithDashboard(data, true), backfillSync: { phase: "progress", prSummarizedCount: 66, prsTotal: 146, issueSummarizedCount: 3, issuesTotal: 10 } as const };
     const html = render(s);
     expect(html).toContain("disabled");
     expect(html).toContain("Syncing");
     expect(html).not.toContain("Sync GitHub");
   });
 
-  it("renders two progress bars — PRs and issues — while backfillSync is set", () => {
+  it("renders two progress bars — PRs and issues — while backfillSync is in progress", () => {
     const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
-    const s = { ...stateWithDashboard(data, true), backfillSync: { prSummarizedCount: 66, prsTotal: 146, issueSummarizedCount: 3, issuesTotal: 10 } };
+    const s = { ...stateWithDashboard(data, true), backfillSync: { phase: "progress", prSummarizedCount: 66, prsTotal: 146, issueSummarizedCount: 3, issuesTotal: 10 } as const };
     const html = render(s);
     expect(html).toContain("66 of 146 PRs summarized");
     expect(html).toContain("width:45%"); // Math.round(66/146*100)
     expect(html).toContain("3 of 10 issues summarized");
     expect(html).toContain("width:30%"); // Math.round(3/10*100)
+  });
+
+  it("renders an inventory-taking line — never '0 of 0' bars — while the first batch is in flight", () => {
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const s = { ...stateWithDashboard(data, true), backfillSync: { phase: "starting" } as const };
+    const html = render(s);
+    expect(html).toContain("Syncing GitHub");
+    expect(html).toContain("Contacting GitHub");
+    expect(html).not.toContain("0 of 0");
   });
 
   it("renders no progress modal when backfillSync is null", () => {

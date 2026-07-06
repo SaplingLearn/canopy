@@ -148,23 +148,26 @@ export async function runBackfill(
     summaryCallDelayMs?: number;
   }
 ): Promise<BackfillResult> {
+  // Nothing-ran failure envelope. The route turns this into a 503 whose error
+  // reaches the admin's toast — a Sync that can't reach GitHub must say so, not
+  // report zeros as if the repo were empty.
+  const failed = (error: string): BackfillResult => ({
+    ok: false,
+    error,
+    captured: 0,
+    unchanged: 0,
+    summarized: 0,
+    summaryBudgetExhausted: false,
+    prSummarizedCount: 0,
+    issueSummarizedCount: 0,
+    prs: 0,
+    issues: 0,
+    issuesToSummarize: 0,
+  });
+
   const token = env.GITHUB_SERVICE_TOKEN;
   const repo = env.GITHUB_REPO;
-  if (!token || !repo) {
-    return {
-      ok: false,
-      error: "service token or repo not configured",
-      captured: 0,
-      unchanged: 0,
-      summarized: 0,
-      summaryBudgetExhausted: false,
-      prSummarizedCount: 0,
-      issueSummarizedCount: 0,
-      prs: 0,
-      issues: 0,
-      issuesToSummarize: 0,
-    };
-  }
+  if (!token || !repo) return failed("service token or repo not configured");
 
   const doFetch = opts?.fetchImpl ?? fetch;
   const summarizer = opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null);
@@ -185,7 +188,10 @@ export async function runBackfill(
     let url: string | null = `https://api.github.com/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
     while (url) {
       const res: Response = await doFetch(url, { headers });
-      if (!res.ok) break;
+      // Fail the whole run, loud: a 401/403/404 here (dead or under-scoped
+      // GITHUB_SERVICE_TOKEN) would otherwise read as "0 PRs" — fake success.
+      // Both lists are fetched before any ingestion, so nothing is half-written.
+      if (!res.ok) return failed(`GitHub ${res.status} listing closed PRs (check GITHUB_SERVICE_TOKEN)`);
       const page = (await res.json()) as GhPrListItem[];
       prList.push(...page);
       url = nextLink(res);
@@ -199,7 +205,7 @@ export async function runBackfill(
     let url: string | null = `https://api.github.com/repos/${repo}/issues?state=open&per_page=100`;
     while (url) {
       const res: Response = await doFetch(url, { headers });
-      if (!res.ok) break;
+      if (!res.ok) return failed(`GitHub ${res.status} listing open issues (check GITHUB_SERVICE_TOKEN)`);
       const page = (await res.json()) as GhIssueListItem[];
       for (const issue of page) {
         if (issue.pull_request) continue;

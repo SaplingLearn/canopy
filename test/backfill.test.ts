@@ -216,6 +216,39 @@ describe("runBackfill", () => {
     expect(await all(env.DB, `SELECT * FROM events`)).toHaveLength(0);
   });
 
+  it("fails loud — {ok:false, error} with the GitHub status — when the PR list fetch is rejected", async () => {
+    const fetchImpl = (async () => new Response("bad credentials", { status: 401 })) as unknown as typeof fetch;
+    const res = await runBackfill(envWith(), "admin-user", {
+      fetchImpl,
+      summarizer: countingSummarizer("unused"),
+      summaryCallDelayMs: 0,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("401");
+    expect(res.error).toContain("closed PRs");
+    expect(res).toMatchObject({ captured: 0, unchanged: 0, summarized: 0, prs: 0, issues: 0, issuesToSummarize: 0 });
+    expect(await all(env.DB, `SELECT * FROM events`)).toHaveLength(0);
+  });
+
+  it("fails loud when the issues list fetch is rejected — nothing from the PR list is written either", async () => {
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/pulls")) {
+        return new Response(JSON.stringify([mergedPr]), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("forbidden", { status: 403 });
+    }) as unknown as typeof fetch;
+    const res = await runBackfill(envWith(), "admin-user", {
+      fetchImpl,
+      summarizer: countingSummarizer("unused"),
+      summaryCallDelayMs: 0,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("403");
+    expect(res.error).toContain("open issues");
+    expect(await all(env.DB, `SELECT * FROM events`)).toHaveLength(0);
+  });
+
   it("caps AI summarization at summaryBatchLimit per invocation; a follow-up run finishes the rest", async () => {
     const summarizer = countingSummarizer("**What changed:** Summary.");
     const fetchImpl = stubFetch([prA, prB, prC], []);
