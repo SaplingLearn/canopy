@@ -7,7 +7,6 @@ import type { Me, StagedProposal, IdentityTask } from "./api";
 import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
-import { parseStructuredSummary } from "@shared/prSummary";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { REPO_URL } from "./github";
@@ -1101,17 +1100,17 @@ function mwDueDate(iso: string): string {
 }
 
 /** A merged/closed PR card (option 2a): title + number pill, then labeled rows —
- *  "What changed"/"Why" when pr.summary matches the structured convention, a
- *  single "Summary" row for prose/absent summaries, "Impact" when present — and
- *  a footer with the MERGED/CLOSED chip + time ("· into <base>" when known). */
+ *  "What changed"/"Why" come straight from the structured DTO fields
+ *  (pr.what/pr.why) when pr.what is set, a single "Summary" row for
+ *  prose/legacy summaries, "Impact" when present — and a footer with the
+ *  MERGED/CLOSED chip + time ("· into <base>" when known). */
 export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
-  const structured = pr.summary !== null ? parseStructuredSummary(pr.summary) : null;
   const rows: string[] = [];
-  if (pr.summary === null) {
+  if (pr.what !== null) {
+    rows.push(mwRow("What changed", mwMdBody(pr.what, markdownFn)));
+    if (pr.why) rows.push(mwRow("Why", mwMdBody(pr.why, markdownFn)));
+  } else if (pr.summary === null) {
     rows.push(mwRow("Summary", `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`));
-  } else if (structured !== null) {
-    rows.push(mwRow("What changed", mwMdBody(structured.what, markdownFn)));
-    if (structured.why) rows.push(mwRow("Why", mwMdBody(structured.why, markdownFn)));
   } else {
     rows.push(mwRow("Summary", mwMdBody(pr.summary, markdownFn)));
   }

@@ -99,31 +99,27 @@ describe("prActivityCard", () => {
     expect(html).not.toContain("javascript:alert(1)");
   });
 
-  it("renders structured What changed + Why as separate labeled rows", () => {
-    const pr = makePr({ summary: "**What changed:** Fixed the login bug.\n**Why:** Users were logged out unexpectedly." });
+  it("renders What changed and Why rows from the structured DTO fields", () => {
+    const pr = makePr({ what: "Fixed the login bug.", why: "Users were logged out unexpectedly." });
     const html = prActivityCard(pr, mockMd);
     expect(html).toContain("What changed");
-    expect(html).toContain("Why");
     expect(html).toContain("Fixed the login bug.");
+    expect(html).toContain("Why");
     expect(html).toContain("Users were logged out unexpectedly.");
-    expect(html).not.toContain("**What changed:**");
-    expect(html).not.toContain("**Why:**");
+    expect(html).not.toContain(">Summary<");
   });
 
-  it("omits the Why row when the structured summary has no Why", () => {
-    const pr = makePr({ summary: "**What changed:** Fixed the login bug." });
-    const html = prActivityCard(pr, mockMd);
+  it("renders What changed without a Why row when why is null", () => {
+    const html = prActivityCard(makePr({ what: "Fixed the login bug.", why: null }), mockMd);
     expect(html).toContain("What changed");
-    expect(html).not.toContain("Why");
-    expect(html).not.toContain("**What changed:**");
+    expect(html).not.toContain(">Why<");
   });
 
-  it("falls back to a single 'Summary' row for a non-conforming summary (legacy/excerpt)", () => {
-    const pr = makePr({ summary: "Fixed the login bug that was affecting users." });
-    const html = prActivityCard(pr, mockMd);
-    expect(html).not.toContain("What changed");
+  it("falls back to a single Summary prose row when what is null", () => {
+    const html = prActivityCard(makePr({ what: null, summary: "Fixed the login bug that was affecting users." }), mockMd);
     expect(html).toContain("Summary");
-    expect(html).toContain("mock-md");
+    expect(html).toContain("Fixed the login bug that was affecting users.");
+    expect(html).not.toContain("What changed");
   });
 
   it("renders an Impact row when pr.impact is set; collapses it when null", () => {
