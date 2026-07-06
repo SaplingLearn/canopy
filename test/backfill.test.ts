@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all, first } from "../src/db";
+import { all, first, run } from "../src/db";
 import { runBackfill } from "../src/tools/backfill";
 import type { Env } from "../src/env";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
@@ -205,6 +205,31 @@ describe("runBackfill", () => {
 
     const summary = await first<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE pr_number = ?`, 10);
     expect(summary?.summary).toBe("Plain prose, no headings — the new richer style.");
+  });
+
+  it("re-summarizes a prose-era row (model set, title NULL) exactly once, then skips it", async () => {
+    const fetchImpl = stubFetch([mergedPr], []);
+    const summarizer = countingSummarizer(PR_STUB);
+
+    // First run captures the PR and writes a structured summary.
+    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    expect(firstRun.ok).toBe(true);
+    expect(summarizer.calls).toBeGreaterThan(0);
+    const callsAfterFirst = summarizer.calls;
+
+    // Simulate a prose-era row: model kept, structured columns wiped.
+    await run(env.DB, `UPDATE pr_summaries SET title = NULL, what = NULL, why = NULL, impact = NULL`);
+
+    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    const callsAfterSecond = summarizer.calls;
+    expect(secondRun.ok).toBe(true);
+    // The prose-era row (title wiped) must regenerate — one more summarizer call.
+    expect(callsAfterSecond).toBeGreaterThan(callsAfterFirst);
+
+    // Third run: the row is structured again — skipped, no further calls.
+    const thirdRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    expect(thirdRun.ok).toBe(true);
+    expect(summarizer.calls).toBe(callsAfterSecond);
   });
 
   it("returns {ok:false} (no throw, no writes) when the service token is missing", async () => {

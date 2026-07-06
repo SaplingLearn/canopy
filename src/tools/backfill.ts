@@ -26,8 +26,8 @@ const USER_AGENT = "canopy";
 // instantly) — a rate limit or per-request ceiling, not a code defect. Cap
 // how many summarizer calls one invocation makes, and pace them, so a single
 // Sync stays comfortably under whatever that limit is; a backlog beyond the
-// cap is picked up by the next Sync click (the model≠excerpt skip-check
-// already makes that safe — nothing already summarized is redone).
+// cap is picked up by the next Sync click (the model≠excerpt-and-structured
+// skip-check already makes that safe — nothing already summarized is redone).
 const SUMMARY_BATCH_LIMIT = 20;
 const SUMMARY_CALL_DELAY_MS = 500;
 
@@ -250,10 +250,13 @@ export async function runBackfill(
       // excerpt summary, not just brand-new ones.
       const existing = await first<PrSummaryRow>(
         env.DB,
-        `SELECT model FROM pr_summaries WHERE semantic_key = ?`,
+        `SELECT model, title FROM pr_summaries WHERE semantic_key = ?`,
         ev.semantic_key
       );
-      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      // "Done" = a real (non-excerpt) summary that is ALSO structured — title
+      // doubles as the structured-generation marker (0018), so prose-era rows
+      // regenerate exactly once under the shared budget.
+      const alreadySummarized = existing !== null && existing.model !== "excerpt" && existing.title !== null;
       if (alreadySummarized) {
         prSummarizedCount++;
         continue;
@@ -273,8 +276,8 @@ export async function runBackfill(
       });
       summarized++;
       // storePrSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually got a real summary.
-      if (stored.model !== "excerpt") prSummarizedCount++;
+      // only count it toward "done" if it actually got a real, structured summary.
+      if (stored.model !== "excerpt" && stored.title !== null) prSummarizedCount++;
 
       // Pace summarizer calls so one invocation doesn't burst past whatever
       // limit caused the wall above — skip the trailing delay once the batch
@@ -308,10 +311,10 @@ export async function runBackfill(
 
       const existing = await first<IssueSummaryRow>(
         env.DB,
-        `SELECT model FROM issue_summaries WHERE issue_number = ?`,
+        `SELECT model, title FROM issue_summaries WHERE issue_number = ?`,
         issue.number
       );
-      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      const alreadySummarized = existing !== null && existing.model !== "excerpt" && existing.title !== null;
       if (alreadySummarized) {
         issueSummarizedCount++;
         continue;
@@ -331,8 +334,8 @@ export async function runBackfill(
       });
       summarized++;
       // storeIssueSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually got a real summary.
-      if (stored.model !== "excerpt") issueSummarizedCount++;
+      // only count it toward "done" if it actually got a real, structured summary.
+      if (stored.model !== "excerpt" && stored.title !== null) issueSummarizedCount++;
 
       if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
