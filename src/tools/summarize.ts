@@ -150,7 +150,17 @@ export async function storePrSummary(
     created_at
   );
 
-  return { semantic_key: pr.semantic_key, pr_number: pr.pr_number, summary, model, created_at };
+  return {
+    semantic_key: pr.semantic_key,
+    pr_number: pr.pr_number,
+    summary,
+    model,
+    created_at,
+    title: null,
+    what: null,
+    why: null,
+    impact: null,
+  };
 }
 
 /**
@@ -191,5 +201,12 @@ export async function storeIssueSummary(
     created_at
   );
 
-  return { issue_number: issue.issue_number, summary, model, created_at };
+  return {
+    issue_number: issue.issue_number,
+    summary,
+    model,
+    created_at,
+    title: null,
+    next_step: null,
+  };
 }
