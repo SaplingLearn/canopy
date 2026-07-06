@@ -13,7 +13,7 @@ import {
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
 import issueClosed from "./fixtures/gh-issue-closed.json";
-import type { Summarizer } from "../src/tools/summarize";
+import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { IssueSummaryRow } from "@shared/rows";
 
 const SECRET = "test-webhook-secret"; // matches vitest.config.ts binding
@@ -40,7 +40,7 @@ async function postWebhook(
   eventName: string,
   payload: unknown,
   e: Env = env,
-  opts?: { summarizer?: Summarizer | null; issueSummarizer?: Summarizer | null }
+  opts?: { summarizer?: Summarizer<PrSummary> | null; issueSummarizer?: Summarizer<IssueSummary> | null }
 ): Promise<Response> {
   const body = JSON.stringify(payload);
   const sig = await sign(SECRET, body);
@@ -195,7 +195,7 @@ describe("progressFromIssueEvent — pure derivation", () => {
 
 describe("webhook → issue summarize wiring", () => {
   it("an assigned issue event → one issue_summaries row keyed by issue number", async () => {
-    const stub: Summarizer = { model: "stub", summarize: async () => "What it is and what to do." };
+    const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "What it is and what to do.", next_step: null }) };
     const res = await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
     expect(res.status).toBe(200);
     const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 17);
@@ -204,7 +204,7 @@ describe("webhook → issue summarize wiring", () => {
   });
 
   it("a non-assigned issue action (closed) never reaches storeIssueSummary — zero issue_summaries rows", async () => {
-    const stub: Summarizer = { model: "stub", summarize: async () => "should never be called" };
+    const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "should never be called", next_step: null }) };
     const res = await postWebhook("issues", issueClosed, env, { issueSummarizer: stub });
     expect(res.status).toBe(200);
     const rows = await all(env.DB, `SELECT * FROM issue_summaries`);
@@ -226,7 +226,7 @@ describe("webhook → issue summarize wiring", () => {
       nowIso(),
       "andres"
     );
-    const stub: Summarizer = { model: "stub", summarize: async () => "summary" };
+    const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "summary", next_step: null }) };
     await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
     const progress = await all(env.DB, `SELECT * FROM milestone_progress`);
     expect(progress.length).toBe(1); // issueAssigned carries a milestone — progressSeam still wrote it

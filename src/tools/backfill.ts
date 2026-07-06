@@ -3,7 +3,7 @@ import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
-import { type Summarizer, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
+import { type Summarizer, type PrSummary, type IssueSummary, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
@@ -142,8 +142,8 @@ export async function runBackfill(
   principalLogin: string,
   opts?: {
     fetchImpl?: typeof fetch;
-    summarizer?: Summarizer | null;
-    issueSummarizer?: Summarizer | null;
+    summarizer?: Summarizer<PrSummary> | null;
+    issueSummarizer?: Summarizer<IssueSummary> | null;
     summaryBatchLimit?: number;
     summaryCallDelayMs?: number;
   }
