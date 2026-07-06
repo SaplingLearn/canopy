@@ -70,11 +70,16 @@ function extractResponseText(result: unknown): string | null {
 }
 
 /** Extracts the single JSON object a summarizer prompt demands. Strips an
- *  accidental markdown fence; anything that isn't one JSON object → null. */
+ *  accidental markdown fence, then tolerates any prose the model prepends or
+ *  appends around the object by slicing from the first `{` to the last `}`;
+ *  anything that isn't one JSON object → null. */
 export function parseStructuredJson(text: string): Record<string, unknown> | null {
   const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const first = stripped.indexOf("{");
+  const last = stripped.lastIndexOf("}");
+  if (first === -1 || last <= first) return null;
   try {
-    const parsed: unknown = JSON.parse(stripped);
+    const parsed: unknown = JSON.parse(stripped.slice(first, last + 1));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
   } catch {

@@ -216,6 +216,15 @@ describe("parseStructuredJson", () => {
     expect(parseStructuredJson("[1,2]")).toBeNull();
     expect(parseStructuredJson("null")).toBeNull();
   });
+  it("tolerates leading prose before the object", () => {
+    expect(parseStructuredJson('Here you go:\n{"a": 1}')).toEqual({ a: 1 });
+  });
+  it("tolerates trailing prose after the object", () => {
+    expect(parseStructuredJson('{"a": 1}\n\nHope this helps!')).toEqual({ a: 1 });
+  });
+  it("tolerates a fence plus surrounding prose on both sides", () => {
+    expect(parseStructuredJson('Sure!\n```json\n{"a": 1, "b": "x"}\n```\nDone.')).toEqual({ a: 1, b: "x" });
+  });
 });
 
 describe("validatePrSummary", () => {
