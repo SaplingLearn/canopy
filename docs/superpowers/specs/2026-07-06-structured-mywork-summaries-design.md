@@ -148,5 +148,30 @@ still generated once at capture, regenerable, never truth.
   (the Queue seam remains a `// SEAM:` comment).
 - No new GitHub calls, no render-time generation, no change to which events are
   captured or which actions trigger a summary (`assigned` only for issues).
-- The frontend wiring (§4's render/DTO consumption + mock deletion) ships as the
-  follow-up slice once this backend lands.
+
+## Wiring up the frontend (final step of this slice)
+
+The option-2a cards and the temporary mock layer are already in the tree
+(uncommitted on `feat/todo-summaries`), so this slice finishes by swapping the cards
+from mock/parsed data onto the real projection — it does not ship as a separate
+follow-up:
+
+1. **DTO** — `MyWorkPr` gains `what: string | null` and `why: string | null`
+   (`displayTitle`/`impact`/`baseRef` and the `MyWorkTodo` fields already exist from
+   the componentization).
+2. **Projection** — `getMyWork` replaces the six `null` placeholders in
+   `src/tools/mywork.ts` with the real values per §4 (summary-table columns +
+   widened `raw` fields).
+3. **Render** — `prActivityCard` reads `pr.what`/`pr.why` directly; `what === null`
+   falls back to the existing single "Summary" prose row (`pr.summary`), and
+   `pr.summary === null` keeps the muted no-summary line. No parsing anywhere.
+4. **Deletions** — `shared/prSummary.ts` + `test/prSummary.test.ts` (the regex
+   convention), and `web/src/mock.ts` + its one call site in `web/src/main.ts` +
+   `test/mock.mywork.test.ts` (the preview layer).
+5. **Tests** — `test/render.mywork.test.ts` asserts What changed/Why from the DTO
+   fields (structured → rows, null `what` → Summary fallback);
+   `test/mywork.test.ts` asserts the real projections replace the placeholders.
+6. **Verify end-to-end** — `npm test`, `npm run typecheck`, `npm run build:web`,
+   then a manual pass on `wrangler dev`: run a Sync so prose-era rows regenerate,
+   confirm both cards render their structured rows from real data and that
+   null-field rows (no milestone, no next step, no impact) collapse.
