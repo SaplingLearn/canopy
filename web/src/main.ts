@@ -304,6 +304,7 @@ async function runAdminBackfillLoop(): Promise<void> {
       batchesSoFar++;
       summarizedSoFar += last.summarized;
       state.backfillSync = {
+        phase: "progress",
         prSummarizedCount: last.prSummarizedCount,
         prsTotal: last.prs,
         issueSummarizedCount: last.issueSummarizedCount,
@@ -490,7 +491,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // refresh My Work so newly-captured PRs/issues surface in the two lists.
     case "adminBackfill": {
       if (state.backfillSync) return; // already syncing — button is disabled, but guard duplicate dispatch too
-      state.backfillSync = { prSummarizedCount: 0, prsTotal: 0, issueSummarizedCount: 0, issuesTotal: 0 }; // real counts land after the first batch resolves
+      state.backfillSync = { phase: "starting" }; // no real counts until the first batch resolves — the modal shows an inventory-taking line, never "0 of 0"
       rerender();
       runAdminBackfillLoop();
       return;
