@@ -27,7 +27,12 @@ try {
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
-} catch { /* localStorage unavailable */ }
+  const dt = localStorage.getItem("canopy.docTreeCollapsed");
+  if (dt) {
+    const parsed = JSON.parse(dt);
+    if (parsed && typeof parsed === "object") state.docTreeCollapsed = parsed as Record<string, boolean>;
+  }
+} catch { /* localStorage unavailable or malformed */ }
 
 if (window.matchMedia) {
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -462,6 +467,14 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "toggleHistory": state.showHistory = !state.showHistory; break;
+    case "toggleDocSection": {
+      if (arg) {
+        if (state.docTreeCollapsed[arg]) delete state.docTreeCollapsed[arg];
+        else state.docTreeCollapsed[arg] = true;
+        persist("canopy.docTreeCollapsed", JSON.stringify(state.docTreeCollapsed));
+      }
+      break;
+    }
 
     // search
     case "setSearch":
