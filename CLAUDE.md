@@ -57,7 +57,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
   `0015_drop_user_token` [drops `users.github_token`], `0016_identity_tasks`, then
-  `0017_issue_summaries` [assigned-issue summaries]).
+  `0017_issue_summaries` [assigned-issue summaries], `0018_structured_summaries` [structured summary
+  columns]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started) served via the ASSETS binding; `web/src/markdown.ts` renders PR summaries and the
   roadmap narrative as styled HTML.
@@ -168,12 +169,15 @@ render path). `github_ref` is bare (a milestone number OR a JSON array of issue 
 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events: two separate lists — `previousActivity` (summarized merged/closed PRs where the person is the
-subject, 5 most recent) and `todo` (their open assigned issues, each carrying its own stored summary) —
+subject, 5 most recent) and `todo` (their open assigned issues, 5 most recently updated, each carrying its own stored summary) —
 built from `events` (+ `pr_summaries`, `issue_summaries`, `people`), no live GitHub. `person` resolves via
 the `people` identity map; an unmapped login yields an empty projection (`degraded:false`); any D1 failure
-yields empty `degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at
-capture time (`tools/summarize.ts`: Workers AI `env.AI`, deterministic excerpt fallback), stored in
-`pr_summaries` / `issue_summaries` respectively and regenerable — never truth, never generated at render.
+yields empty `degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at capture time
+(`tools/summarize.ts`: Workers AI `env.AI` emits one validated JSON object — PR:
+title/what/why/impact; issue: title/summary/next_step — with a deterministic excerpt
+fallback that writes prose-only rows), stored as columns on `pr_summaries` /
+`issue_summaries` and regenerable via Sync (a row is "done" only when
+`model != 'excerpt' AND title IS NOT NULL`) — never truth, never generated at render.
 
 ## Conventions & gotchas
 

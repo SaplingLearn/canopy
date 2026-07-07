@@ -6,11 +6,26 @@ import { type DB, run, nowIso } from "../db";
 // time. A summary failure (throw, empty response) must never fail capture; the
 // deterministic excerpt fallback guarantees storePrSummary always succeeds.
 
-/** One completed PR's title+body in, a short markdown summary (or null) out.
+/** Structured PR summary — the JSON object the PR prompt demands. */
+export interface PrSummary {
+  title: string;          // humanized display title, grounded in the real title+body
+  what: string;           // the concrete change that shipped
+  why: string | null;     // motivation, only when the body states one
+  impact: string | null;  // one user-facing outcome sentence, never files
+}
+
+/** Structured issue summary — the JSON object the issue prompt demands. */
+export interface IssueSummary {
+  title: string;
+  summary: string;          // plain restatement of what the issue is
+  next_step: string | null; // only when the issue states/implies an action
+}
+
+/** One PR/issue's title+body in, a validated structured summary (or null) out.
  *  `model` is the provenance recorded on the stored row. */
-export interface Summarizer {
+export interface Summarizer<T> {
   readonly model: string;
-  summarize(input: { title: string; body: string }): Promise<string | null>;
+  summarize(input: { title: string; body: string }): Promise<T | null>;
 }
 
 // @cf/meta/llama-3.1-8b-instruct was retired from the Workers AI catalog
@@ -20,31 +35,25 @@ export interface Summarizer {
 // the free daily Neuron allocation for this workload (~5 neurons/call).
 const WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 
-// Both prompts: 2-3 sentences of plain prose, no headings/bullets/preamble,
-// grounded only in the provided title+body, output the summary text only.
-// Kept in sync by hand — there's no shared style-rule constant, just the two
-// prompts below and this comment as the source of truth for both.
-
 export const SUMMARIZER_SYSTEM_PROMPT =
   "Summarize this pull request for a team activity feed — what shipped. " +
-  "Lead with the concrete change the PR made; do not just restate the title. " +
-  "Where the description supports it, add the meaningful detail: what behavior changed, " +
-  "what it fixes or enables, and any caveat a teammate would want to know. " +
-  "The description is a record of work that already happened — report what it states, never extrapolate beyond it. " +
-  "Write 2 to 3 sentences of plain prose: no headings, no bullet points, no preamble like \"This PR\". " +
-  "If the description is empty or too thin to add anything beyond the title, output the title verbatim — do not pad. " +
-  "Output the summary text only, nothing else.";
+  "Respond with a SINGLE JSON object and nothing else — no code fences, no preamble: " +
+  '{"title": string, "what": string, "why": string or null, "impact": string or null}. ' +
+  '"title": a short humanized sentence-case rewrite of what the PR did, grounded only in the provided title and description — never invent scope. ' +
+  '"what": 1-2 sentences leading with the concrete change that shipped; do not just restate the title. ' +
+  '"why": the motivation, only where the description states one; else null. ' +
+  '"impact": one sentence on the outcome for people using the product — what it enables or fixes; NEVER a list of files touched; null when the description does not support one. ' +
+  "The description records work that already happened — report what it states, never extrapolate beyond it. " +
+  'If the description is empty or too thin to add anything beyond the title, use the title verbatim for "title" and "what" and null for "why" and "impact".';
 
 export const ISSUE_SUMMARIZER_SYSTEM_PROMPT =
-  "Summarize this GitHub issue for a personal to-do list: what it is, and — only where the issue " +
-  "actually states or clearly implies one — what needs doing about it. " +
-  "Start with a plain restatement of what the issue is about, grounded only in its title and description. " +
-  "If the description states or clearly implies an action, add what needs doing. " +
-  "If the description is vague, aspirational, or states no clear action, stop at the plain restatement — " +
-  "never invent a next step, a plan, or a scope the issue itself never stated. " +
-  "Write 2 to 3 sentences of plain prose: no headings, no bullet points, no preamble like \"This issue\". " +
-  "If the description is empty or too thin to add anything beyond the title, output the title verbatim — do not pad. " +
-  "Output the summary text only, nothing else.";
+  "Summarize this GitHub issue for a personal to-do list. " +
+  "Respond with a SINGLE JSON object and nothing else — no code fences, no preamble: " +
+  '{"title": string, "summary": string, "next_step": string or null}. ' +
+  '"title": a short humanized sentence-case rewrite of what the issue is about, grounded only in its title and description. ' +
+  '"summary": 1-3 sentences plainly restating what the issue is, grounded only in its title and description. ' +
+  '"next_step": what needs doing, ONLY where the issue states or clearly implies an action; if the issue is vague, aspirational, or states no clear action, use null — never invent a next step, a plan, or a scope the issue never stated. ' +
+  'If the description is empty or too thin, use the title verbatim for "title" and "summary" and null for "next_step".';
 
 // Workers AI model families shape ai.run()'s resolved value differently:
 // older/smaller models return the classic flat {response: string}; newer
@@ -60,11 +69,65 @@ function extractResponseText(result: unknown): string | null {
   return null;
 }
 
-/** Shared Workers AI call machinery for both summarizers — only the system
- *  prompt differs. Never throws: any failure (network, empty output,
- *  malformed response) resolves to null so the caller falls back to
- *  excerptSummary. */
-function makeWorkersAiSummarizer(ai: Ai, systemPrompt: string): Summarizer {
+/** Extracts the single JSON object a summarizer prompt demands. Strips an
+ *  accidental markdown fence, then tolerates any prose the model prepends or
+ *  appends around the object by slicing from the first `{` to the last `}`;
+ *  anything that isn't one JSON object → null. */
+export function parseStructuredJson(text: string): Record<string, unknown> | null {
+  const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const first = stripped.indexOf("{");
+  const last = stripped.lastIndexOf("}");
+  if (first === -1 || last <= first) return null;
+  try {
+    const parsed: unknown = JSON.parse(stripped.slice(first, last + 1));
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// Field coercion: required = non-empty string after trim (else the whole
+// object is rejected); nullable = trimmed string, '' / null / undefined → null,
+// any other type rejects the whole object (undefined is the reject marker).
+function reqStr(v: unknown): string | null {
+  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+}
+function nullableStr(v: unknown): string | null | undefined {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length > 0 ? t : null;
+}
+
+export function validatePrSummary(o: Record<string, unknown>): PrSummary | null {
+  const title = reqStr(o.title);
+  const what = reqStr(o.what);
+  if (title === null || what === null) return null;
+  const why = nullableStr(o.why);
+  const impact = nullableStr(o.impact);
+  if (why === undefined || impact === undefined) return null;
+  return { title, what, why, impact };
+}
+
+export function validateIssueSummary(o: Record<string, unknown>): IssueSummary | null {
+  const title = reqStr(o.title);
+  const summary = reqStr(o.summary);
+  if (title === null || summary === null) return null;
+  const next_step = nullableStr(o.next_step);
+  if (next_step === undefined) return null;
+  return { title, summary, next_step };
+}
+
+/** Shared Workers AI call machinery for both summarizers — only the prompt and
+ *  validator differ. Never throws: any failure (network, empty output, prose
+ *  instead of JSON, malformed/mistyped fields) resolves to null so the caller
+ *  falls back to excerptSummary. */
+function makeWorkersAiSummarizer<T>(
+  ai: Ai,
+  systemPrompt: string,
+  validate: (o: Record<string, unknown>) => T | null
+): Summarizer<T> {
   return {
     model: WORKERS_AI_MODEL,
     async summarize({ title, body }) {
@@ -77,8 +140,9 @@ function makeWorkersAiSummarizer(ai: Ai, systemPrompt: string): Summarizer {
         });
         const response = extractResponseText(result);
         if (response === null) return null;
-        const trimmed = response.trim();
-        return trimmed.length > 0 ? trimmed : null;
+        const obj = parseStructuredJson(response);
+        if (obj === null) return null;
+        return validate(obj);
       } catch (err) {
         // TEMPORARY diagnostic logging — remove once the production failure
         // mode under sustained backfill load is identified (see tail output).
@@ -91,13 +155,13 @@ function makeWorkersAiSummarizer(ai: Ai, systemPrompt: string): Summarizer {
 }
 
 /** PR summarizer. Bounded to that PR's own title+body — no other context is sent. */
-export function workersAiPrSummarizer(ai: Ai): Summarizer {
-  return makeWorkersAiSummarizer(ai, SUMMARIZER_SYSTEM_PROMPT);
+export function workersAiPrSummarizer(ai: Ai): Summarizer<PrSummary> {
+  return makeWorkersAiSummarizer(ai, SUMMARIZER_SYSTEM_PROMPT, validatePrSummary);
 }
 
 /** Issue summarizer. Bounded to that issue's own title+body — no other context is sent. */
-export function workersAiIssueSummarizer(ai: Ai): Summarizer {
-  return makeWorkersAiSummarizer(ai, ISSUE_SUMMARIZER_SYSTEM_PROMPT);
+export function workersAiIssueSummarizer(ai: Ai): Summarizer<IssueSummary> {
+  return makeWorkersAiSummarizer(ai, ISSUE_SUMMARIZER_SYSTEM_PROMPT, validateIssueSummary);
 }
 
 const EXCERPT_MAX = 280;
@@ -112,84 +176,95 @@ export function excerptSummary(title: string, body: string): string {
 }
 
 /**
- * Try the summarizer, fall back to excerptSummary (model:'excerpt') on any
- * null/throw. INSERT OR REPLACE so a re-summarize (future re-run) overwrites
- * the one row per semantic_key. NEVER throws — a summary failure must not
- * fail the webhook capture that triggered it.
+ * Try the summarizer, fall back to excerptSummary (model:'excerpt', NULL
+ * structured columns) on any null/throw. On structured success `summary`
+ * mirrors `what` — sane prose for any reader of the old column. INSERT OR
+ * REPLACE keeps one row per semantic_key. NEVER throws — a summary failure
+ * must not fail the webhook capture that triggered it.
  */
 export async function storePrSummary(
   db: DB,
-  summarizer: Summarizer | null,
+  summarizer: Summarizer<PrSummary> | null,
   pr: { semantic_key: string; pr_number: number; title: string; body: string }
 ): Promise<PrSummaryRow> {
-  let summary: string | null = null;
+  let structured: PrSummary | null = null;
   let model = "excerpt";
-
   if (summarizer) {
     try {
-      summary = await summarizer.summarize({ title: pr.title, body: pr.body });
-      if (summary) model = summarizer.model;
+      structured = await summarizer.summarize({ title: pr.title, body: pr.body });
+      if (structured) model = summarizer.model;
     } catch {
-      summary = null;
+      structured = null;
     }
   }
-
-  if (!summary) {
-    summary = excerptSummary(pr.title, pr.body);
-    model = "excerpt";
-  }
-
+  const summary = structured ? structured.what : excerptSummary(pr.title, pr.body);
   const created_at = nowIso();
   await run(
     db,
-    `INSERT OR REPLACE INTO pr_summaries (semantic_key, pr_number, summary, model, created_at) VALUES (?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO pr_summaries (semantic_key, pr_number, summary, model, created_at, title, what, why, impact)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     pr.semantic_key,
     pr.pr_number,
     summary,
     model,
-    created_at
+    created_at,
+    structured?.title ?? null,
+    structured?.what ?? null,
+    structured?.why ?? null,
+    structured?.impact ?? null
   );
-
-  return { semantic_key: pr.semantic_key, pr_number: pr.pr_number, summary, model, created_at };
+  return {
+    semantic_key: pr.semantic_key,
+    pr_number: pr.pr_number,
+    summary,
+    model,
+    created_at,
+    title: structured?.title ?? null,
+    what: structured?.what ?? null,
+    why: structured?.why ?? null,
+    impact: structured?.impact ?? null,
+  };
 }
 
 /**
- * Try the summarizer, fall back to excerptSummary (model:'excerpt') on any
- * null/throw. INSERT OR REPLACE so a re-summarize overwrites the one row per
- * issue_number (an issue can be reassigned/edited many times; only the
- * current summary matters). NEVER throws.
+ * Issue mirror of storePrSummary: `summary` is the structured summary field on
+ * success, the excerpt on fallback; title/next_step NULL on fallback. INSERT OR
+ * REPLACE keeps one row per issue_number. NEVER throws.
  */
 export async function storeIssueSummary(
   db: DB,
-  summarizer: Summarizer | null,
+  summarizer: Summarizer<IssueSummary> | null,
   issue: { issue_number: number; title: string; body: string }
 ): Promise<IssueSummaryRow> {
-  let summary: string | null = null;
+  let structured: IssueSummary | null = null;
   let model = "excerpt";
-
   if (summarizer) {
     try {
-      summary = await summarizer.summarize({ title: issue.title, body: issue.body });
-      if (summary) model = summarizer.model;
+      structured = await summarizer.summarize({ title: issue.title, body: issue.body });
+      if (structured) model = summarizer.model;
     } catch {
-      summary = null;
+      structured = null;
     }
   }
-
-  if (!summary) {
-    summary = excerptSummary(issue.title, issue.body);
-    model = "excerpt";
-  }
-
+  const summary = structured ? structured.summary : excerptSummary(issue.title, issue.body);
   const created_at = nowIso();
   await run(
     db,
-    `INSERT OR REPLACE INTO issue_summaries (issue_number, summary, model, created_at) VALUES (?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO issue_summaries (issue_number, summary, model, created_at, title, next_step)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     issue.issue_number,
     summary,
     model,
-    created_at
+    created_at,
+    structured?.title ?? null,
+    structured?.next_step ?? null
   );
-
-  return { issue_number: issue.issue_number, summary, model, created_at };
+  return {
+    issue_number: issue.issue_number,
+    summary,
+    model,
+    created_at,
+    title: structured?.title ?? null,
+    next_step: structured?.next_step ?? null,
+  };
 }
