@@ -26,7 +26,7 @@ vi.mock("../web/src/markdown", () => ({
 }));
 
 import { planNarrativeBlock, render, initialState } from "../web/src/render";
-import type { PlanView, MilestoneWithProgress } from "../web/src/api";
+import type { PlanView, MilestoneWithProgress, FeedRow } from "../web/src/api";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -178,6 +178,66 @@ describe("render() — Roadmap timeline tab", () => {
     expect(html).toContain('data-act="confirmMilestone"');
     expect(html).toContain('data-arg="9"');
     expect(html).toContain("Confirm done");
+  });
+});
+
+// ── Recent happenings — GitHub artifact chips (feedArtifacts, via render) ─────
+// Prod feed rows carry PRs as full pull URLs and commits as full 40-char SHAs
+// (the intended bare-id shape is only what the append_feed helper produces). The
+// chip LABEL must be the short human form; the href keeps the full/canonical ref.
+
+function feedRow(overrides: Partial<FeedRow> = {}): FeedRow {
+  return {
+    id: 1,
+    author: "AndresL230",
+    summary: "shipped a thing",
+    body: null,
+    artifacts: null,
+    created_at: "2026-07-07T09:00:00Z",
+    ...overrides,
+  };
+}
+
+function stateWithFeed(artifacts: string): ReturnType<typeof initialState> {
+  const s = stateWithPlan(makePlanView(), "narrative");
+  return { ...s, feed: { status: "ok", data: [feedRow({ artifacts })] } };
+}
+
+describe("render() — Recent happenings GitHub chips", () => {
+  it("renders a PR given as a full pull URL as #<number>, not the URL", () => {
+    const html = render(stateWithFeed(
+      JSON.stringify({ prs: ["https://github.com/SaplingLearn/Sapling/pull/321"], commits: [], issues: [] }),
+    ));
+    expect(html).toContain(">#321<");           // clean label
+    expect(html).not.toContain(">#https://");    // never the URL as the label
+    // href still points at the real (possibly cross-repo) PR
+    expect(html).toContain("https://github.com/SaplingLearn/Sapling/pull/321");
+  });
+
+  it("keeps the correct href for a cross-repo PR URL (not rewritten to REPO_URL)", () => {
+    const html = render(stateWithFeed(
+      JSON.stringify({ prs: ["https://github.com/SaplingLearn/canopy/pull/7"], commits: [], issues: [] }),
+    ));
+    expect(html).toContain(">#7<");
+    expect(html).toContain("https://github.com/SaplingLearn/canopy/pull/7");
+  });
+
+  it("shortens a full commit SHA to 7 chars in the label, keeps the full SHA in the href", () => {
+    const html = render(stateWithFeed(
+      JSON.stringify({ prs: [], commits: ["8ad9756a407f0b2a3092cbfbb93f1dbc197546c3"], issues: [] }),
+    ));
+    expect(html).toContain(">8ad9756<");                                              // short label
+    expect(html).not.toContain(">8ad9756a407f");                                      // not the full SHA as label
+    expect(html).toContain("/commit/8ad9756a407f0b2a3092cbfbb93f1dbc197546c3");       // full SHA in href
+  });
+
+  it("still renders bare-numeric PRs and issues unchanged", () => {
+    const html = render(stateWithFeed(
+      JSON.stringify({ prs: ["14"], commits: [], issues: [292] }),
+    ));
+    expect(html).toContain(">#14<");
+    expect(html).toContain(">#292<");
+    expect(html).toContain("/pull/14");
   });
 });
 
