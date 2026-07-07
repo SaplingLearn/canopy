@@ -4,7 +4,7 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, type AppState } from "./render";
+import { render, initialState, firstDocForSpace, docReaderHtml, type AppState } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   completeMilestone,
@@ -185,6 +185,63 @@ function loadDoc(slug: string): void {
     });
 }
 
+// Open a doc clicked in the tree: animate its outline like the chevron does
+// (mutate the live tree, no rerender that would kill the transition) and stream
+// the doc into the reader pane in place.
+function openDocInTree(slug: string): void {
+  applyTreeActive(slug);
+  state.docSlug = slug;
+  state.showHistory = false;
+  state.docOutlineOpen[slug] = true;
+  state.docDetail = { status: "loading", data: null };
+  refreshReaderPane();
+  getDoc(slug)
+    .then((result) => {
+      state.docDetail = { status: "ok", data: result };
+      state.docSpace = result.doc.space;
+      refreshReaderPane();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (e instanceof NotFound) { state.docDetail = { status: "ok", data: null }; refreshReaderPane(); return; }
+      state.docDetail = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
+      refreshReaderPane();
+    });
+}
+
+// Open/close one outline by flipping .is-open — the stylesheet grid-rows transition
+// animates it. Outlines are independent (no accordion): opening one never collapses
+// another, so only a single fr transition ever runs at a time (two overlapping wedge).
+function setOutlineOpen(el: Element | null, open: boolean): void {
+  (el as HTMLElement | null)?.classList.toggle("is-open", open);
+}
+
+// Reflect the newly-active doc in the tree without a rerender: move .is-active and
+// open this doc's outline (animated). Any other open outlines are left as they are.
+function applyTreeActive(slug: string): void {
+  const esc = cssEscape(slug);
+  mount.querySelectorAll(".cnpy-tree.is-active").forEach((b) => b.classList.remove("is-active"));
+  mount.querySelector(`.cnpy-tree[data-act="openDoc"][data-arg="${esc}"]`)?.classList.add("is-active");
+  const tgt = mount.querySelector(`.cnpy-outline[data-outline="${esc}"]`);
+  if (tgt && !tgt.classList.contains("is-open")) {
+    mount.querySelector(`.cnpy-treechev[data-arg="${esc}"]`)?.classList.add("is-open");
+    setOutlineOpen(tgt, true);
+  }
+}
+
+// Update only the reader pane, leaving the tree (and its in-flight animation)
+// untouched. Falls back to a full rerender if the pane isn't mounted.
+function refreshReaderPane(): void {
+  const pane = document.getElementById("cnpy-reader");
+  if (!pane) { rerender(); return; }
+  pane.innerHTML = docReaderHtml(state);
+  if (state.pendingScrollId) {
+    const target = pane.querySelector<HTMLElement>(`.cnpy-md [id="${cssEscape(state.pendingScrollId)}"]`);
+    if (target) { state.pendingScrollId = null; requestAnimationFrame(() => target.scrollIntoView({ block: "start" })); }
+  }
+  updateActiveHeading();
+}
+
 function loadDocs(): void {
   state.docsList = { status: "loading", data: state.docsList.data };
   rerender();
@@ -195,7 +252,7 @@ function loadDocs(): void {
       if (state.docSlug === null && first) {
         state.docSlug = first.slug;
         state.docSpace = first.space;
-        state.docOutlineOpen = { [first.slug]: true };
+        state.docOutlineOpen[first.slug] = true;
         loadDoc(first.slug);
       } else {
         rerender();
@@ -511,17 +568,17 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // docs navigation. Opening a page shows only its outline (others collapse);
     // the chevron still lets you peek another page's outline until you navigate.
     case "openDoc":
-      if (arg) { state.docSlug = arg; state.showHistory = false; state.docOutlineOpen = { [arg]: true }; loadDoc(arg); }
+      if (arg) openDocInTree(arg);
       return;
     case "openDocFrom":
-      if (arg) { state.screen = "docs"; state.docSlug = arg; state.showHistory = false; state.docOutlineOpen = { [arg]: true }; loadDocsIfNeeded(); loadDoc(arg); }
+      if (arg) { state.screen = "docs"; state.docSlug = arg; state.showHistory = false; state.docOutlineOpen[arg] = true; loadDocsIfNeeded(); loadDoc(arg); }
       return;
     case "setDocSpace": {
       if (!arg || arg === state.docSpace) return;
       state.docSpace = arg;
       state.showHistory = false;
       const first = firstDocForSpace(state.docsList.data, arg);
-      if (first) { state.docSlug = first.slug; state.docOutlineOpen = { [first.slug]: true }; loadDoc(first.slug); }
+      if (first) { state.docSlug = first.slug; state.docOutlineOpen[first.slug] = true; loadDoc(first.slug); }
       else { state.docSlug = null; state.docDetail = { status: "ok", data: null }; rerender(); }
       return;
     }
@@ -534,7 +591,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         const open = !state.docOutlineOpen[arg];
         if (open) state.docOutlineOpen[arg] = true; else delete state.docOutlineOpen[arg];
         mount.querySelector(`.cnpy-treechev[data-arg="${cssEscape(arg)}"]`)?.classList.toggle("is-open", open);
-        mount.querySelector(`.cnpy-outline[data-outline="${cssEscape(arg)}"]`)?.classList.toggle("is-open", open);
+        setOutlineOpen(mount.querySelector(`.cnpy-outline[data-outline="${cssEscape(arg)}"]`), open);
         if (open) updateActiveHeading();
       }
       return;
@@ -546,10 +603,15 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const sep = arg.indexOf("::");
       const slug = sep < 0 ? arg : arg.slice(0, sep);
       const headingId = sep < 0 ? "" : arg.slice(sep + 2);
-      state.pendingScrollId = headingId;
-      if (state.docSlug !== slug) { state.docSlug = slug; state.showHistory = false; state.docOutlineOpen = { [slug]: true }; loadDoc(slug); return; }
-      state.docOutlineOpen[slug] = true;
-      break;
+      if (state.docSlug !== slug) {
+        state.pendingScrollId = headingId;
+        openDocInTree(slug); // loads into the pane; refreshReaderPane scrolls once ready
+      } else {
+        // same doc — scroll in place, no rerender (keeps the tree animation intact)
+        const target = document.getElementById("cnpy-reader")?.querySelector<HTMLElement>(`.cnpy-md [id="${cssEscape(headingId)}"]`);
+        if (target) requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
+      }
+      return;
     }
 
     // search
