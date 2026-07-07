@@ -1,5 +1,6 @@
 import { applyD1Migrations, env } from "cloudflare:test";
 import { beforeEach } from "vitest";
+import { RESET_STATEMENTS } from "../scripts/seed/reset.mjs";
 
 // Runs once per test worker before the suite. applyD1Migrations is idempotent.
 // Schema + seeded vocabulary (sections, tags) are applied here and persist for
@@ -8,13 +9,9 @@ import { beforeEach } from "vitest";
 await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 
 beforeEach(async () => {
-  // Truncate all user-writable data tables, preserving vocabulary tables
-  // (sections, tags) that were seeded by the migration.
-  await env.DB.exec(
-    // pr_summaries.semantic_key REFERENCES events(semantic_key) — delete the
-    // child before its parent, or the FK constraint rejects the parent delete.
-    // people gains a runtime write path (identity resolve), so it is reset to
-    // the 0012 seed each test rather than left to accumulate mappings.
-    "DELETE FROM processed_items; DELETE FROM pr_summaries; DELETE FROM issue_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM identity_tasks; DELETE FROM people; INSERT INTO people (login, person) VALUES ('AndresL230', 'Andres'), ('Jose-Gael-Cruz-Lopez', 'Jose'), ('lpcooper-arch', 'Luke'), ('Darkest-Teddy', 'Jack'); DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;"
-  );
+  // The canonical data-table reset lives in scripts/seed/reset.mjs, shared by
+  // this harness and the dev seed loader (FK-safe delete order + people
+  // re-seed). Truncates all user-writable data tables, preserving vocabulary
+  // tables (sections, tags) that were seeded by the migration.
+  await env.DB.exec(RESET_STATEMENTS.join("; ") + ";");
 });

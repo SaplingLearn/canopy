@@ -1,0 +1,14 @@
+{
+  "needs_triage": [
+    { "raw": "The MCP server should rate-limit per token. Proposed 60 writes/min burst, 600/hour sustained.", "reason": "No clear section. Mixes a Reference description with an unmade Decision about limits.", "source_author": "AndresL230", "resolved": 0, "created_at": "2026-06-25T09:00:00Z" },
+    { "raw": "Onboarding: 1) get added to the org, 2) sign in to Canopy, 3) mint an MCP token in Settings.", "reason": "Ambiguous between Context (team process) and Reference (how-to). Needs a human to choose.", "source_author": "Jose-Gael-Cruz-Lopez", "resolved": 0, "created_at": "2026-06-24T00:00:00Z" },
+    { "raw": "We keep saying 'the store' and 'the KB' for the same thing. Pick one term across docs and UI.", "reason": "A vocabulary/naming decision, not a doc — belongs in a Decision once someone chooses.", "source_author": "Darkest-Teddy", "resolved": 0, "created_at": "2026-07-01T14:00:00Z" },
+    { "raw": "Sapling lesson slugs and Canopy doc slugs collide in Search. Namespace them?", "reason": "Cross-surface concern; unclear whether it's a Reference note or an infra Decision.", "source_author": "lpcooper-arch", "resolved": 0, "created_at": "2026-07-03T10:30:00Z" },
+    { "raw": "Should record-session auto-fire at the end of long sessions, or stay explicit-only?", "reason": "Process question with real tradeoffs; needs a human ruling, not a guessed doc edit.", "source_author": "AndresL230", "resolved": 0, "created_at": "2026-07-05T19:00:00Z" }
+  ],
+  "milestone_proposals": [
+    { "title": "Self-host & deploy guide", "target_date": "2026-09-20", "status": "upcoming", "github_ref": null, "change_summary": "Run the whole store on your own Cloudflare account.", "confidence": "high", "staged_status": "staged", "created_at": "2026-06-25T00:00:00Z", "created_by": "Darkest-Teddy" },
+    { "title": "Vectorize semantic search", "target_date": "2026-10-15", "status": "upcoming", "github_ref": null, "change_summary": "Add a semantic candidate stream merged with FTS via RRF.", "confidence": "medium", "staged_status": "staged", "created_at": "2026-07-02T00:00:00Z", "created_by": "Jose-Gael-Cruz-Lopez" },
+    { "title": "Per-token audit log", "target_date": "2026-08-30", "status": "upcoming", "github_ref": "[181,182]", "change_summary": "A read trail of every MCP write, queryable per token.", "confidence": "high", "staged_status": "staged", "created_at": "2026-07-04T00:00:00Z", "created_by": "AndresL230" }
+  ]
+}
