@@ -579,7 +579,7 @@ export function docReaderHtml(s: AppState): string {
       </div>`).join("")}
     </div>` : "";
 
-    return `<div style="max-width:812px;margin:0 auto;padding:34px 44px 120px">
+    return `<div style="max-width:1080px;margin:0 auto;padding:34px 52px 120px">
     ${stagedBanner}
     <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel(doc.space))} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
     <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
