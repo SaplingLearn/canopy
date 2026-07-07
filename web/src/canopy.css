@@ -41,6 +41,8 @@ input, select { font-family: inherit; }
 .cnpy-titem { display:block; width:100%; text-align:left; padding:13px 15px; border-radius:11px; border:1px solid var(--border); background:transparent; margin-bottom:8px; position:relative; transition:all .12s ease; cursor:pointer; }
 .cnpy-titem:hover { border-color:var(--border-strong); }
 .cnpy-selbar { position:absolute; inset:0; border-radius:inherit; border:1px solid var(--border-strong); background:var(--hover); box-shadow:inset 2px 0 0 var(--accent); pointer-events:none; }
+/* Review list cards: selected state keeps the border + fill, no left accent bar. */
+.cnpy-titem .cnpy-selbar { box-shadow:none; }
 /* ── docs nav tree (static section labels · pages · per-page outline) ───────── */
 .cnpy-treesec { font-family:var(--mono); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:0 10px 7px 8px; }
 .cnpy-tree { display:flex; align-items:center; gap:5px; width:100%; text-align:left; padding:6px 10px 6px 6px; border-radius:7px; font-size:13px; font-weight:400; color:var(--fg-55); background:transparent; transition:background .12s ease, color .12s ease; }
