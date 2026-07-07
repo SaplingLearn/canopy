@@ -148,23 +148,32 @@ export interface EventRow {
   recorded_by: string;
 }
 
-// Worker-generated completed-PR summary (0012). Derived, regenerable, never truth.
+// Worker-generated completed-PR summary (0012; structured fields 0018).
+// Derived, regenerable, never truth. Structured fields are NULL on prose-era
+// and excerpt-fallback rows; `summary` mirrors `what` on structured success.
 export interface PrSummaryRow {
   semantic_key: string;
   pr_number: number;
   summary: string;
   model: string | null;    // 'excerpt' = deterministic fallback
   created_at: string;
+  title: string | null;    // humanized display title (0018)
+  what: string | null;     // "What changed" (0018)
+  why: string | null;      // motivation, only when the body states one (0018)
+  impact: string | null;   // user-facing outcome sentence, never files (0018)
 }
 
-// Worker-generated summary of ONE assigned issue's own body (0017). Derived,
-// regenerable, never truth — keyed by issue number (not semantic_key), since
-// only the current summary matters across reassignments/edits.
+// Worker-generated summary of ONE assigned issue's own body (0017; structured
+// fields 0018). Derived, regenerable, never truth — keyed by issue number (not
+// semantic_key), since only the current summary matters across reassignments/
+// edits. Structured fields NULL on prose-era and excerpt-fallback rows.
 export interface IssueSummaryRow {
   issue_number: number;
   summary: string;
-  model: string | null;    // 'excerpt' = deterministic fallback
+  model: string | null;      // 'excerpt' = deterministic fallback
   created_at: string;
+  title: string | null;      // humanized display title (0018)
+  next_step: string | null;  // only when the issue states/implies one (0018)
 }
 
 // Absolute per-milestone progress cache (0012).

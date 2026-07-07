@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all, first } from "../src/db";
+import { all, first, run } from "../src/db";
 import { runBackfill } from "../src/tools/backfill";
 import type { Env } from "../src/env";
-import type { Summarizer } from "../src/tools/summarize";
+import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { EventRow, PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 
 const threeDaysAgo = "2026-06-28T00:00:00Z";
@@ -22,17 +22,19 @@ function stubFetch(prs: unknown[], issues: unknown[]): typeof fetch {
 
 // Deterministic summarizer stub — never touches Workers AI. Counts calls so
 // tests can assert the retroactive-resummarize / skip-if-structured behavior.
-function countingSummarizer(summary: string): Summarizer & { calls: number } {
-  const s = {
-    model: "test-model",
+function countingSummarizer<T>(result: T): Summarizer<T> & { calls: number } {
+  const s: Summarizer<T> & { calls: number } = {
     calls: 0,
+    model: "test-model",
     async summarize() {
       s.calls++;
-      return summary;
+      return result;
     },
   };
   return s;
 }
+const PR_STUB: PrSummary = { title: "Humanized PR", what: "AI summary", why: null, impact: null };
+const ISSUE_STUB: IssueSummary = { title: "Humanized issue", summary: "Issue AI summary", next_step: null };
 
 function envWith(overrides: Partial<Env> = {}): Env {
   return { ...(env as unknown as Env), GITHUB_SERVICE_TOKEN: "svc-token", GITHUB_REPO: "o/r", ...overrides };
@@ -117,8 +119,8 @@ const prC = makePr(102);
 
 describe("runBackfill", () => {
   it("captures ALL closed PRs (full history, no recency window) + open issues, written by the admin principal", async () => {
-    const summarizer = countingSummarizer("AI summary");
-    const issueSummarizer = countingSummarizer("Issue AI summary");
+    const summarizer = countingSummarizer(PR_STUB);
+    const issueSummarizer = countingSummarizer(ISSUE_STUB);
     const res = await runBackfill(envWith(), "admin-user", {
       fetchImpl: stubFetch([mergedPr, olderPr], [openIssue, prAsIssue]),
       summarizer,
@@ -155,8 +157,8 @@ describe("runBackfill", () => {
   });
 
   it("is idempotent on event capture — a second run over the same GitHub state writes no new events", async () => {
-    const summarizer = countingSummarizer("**What changed:** AI summary");
-    const issueSummarizer = countingSummarizer("Issue summary.");
+    const summarizer = countingSummarizer(PR_STUB);
+    const issueSummarizer = countingSummarizer({ ...ISSUE_STUB, summary: "Issue summary." });
     const fetchImpl = stubFetch([mergedPr], [openIssue]);
     const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, issueSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.captured).toBe(2);
@@ -169,7 +171,7 @@ describe("runBackfill", () => {
   });
 
   it("retroactively re-summarizes a PR whose existing summary fell back to excerpt", async () => {
-    const nullSummarizer: Summarizer = { model: "stub", summarize: async () => null }; // forces the excerpt fallback
+    const nullSummarizer: Summarizer<PrSummary> = { model: "stub", summarize: async () => null }; // forces the excerpt fallback
     const fetchImpl = stubFetch([mergedPr], []);
     const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: nullSummarizer, summaryCallDelayMs: 0 });
     expect(firstRun.summarized).toBe(1);
@@ -177,7 +179,7 @@ describe("runBackfill", () => {
 
     // Second run: a real summarizer is available now — the stored summary is
     // still the excerpt fallback (model:'excerpt') → re-summarized.
-    const realSummarizer = countingSummarizer("A real AI summary.");
+    const realSummarizer = countingSummarizer({ ...PR_STUB, what: "A real AI summary." });
     const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer: realSummarizer, summaryCallDelayMs: 0 });
     expect(secondRun.captured).toBe(0);
     expect(secondRun.unchanged).toBe(1);
@@ -187,7 +189,7 @@ describe("runBackfill", () => {
   });
 
   it("skips re-summarizing a PR that already has a real (non-excerpt) summary", async () => {
-    const summarizer = countingSummarizer("Plain prose, no headings — the new richer style.");
+    const summarizer = countingSummarizer({ ...PR_STUB, what: "Plain prose, no headings — the new richer style." });
     const fetchImpl = stubFetch([mergedPr], []);
     const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
     expect(firstRun.summarized).toBe(1);
@@ -205,10 +207,35 @@ describe("runBackfill", () => {
     expect(summary?.summary).toBe("Plain prose, no headings — the new richer style.");
   });
 
+  it("re-summarizes a prose-era row (model set, title NULL) exactly once, then skips it", async () => {
+    const fetchImpl = stubFetch([mergedPr], []);
+    const summarizer = countingSummarizer(PR_STUB);
+
+    // First run captures the PR and writes a structured summary.
+    const firstRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    expect(firstRun.ok).toBe(true);
+    expect(summarizer.calls).toBeGreaterThan(0);
+    const callsAfterFirst = summarizer.calls;
+
+    // Simulate a prose-era row: model kept, structured columns wiped.
+    await run(env.DB, `UPDATE pr_summaries SET title = NULL, what = NULL, why = NULL, impact = NULL`);
+
+    const secondRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    const callsAfterSecond = summarizer.calls;
+    expect(secondRun.ok).toBe(true);
+    // The prose-era row (title wiped) must regenerate — one more summarizer call.
+    expect(callsAfterSecond).toBeGreaterThan(callsAfterFirst);
+
+    // Third run: the row is structured again — skipped, no further calls.
+    const thirdRun = await runBackfill(envWith(), "admin-user", { fetchImpl, summarizer, summaryCallDelayMs: 0 });
+    expect(thirdRun.ok).toBe(true);
+    expect(summarizer.calls).toBe(callsAfterSecond);
+  });
+
   it("returns {ok:false} (no throw, no writes) when the service token is missing", async () => {
     const res = await runBackfill(envWith({ GITHUB_SERVICE_TOKEN: undefined }), "admin-user", {
       fetchImpl: stubFetch([mergedPr], [openIssue]),
-      summarizer: countingSummarizer("AI summary"),
+      summarizer: countingSummarizer(PR_STUB),
     });
     expect(res.ok).toBe(false);
     expect(res.error).toContain("service token or repo");
@@ -220,7 +247,7 @@ describe("runBackfill", () => {
     const fetchImpl = (async () => new Response("bad credentials", { status: 401 })) as unknown as typeof fetch;
     const res = await runBackfill(envWith(), "admin-user", {
       fetchImpl,
-      summarizer: countingSummarizer("unused"),
+      summarizer: countingSummarizer({ ...PR_STUB, what: "unused" }),
       summaryCallDelayMs: 0,
     });
     expect(res.ok).toBe(false);
@@ -240,7 +267,7 @@ describe("runBackfill", () => {
     }) as unknown as typeof fetch;
     const res = await runBackfill(envWith(), "admin-user", {
       fetchImpl,
-      summarizer: countingSummarizer("unused"),
+      summarizer: countingSummarizer({ ...PR_STUB, what: "unused" }),
       summaryCallDelayMs: 0,
     });
     expect(res.ok).toBe(false);
@@ -250,7 +277,7 @@ describe("runBackfill", () => {
   });
 
   it("caps AI summarization at summaryBatchLimit per invocation; a follow-up run finishes the rest", async () => {
-    const summarizer = countingSummarizer("**What changed:** Summary.");
+    const summarizer = countingSummarizer({ ...PR_STUB, what: "**What changed:** Summary." });
     const fetchImpl = stubFetch([prA, prB, prC], []);
 
     const firstRun = await runBackfill(envWith(), "admin-user", {
@@ -280,7 +307,7 @@ describe("runBackfill", () => {
   });
 
   it("waits summaryCallDelayMs between summarizer calls", async () => {
-    const summarizer = countingSummarizer("**What changed:** Summary.");
+    const summarizer = countingSummarizer({ ...PR_STUB, what: "**What changed:** Summary." });
     const start = Date.now();
     await runBackfill(envWith(), "admin-user", {
       fetchImpl: stubFetch([prA, prB], []),
@@ -295,8 +322,8 @@ describe("runBackfill", () => {
 
 describe("runBackfill — issue summarization", () => {
   it("summarizes an assigned issue and skips it on a second run once done", async () => {
-    const summarizer = countingSummarizer("PR summary."); // unused here (no PRs in this fixture set)
-    const issueSummarizer = countingSummarizer("What the issue is and what to do.");
+    const summarizer = countingSummarizer({ ...PR_STUB, what: "PR summary." }); // unused here (no PRs in this fixture set)
+    const issueSummarizer = countingSummarizer({ ...ISSUE_STUB, summary: "What the issue is and what to do." });
     const fetchImpl = stubFetch([], [openIssue]);
 
     const firstRun = await runBackfill(envWith(), "admin-user", {
@@ -317,10 +344,10 @@ describe("runBackfill — issue summarization", () => {
   });
 
   it("does not count an issue toward issueSummarizedCount when the AI call fails and falls back to excerpt", async () => {
-    const nullSummarizer: Summarizer = { model: "stub", summarize: async () => null }; // forces the excerpt fallback
+    const nullSummarizer: Summarizer<IssueSummary> = { model: "stub", summarize: async () => null }; // forces the excerpt fallback
     const fetchImpl = stubFetch([], [openIssue]);
     const firstRun = await runBackfill(envWith(), "admin-user", {
-      fetchImpl, summarizer: countingSummarizer("unused"), issueSummarizer: nullSummarizer, summaryCallDelayMs: 0,
+      fetchImpl, summarizer: countingSummarizer({ ...PR_STUB, what: "unused" }), issueSummarizer: nullSummarizer, summaryCallDelayMs: 0,
     });
     expect(firstRun.summarized).toBe(1); // the AI call was attempted
     expect(firstRun.issueSummarizedCount).toBe(0); // but excerpt fallback never counts as "done"
@@ -330,10 +357,10 @@ describe("runBackfill — issue summarization", () => {
   });
 
   it("never summarizes an unassigned open issue", async () => {
-    const issueSummarizer = countingSummarizer("should never be called");
+    const issueSummarizer = countingSummarizer({ ...ISSUE_STUB, summary: "should never be called" });
     const res = await runBackfill(envWith(), "admin-user", {
       fetchImpl: stubFetch([], [unassignedIssue]),
-      summarizer: countingSummarizer("x"),
+      summarizer: countingSummarizer({ ...PR_STUB, what: "x" }),
       issueSummarizer,
       summaryCallDelayMs: 0,
     });
@@ -345,8 +372,8 @@ describe("runBackfill — issue summarization", () => {
   });
 
   it("shares one AI-call budget across PRs and issues — PRs consume it first", async () => {
-    const summarizer = countingSummarizer("PR summary.");
-    const issueSummarizer = countingSummarizer("Issue summary.");
+    const summarizer = countingSummarizer({ ...PR_STUB, what: "PR summary." });
+    const issueSummarizer = countingSummarizer({ ...ISSUE_STUB, summary: "Issue summary." });
     const fetchImpl = stubFetch([prA, prB], [openIssue]);
 
     const firstRun = await runBackfill(envWith(), "admin-user", {

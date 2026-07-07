@@ -3,7 +3,7 @@ import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
-import { type Summarizer, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
+import { type Summarizer, type PrSummary, type IssueSummary, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
@@ -26,8 +26,8 @@ const USER_AGENT = "canopy";
 // instantly) — a rate limit or per-request ceiling, not a code defect. Cap
 // how many summarizer calls one invocation makes, and pace them, so a single
 // Sync stays comfortably under whatever that limit is; a backlog beyond the
-// cap is picked up by the next Sync click (the model≠excerpt skip-check
-// already makes that safe — nothing already summarized is redone).
+// cap is picked up by the next Sync click (the model≠excerpt-and-structured
+// skip-check already makes that safe — nothing already summarized is redone).
 const SUMMARY_BATCH_LIMIT = 20;
 const SUMMARY_CALL_DELAY_MS = 500;
 
@@ -55,6 +55,8 @@ interface GhUserLite {
 }
 interface GhMilestoneLite {
   number: number;
+  title?: string | null;
+  due_on?: string | null;
   open_issues?: number;
   closed_issues?: number;
 }
@@ -68,6 +70,7 @@ interface GhPrListItem {
   updated_at: string;
   user: GhUserLite;
   milestone?: GhMilestoneLite | null;
+  base?: { ref: string } | null;
 }
 interface GhIssueListItem {
   number: number;
@@ -107,6 +110,7 @@ function prClosedDelivery(pr: GhPrListItem) {
       merged_at: pr.merged_at,
       closed_at: pr.closed_at,
       user: { login: pr.user.login },
+      base: pr.base ? { ref: pr.base.ref } : null,
       milestone: pr.milestone
         ? { number: pr.milestone.number, open_issues: pr.milestone.open_issues, closed_issues: pr.milestone.closed_issues }
         : null,
@@ -131,7 +135,13 @@ function issueDelivery(issue: GhIssueListItem) {
       assignees: (issue.assignees ?? []).map((a) => ({ login: a.login })),
       labels: issue.labels ?? [],
       milestone: issue.milestone
-        ? { number: issue.milestone.number, open_issues: issue.milestone.open_issues, closed_issues: issue.milestone.closed_issues }
+        ? {
+            number: issue.milestone.number,
+            title: issue.milestone.title ?? null,
+            due_on: issue.milestone.due_on ?? null,
+            open_issues: issue.milestone.open_issues,
+            closed_issues: issue.milestone.closed_issues,
+          }
         : null,
     },
   };
@@ -142,8 +152,8 @@ export async function runBackfill(
   principalLogin: string,
   opts?: {
     fetchImpl?: typeof fetch;
-    summarizer?: Summarizer | null;
-    issueSummarizer?: Summarizer | null;
+    summarizer?: Summarizer<PrSummary> | null;
+    issueSummarizer?: Summarizer<IssueSummary> | null;
     summaryBatchLimit?: number;
     summaryCallDelayMs?: number;
   }
@@ -240,10 +250,13 @@ export async function runBackfill(
       // excerpt summary, not just brand-new ones.
       const existing = await first<PrSummaryRow>(
         env.DB,
-        `SELECT model FROM pr_summaries WHERE semantic_key = ?`,
+        `SELECT model, title FROM pr_summaries WHERE semantic_key = ?`,
         ev.semantic_key
       );
-      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      // "Done" = a real (non-excerpt) summary that is ALSO structured — title
+      // doubles as the structured-generation marker (0018), so prose-era rows
+      // regenerate exactly once under the shared budget.
+      const alreadySummarized = existing !== null && existing.model !== "excerpt" && existing.title !== null;
       if (alreadySummarized) {
         prSummarizedCount++;
         continue;
@@ -263,8 +276,8 @@ export async function runBackfill(
       });
       summarized++;
       // storePrSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually got a real summary.
-      if (stored.model !== "excerpt") prSummarizedCount++;
+      // only count it toward "done" if it actually got a real, structured summary.
+      if (stored.model !== "excerpt" && stored.title !== null) prSummarizedCount++;
 
       // Pace summarizer calls so one invocation doesn't burst past whatever
       // limit caused the wall above — skip the trailing delay once the batch
@@ -298,10 +311,10 @@ export async function runBackfill(
 
       const existing = await first<IssueSummaryRow>(
         env.DB,
-        `SELECT model FROM issue_summaries WHERE issue_number = ?`,
+        `SELECT model, title FROM issue_summaries WHERE issue_number = ?`,
         issue.number
       );
-      const alreadySummarized = existing !== null && existing.model !== "excerpt";
+      const alreadySummarized = existing !== null && existing.model !== "excerpt" && existing.title !== null;
       if (alreadySummarized) {
         issueSummarizedCount++;
         continue;
@@ -321,8 +334,8 @@ export async function runBackfill(
       });
       summarized++;
       // storeIssueSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually got a real summary.
-      if (stored.model !== "excerpt") issueSummarizedCount++;
+      // only count it toward "done" if it actually got a real, structured summary.
+      if (stored.model !== "excerpt" && stored.title !== null) issueSummarizedCount++;
 
       if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));

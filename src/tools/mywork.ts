@@ -4,7 +4,7 @@ import { type DB, all, first } from "../db";
 
 // My Work: a D1-only projection over captured GitHub events (Task 6). No live
 // GitHub reads — this is deliberately the "what already happened + what's
-// open" view built entirely from `events` (+ `pr_summaries`, `people`).
+// open" view built entirely from `events` (+ `pr_summaries`, `issue_summaries`, `people`).
 
 // The projection is structurally the /me/dashboard DTO; the shared type is the
 // single source of truth so the Worker and web build agree on the shape.
@@ -27,10 +27,14 @@ function stripPriority(title: string): string {
 
 interface PrEventJoinRow extends EventRow {
   summary: string | null;
+  s_title: string | null;
+  s_what: string | null;
+  s_why: string | null;
+  s_impact: string | null;
 }
 
 interface RawPr {
-  pr: { number: number; title: string; html_url: string; merged: boolean };
+  pr: { number: number; title: string; html_url: string; merged: boolean; base?: { ref: string } | null };
 }
 
 interface RawIssue {
@@ -42,6 +46,7 @@ interface RawIssue {
     updated_at: string;
     assignees: { login: string }[];
     labels: string[];
+    milestone?: { title?: string | null; due_on?: string | null } | null;
   };
 }
 
@@ -49,6 +54,8 @@ interface IssueSnapshotRow {
   ref_number: number;
   raw: string;
   summary: string | null;
+  s_title: string | null;
+  s_next_step: string | null;
 }
 
 /**
@@ -65,7 +72,7 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
 
     const prRows = await all<PrEventJoinRow>(
       db,
-      `SELECT e.*, s.summary AS summary
+      `SELECT e.*, s.summary AS summary, s.title AS s_title, s.what AS s_what, s.why AS s_why, s.impact AS s_impact
          FROM events e
          LEFT JOIN pr_summaries s ON s.semantic_key = e.semantic_key
         WHERE e.event_type IN ('pr_merged', 'pr_closed')
@@ -83,6 +90,11 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         merged: parsed.pr.merged,
         occurredAt: row.occurred_at ?? row.recorded_at,
         summary: row.summary,
+        displayTitle: row.s_title,
+        what: row.s_what,
+        why: row.s_why,
+        impact: row.s_impact,
+        baseRef: parsed.pr.base?.ref ?? null,
       };
     });
 
@@ -90,7 +102,7 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
     // known set of numbers — every issue ever captured is a todo candidate).
     const issueRows = await all<IssueSnapshotRow>(
       db,
-      `SELECT e.ref_number, e.raw, s.summary AS summary
+      `SELECT e.ref_number, e.raw, s.summary AS summary, s.title AS s_title, s.next_step AS s_next_step
        FROM (
          SELECT ref_number, raw, ROW_NUMBER() OVER (PARTITION BY ref_number ORDER BY occurred_at DESC, id DESC) rn
          FROM events WHERE event_type = 'issue'
@@ -105,6 +117,7 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
       const issue = parsed.issue;
       if (issue.state !== "open") continue;
       if (!issue.assignees.some((a) => a.login === login)) continue;
+      const m = issue.milestone;
       todo.push({
         number: issue.number,
         title: stripPriority(issue.title),
@@ -113,6 +126,10 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         url: issue.html_url,
         updatedAt: issue.updated_at,
         summary: row.summary,
+        displayTitle: row.s_title,
+        // legacy raws captured before 0018 lack a milestone title — hide the row.
+        milestone: m?.title ? { title: m.title, dueOn: m.due_on ?? null } : null,
+        nextStep: row.s_next_step,
       });
     }
     // Same cap as previousActivity: the 5 most recently updated, newest first

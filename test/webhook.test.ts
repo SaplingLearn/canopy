@@ -13,7 +13,7 @@ import {
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
 import issueClosed from "./fixtures/gh-issue-closed.json";
-import type { Summarizer } from "../src/tools/summarize";
+import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { IssueSummaryRow } from "@shared/rows";
 
 const SECRET = "test-webhook-secret"; // matches vitest.config.ts binding
@@ -40,7 +40,7 @@ async function postWebhook(
   eventName: string,
   payload: unknown,
   e: Env = env,
-  opts?: { summarizer?: Summarizer | null; issueSummarizer?: Summarizer | null }
+  opts?: { summarizer?: Summarizer<PrSummary> | null; issueSummarizer?: Summarizer<IssueSummary> | null }
 ): Promise<Response> {
   const body = JSON.stringify(payload);
   const sig = await sign(SECRET, body);
@@ -126,6 +126,20 @@ describe("handleGithubWebhook — the third auth class", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].event_type).toBe("pr_merged");
   });
+
+  it("captures the PR base branch in raw (footer 'into <base>' source)", async () => {
+    await postWebhook("pull_request", prMerged, env);
+    const rows = await all<EventRow>(env.DB, `SELECT * FROM events WHERE semantic_key = 'gh:pr:42:merged'`);
+    const raw = JSON.parse(rows[0].raw) as { pr: { base: { ref: string } | null } };
+    expect(raw.pr.base).toEqual({ ref: "main" });
+  });
+
+  it("captures the issue milestone title and due date in raw (Milestone row source)", async () => {
+    await postWebhook("issues", issueAssigned, env);
+    const rows = await all<EventRow>(env.DB, `SELECT * FROM events WHERE event_type = 'issue'`);
+    const raw = JSON.parse(rows[0].raw) as { issue: { milestone: { number: number; title: string | null; due_on: string | null } } };
+    expect(raw.issue.milestone).toMatchObject({ number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" });
+  });
 });
 
 describe("verifyGithubSignature", () => {
@@ -155,7 +169,13 @@ describe("eventsFromDelivery — pure derivation", () => {
     const raw = JSON.parse(e.raw);
     expect(raw.action).toBe("assigned");
     expect(raw.issue.labels).toEqual(["P1", "backend"]); // label objects flattened to names
-    expect(raw.issue.milestone).toEqual({ number: 3, open_issues: 2, closed_issues: 4 });
+    expect(raw.issue.milestone).toEqual({
+      number: 3,
+      title: "Reliable event capture",
+      due_on: "2026-07-20T07:00:00Z",
+      open_issues: 2,
+      closed_issues: 4,
+    });
     expect(raw.issue.body).toBe("Full description of what needs wiring."); // NEW: needed by the issue summarizer
   });
 
@@ -195,7 +215,7 @@ describe("progressFromIssueEvent — pure derivation", () => {
 
 describe("webhook → issue summarize wiring", () => {
   it("an assigned issue event → one issue_summaries row keyed by issue number", async () => {
-    const stub: Summarizer = { model: "stub", summarize: async () => "What it is and what to do." };
+    const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "What it is and what to do.", next_step: null }) };
     const res = await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
     expect(res.status).toBe(200);
     const rows = await all<IssueSummaryRow>(env.DB, `SELECT * FROM issue_summaries WHERE issue_number = ?`, 17);
@@ -204,7 +224,7 @@ describe("webhook → issue summarize wiring", () => {
   });
 
   it("a non-assigned issue action (closed) never reaches storeIssueSummary — zero issue_summaries rows", async () => {
-    const stub: Summarizer = { model: "stub", summarize: async () => "should never be called" };
+    const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "should never be called", next_step: null }) };
     const res = await postWebhook("issues", issueClosed, env, { issueSummarizer: stub });
     expect(res.status).toBe(200);
     const rows = await all(env.DB, `SELECT * FROM issue_summaries`);
@@ -226,7 +246,7 @@ describe("webhook → issue summarize wiring", () => {
       nowIso(),
       "andres"
     );
-    const stub: Summarizer = { model: "stub", summarize: async () => "summary" };
+    const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "summary", next_step: null }) };
     await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
     const progress = await all(env.DB, `SELECT * FROM milestone_progress`);
     expect(progress.length).toBe(1); // issueAssigned carries a milestone — progressSeam still wrote it

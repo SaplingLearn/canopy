@@ -23,10 +23,15 @@ function makePr(overrides: Partial<MyWorkPr> = {}): MyWorkPr {
   return {
     number: 42,
     title: "Fix the thing",
+    displayTitle: null,
     url: "https://github.com/SaplingLearn/sapling/pull/42",
     merged: true,
     occurredAt: new Date().toISOString(),
     summary: "Fixed **the thing** that was broken.",
+    what: null,
+    why: null,
+    impact: null,
+    baseRef: null,
     ...overrides,
   };
 }
@@ -35,11 +40,14 @@ function makeTodo(overrides: Partial<MyWorkTodo> = {}): MyWorkTodo {
   return {
     number: 7,
     title: "Investigate flaky test",
+    displayTitle: null,
     priority: "P1",
     labels: ["bug", "flaky", "ci", "extra"],
     url: "https://github.com/SaplingLearn/sapling/issues/7",
     updatedAt: new Date().toISOString(),
     summary: null,
+    milestone: null,
+    nextStep: null,
     ...overrides,
   };
 }
@@ -91,30 +99,56 @@ describe("prActivityCard", () => {
     expect(html).not.toContain("javascript:alert(1)");
   });
 
-  it("renders structured What changed + Why as separate labeled rows", () => {
-    const pr = makePr({ summary: "**What changed:** Fixed the login bug.\n**Why:** Users were logged out unexpectedly." });
+  it("renders What changed and Why rows from the structured DTO fields", () => {
+    const pr = makePr({ what: "Fixed the login bug.", why: "Users were logged out unexpectedly." });
     const html = prActivityCard(pr, mockMd);
     expect(html).toContain("What changed");
-    expect(html).toContain("Why");
     expect(html).toContain("Fixed the login bug.");
+    expect(html).toContain("Why");
     expect(html).toContain("Users were logged out unexpectedly.");
-    expect(html).not.toContain("**What changed:**");
-    expect(html).not.toContain("**Why:**");
+    expect(html).not.toContain(">Summary<");
   });
 
-  it("omits the Why row when the structured summary has no Why", () => {
-    const pr = makePr({ summary: "**What changed:** Fixed the login bug." });
-    const html = prActivityCard(pr, mockMd);
+  it("renders What changed without a Why row when why is null", () => {
+    const html = prActivityCard(makePr({ what: "Fixed the login bug.", why: null }), mockMd);
     expect(html).toContain("What changed");
-    expect(html).not.toContain("Why");
-    expect(html).not.toContain("**What changed:**");
+    expect(html).not.toContain(">Why<");
   });
 
-  it("falls back to the raw prose block for a non-conforming summary (legacy/excerpt)", () => {
-    const pr = makePr({ summary: "Fixed the login bug that was affecting users." });
-    const html = prActivityCard(pr, mockMd);
+  it("falls back to a single Summary prose row when what is null", () => {
+    const html = prActivityCard(makePr({ what: null, summary: "Fixed the login bug that was affecting users." }), mockMd);
+    expect(html).toContain("Summary");
+    expect(html).toContain("Fixed the login bug that was affecting users.");
     expect(html).not.toContain("What changed");
-    expect(html).toContain("mock-md");
+  });
+
+  it("renders an Impact row when pr.impact is set; collapses it when null", () => {
+    const withImpact = prActivityCard(makePr({ impact: "Users stay logged in across deploys." }), mockMd);
+    expect(withImpact).toContain("Impact");
+    expect(withImpact).toContain("Users stay logged in across deploys.");
+    const withoutImpact = prActivityCard(makePr({ impact: null }), mockMd);
+    expect(withoutImpact).not.toContain("Impact");
+  });
+
+  it("footer shows '· into <baseRef>' in a mono span when set; omits the suffix when null", () => {
+    const withBase = prActivityCard(makePr({ baseRef: "main" }), mockMd);
+    expect(withBase).toContain("· into <span");
+    expect(withBase).toContain("main");
+    const withoutBase = prActivityCard(makePr({ baseRef: null }), mockMd);
+    expect(withoutBase).not.toContain("· into");
+  });
+
+  it("renders displayTitle when set, falling back to the raw title when null", () => {
+    const humanized = prActivityCard(makePr({ displayTitle: "Keep users signed in" }), mockMd);
+    expect(humanized).toContain("Keep users signed in");
+    expect(humanized).not.toContain("Fix the thing");
+    const fallback = prActivityCard(makePr({ displayTitle: null }), mockMd);
+    expect(fallback).toContain("Fix the thing");
+  });
+
+  it("the number pill is the card's only anchor", () => {
+    const html = prActivityCard(makePr(), mockMd);
+    expect((html.match(/<a /g) ?? []).length).toBe(1);
   });
 });
 
@@ -163,16 +197,62 @@ describe("todoCard", () => {
     expect(html).not.toContain("P3");
   });
 
-  it("shows a relative 'updated' time derived from t.updatedAt", () => {
+  it("shows a right-aligned relative 'updated' time derived from t.updatedAt", () => {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const html = todoCard(makeTodo({ updatedAt: threeDaysAgo }));
-    expect(html).toContain("3d ago");
+    expect(html).toContain("updated 3d ago");
   });
 
   it("wraps a long title across lines instead of truncating to one line", () => {
     const html = todoCard(makeTodo({ title: "A very long issue title that should wrap across more than one line of text" }));
-    expect(html).toContain("-webkit-line-clamp:2");
+    expect(html).toContain("A very long issue title that should wrap across more than one line of text");
     expect(html).not.toContain("text-overflow:ellipsis");
+    expect(html).not.toContain("-webkit-line-clamp");
+  });
+
+  it("the number pill is the card's only anchor (the card is no longer one big <a>)", () => {
+    const html = todoCard(makeTodo({ summary: "prose", milestone: { title: "M", dueOn: null }, nextStep: "do it" }));
+    expect((html.match(/<a /g) ?? []).length).toBe(1);
+    expect(html).not.toMatch(/^<a /);
+  });
+
+  it("renders displayTitle when set, falling back to the raw title when null", () => {
+    const humanized = todoCard(makeTodo({ displayTitle: "Chase down the flaky test" }));
+    expect(humanized).toContain("Chase down the flaky test");
+    expect(humanized).not.toContain("Investigate flaky test");
+    const fallback = todoCard(makeTodo({ displayTitle: null }));
+    expect(fallback).toContain("Investigate flaky test");
+  });
+
+  it("renders a Milestone row with the title and a '· due <date>' suffix when dueOn is set", () => {
+    const html = todoCard(makeTodo({ milestone: { title: "Reliable event capture", dueOn: "2026-07-20" } }));
+    expect(html).toContain("Milestone");
+    expect(html).toContain("Reliable event capture");
+    expect(html).toContain("· due Jul 20");
+  });
+
+  it("omits the due suffix when dueOn is null; collapses the whole row when milestone is null", () => {
+    const noDue = todoCard(makeTodo({ milestone: { title: "Reliable event capture", dueOn: null } }));
+    expect(noDue).toContain("Milestone");
+    expect(noDue).not.toContain("· due");
+    const noMilestone = todoCard(makeTodo({ milestone: null }));
+    expect(noMilestone).not.toContain("Milestone");
+  });
+
+  it("renders a Next step row (accent label) when set; collapses it when null", () => {
+    const withStep = todoCard(makeTodo({ nextStep: "Add a per-ref delivery lock." }));
+    expect(withStep).toContain("Next step");
+    expect(withStep).toContain("Add a per-ref delivery lock.");
+    expect(withStep).toContain('color:var(--accent)">Next step');
+    const withoutStep = todoCard(makeTodo({ nextStep: null }));
+    expect(withoutStep).not.toContain("Next step");
+  });
+
+  it("styles backtick spans in prose bodies as <code> after escaping (no raw HTML injection)", () => {
+    const html = todoCard(makeTodo({ nextStep: "Add a lock in `consumer.ts` before the write.", summary: "A `<b>tag</b>` inside code." }));
+    expect(html).toContain(">consumer.ts</code>");
+    expect(html).toContain("&lt;b&gt;tag&lt;/b&gt;"); // escaped BEFORE the code-span pass
+    expect(html).not.toContain("<b>tag</b>");
   });
 });
 
@@ -293,12 +373,13 @@ describe("render() — My Work screen", () => {
 
   it("renders the stored summary on a todo card when one exists", () => {
     const html = todoCard(makeTodo({ summary: "Fix the OAuth consent fallback on Edge." }));
+    expect(html).toContain("Summary");
     expect(html).toContain("Fix the OAuth consent fallback on Edge.");
   });
 
-  it("renders no summary block on a todo card without a summary", () => {
+  it("renders no Summary row on a todo card without a summary (null rows collapse)", () => {
     const html = todoCard(makeTodo({ summary: null }));
-    expect(html).not.toContain("font-size:12.5px"); // the summary line's size — absent when summary is null
+    expect(html).not.toContain("Summary");
   });
 
   it("renders To-do before Previous activity", () => {
