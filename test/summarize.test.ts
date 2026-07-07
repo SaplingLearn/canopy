@@ -331,6 +331,82 @@ describe("workersAiPrSummarizer — response shape handling", () => {
   });
 });
 
+// A hung/overloaded Workers AI call (exhausted Neuron budget, overloaded model)
+// can leave `ai.run` pending forever — it never resolves and never rejects, so
+// the try/catch that handles throws cannot save us. Without a timeout that wedges
+// the whole /admin/backfill request the browser waits on. The summarizer must
+// race ai.run against an injectable timeout and resolve to null on timeout so the
+// deterministic excerpt fallback fires and the request always completes.
+describe("workersAiSummarizer — timeout guard", () => {
+  const hangingAi = { run: () => new Promise(() => {}) } as unknown as Ai;
+
+  it("resolves the PR summarizer to null when ai.run never resolves, within the injected timeout", async () => {
+    const result = await workersAiPrSummarizer(hangingAi, 50).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  }, 1500);
+
+  it("resolves the issue summarizer to null when ai.run never resolves, within the injected timeout", async () => {
+    const result = await workersAiIssueSummarizer(hangingAi, 50).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  }, 1500);
+
+  it("storePrSummary falls back to excerpt (never hangs) when the AI call hangs past the timeout", async () => {
+    await seedEvent("gh:pr:99:merged", 99);
+    const row = await storePrSummary(env.DB, workersAiPrSummarizer(hangingAi, 50), {
+      semantic_key: "gh:pr:99:merged",
+      pr_number: 99,
+      title: "A PR",
+      body: "Body text here",
+    });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe(excerptSummary("A PR", "Body text here"));
+    expect(row).toMatchObject({ title: null, what: null, why: null, impact: null });
+  }, 1500);
+
+  it("storeIssueSummary falls back to excerpt (never hangs) when the AI call hangs past the timeout", async () => {
+    const row = await storeIssueSummary(env.DB, workersAiIssueSummarizer(hangingAi, 50), {
+      issue_number: 99,
+      title: "An issue",
+      body: "Body text here",
+    });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe(excerptSummary("An issue", "Body text here"));
+    expect(row).toMatchObject({ title: null, next_step: null });
+  }, 1500);
+
+  // Promise.race only stops WAITING for ai.run — it does not cancel it. A timed-out
+  // call keeps its inference subrequest running, so across a backfill batch several
+  // abandoned calls pile up and keep consuming the capacity that's already exhausted.
+  // The summarizer passes an AbortSignal and aborts it on timeout so the call cancels.
+  it("aborts the in-flight ai.run via its AbortSignal when the timeout fires", async () => {
+    let captured: AbortSignal | undefined;
+    const capturingAi = {
+      run: (_model: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        captured = opts?.signal;
+        return new Promise(() => {}); // never resolves — only the timeout can end this
+      },
+    } as unknown as Ai;
+    const result = await workersAiPrSummarizer(capturingAi, 50).summarize({ title: "t", body: "b" });
+    expect(result).toBeNull();
+    expect(captured).toBeInstanceOf(AbortSignal);
+    expect(captured?.aborted).toBe(true);
+  }, 1500);
+
+  it("passes an AbortSignal but does NOT abort it on a healthy (fast) call", async () => {
+    let captured: AbortSignal | undefined;
+    const fastAi = {
+      run: (_model: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        captured = opts?.signal;
+        return Promise.resolve({ response: '{"title":"T","what":"W","why":null,"impact":null}' });
+      },
+    } as unknown as Ai;
+    const result = await workersAiPrSummarizer(fastAi, 50).summarize({ title: "t", body: "b" });
+    expect(result).toEqual({ title: "T", what: "W", why: null, impact: null });
+    expect(captured).toBeInstanceOf(AbortSignal);
+    expect(captured?.aborted).toBe(false);
+  });
+});
+
 describe("storeIssueSummary", () => {
   it("stores the stub summarizer's structured summary under its own model id", async () => {
     const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ISSUE_STUB };
