@@ -4,7 +4,7 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, type AppState } from "./render";
+import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   completeMilestone,
@@ -69,7 +69,19 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
+  // Reflect the current screen in the URL hash so a reload restores it.
+  if (state.view === "app") {
+    const want = `#${state.screen}`;
+    if (location.hash !== want) history.replaceState(null, "", want);
+  }
 }
+
+// Back/forward or a manually edited hash → switch screens.
+window.addEventListener("hashchange", () => {
+  if (state.view !== "app") return;
+  const s = screenFromHash();
+  if (s !== state.screen) { state.screen = s; loadForScreen(s); }
+});
 
 // Minimal CSS.escape shim for id selectors (heading ids are already slug-safe).
 function cssEscape(v: string): string {
@@ -122,6 +134,26 @@ function resolvedTheme(): "dark" | "light" | "midnight" {
 }
 function persist(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
+}
+
+// ── screen ↔ URL hash (so a reload stays on the current page) ─────────────────
+const SCREENS: Screen[] = ["mywork", "feed", "docs", "roadmap", "review", "maintenance", "search", "settings", "guide"];
+function screenFromHash(): Screen {
+  const h = location.hash.replace(/^#/, "") as Screen;
+  return SCREENS.includes(h) ? h : "mywork";
+}
+// Kick off the data load for a screen (mirrors the go* dispatch cases).
+function loadForScreen(screen: Screen): void {
+  switch (screen) {
+    case "feed": loadFeedIfNeeded(); break;
+    case "docs": loadDocsIfNeeded(); break;
+    case "roadmap": loadRoadmapIfNeeded(); loadFeedIfNeeded(); break;
+    case "review": loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); break;
+    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); break;
+    case "search": loadSearchIfNeeded(); break;
+    case "mywork": loadMyWorkIfNeeded(); break;
+    default: rerender(); break; // settings, guide — no data load
+  }
 }
 
 // ── per-screen data loaders ──────────────────────────────────────────────────
@@ -816,7 +848,9 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
       state.me = me;
       state.displayName = me.name ?? me.login;
       state.view = "app";
-      loadMyWork();
+      // Restore the screen from the URL hash (reload stays put) instead of always My Work.
+      state.screen = screenFromHash();
+      loadForScreen(state.screen);
       // Boot-time loads for the sidebar triage badges — the counts must be
       // right on every screen, not just after visiting Review/Maintenance.
       loadProposals();
