@@ -44,6 +44,8 @@ export interface AppState {
   docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
   docSlug: string | null;
   docSpace: DocSpace;
+  /** Collapsed docs-tree sections, keyed `${space}:${section}`; absent/false = expanded. */
+  docTreeCollapsed: Record<string, boolean>;
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<PlanView>;
   // Triage surfaces (Review + Maintenance) — four Loadable slices, one per
@@ -99,6 +101,7 @@ export function initialState(): AppState {
     docDetail: { status: "idle", data: null },
     docSlug: null,
     docSpace: "sapling",
+    docTreeCollapsed: {},
     roadmapTab: "timeline",
     roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
     proposals: { status: "idle", data: [] },
@@ -477,15 +480,24 @@ function docsView(s: AppState): string {
       }
       treeHtml = [...grouped.entries()]
         .filter(([, pages]) => pages.length > 0)
-        .map(([sec, pages]) => `<div style="margin-bottom:18px">
-        <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--fg-40);padding:0 10px 6px">${esc(sec.toUpperCase())}</div>
-        <div style="display:flex;flex-direction:column;gap:1px">
+        .map(([sec, pages]) => {
+          const key = `${s.docSpace}:${sec}`;
+          const collapsed = !!s.docTreeCollapsed[key];
+          const items = collapsed ? "" : `<div style="display:flex;flex-direction:column;gap:1px;margin-top:2px;padding-left:8px">
           ${pages.map((doc) => {
             const active = doc.slug === s.docSlug;
-            return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree">${active ? `<span class="cnpy-selbar"></span>` : ""}<span style="position:relative;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
+            return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree${active ? " is-active" : ""}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
           }).join("")}
-        </div>
-      </div>`).join("");
+        </div>`;
+          return `<div style="margin-bottom:5px">
+        <button data-act="toggleDocSection" data-arg="${attr(key)}" class="cnpy-treehead" aria-expanded="${collapsed ? "false" : "true"}">
+          <svg class="cnpy-treechev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>
+          <span class="cnpy-treelabel">${esc(sec.toUpperCase())}</span>
+          <span class="cnpy-treecount">${pages.length}</span>
+        </button>
+        ${items}
+      </div>`;
+        }).join("");
     }
   }
 
@@ -518,13 +530,12 @@ function docsView(s: AppState): string {
       </div>`).join("")}
     </div>` : "";
 
-    readerHtml = `<div style="max-width:none;margin:0;padding:28px 56px 100px">
+    const spaceLabel = doc.space === "sapling" ? "Sapling" : "Canopy";
+    readerHtml = `<div style="max-width:812px;margin:0 auto;padding:34px 44px 120px">
     ${stagedBanner}
-    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-40);margin-bottom:8px"><span>${esc(doc.section)}</span></div>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h1 style="font-size:28px;font-weight:600;letter-spacing:-0.02em;margin:0;white-space:nowrap">${esc(doc.title)}</h1>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px;padding-bottom:18px;border-bottom:1px solid var(--border)">
+    <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel)} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
+    <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:15px;padding-bottom:17px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
         <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(doc.updated_by ?? ""))}</div>
         <span>Updated by <b style="color:var(--fg-70);font-weight:500">${esc(doc.updated_by ?? "")}</b> · ${relTime(doc.updated_at)}</span>
@@ -532,7 +543,7 @@ function docsView(s: AppState): string {
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
     </div>
     ${history}
-    <div class="cnpy-md" style="margin-top:26px">${renderMarkdown(doc.body)}</div>
+    <div class="cnpy-md" style="margin-top:28px">${renderMarkdown(doc.body)}</div>
   </div>`;
   } else {
     readerHtml = notice("Select a doc from the tree.");
