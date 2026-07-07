@@ -371,26 +371,30 @@ describe("runBackfill — issue summarization", () => {
     expect(rows.length).toBe(0);
   });
 
-  it("shares one AI-call budget across PRs and issues — PRs consume it first", async () => {
+  it("summarizes issues before PRs so a PR backlog never starves the todo surface", async () => {
     const summarizer = countingSummarizer({ ...PR_STUB, what: "PR summary." });
     const issueSummarizer = countingSummarizer({ ...ISSUE_STUB, summary: "Issue summary." });
-    const fetchImpl = stubFetch([prA, prB], [openIssue]);
+    const fetchImpl = stubFetch([prA, prB, prC], [openIssue]); // 3 PRs would exhaust a budget of 2
 
+    // The shared AI-call budget is spent ISSUES-FIRST: even though 3 PRs exceed
+    // the budget, the assigned issue is summarized this run — the To-do surface
+    // (and the per-Sync AI rate-limit wall, which issues clear well before) is
+    // never starved by a PR backlog. PRs take the remaining budget.
     const firstRun = await runBackfill(envWith(), "admin-user", {
       fetchImpl, summarizer, issueSummarizer, summaryBatchLimit: 2, summaryCallDelayMs: 0,
     });
-    expect(firstRun.summarized).toBe(2); // budget fully spent on the 2 PRs
+    expect(firstRun.summarized).toBe(2); // budget fully spent: 1 issue + 1 PR
     expect(firstRun.summaryBudgetExhausted).toBe(true);
-    expect(summarizer.calls).toBe(2);
-    expect(issueSummarizer.calls).toBe(0); // no budget left for the issue this run
-    expect(firstRun.issueSummarizedCount).toBe(0);
+    expect(issueSummarizer.calls).toBe(1); // the issue was summarized — NOT starved
+    expect(firstRun.issueSummarizedCount).toBe(1);
+    expect(summarizer.calls).toBe(1); // only 1 PR fit in the remaining budget
 
-    // A follow-up run finishes the issue now that the PR backlog is clear.
+    // A follow-up run clears the remaining PR backlog; the issue is already done.
     const secondRun = await runBackfill(envWith(), "admin-user", {
       fetchImpl, summarizer, issueSummarizer, summaryBatchLimit: 2, summaryCallDelayMs: 0,
     });
-    expect(secondRun.summarized).toBe(1); // just the issue — both PRs already summarized
-    expect(issueSummarizer.calls).toBe(1);
-    expect(secondRun.issueSummarizedCount).toBe(1);
+    expect(issueSummarizer.calls).toBe(1); // already structured → skipped, not re-called
+    expect(secondRun.summarized).toBe(2); // the 2 remaining PRs
+    expect(summarizer.calls).toBe(3); // all 3 PRs summarized across the two runs
   });
 });
