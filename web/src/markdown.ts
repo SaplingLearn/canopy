@@ -1,6 +1,7 @@
 import { marked, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 import { REPO_URL } from "./github";
+import { slugifyHeading } from "./outline";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -49,9 +50,20 @@ export function renderMarkdown(body: string): string {
  * Browser-only — the reader is the sole caller at runtime; render tests mock this module.
  */
 function enhance(clean: string): string {
-  if (typeof document === "undefined" || (!clean.includes("<pre") && !clean.includes("<table"))) return clean;
+  if (typeof document === "undefined") return clean;
   const tpl = document.createElement("template");
   tpl.innerHTML = clean;
+
+  // Anchor ids on every heading (document order, de-duped) so the tree outline
+  // can scroll to them. slugifyHeading + this de-dup mirror extractOutline().
+  const seen = new Map<string, number>();
+  tpl.content.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
+    let id = slugifyHeading(h.textContent ?? "") || "section";
+    const n = seen.get(id) ?? 0;
+    seen.set(id, n + 1);
+    if (n > 0) id = `${id}-${n}`;
+    if (!h.id) h.id = id;
+  });
 
   tpl.content.querySelectorAll("pre").forEach((pre) => {
     const wrap = document.createElement("div");

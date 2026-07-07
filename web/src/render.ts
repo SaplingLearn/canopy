@@ -9,13 +9,16 @@ import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithP
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
+import { extractOutline } from "./outline";
 import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromLogins } from "./triage-map";
 
-export type DocSpace = "canopy" | "sapling";
+// A docs "space" is a free-form top-level grouping shown as a toggle (e.g.
+// Technical | Product). Values come from the data, not a fixed union.
+export type DocSpace = string;
 
 export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide";
 
@@ -44,8 +47,10 @@ export interface AppState {
   docDetail: Loadable<{ doc: DocRow; versions: DocVersionRow[] } | null>;
   docSlug: string | null;
   docSpace: DocSpace;
-  /** Collapsed docs-tree sections, keyed `${space}:${section}`; absent/false = expanded. */
-  docTreeCollapsed: Record<string, boolean>;
+  /** Docs-tree pages whose outline (in-page headings) is expanded, keyed by slug. */
+  docOutlineOpen: Record<string, boolean>;
+  /** Heading id to scroll the reader to after the next render, then cleared. */
+  pendingScrollId: string | null;
   roadmapTab: "narrative" | "timeline";
   roadmap: Loadable<PlanView>;
   // Triage surfaces (Review + Maintenance) — four Loadable slices, one per
@@ -100,8 +105,9 @@ export function initialState(): AppState {
     docsList: { status: "idle", data: [] },
     docDetail: { status: "idle", data: null },
     docSlug: null,
-    docSpace: "sapling",
-    docTreeCollapsed: {},
+    docSpace: "technical",
+    docOutlineOpen: {},
+    pendingScrollId: null,
     roadmapTab: "timeline",
     roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
     proposals: { status: "idle", data: [] },
@@ -370,9 +376,12 @@ function header(s: AppState): string {
       </select>
     </div>` : "";
 
-  const spaceTab = (k: DocSpace, label: string) =>
-    `<button data-act="setDocSpace" data-arg="${k}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${label}</button>`;
-  const docsControls = s.screen === "docs" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${spaceTab("sapling", "Sapling")}${spaceTab("canopy", "Canopy")}</div>` : "";
+  const spaceTab = (k: DocSpace) =>
+    `<button data-act="setDocSpace" data-arg="${attr(k)}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${esc(spaceLabel(k))}</button>`;
+  const docSpaces = orderedSpaces(s.docsList.data);
+  const docsControls = s.screen === "docs" && docSpaces.length > 1
+    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${docSpaces.map(spaceTab).join("")}</div>`
+    : "";
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
   const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
@@ -456,7 +465,49 @@ function feedView(s: AppState): string {
 }
 
 // ── docs ─────────────────────────────────────────────────────────────────────
-const DOC_SECTION_ORDER = ["reference", "context", "decisions"];
+// Preferred display order for section groups within a space; anything not listed
+// falls to the end (alphabetical). Case-insensitive match against doc.section.
+const DOC_SECTION_ORDER = [
+  "Overview", "Architecture", "AI & Learning Engine", "Engineering Guide", "Decisions",
+  "Roadmap", "Brand & Marketing", "reference", "context", "decisions",
+];
+const sectionRank = (sec: string): number => {
+  const i = DOC_SECTION_ORDER.findIndex((x) => x.toLowerCase() === sec.toLowerCase());
+  return i < 0 ? DOC_SECTION_ORDER.length : i;
+};
+
+// Preferred order for the space toggle; unlisted spaces follow alphabetically.
+const DOC_SPACE_ORDER = ["technical", "product", "sapling", "canopy"];
+const spaceLabel = (k: string): string => (k ? k.charAt(0).toUpperCase() + k.slice(1) : k);
+function orderedSpaces(docs: DocRow[]): string[] {
+  const rank = (k: string) => { const i = DOC_SPACE_ORDER.indexOf(k); return i < 0 ? DOC_SPACE_ORDER.length : i; };
+  return [...new Set(docs.map((d) => d.space))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+/** First doc of a space in tree display order (section rank, then title) — the
+ *  page opened by default when the docs list loads or the space toggles. */
+export function firstDocForSpace(docs: DocRow[], space: string): DocRow | undefined {
+  return docs
+    .filter((d) => d.space === space)
+    .sort((a, b) => sectionRank(a.section) - sectionRank(b.section) || a.title.localeCompare(b.title))[0];
+}
+
+// One tree row: the page button (opens the doc) with a chevron that toggles its
+// in-page outline, plus the outline itself (scroll-to-heading links) when open.
+function docTreeRow(s: AppState, doc: DocRow): string {
+  const active = doc.slug === s.docSlug;
+  const outline = extractOutline(doc.body);
+  const open = !!s.docOutlineOpen[doc.slug];
+  const chevron = outline.length
+    ? `<span class="cnpy-treechev${open ? " is-open" : ""}" data-act="toggleOutline" data-arg="${attr(doc.slug)}" role="button" aria-expanded="${open ? "true" : "false"}" aria-label="Toggle outline"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>`
+    : `<span class="cnpy-treechev is-empty"></span>`;
+  const page = `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree${active ? " is-active" : ""}">${chevron}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
+  const outlineHtml = open && outline.length
+    ? `<div class="cnpy-outline">${outline.map((h) =>
+        `<button data-act="scrollToHeading" data-arg="${attr(doc.slug + "::" + h.id)}" class="cnpy-outline-item${h.level >= 3 ? " lvl3" : ""}"><span>${esc(h.text)}</span></button>`).join("")}</div>`
+    : "";
+  return page + outlineHtml;
+}
 
 function docsView(s: AppState): string {
   // ── tree (left pane) ────────────────────────────────────────────────────────
@@ -466,38 +517,25 @@ function docsView(s: AppState): string {
   } else if (s.docsList.status === "error") {
     treeHtml = notice("Couldn't load docs.");
   } else {
-    // Filter to the toggled space (Sapling | Canopy), then group by section.
+    // Filter to the toggled space (Technical | Product), then group by section.
+    // Sections are static labels; each page expands to its own headings.
     const spaceDocs = s.docsList.data.filter((d) => d.space === s.docSpace);
     if (spaceDocs.length === 0) {
-      treeHtml = notice(`No ${s.docSpace === "sapling" ? "Sapling" : "Canopy"} docs yet.`);
+      treeHtml = notice(`No ${spaceLabel(s.docSpace)} docs yet.`);
     } else {
       const grouped = new Map<string, DocRow[]>();
-      for (const sec of DOC_SECTION_ORDER) grouped.set(sec, []);
       for (const doc of spaceDocs) {
-        const sec = doc.section.toLowerCase();
-        if (!grouped.has(sec)) grouped.set(sec, []);
-        grouped.get(sec)!.push(doc);
+        if (!grouped.has(doc.section)) grouped.set(doc.section, []);
+        grouped.get(doc.section)!.push(doc);
       }
-      treeHtml = [...grouped.entries()]
-        .filter(([, pages]) => pages.length > 0)
-        .map(([sec, pages]) => {
-          const key = `${s.docSpace}:${sec}`;
-          const collapsed = !!s.docTreeCollapsed[key];
-          const items = collapsed ? "" : `<div style="display:flex;flex-direction:column;gap:1px;margin-top:2px;padding-left:8px">
-          ${pages.map((doc) => {
-            const active = doc.slug === s.docSlug;
-            return `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree${active ? " is-active" : ""}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
-          }).join("")}
-        </div>`;
-          return `<div style="margin-bottom:5px">
-        <button data-act="toggleDocSection" data-arg="${attr(key)}" class="cnpy-treehead" aria-expanded="${collapsed ? "false" : "true"}">
-          <svg class="cnpy-treechev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>
-          <span class="cnpy-treelabel">${esc(sec.toUpperCase())}</span>
-          <span class="cnpy-treecount">${pages.length}</span>
-        </button>
-        ${items}
+      const sections = [...grouped.keys()].sort((a, b) => sectionRank(a) - sectionRank(b) || a.localeCompare(b));
+      treeHtml = sections.map((sec) => {
+        const rows = grouped.get(sec)!.map((doc) => docTreeRow(s, doc)).join("");
+        return `<div style="margin-bottom:16px">
+        <div class="cnpy-treesec">${esc(sec)}</div>
+        <div style="display:flex;flex-direction:column;gap:1px">${rows}</div>
       </div>`;
-        }).join("");
+      }).join("");
     }
   }
 
@@ -530,10 +568,9 @@ function docsView(s: AppState): string {
       </div>`).join("")}
     </div>` : "";
 
-    const spaceLabel = doc.space === "sapling" ? "Sapling" : "Canopy";
     readerHtml = `<div style="max-width:812px;margin:0 auto;padding:34px 44px 120px">
     ${stagedBanner}
-    <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel)} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
+    <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel(doc.space))} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
     <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:15px;padding-bottom:17px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">

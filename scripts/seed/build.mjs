@@ -22,6 +22,14 @@ export const targetsRemote = (argv) => argv.includes("--remote");
 export function buildSeedStatements(fx) {
   const s = [...RESET_STATEMENTS];
 
+  // Register every section the doc fixtures reference so the `docs.section`
+  // foreign key (→ sections.name) is satisfied for any taxonomy the fixtures
+  // use. INSERT OR IGNORE keeps the migration-seeded vocab intact. Local seed
+  // only — never runs against remote.
+  for (const name of [...new Set((fx.docs?.docs ?? []).map((d) => d.section))]) {
+    s.push(`INSERT OR IGNORE INTO sections (name, description) VALUES (${q(name)}, ${q(name)})`);
+  }
+
   for (const d of fx.docs?.docs ?? []) {
     s.push(
       `INSERT INTO docs (slug, section, space, title, body, current_version, updated_at, updated_by) VALUES (` +
