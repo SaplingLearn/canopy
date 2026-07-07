@@ -229,10 +229,71 @@ export async function runBackfill(
   let unchanged = 0;
   let summarized = 0;
   let summaryBudgetExhausted = false;
-  // Running count of PRs that end this call with a real (non-excerpt) summary —
-  // either already had one, or got one just now. Paired with prList.length, this
-  // is the "X of Y" progress the frontend shows across a multi-batch sync.
+  // Running counts of PRs / issues that end this call with a real (non-excerpt,
+  // structured) summary — either already had one, or got one just now. Paired
+  // with prList.length / issuesToSummarize, these are the "X of Y" progress the
+  // frontend shows across a multi-batch sync.
   let prSummarizedCount = 0;
+  let issueSummarizedCount = 0;
+  let issuesToSummarize = 0; // denominator: assigned issues found this run
+
+  // Issues are summarized BEFORE PRs. The AI-call budget is shared per invocation,
+  // so ordering is what decides who gets starved when there's a backlog: the To-do
+  // surface (open assigned issues) is the more time-sensitive glance, and — because
+  // issues are far fewer than PRs — it clears well before the sustained-load AI
+  // rate-limit wall the long PR run can hit. PRs (Previous activity) take whatever
+  // budget remains and finish across follow-up Sync batches (the frontend auto-loops).
+  for (const issue of issueList) {
+    const payload = issueDelivery(issue);
+    const isAssigned = payload.action === "assigned";
+    if (isAssigned) issuesToSummarize++;
+
+    for (const base of eventsFromDelivery("issues", payload)) {
+      const ev = { ...base, provenance: "backfill" as const };
+      const res = await ingestEvent(env.DB, ev, principalLogin);
+      if (res.outcome === "written") {
+        captured++;
+        // Mirror handleGithubWebhook's progress seam for newly-written issues.
+        await applyEventProgress(env.DB, payload);
+      } else {
+        unchanged++;
+      }
+
+      if (!isAssigned) continue; // unassigned issues never appear in anyone's to-do
+
+      const existing = await first<IssueSummaryRow>(
+        env.DB,
+        `SELECT model, title FROM issue_summaries WHERE issue_number = ?`,
+        issue.number
+      );
+      const alreadySummarized = existing !== null && existing.model !== "excerpt" && existing.title !== null;
+      if (alreadySummarized) {
+        issueSummarizedCount++;
+        continue;
+      }
+
+      // Shares the SAME summarized/summaryBatchLimit budget as the PR loop
+      // below — not a separate allowance. See Global Constraints.
+      if (summarized >= summaryBatchLimit) {
+        summaryBudgetExhausted = true;
+        continue;
+      }
+
+      const stored = await storeIssueSummary(env.DB, issueSummarizer, {
+        issue_number: issue.number,
+        title: issue.title,
+        body: issue.body ?? "",
+      });
+      summarized++;
+      // storeIssueSummary can still fall back to excerpt if the AI call failed —
+      // only count it toward "done" if it actually got a real, structured summary.
+      if (stored.model !== "excerpt" && stored.title !== null) issueSummarizedCount++;
+
+      if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
+      }
+    }
+  }
 
   for (const pr of prList) {
     const payload = prClosedDelivery(pr);
@@ -282,61 +343,6 @@ export async function runBackfill(
       // Pace summarizer calls so one invocation doesn't burst past whatever
       // limit caused the wall above — skip the trailing delay once the batch
       // is done, nothing follows it.
-      if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
-      }
-    }
-  }
-
-  let issueSummarizedCount = 0;
-  let issuesToSummarize = 0; // denominator: assigned issues found this run
-
-  for (const issue of issueList) {
-    const payload = issueDelivery(issue);
-    const isAssigned = payload.action === "assigned";
-    if (isAssigned) issuesToSummarize++;
-
-    for (const base of eventsFromDelivery("issues", payload)) {
-      const ev = { ...base, provenance: "backfill" as const };
-      const res = await ingestEvent(env.DB, ev, principalLogin);
-      if (res.outcome === "written") {
-        captured++;
-        // Mirror handleGithubWebhook's progress seam for newly-written issues.
-        await applyEventProgress(env.DB, payload);
-      } else {
-        unchanged++;
-      }
-
-      if (!isAssigned) continue; // unassigned issues never appear in anyone's to-do
-
-      const existing = await first<IssueSummaryRow>(
-        env.DB,
-        `SELECT model, title FROM issue_summaries WHERE issue_number = ?`,
-        issue.number
-      );
-      const alreadySummarized = existing !== null && existing.model !== "excerpt" && existing.title !== null;
-      if (alreadySummarized) {
-        issueSummarizedCount++;
-        continue;
-      }
-
-      // Shares the SAME summarized/summaryBatchLimit budget as the PR loop
-      // above — not a separate allowance. See Global Constraints.
-      if (summarized >= summaryBatchLimit) {
-        summaryBudgetExhausted = true;
-        continue;
-      }
-
-      const stored = await storeIssueSummary(env.DB, issueSummarizer, {
-        issue_number: issue.number,
-        title: issue.title,
-        body: issue.body ?? "",
-      });
-      summarized++;
-      // storeIssueSummary can still fall back to excerpt if the AI call failed —
-      // only count it toward "done" if it actually got a real, structured summary.
-      if (stored.model !== "excerpt" && stored.title !== null) issueSummarizedCount++;
-
       if (summarized < summaryBatchLimit && summaryCallDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, summaryCallDelayMs));
       }
