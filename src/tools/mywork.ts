@@ -10,8 +10,8 @@ import { type DB, all, first } from "../db";
 // single source of truth so the Worker and web build agree on the shape.
 export type MyWork = DashboardData;
 
-const PR_LIMIT = 5;
-const TODO_LIMIT = 5;
+const PR_LIMIT = 6;
+const TODO_LIMIT = 6;
 
 const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], degraded });
 
@@ -132,7 +132,7 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         nextStep: row.s_next_step,
       });
     }
-    // Same cap as previousActivity: the 5 most recently updated, newest first
+    // Same cap as previousActivity: the 6 most recently updated, newest first
     // (updated_at is a GitHub ISO-8601 UTC string — lexicographic order is
     // chronological). The dashboard is a glance surface, not the full backlog.
     todo.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
