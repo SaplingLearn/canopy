@@ -178,14 +178,33 @@ function logo(size: number): string {
 }
 
 // ── real-data helpers (authors are github logins; no curated display map) ─────
+/** A PR artifact may arrive bare ("14"), as "#14", or as a full pull URL (".../pull/14"). */
+function prNumber(ref: string): string {
+  const s = String(ref);
+  const m = s.match(/\/pull\/(\d+)/) ?? s.match(/^#?(\d+)$/);
+  return m ? m[1] : s;
+}
+/** A commit artifact may arrive as a bare SHA or a full commit URL; extract the SHA (href keeps it whole). */
+function commitSha(ref: string): string {
+  const s = String(ref);
+  const m = s.match(/\/commit\/([0-9a-f]+)/i) ?? s.match(/\b([0-9a-f]{7,40})\b/i);
+  return m ? m[1] : s;
+}
 /** Parse the feed row's artifacts JSON ({prs,commits,issues}) into render-ready chips. */
 function feedArtifacts(json: string | null): { kind: string; label: string; href: string }[] {
   if (!json) return [];
   let a: { prs?: string[]; commits?: string[]; issues?: number[] };
   try { a = JSON.parse(json); } catch { return []; }
+  const isUrl = (v: string) => /^https?:\/\//i.test(v);
   const out: { kind: string; label: string; href: string }[] = [];
-  for (const pr of a.prs ?? []) out.push({ kind: "PR", label: `#${pr}`, href: `${REPO_URL}/pull/${pr}` });
-  for (const c of a.commits ?? []) out.push({ kind: "commit", label: c, href: `${REPO_URL}/commit/${c}` });
+  for (const pr of a.prs ?? []) {
+    const num = prNumber(pr);
+    out.push({ kind: "PR", label: `#${num}`, href: isUrl(String(pr)) ? String(pr) : `${REPO_URL}/pull/${num}` });
+  }
+  for (const c of a.commits ?? []) {
+    const sha = commitSha(c);
+    out.push({ kind: "commit", label: sha.slice(0, 7), href: isUrl(String(c)) ? String(c) : `${REPO_URL}/commit/${sha}` });
+  }
   for (const i of a.issues ?? []) out.push({ kind: "issue", label: `#${i}`, href: `${REPO_URL}/issues/${i}` });
   return out;
 }
