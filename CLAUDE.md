@@ -174,7 +174,8 @@ subject, 5 most recent) and `todo` (their open assigned issues, 5 most recently 
 built from `events` (+ `pr_summaries`, `issue_summaries`, `people`), no live GitHub. `person` resolves via
 the `people` identity map; an unmapped login yields an empty projection (`degraded:false`); any D1 failure
 yields empty `degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at capture time
-(`tools/summarize.ts`: Workers AI `env.AI` emits one validated JSON object — PR:
+(`tools/summarize.ts`: Google Gemini `gemini-2.5-flash-lite` via `GEMINI_API_KEY` — a REST
+`generateContent` call, not a Cloudflare binding — emits one validated JSON object — PR:
 title/what/why/impact; issue: title/summary/next_step). On AI failure the **issue**
 path writes a deterministic prose excerpt (`issue_summaries.summary`); the **PR** path
 is structured-only (the prose `pr_summaries.summary` column was dropped in `0019`), so
@@ -200,6 +201,7 @@ that renders a "No summary recorded" placeholder. Stored as columns on `pr_summa
 Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s),
 `GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress recompute — absent → `scheduled()`
-no-ops). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`). Bindings: `DB`
-(D1), `ASSETS` (static), `AI` (Workers AI — capture-time PR summaries only, never at render).
-`[triggers] crons` drives the progress recompute backstop.
+no-ops), `GEMINI_API_KEY` (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt
+fallback). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`). Bindings: `DB`
+(D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
+not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` drives the progress recompute backstop.

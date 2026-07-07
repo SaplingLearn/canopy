@@ -14,8 +14,8 @@ import {
   validateIssueSummary,
   SUMMARIZER_SYSTEM_PROMPT,
   ISSUE_SUMMARIZER_SYSTEM_PROMPT,
-  workersAiPrSummarizer,
-  workersAiIssueSummarizer,
+  geminiPrSummarizer,
+  geminiIssueSummarizer,
 } from "../src/tools/summarize";
 import type { Summarizer } from "../src/tools/summarize";
 import { handleGithubWebhook } from "../src/webhook";
@@ -189,7 +189,7 @@ describe("webhook → summarize wiring", () => {
     expect(rows.length).toBe(0);
   });
 
-  it("with no explicit summarizer, falls back through workersAiPrSummarizer(env.AI) to excerpt (no remote AI session in tests, never throws)", async () => {
+  it("with no explicit summarizer and GEMINI_API_KEY unset in tests, the webhook resolves it to null → excerpt (never throws, never hits the network)", async () => {
     const res = await postWebhook("pull_request", prMerged);
     expect(res.status).toBe(200);
     const rows = await all<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE semantic_key = ?`, "gh:pr:42:merged");
@@ -274,92 +274,111 @@ describe("ISSUE_SUMMARIZER_SYSTEM_PROMPT", () => {
   });
 });
 
-// Different Workers AI model families shape ai.run()'s resolved value
-// differently: some return the classic flat {response: string}, others
-// (e.g. gemma-4-26b-a4b-it) return an OpenAI-style Chat Completions shape
-// ({choices: [{message: {content: string}}]}). workersAiPrSummarizer must
-// handle both without throwing, since a mismatch here silently produces
-// model:'excerpt' forever — exactly the bug this test suite exists to catch.
-describe("workersAiPrSummarizer — response shape handling", () => {
+// Gemini's generateContent nests the model text under
+// candidates[0].content.parts[0].text. geminiPrSummarizer must extract+validate
+// exactly that shape, and degrade to null (→ excerpt) on a non-2xx response, a
+// missing candidate, prose instead of JSON, or a thrown fetch — a mismatch here
+// silently produces model:'excerpt' forever, exactly the bug this suite exists to
+// catch. Every case injects a stubbed fetchImpl; the network is never touched.
+describe("geminiPrSummarizer — Gemini response handling", () => {
   const PR_JSON = '{"title": "T", "what": "W", "why": null, "impact": null}';
+  const geminiResponse = (text: string) => ({ candidates: [{ content: { parts: [{ text }] } }] });
+  const stubFetch = (body: unknown, status = 200): typeof fetch =>
+    (async () =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
 
-  it("extracts and validates JSON from the classic flat {response} shape", async () => {
-    const fakeAi = { run: async () => ({ response: PR_JSON }) } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("extracts and validates JSON from candidates[0].content.parts[0].text", async () => {
+    const result = await geminiPrSummarizer("k", { fetchImpl: stubFetch(geminiResponse(PR_JSON)) })
+      .summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toEqual({ title: "T", what: "W", why: null, impact: null });
   });
 
-  it("extracts and validates JSON from the OpenAI-style {choices[0].message.content} shape", async () => {
-    const fakeAi = {
-      run: async () => ({ choices: [{ message: { role: "assistant", content: PR_JSON } }] }),
-    } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
-    expect(result).toEqual({ title: "T", what: "W", why: null, impact: null });
-  });
-
-  it("returns null when neither shape is present", async () => {
-    const fakeAi = { run: async () => ({ unexpected: "shape" }) } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("returns null on a non-2xx response (never reads the error body as a summary)", async () => {
+    const result = await geminiPrSummarizer("k", { fetchImpl: stubFetch({ error: "quota exceeded" }, 429) })
+      .summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   });
 
-  it("returns null when ai.run throws", async () => {
-    const fakeAi = {
-      run: async () => {
-        throw new Error("model not found");
-      },
-    } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("returns null when the candidate shape is absent (e.g. a safety block)", async () => {
+    const result = await geminiPrSummarizer("k", { fetchImpl: stubFetch({ promptFeedback: { blockReason: "SAFETY" } }) })
+      .summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   });
 
-  it("returns null for an empty/whitespace-only response", async () => {
-    const fakeAi = { run: async () => ({ response: "   " }) } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("returns null when fetch throws", async () => {
+    const throwingFetch = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    const result = await geminiPrSummarizer("k", { fetchImpl: throwingFetch })
+      .summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   });
 
-  it("returns null when the response is prose instead of JSON", async () => {
-    const fakeAi = { run: async () => ({ response: "This PR fixes a bug in the login flow." }) } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fakeAi).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("returns null for an empty/whitespace-only candidate text", async () => {
+    const result = await geminiPrSummarizer("k", { fetchImpl: stubFetch(geminiResponse("   ")) })
+      .summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
+  });
+
+  it("returns null when the candidate text is prose instead of JSON", async () => {
+    const result = await geminiPrSummarizer("k", { fetchImpl: stubFetch(geminiResponse("This PR fixes a bug in the login flow.")) })
+      .summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  });
+
+  it("sends the key as x-goog-api-key and targets the configured model's generateContent endpoint", async () => {
+    let capturedUrl: string | undefined;
+    let capturedHeaders: Record<string, string> | undefined;
+    const capturingFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      capturedUrl = String(url);
+      capturedHeaders = init?.headers as Record<string, string>;
+      return new Response(JSON.stringify(geminiResponse(PR_JSON)), { status: 200 });
+    }) as unknown as typeof fetch;
+    await geminiPrSummarizer("secret-key", { model: "gemini-2.5-flash-lite", fetchImpl: capturingFetch })
+      .summarize({ title: "t", body: "b" });
+    expect(capturedUrl).toContain("gemini-2.5-flash-lite:generateContent");
+    expect(capturedHeaders?.["x-goog-api-key"]).toBe("secret-key");
   });
 });
 
-// A hung/overloaded Workers AI call (exhausted Neuron budget, overloaded model)
-// can leave `ai.run` pending forever — it never resolves and never rejects, so
-// the try/catch that handles throws cannot save us. Without a timeout that wedges
-// the whole /admin/backfill request the browser waits on. The summarizer must
-// race ai.run against an injectable timeout and resolve to null on timeout so the
-// deterministic excerpt fallback fires and the request always completes.
-describe("workersAiSummarizer — timeout guard", () => {
-  const hangingAi = { run: () => new Promise(() => {}) } as unknown as Ai;
+// The summarizer runs INLINE on the webhook/backfill request the browser waits
+// on, so a hung Gemini call must never wedge capture. The summarizer races the
+// fetch against an injectable timeout and aborts the in-flight request on
+// timeout (real fetch rejects when its AbortSignal fires — the hanging stubs
+// below model that), resolving to null so the deterministic excerpt fallback
+// fires and the request always completes.
+describe("geminiSummarizer — timeout guard", () => {
+  // A fetch that never resolves on its own — only the AbortSignal firing ends it,
+  // exactly as a real fetch rejects with an AbortError when its signal aborts.
+  const hangingFetch = ((_url: string | URL | Request, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+    })) as unknown as typeof fetch;
 
-  it("resolves the PR summarizer to null when ai.run never resolves, within the injected timeout", async () => {
-    const result = await workersAiPrSummarizer(hangingAi, 50).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("resolves the PR summarizer to null when fetch never resolves, within the injected timeout", async () => {
+    const result = await geminiPrSummarizer("k", { timeoutMs: 50, fetchImpl: hangingFetch }).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   }, 1500);
 
-  it("resolves the issue summarizer to null when ai.run never resolves, within the injected timeout", async () => {
-    const result = await workersAiIssueSummarizer(hangingAi, 50).summarize({ title: "Fix", body: "Fixes a bug" });
+  it("resolves the issue summarizer to null when fetch never resolves, within the injected timeout", async () => {
+    const result = await geminiIssueSummarizer("k", { timeoutMs: 50, fetchImpl: hangingFetch }).summarize({ title: "Fix", body: "Fixes a bug" });
     expect(result).toBeNull();
   }, 1500);
 
-  it("storePrSummary falls back to excerpt (never hangs) when the AI call hangs past the timeout", async () => {
+  it("storePrSummary falls back to excerpt (never hangs) when the Gemini call hangs past the timeout", async () => {
     await seedEvent("gh:pr:99:merged", 99);
-    const row = await storePrSummary(env.DB, workersAiPrSummarizer(hangingAi, 50), {
+    const row = await storePrSummary(env.DB, geminiPrSummarizer("k", { timeoutMs: 50, fetchImpl: hangingFetch }), {
       semantic_key: "gh:pr:99:merged",
       pr_number: 99,
       title: "A PR",
       body: "Body text here",
     });
     expect(row.model).toBe("excerpt");
-    expect(row.summary).toBe(excerptSummary("A PR", "Body text here"));
     expect(row).toMatchObject({ title: null, what: null, why: null, impact: null });
   }, 1500);
 
-  it("storeIssueSummary falls back to excerpt (never hangs) when the AI call hangs past the timeout", async () => {
-    const row = await storeIssueSummary(env.DB, workersAiIssueSummarizer(hangingAi, 50), {
+  it("storeIssueSummary falls back to excerpt (never hangs) when the Gemini call hangs past the timeout", async () => {
+    const row = await storeIssueSummary(env.DB, geminiIssueSummarizer("k", { timeoutMs: 50, fetchImpl: hangingFetch }), {
       issue_number: 99,
       title: "An issue",
       body: "Body text here",
@@ -369,19 +388,18 @@ describe("workersAiSummarizer — timeout guard", () => {
     expect(row).toMatchObject({ title: null, next_step: null });
   }, 1500);
 
-  // Promise.race only stops WAITING for ai.run — it does not cancel it. A timed-out
-  // call keeps its inference subrequest running, so across a backfill batch several
-  // abandoned calls pile up and keep consuming the capacity that's already exhausted.
-  // The summarizer passes an AbortSignal and aborts it on timeout so the call cancels.
-  it("aborts the in-flight ai.run via its AbortSignal when the timeout fires", async () => {
+  // Only WAITING for the fetch is bounded by the timer; a timed-out call would keep
+  // its subrequest alive, so the summarizer aborts the AbortSignal on timeout to
+  // actually cancel the in-flight request.
+  it("aborts the in-flight fetch via its AbortSignal when the timeout fires", async () => {
     let captured: AbortSignal | undefined;
-    const capturingAi = {
-      run: (_model: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
-        captured = opts?.signal;
-        return new Promise(() => {}); // never resolves — only the timeout can end this
-      },
-    } as unknown as Ai;
-    const result = await workersAiPrSummarizer(capturingAi, 50).summarize({ title: "t", body: "b" });
+    const capturingFetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      captured = init?.signal ?? undefined;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    }) as unknown as typeof fetch;
+    const result = await geminiPrSummarizer("k", { timeoutMs: 50, fetchImpl: capturingFetch }).summarize({ title: "t", body: "b" });
     expect(result).toBeNull();
     expect(captured).toBeInstanceOf(AbortSignal);
     expect(captured?.aborted).toBe(true);
@@ -389,13 +407,13 @@ describe("workersAiSummarizer — timeout guard", () => {
 
   it("passes an AbortSignal but does NOT abort it on a healthy (fast) call", async () => {
     let captured: AbortSignal | undefined;
-    const fastAi = {
-      run: (_model: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
-        captured = opts?.signal;
-        return Promise.resolve({ response: '{"title":"T","what":"W","why":null,"impact":null}' });
-      },
-    } as unknown as Ai;
-    const result = await workersAiPrSummarizer(fastAi, 50).summarize({ title: "t", body: "b" });
+    const fastFetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      captured = init?.signal ?? undefined;
+      return Promise.resolve(
+        new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"title":"T","what":"W","why":null,"impact":null}' }] } }] }), { status: 200 })
+      );
+    }) as unknown as typeof fetch;
+    const result = await geminiPrSummarizer("k", { timeoutMs: 50, fetchImpl: fastFetch }).summarize({ title: "t", body: "b" });
     expect(result).toEqual({ title: "T", what: "W", why: null, impact: null });
     expect(captured).toBeInstanceOf(AbortSignal);
     expect(captured?.aborted).toBe(false);

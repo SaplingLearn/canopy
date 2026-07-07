@@ -8,8 +8,8 @@ const jsonLit = (obj) => (obj === null || obj === undefined ? "NULL" : q(JSON.st
 
 // Provenance stamped on structured summary rows so they read as "done" (My Work's
 // Sync skip-check treats a row as generated only when model != 'excerpt' AND
-// title IS NOT NULL). Matches WORKERS_AI_MODEL in src/tools/summarize.ts.
-const STRUCTURED_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+// title IS NOT NULL). Matches GEMINI_MODEL in src/tools/summarize.ts.
+const STRUCTURED_MODEL = "gemini-2.5-flash-lite";
 
 /** True iff the loader was asked to touch remote D1 — the loader must refuse. */
 export const targetsRemote = (argv) => argv.includes("--remote");

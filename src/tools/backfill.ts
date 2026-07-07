@@ -3,7 +3,7 @@ import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
 import { eventsFromDelivery } from "../webhook";
-import { type Summarizer, type PrSummary, type IssueSummary, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
+import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer, geminiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
 
 // Admin-triggered server-side GitHub backfill. Unlike scripts/backfill-events.mjs
@@ -32,7 +32,7 @@ const USER_AGENT = "canopy";
 // Kept small (5) so each /admin/backfill returns quickly and the browser sees
 // progress between batches rather than one long stall — the frontend auto-loops
 // up to MAX_BACKFILL_BATCHES (web/src/main.ts). Even in the pathological case
-// where every call times out (WORKERS_AI_TIMEOUT_MS), a batch is bounded to
+// where every call times out (GEMINI_TIMEOUT_MS), a batch is bounded to
 // ~5 × timeout and still completes via the excerpt fallback.
 const SUMMARY_BATCH_LIMIT = 5;
 const SUMMARY_CALL_DELAY_MS = 500;
@@ -186,8 +186,8 @@ export async function runBackfill(
   if (!token || !repo) return failed("service token or repo not configured");
 
   const doFetch = opts?.fetchImpl ?? fetch;
-  const summarizer = opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null);
-  const issueSummarizer = opts?.issueSummarizer ?? (env.AI ? workersAiIssueSummarizer(env.AI) : null);
+  const summarizer = opts?.summarizer ?? (env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null);
+  const issueSummarizer = opts?.issueSummarizer ?? (env.GEMINI_API_KEY ? geminiIssueSummarizer(env.GEMINI_API_KEY) : null);
   const summaryBatchLimit = opts?.summaryBatchLimit ?? SUMMARY_BATCH_LIMIT;
   const summaryCallDelayMs = opts?.summaryCallDelayMs ?? SUMMARY_CALL_DELAY_MS;
   const headers = {
