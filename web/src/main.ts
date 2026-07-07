@@ -526,13 +526,19 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "toggleHistory": state.showHistory = !state.showHistory; break;
-    // Expand/collapse a page's in-page outline without navigating to it.
-    case "toggleOutline":
+    // Expand/collapse a page's in-page outline without navigating to it. Toggle
+    // the class on the live element (no full rerender) so the CSS grid-rows
+    // transition actually fires — a rerender would swap in a fresh element.
+    case "toggleOutline": {
       if (arg) {
-        if (state.docOutlineOpen[arg]) delete state.docOutlineOpen[arg];
-        else state.docOutlineOpen[arg] = true;
+        const open = !state.docOutlineOpen[arg];
+        if (open) state.docOutlineOpen[arg] = true; else delete state.docOutlineOpen[arg];
+        mount.querySelector(`.cnpy-treechev[data-arg="${cssEscape(arg)}"]`)?.classList.toggle("is-open", open);
+        mount.querySelector(`.cnpy-outline[data-outline="${cssEscape(arg)}"]`)?.classList.toggle("is-open", open);
+        if (open) updateActiveHeading();
       }
-      break;
+      return;
+    }
     // Jump to a heading; arg is `${slug}::${headingId}`. Opens the doc first if
     // it isn't the one showing, then scrolls once its reader has rendered.
     case "scrollToHeading": {
