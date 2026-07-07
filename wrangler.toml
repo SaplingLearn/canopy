@@ -24,9 +24,8 @@ ADMIN_LOGINS = "AndresL230"
 [observability]
 enabled = true
 
-# Workers AI: capture-time summaries of completed PR bodies (never at render).
-[ai]
-binding = "AI"
+# Capture-time PR/issue summaries come from Google Gemini over REST (GEMINI_API_KEY
+# secret) — a plain fetch(), not a Cloudflare binding, so no [ai] block is needed.
 
 # Scheduled backstop for the milestone progress cache (event-derived writes are primary).
 [triggers]

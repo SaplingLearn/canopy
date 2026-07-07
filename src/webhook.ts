@@ -2,7 +2,7 @@ import type { CapturedEvent } from "@shared/contract";
 import type { Env } from "./env";
 import { type DB } from "./db";
 import { ingestEvent } from "./consumer";
-import { type Summarizer, type PrSummary, type IssueSummary, workersAiPrSummarizer, workersAiIssueSummarizer, storePrSummary, storeIssueSummary } from "./tools/summarize";
+import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer, geminiIssueSummarizer, storePrSummary, storeIssueSummary } from "./tools/summarize";
 import { applyEventProgress } from "./tools/progress";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
@@ -247,7 +247,7 @@ export function progressFromIssueEvent(
 
 // Task 4: parse the PR event's own `raw` (its title/body — nothing else) and
 // store a capture-time summary. `summarizer` is already resolved by the
-// caller (opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null));
+// caller (opts?.summarizer ?? (env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null));
 // storePrSummary itself never throws, so a summary failure never fails capture.
 async function summarizePrSeam(db: DB, summarizer: Summarizer<PrSummary> | null, event: CapturedEvent): Promise<void> {
   const parsed = JSON.parse(event.raw) as { pr: { number: number; title: string; body: string | null } };
@@ -319,11 +319,11 @@ export async function handleGithubWebhook(
     if (res.outcome === "written") {
       captured++;
       if (ev.event_type === "pr_merged" || ev.event_type === "pr_closed") {
-        const summarizer = opts?.summarizer ?? (env.AI ? workersAiPrSummarizer(env.AI) : null);
+        const summarizer = opts?.summarizer ?? (env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null);
         await summarizePrSeam(env.DB, summarizer, ev);
       } else {
         await progressSeam(env.DB, payload);
-        const issueSummarizer = opts?.issueSummarizer ?? (env.AI ? workersAiIssueSummarizer(env.AI) : null);
+        const issueSummarizer = opts?.issueSummarizer ?? (env.GEMINI_API_KEY ? geminiIssueSummarizer(env.GEMINI_API_KEY) : null);
         await summarizeIssueSeam(env.DB, issueSummarizer, ev);
       }
     } else {
