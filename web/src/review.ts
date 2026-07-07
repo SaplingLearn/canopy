@@ -7,7 +7,7 @@
 // Interactions dispatch via data-act / data-arg handled in main.ts. No fetching,
 // no inline data.
 
-import { esc, attr, statusBadge, avatarCircle, selectChip, dashedCard, MONO_LABEL } from "./ui";
+import { esc, attr, statusBadge, selectChip, dashedCard, MONO_LABEL } from "./ui";
 
 // ── prop shapes (loose for now — reshaped at wire time) ──────────────────────
 export type ReviewKind = "proposal" | "decision";
@@ -57,21 +57,25 @@ export function reviewFilterChips(filter: ReviewFilter): string {
     .join("")}</div>`;
 }
 
-/** One review queue row: eyebrow + badge, title, 2-line summary, agent + time. */
+/** One review queue row — mirrors the detail header: title first, status badge
+ *  up-right on the title row, 2-line summary, then a byline that folds the
+ *  record type · identifier (mono) into the author · date. */
 export function reviewCard(it: ReviewItem, selected: boolean): string {
+  const { type, id } = splitEyebrow(it.eyebrow);
+  const dot = `<span style="color:var(--fg-40)">·</span>`;
   return `<button data-act="reviewSelect" data-arg="${attr(it.id)}" class="cnpy-titem">
     ${selected ? `<span class="cnpy-selbar"></span>` : ""}
     <div style="position:relative">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</div>
-        ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED", "var(--amber)") : ""}
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="font-size:14px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);min-width:0">${esc(it.title)}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex:none">${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED", "var(--amber)") : ""}</div>
       </div>
-      <div style="font-size:14px;font-weight:600;letter-spacing:-0.005em;margin-top:6px;color:var(--fg)">${esc(it.title)}</div>
-      <div style="font-size:12.5px;color:var(--fg-55);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
-        ${avatarCircle(it.agentInitials)}
-        <div style="font-size:12px;color:var(--fg-55);flex:1">${esc(it.agent)}</div>
-        <div style="font-size:11.5px;color:var(--fg-40)">${esc(it.time)}</div>
+      <div style="font-size:12.5px;color:var(--fg-55);margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11.5px;color:var(--fg-55)">
+        ${type ? `<span>${esc(type)}</span>` : ""}
+        ${id ? `${dot}<span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">${esc(id)}</span>` : ""}
+        ${dot}<span>${esc(it.agent)}</span>
+        ${dot}<span style="color:var(--fg-40)">${esc(it.time)}</span>
       </div>
     </div>
   </button>`;
@@ -211,26 +215,38 @@ export function adrRecord(sections: AdrSection[]): string {
 }
 
 /** Detail pane for the selected item: header + verdict actions + content. */
+/** Split the mapper's "TYPE · IDENTIFIER" eyebrow into a title-cased record
+ *  type and its identifier — e.g. "DECISION · ADR-005" → {type:"Decision",
+ *  id:"ADR-005"}; "PROPOSAL · CANOPY / REFERENCE" → {type:"Proposal", id:"CANOPY / REFERENCE"}. */
+function splitEyebrow(eyebrow: string): { type: string; id: string } {
+  const at = eyebrow.indexOf(" · ");
+  const rawType = at === -1 ? eyebrow : eyebrow.slice(0, at);
+  const id = at === -1 ? "" : eyebrow.slice(at + 3);
+  const type = rawType ? rawType.charAt(0) + rawType.slice(1).toLowerCase() : "";
+  return { type, id };
+}
+
 export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
   const acceptLabel = it.kind === "decision" ? "Ratify" : "Promote";
   const content = it.kind === "decision"
     ? adrRecord(it.adr ?? [])
     : diffViewer(it.diff ?? [], diffView, it.liveVersion ?? "LIVE");
+  const { type, id } = splitEyebrow(it.eyebrow);
+  // Byline: record type · identifier (mono, reads as a reference) · author · date.
+  const dot = `<span style="color:var(--fg-40)">·</span>`;
   return `<div style="max-width:920px;padding:24px 32px 100px">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
       <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:9px">
-          <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">${esc(it.eyebrow)}</div>
-          ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)") : ""}
-        </div>
-        <h2 style="margin:8px 0 0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(it.title)}</h2>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-          ${avatarCircle(it.agentInitials)}
-          <div style="font-size:12px;color:var(--fg-55)">${esc(it.agent)}</div>
-          <div style="font-size:11.5px;color:var(--fg-40)">· ${esc(it.time)}</div>
+        <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(it.title)}</h2>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px;font-size:12px;color:var(--fg-55)">
+          ${type ? `<span>${esc(type)}</span>` : ""}
+          ${id ? `${dot}<span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">${esc(id)}</span>` : ""}
+          ${dot}<span>${esc(it.agent)}</span>
+          ${dot}<span style="color:var(--fg-40)">${esc(it.time)}</span>
         </div>
       </div>
-      <div style="display:flex;gap:8px;flex:none;padding-top:2px">
+      <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">
+        ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)") : ""}
         <button data-act="reviewReject" data-arg="${attr(it.id)}" class="cnpy-rejectbtn" style="background:transparent;border:1px solid var(--border-strong);border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Reject</button>
         <button data-act="reviewAccept" data-arg="${attr(it.id)}" class="cnpy-accentbtn" style="background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:9px 17px;font-size:13px;font-weight:600">${acceptLabel}</button>
       </div>
