@@ -502,9 +502,9 @@ function docTreeRow(s: AppState, doc: DocRow): string {
     ? `<span class="cnpy-treechev${open ? " is-open" : ""}" data-act="toggleOutline" data-arg="${attr(doc.slug)}" role="button" aria-expanded="${open ? "true" : "false"}" aria-label="Toggle outline"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>`
     : `<span class="cnpy-treechev is-empty"></span>`;
   const page = `<button data-act="openDoc" data-arg="${attr(doc.slug)}" class="cnpy-tree${active ? " is-active" : ""}">${chevron}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(doc.title)}</span></button>`;
-  const outlineHtml = open && outline.length
-    ? `<div class="cnpy-outline">${outline.map((h) =>
-        `<button data-act="scrollToHeading" data-arg="${attr(doc.slug + "::" + h.id)}" class="cnpy-outline-item${h.level >= 3 ? " lvl3" : ""}"><span>${esc(h.text)}</span></button>`).join("")}</div>`
+  const outlineHtml = outline.length
+    ? `<div class="cnpy-outline${open ? " is-open" : ""}" data-outline="${attr(doc.slug)}"><div class="cnpy-outline-inner">${outline.map((h) =>
+        `<button data-act="scrollToHeading" data-arg="${attr(doc.slug + "::" + h.id)}" class="cnpy-outline-item${h.level >= 3 ? " lvl3" : ""}"><span>${esc(h.text)}</span></button>`).join("")}</div></div>`
     : "";
   return page + outlineHtml;
 }
