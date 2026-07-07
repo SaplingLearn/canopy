@@ -68,12 +68,54 @@ function rerender(): void {
       requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
     }
   }
+  updateActiveHeading();
 }
 
 // Minimal CSS.escape shim for id selectors (heading ids are already slug-safe).
 function cssEscape(v: string): string {
   return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : v.replace(/["\\]/g, "\\$&");
 }
+
+// ── docs scrollspy: highlight the outline item for the section in view ────────
+// Nearest scrollable ancestor of the reader body (the pane that actually scrolls).
+function readerScroller(): HTMLElement | null {
+  const md = mount.querySelector(".cnpy-md");
+  for (let n = md?.parentElement; n; n = n.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n as HTMLElement;
+  }
+  return null;
+}
+
+// Mark the outline entry for the heading currently at the top of the reader as
+// current. Direct DOM (no rerender) so it stays cheap while scrolling.
+function updateActiveHeading(): void {
+  if (state.screen !== "docs" || !state.docSlug) return;
+  const reader = readerScroller();
+  if (!reader) return;
+  const heads = [...reader.querySelectorAll<HTMLElement>(".cnpy-md h2[id], .cnpy-md h3[id]")];
+  if (!heads.length) return;
+  const top = reader.getBoundingClientRect().top;
+  let activeId = heads[0].id;
+  for (const h of heads) {
+    if (h.getBoundingClientRect().top - top <= 96) activeId = h.id;
+    else break;
+  }
+  // At the bottom the last section can't reach the top — force it current.
+  if (reader.scrollTop + reader.clientHeight >= reader.scrollHeight - 4) activeId = heads[heads.length - 1].id;
+  const want = `${state.docSlug}::${activeId}`;
+  for (const item of mount.querySelectorAll<HTMLElement>(".cnpy-outline-item")) {
+    item.classList.toggle("is-current", item.getAttribute("data-arg") === want);
+  }
+}
+
+// One capture-phase listener survives every rerender (scroll doesn't bubble, so
+// capture catches the reader pane); rAF-throttled.
+let spyScheduled = false;
+mount.addEventListener("scroll", () => {
+  if (spyScheduled) return;
+  spyScheduled = true;
+  requestAnimationFrame(() => { spyScheduled = false; updateActiveHeading(); });
+}, true);
 
 function resolvedTheme(): "dark" | "light" | "midnight" {
   return state.theme === "system" ? (state.systemDark ? "dark" : "light") : state.theme;
