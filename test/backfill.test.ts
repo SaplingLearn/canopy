@@ -153,7 +153,7 @@ describe("runBackfill", () => {
     // The PR summary projection ran for both newly-written PR events.
     const summary = await first<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE pr_number = ?`, 10);
     expect(summary).toBeTruthy();
-    expect(summary?.summary).toBe("AI summary");
+    expect(summary?.what).toBe("AI summary");
   });
 
   it("is idempotent on event capture — a second run over the same GitHub state writes no new events", async () => {
@@ -204,7 +204,7 @@ describe("runBackfill", () => {
     expect(summarizer.calls).toBe(1);
 
     const summary = await first<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE pr_number = ?`, 10);
-    expect(summary?.summary).toBe("Plain prose, no headings — the new richer style.");
+    expect(summary?.what).toBe("Plain prose, no headings — the new richer style.");
   });
 
   it("re-summarizes a prose-era row (model set, title NULL) exactly once, then skips it", async () => {

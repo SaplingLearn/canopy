@@ -79,7 +79,7 @@ function issueEvent(over: {
 }
 
 describe("getMyWork — previous activity cap", () => {
-  it("returns only the 6 most recent merged/closed PR events, with the stored summary joined", async () => {
+  it("returns only the 6 most recent merged/closed PR events, with the stored structured columns joined", async () => {
     for (let n = 1; n <= 7; n++) {
       await ingestEvent(env.DB, prEvent({ number: n, login: "AndresL230", occurred_at: daysBefore(NOW, 7 - n) }), "github-webhook");
     }
@@ -96,10 +96,11 @@ describe("getMyWork — previous activity cap", () => {
       merged: true,
       // Not yet populated by capture/summarize — null until the follow-up lands.
       displayTitle: null,
+      what: null,
+      why: null,
       impact: null,
       baseRef: null,
     });
-    expect(work.previousActivity[0].summary).toBe("some body"); // excerpt fallback (no summarizer)
   });
 
   it("does not surface another person's PR events", async () => {
@@ -242,7 +243,6 @@ describe("getMyWork — structured fields", () => {
       what: "Did the thing.",
       why: "It was broken.",
       impact: "Users can log in.",
-      summary: "Did the thing.",
       baseRef: "main",
     });
   });

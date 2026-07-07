@@ -26,7 +26,6 @@ function stripPriority(title: string): string {
 }
 
 interface PrEventJoinRow extends EventRow {
-  summary: string | null;
   s_title: string | null;
   s_what: string | null;
   s_why: string | null;
@@ -72,7 +71,7 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
 
     const prRows = await all<PrEventJoinRow>(
       db,
-      `SELECT e.*, s.summary AS summary, s.title AS s_title, s.what AS s_what, s.why AS s_why, s.impact AS s_impact
+      `SELECT e.*, s.title AS s_title, s.what AS s_what, s.why AS s_why, s.impact AS s_impact
          FROM events e
          LEFT JOIN pr_summaries s ON s.semantic_key = e.semantic_key
         WHERE e.event_type IN ('pr_merged', 'pr_closed')
@@ -89,7 +88,6 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         url: parsed.pr.html_url,
         merged: parsed.pr.merged,
         occurredAt: row.occurred_at ?? row.recorded_at,
-        summary: row.summary,
         displayTitle: row.s_title,
         what: row.s_what,
         why: row.s_why,

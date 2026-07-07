@@ -211,11 +211,12 @@ export function excerptSummary(title: string, body: string): string {
 }
 
 /**
- * Try the summarizer, fall back to excerptSummary (model:'excerpt', NULL
- * structured columns) on any null/throw. On structured success `summary`
- * mirrors `what` — sane prose for any reader of the old column. INSERT OR
- * REPLACE keeps one row per semantic_key. NEVER throws — a summary failure
- * must not fail the webhook capture that triggered it.
+ * Try the summarizer; on any null/throw store a marker row (model:'excerpt',
+ * NULL structured columns) with no content — a PR is structured-only, so the
+ * fallback is just a "not summarized yet" marker that Sync retries (not a prose
+ * excerpt). On success, title/what/why/impact are stored. INSERT OR REPLACE
+ * keeps one row per semantic_key. NEVER throws — a summary failure must not fail
+ * the webhook capture that triggered it.
  */
 export async function storePrSummary(
   db: DB,
@@ -232,15 +233,13 @@ export async function storePrSummary(
       structured = null;
     }
   }
-  const summary = structured ? structured.what : excerptSummary(pr.title, pr.body);
   const created_at = nowIso();
   await run(
     db,
-    `INSERT OR REPLACE INTO pr_summaries (semantic_key, pr_number, summary, model, created_at, title, what, why, impact)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO pr_summaries (semantic_key, pr_number, model, created_at, title, what, why, impact)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     pr.semantic_key,
     pr.pr_number,
-    summary,
     model,
     created_at,
     structured?.title ?? null,
@@ -251,7 +250,6 @@ export async function storePrSummary(
   return {
     semantic_key: pr.semantic_key,
     pr_number: pr.pr_number,
-    summary,
     model,
     created_at,
     title: structured?.title ?? null,

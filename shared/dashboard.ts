@@ -9,8 +9,7 @@ export interface MyWorkPr {
   url: string;
   merged: boolean;
   occurredAt: string;
-  summary: string | null;
-  what: string | null; // structured "What changed" (null → render falls back to summary prose)
+  what: string | null; // structured "What changed" (null → card shows a "No summary recorded" placeholder)
   why: string | null; // motivation, only when the PR body stated one
   impact: string | null; // plain-language outcome sentence (never a file list)
   baseRef: string | null; // PR base branch (footer "into main" suffix; hidden when null)

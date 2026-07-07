@@ -148,13 +148,13 @@ export interface EventRow {
   recorded_by: string;
 }
 
-// Worker-generated completed-PR summary (0012; structured fields 0018).
-// Derived, regenerable, never truth. Structured fields are NULL on prose-era
-// and excerpt-fallback rows; `summary` mirrors `what` on structured success.
+// Worker-generated completed-PR summary (0012; structured fields 0018; the
+// legacy prose `summary` column dropped in 0019 — PRs are structured-only).
+// Derived, regenerable, never truth. Structured fields are NULL on excerpt-
+// fallback rows (model='excerpt'), which carry no content and are retried by Sync.
 export interface PrSummaryRow {
   semantic_key: string;
   pr_number: number;
-  summary: string;
   model: string | null;    // 'excerpt' = deterministic fallback
   created_at: string;
   title: string | null;    // humanized display title (0018)
