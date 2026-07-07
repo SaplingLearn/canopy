@@ -79,13 +79,12 @@ describe("storePrSummary", () => {
     const stub: Summarizer<PrSummary> = { model: "stub-model", summarize: async () => PR_STUB };
     const row = await storePrSummary(env.DB, stub, { semantic_key: "gh:pr:1:merged", pr_number: 1, title: "t", body: "b" });
     expect(row.model).toBe("stub-model");
-    expect(row.summary).toBe("The concrete change."); // prose mirror of `what`
     expect(row).toMatchObject({ title: "Humanized PR title", what: "The concrete change.", why: "Because reasons.", impact: "Users win." });
     const stored = await all<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE semantic_key = 'gh:pr:1:merged'`);
-    expect(stored[0]).toMatchObject({ summary: "The concrete change.", title: "Humanized PR title", what: "The concrete change.", why: "Because reasons.", impact: "Users win." });
+    expect(stored[0]).toMatchObject({ title: "Humanized PR title", what: "The concrete change.", why: "Because reasons.", impact: "Users win." });
   });
 
-  it("falls back to excerptSummary (model:'excerpt') when the summarizer returns null, and never throws", async () => {
+  it("marks the row model:'excerpt' with null structured columns when the summarizer returns null, and never throws", async () => {
     await seedEvent("gh:pr:2:merged", 2);
     const nullStub: Summarizer<PrSummary> = { model: "stub", summarize: async () => null };
     const row = await storePrSummary(env.DB, nullStub, {
@@ -95,11 +94,10 @@ describe("storePrSummary", () => {
       body: "Body text here",
     });
     expect(row.model).toBe("excerpt");
-    expect(row.summary).toBe(excerptSummary("Another PR", "Body text here"));
     expect(row).toMatchObject({ title: null, what: null, why: null, impact: null });
   });
 
-  it("falls back to excerptSummary when the summarizer throws, and never throws", async () => {
+  it("marks the row model:'excerpt' (null structured columns) when the summarizer throws, and never throws", async () => {
     await seedEvent("gh:pr:3:merged", 3);
     const throwingStub: Summarizer<PrSummary> = {
       model: "stub",
@@ -122,11 +120,10 @@ describe("storePrSummary", () => {
       body: "",
     });
     expect(row.model).toBe("excerpt");
-    expect(row.summary).toBe("Third PR"); // empty body → title
     expect(row).toMatchObject({ title: null, what: null, why: null, impact: null });
   });
 
-  it("falls back to excerptSummary when no summarizer is provided (null)", async () => {
+  it("marks the row model:'excerpt' (null structured columns) when no summarizer is provided (null)", async () => {
     await seedEvent("gh:pr:4:merged", 4);
     const row = await storePrSummary(env.DB, null, {
       semantic_key: "gh:pr:4:merged",
@@ -135,7 +132,6 @@ describe("storePrSummary", () => {
       body: "   ",
     });
     expect(row.model).toBe("excerpt");
-    expect(row.summary).toBe("Fourth PR"); // whitespace-only body collapses to empty → title
     expect(row).toMatchObject({ title: null, what: null, why: null, impact: null });
   });
 });
@@ -175,7 +171,6 @@ describe("webhook → summarize wiring", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].pr_number).toBe(42);
     expect(rows[0].model).toBe("stub");
-    expect(rows[0].summary).toBe(PR_STUB.what);
 
     // Replay: the event is unchanged (INSERT OR IGNORE drops it) → the seam never
     // re-runs, so still exactly one pr_summaries row.

@@ -1102,20 +1102,19 @@ function mwDueDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** A merged/closed PR card (option 2a): title + number pill, then labeled rows —
- *  "What changed"/"Why" come straight from the structured DTO fields
- *  (pr.what/pr.why) when pr.what is set, a single "Summary" row for
- *  prose/legacy summaries, "Impact" when present — and a footer with the
- *  MERGED/CLOSED chip + time ("· into <base>" when known). */
+/** A merged/closed PR card (option 2a): title + number pill, then the structured
+ *  rows — "What changed"/"Why" from the DTO fields (pr.what/pr.why), "Impact" when
+ *  present — and a footer with the MERGED/CLOSED chip + time ("· into <base>" when
+ *  known). A PR with no structured summary shows a "No summary recorded"
+ *  placeholder; the raw excerpt is NEVER rendered here — a prose "Summary" is the
+ *  issue/todo surface (see todoCard), not the PR surface. */
 export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => string): string {
   const rows: string[] = [];
   if (pr.what !== null) {
     rows.push(mwRow("What changed", mwMdBody(pr.what, markdownFn)));
     if (pr.why) rows.push(mwRow("Why", mwMdBody(pr.why, markdownFn)));
-  } else if (pr.summary === null) {
-    rows.push(mwRow("Summary", `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`));
   } else {
-    rows.push(mwRow("Summary", mwMdBody(pr.summary, markdownFn)));
+    rows.push(mwRow("What changed", `<div style="font-size:13.5px;color:var(--fg-55);line-height:1.6">${linkifyRefs("No summary recorded for this PR.")}</div>`));
   }
   if (pr.impact) rows.push(mwRow("Impact", mwMdBody(pr.impact, markdownFn)));
   const chip = pr.merged

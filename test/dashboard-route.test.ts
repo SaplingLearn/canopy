@@ -96,7 +96,7 @@ describe("GET /me/dashboard (session-gated)", () => {
       title: "PR 1",
       url: "https://github.com/o/r/pull/1",
       merged: true,
-      summary: "some body", // the stored excerpt summary joined in
+      what: null, // excerpt fallback (no summarizer) → no structured summary
     });
 
     expect(body.todo).toHaveLength(1);

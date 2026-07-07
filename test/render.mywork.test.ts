@@ -27,7 +27,6 @@ function makePr(overrides: Partial<MyWorkPr> = {}): MyWorkPr {
     url: "https://github.com/SaplingLearn/sapling/pull/42",
     merged: true,
     occurredAt: new Date().toISOString(),
-    summary: "Fixed **the thing** that was broken.",
     what: null,
     why: null,
     impact: null,
@@ -55,8 +54,8 @@ function makeTodo(overrides: Partial<MyWorkTodo> = {}): MyWorkTodo {
 // ── prActivityCard ───────────────────────────────────────────────────────────
 
 describe("prActivityCard", () => {
-  it("embeds the injected markdownFn output for the summary", () => {
-    const html = prActivityCard(makePr(), mockMd);
+  it("embeds the injected markdownFn output for the structured 'what' field", () => {
+    const html = prActivityCard(makePr({ what: "Fixed **the thing** that was broken." }), mockMd);
     expect(html).toContain("mock-md");
     expect(html).toContain("Fixed **the thing**");
   });
@@ -82,9 +81,10 @@ describe("prActivityCard", () => {
     expect(html).toContain('rel="noopener"');
   });
 
-  it("falls back to linkifyRefs raw text when summary is null (no markdownFn call)", () => {
-    const html = prActivityCard(makePr({ summary: null }), mockMd);
+  it("uses linkifyRefs (not markdownFn) for the no-summary placeholder when what is null", () => {
+    const html = prActivityCard(makePr({ what: null }), mockMd);
     expect(html).not.toContain("mock-md");
+    expect(html).toContain("No summary recorded for this PR.");
   });
 
   it("XSS: a <script> in the PR title is escaped, not executed", () => {
@@ -115,11 +115,10 @@ describe("prActivityCard", () => {
     expect(html).not.toContain(">Why<");
   });
 
-  it("falls back to a single Summary prose row when what is null", () => {
-    const html = prActivityCard(makePr({ what: null, summary: "Fixed the login bug that was affecting users." }), mockMd);
-    expect(html).toContain("Summary");
-    expect(html).toContain("Fixed the login bug that was affecting users.");
-    expect(html).not.toContain("What changed");
+  it("never renders a 'Summary' row on a PR card — prose Summary is issue-only", () => {
+    const html = prActivityCard(makePr({ what: null }), mockMd);
+    expect(html).not.toContain(">Summary<");                    // no "Summary" label on PR cards
+    expect(html).toContain("No summary recorded for this PR."); // placeholder instead
   });
 
   it("renders an Impact row when pr.impact is set; collapses it when null", () => {
@@ -270,14 +269,15 @@ describe("render() — My Work screen", () => {
     };
   }
 
-  // previousActivity items here use summary:null (linkifyRefs fallback path) — myWorkView
-  // passes the REAL renderMarkdown (DOMPurify) for non-null summaries, and DOMPurify needs
-  // DOM globals that aren't present in this workerd test environment (same reason
-  // render.triage.test.ts never drives renderMarkdown through the full render() tree).
+  // previousActivity items here use what:null (the "No summary recorded" placeholder,
+  // linkifyRefs path) — myWorkView passes the REAL renderMarkdown (DOMPurify) for the
+  // structured `what`, and DOMPurify needs DOM globals that aren't present in this
+  // workerd test environment (same reason render.triage.test.ts never drives
+  // renderMarkdown through the full render() tree).
   it("contains both section labels", () => {
     const data: DashboardData = {
       person: "alice",
-      previousActivity: [makePr({ summary: null })],
+      previousActivity: [makePr({ what: null })],
       todo: [makeTodo()],
       degraded: false,
     };
@@ -289,7 +289,7 @@ describe("render() — My Work screen", () => {
   it("does NOT contain the old 'Working on now' focus headline (revert guard)", () => {
     const data: DashboardData = {
       person: "alice",
-      previousActivity: [makePr({ summary: null })],
+      previousActivity: [makePr({ what: null })],
       todo: [makeTodo()],
       degraded: false,
     };
@@ -385,7 +385,7 @@ describe("render() — My Work screen", () => {
   it("renders To-do before Previous activity", () => {
     const data: DashboardData = {
       person: "alice",
-      previousActivity: [makePr({ summary: null })],
+      previousActivity: [makePr({ what: null })],
       todo: [makeTodo()],
       degraded: false,
     };

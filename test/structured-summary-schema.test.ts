@@ -20,8 +20,8 @@ describe("0018_structured_summaries schema", () => {
     await seedEvent("gh:pr:900:merged", 900);
     await run(
       env.DB,
-      `INSERT INTO pr_summaries (semantic_key, pr_number, summary, model, created_at, title, what, why, impact)
-       VALUES ('gh:pr:900:merged', 900, 'prose', 'm', ?, 'T', 'W', 'Y', 'I')`,
+      `INSERT INTO pr_summaries (semantic_key, pr_number, model, created_at, title, what, why, impact)
+       VALUES ('gh:pr:900:merged', 900, 'm', ?, 'T', 'W', 'Y', 'I')`,
       nowIso()
     );
     const rows = await all<{ title: string | null; what: string | null; why: string | null; impact: string | null }>(
