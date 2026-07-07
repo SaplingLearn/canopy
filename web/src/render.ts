@@ -540,15 +540,26 @@ function docsView(s: AppState): string {
   }
 
   // ── reader (right pane) ─────────────────────────────────────────────────────
-  let readerHtml: string;
+  const readerHtml = docReaderHtml(s);
+
+  return `<div style="display:flex;height:100%">
+    <div class="cnpy-scroll" style="width:252px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 12px">${treeHtml}</div>
+    <div id="cnpy-reader" class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">${readerHtml}</div>
+  </div>`;
+}
+
+/** The reader pane's inner HTML. Extracted so main.ts can load a doc into the
+ *  pane in place (updating only #cnpy-reader) without rerendering the tree —
+ *  a tree rerender swaps in fresh outline elements and kills their transition. */
+export function docReaderHtml(s: AppState): string {
   const dd = s.docDetail;
 
   if (dd.status === "loading" || (dd.status === "idle" && s.docSlug !== null)) {
-    readerHtml = notice("Loading…");
+    return notice("Loading…");
   } else if (dd.status === "error") {
-    readerHtml = notice("Couldn't load this doc.");
+    return notice("Couldn't load this doc.");
   } else if (dd.data === null) {
-    readerHtml = notice(s.docSlug === null ? "Select a doc from the tree." : "Doc not found.");
+    return notice(s.docSlug === null ? "Select a doc from the tree." : "Doc not found.");
   } else if (dd.status === "ok" && dd.data !== null) {
     const { doc, versions } = dd.data;
     const hasStaged = versions.some((v) => v.status === "staged" && v.version > doc.current_version);
@@ -568,7 +579,7 @@ function docsView(s: AppState): string {
       </div>`).join("")}
     </div>` : "";
 
-    readerHtml = `<div style="max-width:812px;margin:0 auto;padding:34px 44px 120px">
+    return `<div style="max-width:812px;margin:0 auto;padding:34px 44px 120px">
     ${stagedBanner}
     <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel(doc.space))} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
     <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
@@ -582,14 +593,8 @@ function docsView(s: AppState): string {
     ${history}
     <div class="cnpy-md" style="margin-top:28px">${renderMarkdown(doc.body)}</div>
   </div>`;
-  } else {
-    readerHtml = notice("Select a doc from the tree.");
   }
-
-  return `<div style="display:flex;height:100%">
-    <div class="cnpy-scroll" style="width:252px;flex:none;border-right:1px solid var(--border);overflow-y:auto;padding:18px 12px">${treeHtml}</div>
-    <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-width:0">${readerHtml}</div>
-  </div>`;
+  return notice("Select a doc from the tree.");
 }
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
