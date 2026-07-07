@@ -208,7 +208,7 @@ export function maintenanceView(p: MaintenanceProps): string {
     ? p.identity.map((g) => identityCard(g, p.people, p.mapPicks[g.id] ?? null, p.mapConfirm === g.id)).join("")
     : maintEmpty("Everyone is accounted for", "Every login in the activity stream is matched to a person.");
 
-  return `<div style="max-width:860px;padding:26px 32px 100px">
+  return `<div style="max-width:860px;margin:0 auto;padding:26px 32px 100px">
     <h1 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">Maintenance</h1>
     <div style="font-size:12.5px;color:var(--fg-55);margin-top:3px">Occasional housekeeping. Empty is the normal state.</div>
     ${maintSectionHeader("UNPLACED", "read a loose thing, then route it or throw it away", unplacedCount, true)}
