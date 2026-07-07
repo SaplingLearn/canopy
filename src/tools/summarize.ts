@@ -142,19 +142,30 @@ function makeWorkersAiSummarizer<T>(
     async summarize({ title, body }) {
       // A hung ai.run neither resolves nor rejects, so the try/catch alone can't
       // save us — race it against a timer whose rejection lands in the same catch
-      // and degrades to the excerpt fallback. clearTimeout in finally so a healthy
-      // call doesn't leave the timer pending.
+      // and degrades to the excerpt fallback. Promise.race only stops WAITING,
+      // though; the losing ai.run keeps its inference subrequest alive and keeps
+      // consuming capacity. So thread an AbortSignal into the call and abort it
+      // when the timer wins, actually cancelling the in-flight request. clearTimeout
+      // in finally so a healthy call doesn't leave the timer pending.
+      const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const result = await Promise.race([
-          ai.run(WORKERS_AI_MODEL, {
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: `Title: ${title}\n\nBody: ${body}` },
-            ],
-          }),
+          ai.run(
+            WORKERS_AI_MODEL,
+            {
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: `Title: ${title}\n\nBody: ${body}` },
+              ],
+            },
+            { signal: controller.signal }
+          ),
           new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`Workers AI timed out after ${timeoutMs}ms`)), timeoutMs);
+            timer = setTimeout(() => {
+              controller.abort();
+              reject(new Error(`Workers AI timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
           }),
         ]);
         const response = extractResponseText(result);

@@ -373,6 +373,38 @@ describe("workersAiSummarizer — timeout guard", () => {
     expect(row.summary).toBe(excerptSummary("An issue", "Body text here"));
     expect(row).toMatchObject({ title: null, next_step: null });
   }, 1500);
+
+  // Promise.race only stops WAITING for ai.run — it does not cancel it. A timed-out
+  // call keeps its inference subrequest running, so across a backfill batch several
+  // abandoned calls pile up and keep consuming the capacity that's already exhausted.
+  // The summarizer passes an AbortSignal and aborts it on timeout so the call cancels.
+  it("aborts the in-flight ai.run via its AbortSignal when the timeout fires", async () => {
+    let captured: AbortSignal | undefined;
+    const capturingAi = {
+      run: (_model: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        captured = opts?.signal;
+        return new Promise(() => {}); // never resolves — only the timeout can end this
+      },
+    } as unknown as Ai;
+    const result = await workersAiPrSummarizer(capturingAi, 50).summarize({ title: "t", body: "b" });
+    expect(result).toBeNull();
+    expect(captured).toBeInstanceOf(AbortSignal);
+    expect(captured?.aborted).toBe(true);
+  }, 1500);
+
+  it("passes an AbortSignal but does NOT abort it on a healthy (fast) call", async () => {
+    let captured: AbortSignal | undefined;
+    const fastAi = {
+      run: (_model: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        captured = opts?.signal;
+        return Promise.resolve({ response: '{"title":"T","what":"W","why":null,"impact":null}' });
+      },
+    } as unknown as Ai;
+    const result = await workersAiPrSummarizer(fastAi, 50).summarize({ title: "t", body: "b" });
+    expect(result).toEqual({ title: "T", what: "W", why: null, impact: null });
+    expect(captured).toBeInstanceOf(AbortSignal);
+    expect(captured?.aborted).toBe(false);
+  });
 });
 
 describe("storeIssueSummary", () => {
