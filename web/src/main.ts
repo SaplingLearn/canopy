@@ -216,6 +216,17 @@ function setOutlineOpen(el: Element | null, open: boolean): void {
   (el as HTMLElement | null)?.classList.toggle("is-open", open);
 }
 
+// Flip a doc's outline open/closed in place (chevron + row both use this). No
+// navigation, no rerender — just the animated toggle and the open-set update.
+function toggleOutlineFor(slug: string): void {
+  const esc = cssEscape(slug);
+  const open = !state.docOutlineOpen[slug];
+  if (open) state.docOutlineOpen[slug] = true; else delete state.docOutlineOpen[slug];
+  mount.querySelector(`.cnpy-treechev[data-arg="${esc}"]`)?.classList.toggle("is-open", open);
+  setOutlineOpen(mount.querySelector(`.cnpy-outline[data-outline="${esc}"]`), open);
+  if (open) updateActiveHeading();
+}
+
 // Reflect the newly-active doc in the tree without a rerender: move .is-active and
 // open this doc's outline (animated). Any other open outlines are left as they are.
 function applyTreeActive(slug: string): void {
@@ -565,10 +576,14 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
 
-    // docs navigation. Opening a page shows only its outline (others collapse);
-    // the chevron still lets you peek another page's outline until you navigate.
+    // docs navigation. Clicking the whole row toggles the outline like the chevron:
+    // if it's the doc you're already reading, collapse/expand its outline; otherwise
+    // navigate to it (which opens its outline).
     case "openDoc":
-      if (arg) openDocInTree(arg);
+      if (arg) {
+        if (arg === state.docSlug) toggleOutlineFor(arg);
+        else openDocInTree(arg);
+      }
       return;
     case "openDocFrom":
       if (arg) { state.screen = "docs"; state.docSlug = arg; state.showHistory = false; state.docOutlineOpen[arg] = true; loadDocsIfNeeded(); loadDoc(arg); }
@@ -583,19 +598,10 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "toggleHistory": state.showHistory = !state.showHistory; break;
-    // Expand/collapse a page's in-page outline without navigating to it. Toggle
-    // the class on the live element (no full rerender) so the CSS grid-rows
-    // transition actually fires — a rerender would swap in a fresh element.
-    case "toggleOutline": {
-      if (arg) {
-        const open = !state.docOutlineOpen[arg];
-        if (open) state.docOutlineOpen[arg] = true; else delete state.docOutlineOpen[arg];
-        mount.querySelector(`.cnpy-treechev[data-arg="${cssEscape(arg)}"]`)?.classList.toggle("is-open", open);
-        setOutlineOpen(mount.querySelector(`.cnpy-outline[data-outline="${cssEscape(arg)}"]`), open);
-        if (open) updateActiveHeading();
-      }
+    // Expand/collapse a page's in-page outline without navigating to it (the chevron).
+    case "toggleOutline":
+      if (arg) toggleOutlineFor(arg);
       return;
-    }
     // Jump to a heading; arg is `${slug}::${headingId}`. Opens the doc first if
     // it isn't the one showing, then scrolls once its reader has rendered.
     case "scrollToHeading": {
