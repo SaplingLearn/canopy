@@ -325,6 +325,14 @@ describe("maintenanceView — populated", () => {
     expect(html).toContain("1 login to match");
   });
 
+  it("centers its single-column wrapper (margin:0 auto) like every other screen", () => {
+    // Regression: the wrapper was max-width-capped but had no horizontal auto
+    // margin, so it pinned to the left of the full-width <main> instead of
+    // centering the way My Work / Roadmap / Search / Settings do.
+    const html = maintenanceView(makeMaintProps());
+    expect(html).toMatch(/max-width:\s*\d+px;\s*margin:\s*0 auto/);
+  });
+
   it("renders the unplaced row with its assign/discard affordances (panel closed)", () => {
     const html = maintenanceView(makeMaintProps());
     expect(html).toContain("Loose thing");
