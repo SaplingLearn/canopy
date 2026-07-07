@@ -468,7 +468,7 @@ function feedView(s: AppState): string {
 // Preferred display order for section groups within a space; anything not listed
 // falls to the end (alphabetical). Case-insensitive match against doc.section.
 const DOC_SECTION_ORDER = [
-  "Overview", "Architecture", "AI & Learning Engine", "Engineering Guide", "Decisions",
+  "Overview", "Features", "Architecture", "AI & Learning Engine", "Engineering Guide", "Decisions",
   "Roadmap", "Brand & Marketing", "reference", "context", "decisions",
 ];
 const sectionRank = (sec: string): number => {

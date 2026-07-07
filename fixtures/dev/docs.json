@@ -271,12 +271,327 @@
       "current_version": 1,
       "updated_at": "2026-06-25T20:00:00Z",
       "updated_by": "AndresL230",
-      "body": "## What Sapling Is\n\n**Sapling** is an AI-powered study companion built for college students. Its central idea is simple: as you learn — through tutoring sessions, quizzes, and uploaded notes — a **live knowledge graph** grows and updates in real time, mapping what you know and where gaps remain. Every interaction feeds mastery scores back into that graph, so your study state is never a flat checklist but a living picture of understanding.\n\nThe primary audience is students enrolled in courses at a specific institution (sign-in is gated by email domain, defaulting to `bu.edu`). A role system with an admin panel supports instructors and staff alongside students.\n\n---\n\n## Core Idea: Learn → Live Knowledge Graph\n\nThe knowledge graph is the spine of the product. Every concept you encounter — through a chat session, a quiz answer, an uploaded document, or a note — is extracted and merged into a per-user, per-course graph stored in Supabase. **Mastery scores update dynamically** after every session and quiz, and the graph drives:\n\n- What the adaptive quiz targets next (weakest nodes)\n- What the study guide pulls from when generating exam prep\n- How classmates' progress compares to yours in study rooms\n- What concepts a note is linked to, enabling note-grounded quizzes and chat\n\n---\n\n## Feature Set\n\n### Knowledge Graph\n\n- **2D view** — rendered with D3.js (SVG), the default. Per-course color shading and mastery-based node opacity.\n- **3D view** — rendered via `react-force-graph-3d` (three.js / WebGL), lazy-loaded so it only enters the bundle when toggled on.\n- Recommendations endpoint surfaces next concepts to study based on graph state.\n\n### AI Tutor — Three Teaching Modes\n\nAll three modes run through a single `chat_tutor_agent` (Pydantic AI, `gemini-2.5-pro` by default):\n\n| Mode | Behavior |\n|---|---|\n| **Socratic** | Guided reasoning — the tutor asks questions rather than explaining directly |\n| **Expository** | Direct explanation of concepts |\n| **TeachBack** | You explain; Sapling corrects misunderstandings |\n\nChat supports **inline math** (KaTeX), **Mermaid diagrams**, function plots, and theorem callouts.\n\n### Adaptive Quizzes\n\nAI-generated quizzes target your **weakest concepts** from the knowledge graph. Difficulty scales with performance, and spaced-repetition scheduling resurfaces concepts you've previously missed. Quiz generation runs through a dedicated `quiz_agent` (`gemini-2.5-flash-lite`).\n\n### Flashcards\n\nGenerate AI flashcards per course, or import from multiple sources: paste, file (CSV, Markdown, Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (**Easy / Hard / Forgot**). A multi-step import pipeline handles parse → cleanup → cloze conversion → commit.\n\n### Gradebook\n\nTrack real-world grades per course. Supports:\n- Custom categories with weights\n- Per-assignment scores\n- Per-course letter-scale overrides\n- Current grade calculation\n\nUpload a syllabus and Sapling auto-extracts categories and assignments via the `syllabus_extraction` agent (`gemini-2.5-flash`).\n\n### Study Guide\n\nGenerates a Gemini-powered exam study guide from uploaded course materials. Guides are **cached per exam** and can be regenerated on demand via `POST /api/study-guide/regenerate`.\n\n### Document Library\n\nUpload PDFs and notes (up to 100 MB each). The ingest pipeline is an agentic parallel fan-out:\n\n1. **Classifier agent** — determines document type\n2. **Summary, concept-extraction, and syllabus agents** — run in parallel via `asyncio.gather`\n3. Extracted concepts merge into the knowledge graph; summaries and concept notes are stored AES-256-GCM encrypted\n\nThe streaming upload endpoint (`POST /api/documents/upload`) uses **Server-Sent Events** (sse-starlette) to emit live per-phase progress to the UI: `status:start → progress:classify → progress:classified → progress:extract → progress:extracted → progress:graph_update → result:finalize → status:done`. Uploads are **idempotent** on `X-Request-ID`.\n\nOCR uses **Docling** (layout-aware PDF → Markdown) with GOT-OCR 2.0 as a fallback for math and handwriting, and Tesseract retained as a legacy fallback.\n\n### Notetaker\n\nWrite typed notes per course with debounced autosave and tags. Per note, four agent-backed actions are available:\n- **AI summarize** — `note_summary_agent`\n- **Extract concepts** — merges into the knowledge graph and links back to the note\n- **Note-grounded chat** — ask questions about the note's content\n- **Generate quiz** — targets the note's weakest linked concept\n\n### Calendar & Syllabus Tracking\n\nPaste a syllabus; Sapling extracts assignments, deadlines, and topics automatically. Upcoming assignments are accessible via `GET /api/calendar/upcoming/{user_id}`.\n\n### Class Intelligence\n\nAggregates **anonymized class-wide patterns** to surface common misconceptions and weak areas, personalizing individual tutoring sessions.\n\n### Study Rooms & Chat\n\n- **Study Rooms** — invite classmates, compare knowledge graphs, and track relative mastery across the group. Includes an AI-generated group summary and a study-partner matching endpoint.\n- **Room Chat** — real-time text chat with avatars inside each room (currently REST-polled after the RLS lockdown; a realtime JWT bridge is planned).\n\n### Profiles, Achievements & Cosmetics\n\n- **Public profiles** — academic info, bio, featured achievements, equipped cosmetics\n- **Achievements** — unlocked by milestones (sessions, quizzes, streaks); admin-configurable with triggers\n- **Cosmetics** — avatar frames, name colors, title flairs; equipped per user; linked to roles or achievements\n\n### Roles & Admin Panel\n\nRole-based access control. The admin panel covers: user approval/unapproval, role assignment, achievement management (including manual grants), cosmetic management, and a paginated audit log. Analytics overview provides 30-day series and role counts.\n\n### Onboarding\n\nMulti-step flow after first Google OAuth sign-in. Collects school, major, year, and courses. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.\n\n### Newsletter & Feedback\n\n- **Newsletter** — beta-list email signup directly from the landing page (`POST /api/newsletter/subscribe`)\n- **Feedback** — session feedback and bug/issue reports submittable from within the app\n\n---\n\n## How It Fits Together\n\n```\nNext.js 16 frontend  ──REST──►  FastAPI backend  ──►  Supabase (PostgreSQL)\n(TypeScript, App Router)         (Python)               AES-256-GCM encrypted columns\n(Cloudflare Workers via          Pydantic AI agents\n @opennextjs/cloudflare)         Google Gemini\n                                 (per-task model routing)\n```\n\n- **Frontend** — Next.js 16 (TypeScript, App Router), deployed on Cloudflare Workers via `@opennextjs/cloudflare`. The knowledge graph 2D layer uses D3.js; the 3D layer (`react-force-graph-3d`) is lazy-loaded.\n- **Backend** — FastAPI (Python) at `localhost:5000`. Agentic workloads use **Pydantic AI** with four parallel worker agents for document ingestion and dedicated agents for chat, quizzes, syllabus extraction, and the notetaker. Remaining LLM routes use a structured-prompt helper in `services/gemini_service.py` pending migration.\n- **AI** — **Google Gemini**, with per-task model routing via `SAPLING_MODEL_<TASK>` env vars. `gemini-2.5-pro` powers the chat tutor; `gemini-2.5-flash` handles concept extraction, syllabus parsing, and note chat; `gemini-2.5-flash-lite` covers classification, summarization, quiz generation, and note summarization.\n- **Database** — **Supabase** (PostgreSQL). Sensitive columns (user PII, document summaries, concept notes, OAuth tokens, chat messages, gradebook notes) are AES-256-GCM encrypted at the application layer via the `cryptography` library. Row-Level Security is enabled on all 40 public tables with the `anon` role's DML revoked.\n- **Observability** — Logfire auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom scrubber (`backend/services/logfire_scrubber.py`) SHA-256-fingerprints prompt and output content before egress so raw user text never ships to the observability backend.",
+      "body": "## What Sapling Is\n\n**Sapling** is an AI-powered study companion built for college students. Its central idea is simple: as you learn — through tutoring sessions, quizzes, and uploaded notes — a **live knowledge graph** grows and updates in real time, mapping what you know and where gaps remain. Every interaction feeds mastery scores back into that graph, so your study state is never a flat checklist but a living picture of understanding.\n\nThe primary audience is students enrolled in courses at a specific institution (sign-in is gated by email domain, defaulting to `bu.edu`). A role system with an admin panel supports instructors and staff alongside students.\n\n---\n\n## Core Idea: Learn → Live Knowledge Graph\n\nThe knowledge graph is the spine of the product. Every concept you encounter — through a chat session, a quiz answer, an uploaded document, or a note — is extracted and merged into a per-user, per-course graph stored in Supabase. **Mastery scores update dynamically** after every session and quiz, and the graph drives:\n\n- What the adaptive quiz targets next (weakest nodes)\n- What the study guide pulls from when generating exam prep\n- How classmates' progress compares to yours in study rooms\n- What concepts a note is linked to, enabling note-grounded quizzes and chat\n\n---\n\n---\n\n## Feature Set\n\nSapling's capabilities are documented one page at a time under the **Features** section — from the Knowledge Graph and AI Tutor through Flashcards, Gradebook, Study Rooms, and the Admin Panel.\n\n---\n\n## How It Fits Together\n\n```\nNext.js 16 frontend  ──REST──►  FastAPI backend  ──►  Supabase (PostgreSQL)\n(TypeScript, App Router)         (Python)               AES-256-GCM encrypted columns\n(Cloudflare Workers via          Pydantic AI agents\n @opennextjs/cloudflare)         Google Gemini\n                                 (per-task model routing)\n```\n\n- **Frontend** — Next.js 16 (TypeScript, App Router), deployed on Cloudflare Workers via `@opennextjs/cloudflare`. The knowledge graph 2D layer uses D3.js; the 3D layer (`react-force-graph-3d`) is lazy-loaded.\n- **Backend** — FastAPI (Python) at `localhost:5000`. Agentic workloads use **Pydantic AI** with four parallel worker agents for document ingestion and dedicated agents for chat, quizzes, syllabus extraction, and the notetaker. Remaining LLM routes use a structured-prompt helper in `services/gemini_service.py` pending migration.\n- **AI** — **Google Gemini**, with per-task model routing via `SAPLING_MODEL_<TASK>` env vars. `gemini-2.5-pro` powers the chat tutor; `gemini-2.5-flash` handles concept extraction, syllabus parsing, and note chat; `gemini-2.5-flash-lite` covers classification, summarization, quiz generation, and note summarization.\n- **Database** — **Supabase** (PostgreSQL). Sensitive columns (user PII, document summaries, concept notes, OAuth tokens, chat messages, gradebook notes) are AES-256-GCM encrypted at the application layer via the `cryptography` library. Row-Level Security is enabled on all 40 public tables with the `anon` role's DML revoked.\n- **Observability** — Logfire auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom scrubber (`backend/services/logfire_scrubber.py`) SHA-256-fingerprints prompt and output content before egress so raw user text never ships to the observability backend.",
       "versions": [
         {
           "version": 1,
-          "body": "## What Sapling Is\n\n**Sapling** is an AI-powered study companion built for college students. Its central idea is simple: as you learn — through tutoring sessions, quizzes, and uploaded notes — a **live knowledge graph** grows and updates in real time, mapping what you know and where gaps remain. Every interaction feeds mastery scores back into that graph, so your study state is never a flat checklist but a living picture of understanding.\n\nThe primary audience is students enrolled in courses at a specific institution (sign-in is gated by email domain, defaulting to `bu.edu`). A role system with an admin panel supports instructors and staff alongside students.\n\n---\n\n## Core Idea: Learn → Live Knowledge Graph\n\nThe knowledge graph is the spine of the product. Every concept you encounter — through a chat session, a quiz answer, an uploaded document, or a note — is extracted and merged into a per-user, per-course graph stored in Supabase. **Mastery scores update dynamically** after every session and quiz, and the graph drives:\n\n- What the adaptive quiz targets next (weakest nodes)\n- What the study guide pulls from when generating exam prep\n- How classmates' progress compares to yours in study rooms\n- What concepts a note is linked to, enabling note-grounded quizzes and chat\n\n---\n\n## Feature Set\n\n### Knowledge Graph\n\n- **2D view** — rendered with D3.js (SVG), the default. Per-course color shading and mastery-based node opacity.\n- **3D view** — rendered via `react-force-graph-3d` (three.js / WebGL), lazy-loaded so it only enters the bundle when toggled on.\n- Recommendations endpoint surfaces next concepts to study based on graph state.\n\n### AI Tutor — Three Teaching Modes\n\nAll three modes run through a single `chat_tutor_agent` (Pydantic AI, `gemini-2.5-pro` by default):\n\n| Mode | Behavior |\n|---|---|\n| **Socratic** | Guided reasoning — the tutor asks questions rather than explaining directly |\n| **Expository** | Direct explanation of concepts |\n| **TeachBack** | You explain; Sapling corrects misunderstandings |\n\nChat supports **inline math** (KaTeX), **Mermaid diagrams**, function plots, and theorem callouts.\n\n### Adaptive Quizzes\n\nAI-generated quizzes target your **weakest concepts** from the knowledge graph. Difficulty scales with performance, and spaced-repetition scheduling resurfaces concepts you've previously missed. Quiz generation runs through a dedicated `quiz_agent` (`gemini-2.5-flash-lite`).\n\n### Flashcards\n\nGenerate AI flashcards per course, or import from multiple sources: paste, file (CSV, Markdown, Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (**Easy / Hard / Forgot**). A multi-step import pipeline handles parse → cleanup → cloze conversion → commit.\n\n### Gradebook\n\nTrack real-world grades per course. Supports:\n- Custom categories with weights\n- Per-assignment scores\n- Per-course letter-scale overrides\n- Current grade calculation\n\nUpload a syllabus and Sapling auto-extracts categories and assignments via the `syllabus_extraction` agent (`gemini-2.5-flash`).\n\n### Study Guide\n\nGenerates a Gemini-powered exam study guide from uploaded course materials. Guides are **cached per exam** and can be regenerated on demand via `POST /api/study-guide/regenerate`.\n\n### Document Library\n\nUpload PDFs and notes (up to 100 MB each). The ingest pipeline is an agentic parallel fan-out:\n\n1. **Classifier agent** — determines document type\n2. **Summary, concept-extraction, and syllabus agents** — run in parallel via `asyncio.gather`\n3. Extracted concepts merge into the knowledge graph; summaries and concept notes are stored AES-256-GCM encrypted\n\nThe streaming upload endpoint (`POST /api/documents/upload`) uses **Server-Sent Events** (sse-starlette) to emit live per-phase progress to the UI: `status:start → progress:classify → progress:classified → progress:extract → progress:extracted → progress:graph_update → result:finalize → status:done`. Uploads are **idempotent** on `X-Request-ID`.\n\nOCR uses **Docling** (layout-aware PDF → Markdown) with GOT-OCR 2.0 as a fallback for math and handwriting, and Tesseract retained as a legacy fallback.\n\n### Notetaker\n\nWrite typed notes per course with debounced autosave and tags. Per note, four agent-backed actions are available:\n- **AI summarize** — `note_summary_agent`\n- **Extract concepts** — merges into the knowledge graph and links back to the note\n- **Note-grounded chat** — ask questions about the note's content\n- **Generate quiz** — targets the note's weakest linked concept\n\n### Calendar & Syllabus Tracking\n\nPaste a syllabus; Sapling extracts assignments, deadlines, and topics automatically. Upcoming assignments are accessible via `GET /api/calendar/upcoming/{user_id}`.\n\n### Class Intelligence\n\nAggregates **anonymized class-wide patterns** to surface common misconceptions and weak areas, personalizing individual tutoring sessions.\n\n### Study Rooms & Chat\n\n- **Study Rooms** — invite classmates, compare knowledge graphs, and track relative mastery across the group. Includes an AI-generated group summary and a study-partner matching endpoint.\n- **Room Chat** — real-time text chat with avatars inside each room (currently REST-polled after the RLS lockdown; a realtime JWT bridge is planned).\n\n### Profiles, Achievements & Cosmetics\n\n- **Public profiles** — academic info, bio, featured achievements, equipped cosmetics\n- **Achievements** — unlocked by milestones (sessions, quizzes, streaks); admin-configurable with triggers\n- **Cosmetics** — avatar frames, name colors, title flairs; equipped per user; linked to roles or achievements\n\n### Roles & Admin Panel\n\nRole-based access control. The admin panel covers: user approval/unapproval, role assignment, achievement management (including manual grants), cosmetic management, and a paginated audit log. Analytics overview provides 30-day series and role counts.\n\n### Onboarding\n\nMulti-step flow after first Google OAuth sign-in. Collects school, major, year, and courses. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.\n\n### Newsletter & Feedback\n\n- **Newsletter** — beta-list email signup directly from the landing page (`POST /api/newsletter/subscribe`)\n- **Feedback** — session feedback and bug/issue reports submittable from within the app\n\n---\n\n## How It Fits Together\n\n```\nNext.js 16 frontend  ──REST──►  FastAPI backend  ──►  Supabase (PostgreSQL)\n(TypeScript, App Router)         (Python)               AES-256-GCM encrypted columns\n(Cloudflare Workers via          Pydantic AI agents\n @opennextjs/cloudflare)         Google Gemini\n                                 (per-task model routing)\n```\n\n- **Frontend** — Next.js 16 (TypeScript, App Router), deployed on Cloudflare Workers via `@opennextjs/cloudflare`. The knowledge graph 2D layer uses D3.js; the 3D layer (`react-force-graph-3d`) is lazy-loaded.\n- **Backend** — FastAPI (Python) at `localhost:5000`. Agentic workloads use **Pydantic AI** with four parallel worker agents for document ingestion and dedicated agents for chat, quizzes, syllabus extraction, and the notetaker. Remaining LLM routes use a structured-prompt helper in `services/gemini_service.py` pending migration.\n- **AI** — **Google Gemini**, with per-task model routing via `SAPLING_MODEL_<TASK>` env vars. `gemini-2.5-pro` powers the chat tutor; `gemini-2.5-flash` handles concept extraction, syllabus parsing, and note chat; `gemini-2.5-flash-lite` covers classification, summarization, quiz generation, and note summarization.\n- **Database** — **Supabase** (PostgreSQL). Sensitive columns (user PII, document summaries, concept notes, OAuth tokens, chat messages, gradebook notes) are AES-256-GCM encrypted at the application layer via the `cryptography` library. Row-Level Security is enabled on all 40 public tables with the `anon` role's DML revoked.\n- **Observability** — Logfire auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom scrubber (`backend/services/logfire_scrubber.py`) SHA-256-fingerprints prompt and output content before egress so raw user text never ships to the observability backend.",
+          "body": "## What Sapling Is\n\n**Sapling** is an AI-powered study companion built for college students. Its central idea is simple: as you learn — through tutoring sessions, quizzes, and uploaded notes — a **live knowledge graph** grows and updates in real time, mapping what you know and where gaps remain. Every interaction feeds mastery scores back into that graph, so your study state is never a flat checklist but a living picture of understanding.\n\nThe primary audience is students enrolled in courses at a specific institution (sign-in is gated by email domain, defaulting to `bu.edu`). A role system with an admin panel supports instructors and staff alongside students.\n\n---\n\n## Core Idea: Learn → Live Knowledge Graph\n\nThe knowledge graph is the spine of the product. Every concept you encounter — through a chat session, a quiz answer, an uploaded document, or a note — is extracted and merged into a per-user, per-course graph stored in Supabase. **Mastery scores update dynamically** after every session and quiz, and the graph drives:\n\n- What the adaptive quiz targets next (weakest nodes)\n- What the study guide pulls from when generating exam prep\n- How classmates' progress compares to yours in study rooms\n- What concepts a note is linked to, enabling note-grounded quizzes and chat\n\n---\n\n---\n\n## Feature Set\n\nSapling's capabilities are documented one page at a time under the **Features** section — from the Knowledge Graph and AI Tutor through Flashcards, Gradebook, Study Rooms, and the Admin Panel.\n\n---\n\n## How It Fits Together\n\n```\nNext.js 16 frontend  ──REST──►  FastAPI backend  ──►  Supabase (PostgreSQL)\n(TypeScript, App Router)         (Python)               AES-256-GCM encrypted columns\n(Cloudflare Workers via          Pydantic AI agents\n @opennextjs/cloudflare)         Google Gemini\n                                 (per-task model routing)\n```\n\n- **Frontend** — Next.js 16 (TypeScript, App Router), deployed on Cloudflare Workers via `@opennextjs/cloudflare`. The knowledge graph 2D layer uses D3.js; the 3D layer (`react-force-graph-3d`) is lazy-loaded.\n- **Backend** — FastAPI (Python) at `localhost:5000`. Agentic workloads use **Pydantic AI** with four parallel worker agents for document ingestion and dedicated agents for chat, quizzes, syllabus extraction, and the notetaker. Remaining LLM routes use a structured-prompt helper in `services/gemini_service.py` pending migration.\n- **AI** — **Google Gemini**, with per-task model routing via `SAPLING_MODEL_<TASK>` env vars. `gemini-2.5-pro` powers the chat tutor; `gemini-2.5-flash` handles concept extraction, syllabus parsing, and note chat; `gemini-2.5-flash-lite` covers classification, summarization, quiz generation, and note summarization.\n- **Database** — **Supabase** (PostgreSQL). Sensitive columns (user PII, document summaries, concept notes, OAuth tokens, chat messages, gradebook notes) are AES-256-GCM encrypted at the application layer via the `cryptography` library. Row-Level Security is enabled on all 40 public tables with the `anon` role's DML revoked.\n- **Observability** — Logfire auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom scrubber (`backend/services/logfire_scrubber.py`) SHA-256-fingerprints prompt and output content before egress so raw user text never ships to the observability backend.",
           "summary": "Imported from the Sapling documentation",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-knowledge-graph",
+      "section": "Features",
+      "space": "product",
+      "title": "Knowledge Graph",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "- **2D view** — rendered with D3.js (SVG), the default. Per-course color shading and mastery-based node opacity.\n- **3D view** — rendered via `react-force-graph-3d` (three.js / WebGL), lazy-loaded so it only enters the bundle when toggled on.\n- Recommendations endpoint surfaces next concepts to study based on graph state.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "- **2D view** — rendered with D3.js (SVG), the default. Per-course color shading and mastery-based node opacity.\n- **3D view** — rendered via `react-force-graph-3d` (three.js / WebGL), lazy-loaded so it only enters the bundle when toggled on.\n- Recommendations endpoint surfaces next concepts to study based on graph state.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-ai-tutor-three-teaching-modes",
+      "section": "Features",
+      "space": "product",
+      "title": "AI Tutor — Three Teaching Modes",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "All three modes run through a single `chat_tutor_agent` (Pydantic AI, `gemini-2.5-pro` by default):\n\n| Mode | Behavior |\n|---|---|\n| **Socratic** | Guided reasoning — the tutor asks questions rather than explaining directly |\n| **Expository** | Direct explanation of concepts |\n| **TeachBack** | You explain; Sapling corrects misunderstandings |\n\nChat supports **inline math** (KaTeX), **Mermaid diagrams**, function plots, and theorem callouts.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "All three modes run through a single `chat_tutor_agent` (Pydantic AI, `gemini-2.5-pro` by default):\n\n| Mode | Behavior |\n|---|---|\n| **Socratic** | Guided reasoning — the tutor asks questions rather than explaining directly |\n| **Expository** | Direct explanation of concepts |\n| **TeachBack** | You explain; Sapling corrects misunderstandings |\n\nChat supports **inline math** (KaTeX), **Mermaid diagrams**, function plots, and theorem callouts.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-adaptive-quizzes",
+      "section": "Features",
+      "space": "product",
+      "title": "Adaptive Quizzes",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "AI-generated quizzes target your **weakest concepts** from the knowledge graph. Difficulty scales with performance, and spaced-repetition scheduling resurfaces concepts you've previously missed. Quiz generation runs through a dedicated `quiz_agent` (`gemini-2.5-flash-lite`).",
+      "versions": [
+        {
+          "version": 1,
+          "body": "AI-generated quizzes target your **weakest concepts** from the knowledge graph. Difficulty scales with performance, and spaced-repetition scheduling resurfaces concepts you've previously missed. Quiz generation runs through a dedicated `quiz_agent` (`gemini-2.5-flash-lite`).",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-flashcards",
+      "section": "Features",
+      "space": "product",
+      "title": "Flashcards",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Generate AI flashcards per course, or import from multiple sources: paste, file (CSV, Markdown, Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (**Easy / Hard / Forgot**). A multi-step import pipeline handles parse → cleanup → cloze conversion → commit.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Generate AI flashcards per course, or import from multiple sources: paste, file (CSV, Markdown, Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (**Easy / Hard / Forgot**). A multi-step import pipeline handles parse → cleanup → cloze conversion → commit.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-gradebook",
+      "section": "Features",
+      "space": "product",
+      "title": "Gradebook",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Track real-world grades per course. Supports:\n- Custom categories with weights\n- Per-assignment scores\n- Per-course letter-scale overrides\n- Current grade calculation\n\nUpload a syllabus and Sapling auto-extracts categories and assignments via the `syllabus_extraction` agent (`gemini-2.5-flash`).",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Track real-world grades per course. Supports:\n- Custom categories with weights\n- Per-assignment scores\n- Per-course letter-scale overrides\n- Current grade calculation\n\nUpload a syllabus and Sapling auto-extracts categories and assignments via the `syllabus_extraction` agent (`gemini-2.5-flash`).",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-study-guide",
+      "section": "Features",
+      "space": "product",
+      "title": "Study Guide",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Generates a Gemini-powered exam study guide from uploaded course materials. Guides are **cached per exam** and can be regenerated on demand via `POST /api/study-guide/regenerate`.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Generates a Gemini-powered exam study guide from uploaded course materials. Guides are **cached per exam** and can be regenerated on demand via `POST /api/study-guide/regenerate`.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-document-library",
+      "section": "Features",
+      "space": "product",
+      "title": "Document Library",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Upload PDFs and notes (up to 100 MB each). The ingest pipeline is an agentic parallel fan-out:\n\n1. **Classifier agent** — determines document type\n2. **Summary, concept-extraction, and syllabus agents** — run in parallel via `asyncio.gather`\n3. Extracted concepts merge into the knowledge graph; summaries and concept notes are stored AES-256-GCM encrypted\n\nThe streaming upload endpoint (`POST /api/documents/upload`) uses **Server-Sent Events** (sse-starlette) to emit live per-phase progress to the UI: `status:start → progress:classify → progress:classified → progress:extract → progress:extracted → progress:graph_update → result:finalize → status:done`. Uploads are **idempotent** on `X-Request-ID`.\n\nOCR uses **Docling** (layout-aware PDF → Markdown) with GOT-OCR 2.0 as a fallback for math and handwriting, and Tesseract retained as a legacy fallback.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Upload PDFs and notes (up to 100 MB each). The ingest pipeline is an agentic parallel fan-out:\n\n1. **Classifier agent** — determines document type\n2. **Summary, concept-extraction, and syllabus agents** — run in parallel via `asyncio.gather`\n3. Extracted concepts merge into the knowledge graph; summaries and concept notes are stored AES-256-GCM encrypted\n\nThe streaming upload endpoint (`POST /api/documents/upload`) uses **Server-Sent Events** (sse-starlette) to emit live per-phase progress to the UI: `status:start → progress:classify → progress:classified → progress:extract → progress:extracted → progress:graph_update → result:finalize → status:done`. Uploads are **idempotent** on `X-Request-ID`.\n\nOCR uses **Docling** (layout-aware PDF → Markdown) with GOT-OCR 2.0 as a fallback for math and handwriting, and Tesseract retained as a legacy fallback.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-notetaker",
+      "section": "Features",
+      "space": "product",
+      "title": "Notetaker",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Write typed notes per course with debounced autosave and tags. Per note, four agent-backed actions are available:\n- **AI summarize** — `note_summary_agent`\n- **Extract concepts** — merges into the knowledge graph and links back to the note\n- **Note-grounded chat** — ask questions about the note's content\n- **Generate quiz** — targets the note's weakest linked concept",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Write typed notes per course with debounced autosave and tags. Per note, four agent-backed actions are available:\n- **AI summarize** — `note_summary_agent`\n- **Extract concepts** — merges into the knowledge graph and links back to the note\n- **Note-grounded chat** — ask questions about the note's content\n- **Generate quiz** — targets the note's weakest linked concept",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-calendar-and-syllabus-tracking",
+      "section": "Features",
+      "space": "product",
+      "title": "Calendar & Syllabus Tracking",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Paste a syllabus; Sapling extracts assignments, deadlines, and topics automatically. Upcoming assignments are accessible via `GET /api/calendar/upcoming/{user_id}`.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Paste a syllabus; Sapling extracts assignments, deadlines, and topics automatically. Upcoming assignments are accessible via `GET /api/calendar/upcoming/{user_id}`.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-class-intelligence",
+      "section": "Features",
+      "space": "product",
+      "title": "Class Intelligence",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Aggregates **anonymized class-wide patterns** to surface common misconceptions and weak areas, personalizing individual tutoring sessions.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Aggregates **anonymized class-wide patterns** to surface common misconceptions and weak areas, personalizing individual tutoring sessions.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-study-rooms-and-chat",
+      "section": "Features",
+      "space": "product",
+      "title": "Study Rooms & Chat",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "- **Study Rooms** — invite classmates, compare knowledge graphs, and track relative mastery across the group. Includes an AI-generated group summary and a study-partner matching endpoint.\n- **Room Chat** — real-time text chat with avatars inside each room (currently REST-polled after the RLS lockdown; a realtime JWT bridge is planned).",
+      "versions": [
+        {
+          "version": 1,
+          "body": "- **Study Rooms** — invite classmates, compare knowledge graphs, and track relative mastery across the group. Includes an AI-generated group summary and a study-partner matching endpoint.\n- **Room Chat** — real-time text chat with avatars inside each room (currently REST-polled after the RLS lockdown; a realtime JWT bridge is planned).",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-profiles-achievements-and-cosmetics",
+      "section": "Features",
+      "space": "product",
+      "title": "Profiles, Achievements & Cosmetics",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "- **Public profiles** — academic info, bio, featured achievements, equipped cosmetics\n- **Achievements** — unlocked by milestones (sessions, quizzes, streaks); admin-configurable with triggers\n- **Cosmetics** — avatar frames, name colors, title flairs; equipped per user; linked to roles or achievements",
+      "versions": [
+        {
+          "version": 1,
+          "body": "- **Public profiles** — academic info, bio, featured achievements, equipped cosmetics\n- **Achievements** — unlocked by milestones (sessions, quizzes, streaks); admin-configurable with triggers\n- **Cosmetics** — avatar frames, name colors, title flairs; equipped per user; linked to roles or achievements",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-roles-and-admin-panel",
+      "section": "Features",
+      "space": "product",
+      "title": "Roles & Admin Panel",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Role-based access control. The admin panel covers: user approval/unapproval, role assignment, achievement management (including manual grants), cosmetic management, and a paginated audit log. Analytics overview provides 30-day series and role counts.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Role-based access control. The admin panel covers: user approval/unapproval, role assignment, achievement management (including manual grants), cosmetic management, and a paginated audit log. Analytics overview provides 30-day series and role counts.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-onboarding",
+      "section": "Features",
+      "space": "product",
+      "title": "Onboarding",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "Multi-step flow after first Google OAuth sign-in. Collects school, major, year, and courses. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.",
+      "versions": [
+        {
+          "version": 1,
+          "body": "Multi-step flow after first Google OAuth sign-in. Collects school, major, year, and courses. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.",
+          "summary": "Split out of the Product Overview",
+          "status": "promoted",
+          "confidence": "high",
+          "created_at": "2026-06-25T20:00:00Z",
+          "created_by": "AndresL230"
+        }
+      ]
+    },
+    {
+      "slug": "sapling-feature-newsletter-and-feedback",
+      "section": "Features",
+      "space": "product",
+      "title": "Newsletter & Feedback",
+      "current_version": 1,
+      "updated_at": "2026-06-25T20:00:00Z",
+      "updated_by": "AndresL230",
+      "body": "- **Newsletter** — beta-list email signup directly from the landing page (`POST /api/newsletter/subscribe`)\n- **Feedback** — session feedback and bug/issue reports submittable from within the app\n\n---",
+      "versions": [
+        {
+          "version": 1,
+          "body": "- **Newsletter** — beta-list email signup directly from the landing page (`POST /api/newsletter/subscribe`)\n- **Feedback** — session feedback and bug/issue reports submittable from within the app\n\n---",
+          "summary": "Split out of the Product Overview",
           "status": "promoted",
           "confidence": "high",
           "created_at": "2026-06-25T20:00:00Z",
