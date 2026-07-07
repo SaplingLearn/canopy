@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { lineDiff, collapsedLineDiff } from "../web/src/diff";
-import { reviewView, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
+import { reviewView, reviewDetail, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
 import { maintenanceView, assignPanel, personPicker, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
 
 // ── lineDiff ──────────────────────────────────────────────────────────────────
@@ -177,6 +177,37 @@ describe("reviewView — diff view modes", () => {
     expect(html).toContain("removed (struck)");
     expect(html).toContain("Heading");
     expect(html).not.toContain("## Heading");
+  });
+});
+
+describe("reviewDetail — restructured header", () => {
+  const decision = () => makeItem({
+    id: "d1", kind: "decision", eyebrow: "DECISION · ADR-005", badge: "DRAFT", badgeColor: "var(--blue)",
+    title: "Append-only feed as the record", agent: "AndresL230", time: "Jun 25",
+    diff: undefined, adr: [{ h: "Context", p: "Why." }],
+  });
+
+  it("drops the uppercase eyebrow and folds type/id/author/date into one byline", () => {
+    const html = reviewDetail(decision(), "unified");
+    // The standalone uppercase eyebrow line is gone.
+    expect(html).not.toContain("DECISION · ADR-005");
+    // Title-cased record type, author, and date share the byline.
+    expect(html).toContain(">Decision<");
+    expect(html).toContain("AndresL230");
+    expect(html).toContain("Jun 25");
+    // The identifier reads as a reference: monospace.
+    expect(html).toMatch(/font-family:var\(--mono\)[^>]*>ADR-005</);
+    // Title is the first element — it precedes the byline record type.
+    expect(html.indexOf("Append-only feed as the record")).toBeLessThan(html.indexOf(">Decision<"));
+  });
+
+  it("moves the status badge up-right, next to the verdict controls", () => {
+    const html = reviewDetail(decision(), "unified");
+    expect(html).toContain("DRAFT");
+    // Badge sits on the title's row (after the title) and beside the buttons (before Reject).
+    expect(html.indexOf("Append-only feed as the record")).toBeLessThan(html.indexOf("DRAFT"));
+    expect(html.indexOf("DRAFT")).toBeLessThan(html.indexOf("Reject"));
+    expect(html.indexOf("Reject")).toBeLessThan(html.indexOf("Ratify"));
   });
 });
 
