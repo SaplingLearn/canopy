@@ -4,7 +4,7 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, type AppState } from "./render";
+import { render, initialState, firstDocForSpace, type AppState } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
   completeMilestone,
@@ -27,12 +27,7 @@ try {
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
-  const dt = localStorage.getItem("canopy.docTreeCollapsed");
-  if (dt) {
-    const parsed = JSON.parse(dt);
-    if (parsed && typeof parsed === "object") state.docTreeCollapsed = parsed as Record<string, boolean>;
-  }
-} catch { /* localStorage unavailable or malformed */ }
+} catch { /* localStorage unavailable */ }
 
 if (window.matchMedia) {
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -60,6 +55,24 @@ function rerender(): void {
       try { el.setSelectionRange(selStart, selEnd); } catch { /* non-text input */ }
     }
   }
+  // Deferred scroll-to-heading: fires once the reader for the target doc has
+  // rendered (may be a later rerender if the doc was still loading). Cleared on
+  // hit. The scroll itself waits a frame so layout settles after the innerHTML
+  // swap — scrollIntoView called synchronously after it is a no-op.
+  if (state.pendingScrollId) {
+    const target = mount.querySelector<HTMLElement>(`.cnpy-md [id="${cssEscape(state.pendingScrollId)}"]`);
+    if (target) {
+      state.pendingScrollId = null;
+      // Instant, not smooth: smooth scrollIntoView is a silent no-op on this
+      // nested overflow container, and instant is the right call after navigation.
+      requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
+    }
+  }
+}
+
+// Minimal CSS.escape shim for id selectors (heading ids are already slug-safe).
+function cssEscape(v: string): string {
+  return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : v.replace(/["\\]/g, "\\$&");
 }
 
 function resolvedTheme(): "dark" | "light" | "midnight" {
@@ -118,7 +131,8 @@ function loadDoc(slug: string): void {
   getDoc(slug)
     .then((result) => {
       state.docDetail = { status: "ok", data: result };
-      state.docSpace = result.doc.space === "sapling" ? "sapling" : "canopy";
+      state.docSpace = result.doc.space;
+      state.docOutlineOpen[result.doc.slug] = true;
       rerender();
     })
     .catch((e) => {
@@ -135,9 +149,11 @@ function loadDocs(): void {
   listDocs()
     .then((docs) => {
       state.docsList = { status: "ok", data: docs };
-      const first = docs.find((d) => d.space === state.docSpace) ?? docs[0];
+      const first = firstDocForSpace(docs, state.docSpace) ?? docs[0];
       if (state.docSlug === null && first) {
         state.docSlug = first.slug;
+        state.docSpace = first.space;
+        state.docOutlineOpen = { [first.slug]: true };
         loadDoc(first.slug);
       } else {
         rerender();
@@ -450,29 +466,41 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
 
-    // docs navigation
+    // docs navigation. Opening a page shows only its outline (others collapse);
+    // the chevron still lets you peek another page's outline until you navigate.
     case "openDoc":
-      if (arg) { state.docSlug = arg; state.showHistory = false; loadDoc(arg); }
+      if (arg) { state.docSlug = arg; state.showHistory = false; state.docOutlineOpen = { [arg]: true }; loadDoc(arg); }
       return;
     case "openDocFrom":
-      if (arg) { state.screen = "docs"; state.docSlug = arg; state.showHistory = false; loadDocsIfNeeded(); loadDoc(arg); }
+      if (arg) { state.screen = "docs"; state.docSlug = arg; state.showHistory = false; state.docOutlineOpen = { [arg]: true }; loadDocsIfNeeded(); loadDoc(arg); }
       return;
     case "setDocSpace": {
-      const sp = arg === "sapling" ? "sapling" : "canopy";
-      state.docSpace = sp;
+      if (!arg || arg === state.docSpace) return;
+      state.docSpace = arg;
       state.showHistory = false;
-      const first = state.docsList.data.find((d) => d.space === sp);
-      if (first) { state.docSlug = first.slug; loadDoc(first.slug); }
+      const first = firstDocForSpace(state.docsList.data, arg);
+      if (first) { state.docSlug = first.slug; state.docOutlineOpen = { [first.slug]: true }; loadDoc(first.slug); }
       else { state.docSlug = null; state.docDetail = { status: "ok", data: null }; rerender(); }
       return;
     }
     case "toggleHistory": state.showHistory = !state.showHistory; break;
-    case "toggleDocSection": {
+    // Expand/collapse a page's in-page outline without navigating to it.
+    case "toggleOutline":
       if (arg) {
-        if (state.docTreeCollapsed[arg]) delete state.docTreeCollapsed[arg];
-        else state.docTreeCollapsed[arg] = true;
-        persist("canopy.docTreeCollapsed", JSON.stringify(state.docTreeCollapsed));
+        if (state.docOutlineOpen[arg]) delete state.docOutlineOpen[arg];
+        else state.docOutlineOpen[arg] = true;
       }
+      break;
+    // Jump to a heading; arg is `${slug}::${headingId}`. Opens the doc first if
+    // it isn't the one showing, then scrolls once its reader has rendered.
+    case "scrollToHeading": {
+      if (!arg) return;
+      const sep = arg.indexOf("::");
+      const slug = sep < 0 ? arg : arg.slice(0, sep);
+      const headingId = sep < 0 ? "" : arg.slice(sep + 2);
+      state.pendingScrollId = headingId;
+      if (state.docSlug !== slug) { state.docSlug = slug; state.showHistory = false; state.docOutlineOpen = { [slug]: true }; loadDoc(slug); return; }
+      state.docOutlineOpen[slug] = true;
       break;
     }
 
