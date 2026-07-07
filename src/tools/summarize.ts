@@ -35,6 +35,14 @@ export interface Summarizer<T> {
 // the free daily Neuron allocation for this workload (~5 neurons/call).
 const WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 
+// The 26B model is slow but bounded — a healthy call resolves in a few seconds.
+// When the daily Neuron budget is exhausted or the model is overloaded, ai.run
+// has been observed to hang indefinitely (never resolves, never rejects), which
+// would wedge the /admin/backfill request the browser waits on. This ceiling
+// races every call against a timer so a hang degrades to the excerpt fallback
+// instead of a permanent stall; 15s is comfortably above a healthy call's latency.
+export const WORKERS_AI_TIMEOUT_MS = 15000;
+
 export const SUMMARIZER_SYSTEM_PROMPT =
   "Summarize this pull request for a team activity feed — what shipped. " +
   "Respond with a SINGLE JSON object and nothing else — no code fences, no preamble: " +
@@ -126,42 +134,58 @@ export function validateIssueSummary(o: Record<string, unknown>): IssueSummary |
 function makeWorkersAiSummarizer<T>(
   ai: Ai,
   systemPrompt: string,
-  validate: (o: Record<string, unknown>) => T | null
+  validate: (o: Record<string, unknown>) => T | null,
+  timeoutMs: number = WORKERS_AI_TIMEOUT_MS
 ): Summarizer<T> {
   return {
     model: WORKERS_AI_MODEL,
     async summarize({ title, body }) {
+      // A hung ai.run neither resolves nor rejects, so the try/catch alone can't
+      // save us — race it against a timer whose rejection lands in the same catch
+      // and degrades to the excerpt fallback. clearTimeout in finally so a healthy
+      // call doesn't leave the timer pending.
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const result = await ai.run(WORKERS_AI_MODEL, {
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Title: ${title}\n\nBody: ${body}` },
-          ],
-        });
+        const result = await Promise.race([
+          ai.run(WORKERS_AI_MODEL, {
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `Title: ${title}\n\nBody: ${body}` },
+            ],
+          }),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Workers AI timed out after ${timeoutMs}ms`)), timeoutMs);
+          }),
+        ]);
         const response = extractResponseText(result);
         if (response === null) return null;
         const obj = parseStructuredJson(response);
         if (obj === null) return null;
         return validate(obj);
       } catch (err) {
-        // TEMPORARY diagnostic logging — remove once the production failure
-        // mode under sustained backfill load is identified (see tail output).
+        // A timeout, a thrown error (e.g. model-not-found), or malformed output
+        // all land here and degrade to the excerpt fallback. Logged so a spike in
+        // timeouts (exhausted Neuron budget) is visible in `wrangler tail`.
         const kind = systemPrompt === SUMMARIZER_SYSTEM_PROMPT ? "pr" : "issue";
         console.error(`workersAiSummarizer (${kind}) failed:`, err instanceof Error ? err.message : err);
         return null;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     },
   };
 }
 
-/** PR summarizer. Bounded to that PR's own title+body — no other context is sent. */
-export function workersAiPrSummarizer(ai: Ai): Summarizer<PrSummary> {
-  return makeWorkersAiSummarizer(ai, SUMMARIZER_SYSTEM_PROMPT, validatePrSummary);
+/** PR summarizer. Bounded to that PR's own title+body — no other context is sent.
+ *  `timeoutMs` (injectable for tests) caps the ai.run call; a hang → null → excerpt. */
+export function workersAiPrSummarizer(ai: Ai, timeoutMs?: number): Summarizer<PrSummary> {
+  return makeWorkersAiSummarizer(ai, SUMMARIZER_SYSTEM_PROMPT, validatePrSummary, timeoutMs);
 }
 
-/** Issue summarizer. Bounded to that issue's own title+body — no other context is sent. */
-export function workersAiIssueSummarizer(ai: Ai): Summarizer<IssueSummary> {
-  return makeWorkersAiSummarizer(ai, ISSUE_SUMMARIZER_SYSTEM_PROMPT, validateIssueSummary);
+/** Issue summarizer. Bounded to that issue's own title+body — no other context is sent.
+ *  `timeoutMs` (injectable for tests) caps the ai.run call; a hang → null → excerpt. */
+export function workersAiIssueSummarizer(ai: Ai, timeoutMs?: number): Summarizer<IssueSummary> {
+  return makeWorkersAiSummarizer(ai, ISSUE_SUMMARIZER_SYSTEM_PROMPT, validateIssueSummary, timeoutMs);
 }
 
 const EXCERPT_MAX = 280;

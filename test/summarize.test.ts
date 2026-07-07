@@ -331,6 +331,50 @@ describe("workersAiPrSummarizer — response shape handling", () => {
   });
 });
 
+// A hung/overloaded Workers AI call (exhausted Neuron budget, overloaded model)
+// can leave `ai.run` pending forever — it never resolves and never rejects, so
+// the try/catch that handles throws cannot save us. Without a timeout that wedges
+// the whole /admin/backfill request the browser waits on. The summarizer must
+// race ai.run against an injectable timeout and resolve to null on timeout so the
+// deterministic excerpt fallback fires and the request always completes.
+describe("workersAiSummarizer — timeout guard", () => {
+  const hangingAi = { run: () => new Promise(() => {}) } as unknown as Ai;
+
+  it("resolves the PR summarizer to null when ai.run never resolves, within the injected timeout", async () => {
+    const result = await workersAiPrSummarizer(hangingAi, 50).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  }, 1500);
+
+  it("resolves the issue summarizer to null when ai.run never resolves, within the injected timeout", async () => {
+    const result = await workersAiIssueSummarizer(hangingAi, 50).summarize({ title: "Fix", body: "Fixes a bug" });
+    expect(result).toBeNull();
+  }, 1500);
+
+  it("storePrSummary falls back to excerpt (never hangs) when the AI call hangs past the timeout", async () => {
+    await seedEvent("gh:pr:99:merged", 99);
+    const row = await storePrSummary(env.DB, workersAiPrSummarizer(hangingAi, 50), {
+      semantic_key: "gh:pr:99:merged",
+      pr_number: 99,
+      title: "A PR",
+      body: "Body text here",
+    });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe(excerptSummary("A PR", "Body text here"));
+    expect(row).toMatchObject({ title: null, what: null, why: null, impact: null });
+  }, 1500);
+
+  it("storeIssueSummary falls back to excerpt (never hangs) when the AI call hangs past the timeout", async () => {
+    const row = await storeIssueSummary(env.DB, workersAiIssueSummarizer(hangingAi, 50), {
+      issue_number: 99,
+      title: "An issue",
+      body: "Body text here",
+    });
+    expect(row.model).toBe("excerpt");
+    expect(row.summary).toBe(excerptSummary("An issue", "Body text here"));
+    expect(row).toMatchObject({ title: null, next_step: null });
+  }, 1500);
+});
+
 describe("storeIssueSummary", () => {
   it("stores the stub summarizer's structured summary under its own model id", async () => {
     const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ISSUE_STUB };

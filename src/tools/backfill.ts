@@ -28,7 +28,13 @@ const USER_AGENT = "canopy";
 // Sync stays comfortably under whatever that limit is; a backlog beyond the
 // cap is picked up by the next Sync click (the model≠excerpt-and-structured
 // skip-check already makes that safe — nothing already summarized is redone).
-const SUMMARY_BATCH_LIMIT = 20;
+//
+// Kept small (5) so each /admin/backfill returns quickly and the browser sees
+// progress between batches rather than one long stall — the frontend auto-loops
+// up to MAX_BACKFILL_BATCHES (web/src/main.ts). Even in the pathological case
+// where every call times out (WORKERS_AI_TIMEOUT_MS), a batch is bounded to
+// ~5 × timeout and still completes via the excerpt fallback.
+const SUMMARY_BATCH_LIMIT = 5;
 const SUMMARY_CALL_DELAY_MS = 500;
 
 export interface BackfillResult {
