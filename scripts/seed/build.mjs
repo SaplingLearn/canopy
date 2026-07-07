@@ -6,6 +6,11 @@ const q = (v) => (v === null || v === undefined ? "NULL" : `'${String(v).replace
 const num = (v) => (v === null || v === undefined ? "NULL" : String(Number(v)));
 const jsonLit = (obj) => (obj === null || obj === undefined ? "NULL" : q(JSON.stringify(obj)));
 
+// Provenance stamped on structured summary rows so they read as "done" (My Work's
+// Sync skip-check treats a row as generated only when model != 'excerpt' AND
+// title IS NOT NULL). Matches WORKERS_AI_MODEL in src/tools/summarize.ts.
+const STRUCTURED_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+
 /** True iff the loader was asked to touch remote D1 — the loader must refuse. */
 export const targetsRemote = (argv) => argv.includes("--remote");
 
@@ -89,16 +94,23 @@ export function buildSeedStatements(fx) {
       `INSERT INTO events (semantic_key, event_type, ref_number, subject_login, raw, provenance, occurred_at, recorded_at, recorded_by) VALUES (` +
         `${q(e.semantic_key)}, ${q(e.event_type)}, ${num(e.ref_number)}, ${q(e.subject_login)}, ${jsonLit(e.raw)}, ${q(e.provenance ?? "backfill")}, ${q(e.occurred_at)}, ${q(e.recorded_at)}, ${q(e.recorded_by ?? "github-webhook")})`
     );
+    // Structured summaries (0018): fixtures carry an object; `summary` (the NOT
+    // NULL prose mirror) is `what`/`summary`, and title/what/why/impact | next_step
+    // land in their own columns. A bare `model:"excerpt"` fixture stays prose-only.
     if (e.pr_summary) {
+      const p = e.pr_summary;
+      const model = p.model ?? STRUCTURED_MODEL;
       s.push(
-        `INSERT INTO pr_summaries (semantic_key, pr_number, summary, model, created_at) VALUES (` +
-          `${q(e.semantic_key)}, ${num(e.ref_number)}, ${q(e.pr_summary)}, 'excerpt', ${q(e.recorded_at)})`
+        `INSERT INTO pr_summaries (semantic_key, pr_number, summary, model, created_at, title, what, why, impact) VALUES (` +
+          `${q(e.semantic_key)}, ${num(e.ref_number)}, ${q(p.what)}, ${q(model)}, ${q(e.recorded_at)}, ${q(p.title)}, ${q(p.what)}, ${q(p.why)}, ${q(p.impact)})`
       );
     }
     if (e.issue_summary) {
+      const i = e.issue_summary;
+      const model = i.model ?? STRUCTURED_MODEL;
       s.push(
-        `INSERT INTO issue_summaries (issue_number, summary, model, created_at) VALUES (` +
-          `${num(e.ref_number)}, ${q(e.issue_summary)}, 'excerpt', ${q(e.recorded_at)})`
+        `INSERT INTO issue_summaries (issue_number, summary, model, created_at, title, next_step) VALUES (` +
+          `${num(e.ref_number)}, ${q(i.summary)}, ${q(model)}, ${q(e.recorded_at)}, ${q(i.title)}, ${q(i.next_step)})`
       );
     }
   }

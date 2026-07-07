@@ -3,30 +3,106 @@
     {
       "slug": "mcp-server", "section": "reference", "space": "canopy",
       "title": "MCP Server", "current_version": 2,
-      "updated_at": "2026-06-23T00:00:00Z", "updated_by": "meilin",
+      "updated_at": "2026-06-23T00:00:00Z", "updated_by": "AndresL230",
       "body": "The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract. Every request carries a bearer token, compared in constant time. Token rotation is tracked in #142.",
       "versions": [
-        { "version": 1, "body": "v1 body — initial page.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-04-01T00:00:00Z", "created_by": "devraj" },
-        { "version": 2, "body": "The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract. Every request carries a bearer token, compared in constant time. Token rotation is tracked in #142.", "summary": "Documented the typed contract", "status": "promoted", "confidence": "high", "created_at": "2026-06-23T00:00:00Z", "created_by": "meilin" },
-        { "version": 3, "body": "The MCP server is the only write path. Tokens are compared in constant time. Rotation: revoke and re-mint from Settings.", "summary": "Clarify token rotation", "status": "staged", "confidence": "high", "created_at": "2026-06-24T00:00:00Z", "created_by": "meilin", "change_kind": "edit", "base_version": 2 }
+        { "version": 1, "body": "v1 body — initial page.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-04-01T00:00:00Z", "created_by": "AndresL230" },
+        { "version": 2, "body": "The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post session output through a typed contract. Every request carries a bearer token, compared in constant time. Token rotation is tracked in #142.", "summary": "Documented the typed contract", "status": "promoted", "confidence": "high", "created_at": "2026-06-23T00:00:00Z", "created_by": "AndresL230" },
+        { "version": 3, "body": "The MCP server is the only write path. Tokens are compared in constant time. Rotation: revoke and re-mint from Settings. A fresh McpServer is constructed per request.", "summary": "Clarify token rotation + per-request server", "status": "staged", "confidence": "high", "created_at": "2026-06-24T00:00:00Z", "created_by": "Jose-Gael-Cruz-Lopez", "change_kind": "edit", "base_version": 2 }
+      ]
+    },
+    {
+      "slug": "the-gate", "section": "reference", "space": "canopy",
+      "title": "The reconciling gate", "current_version": 1,
+      "updated_at": "2026-06-18T00:00:00Z", "updated_by": "Jose-Gael-Cruz-Lopez",
+      "body": "Every ingested entry funnels through consume(): a replay ledger drops re-POSTs, content-hash dedupe drops identical bodies, and change-typing (new/edit/rewrite) is computed by an LCS diff against the promoted body. Low-confidence new slugs go to triage; low-confidence edits stage-and-flag.",
+      "versions": [
+        { "version": 1, "body": "Every ingested entry funnels through consume(): a replay ledger drops re-POSTs, content-hash dedupe drops identical bodies, and change-typing (new/edit/rewrite) is computed by an LCS diff against the promoted body. Low-confidence new slugs go to triage; low-confidence edits stage-and-flag.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-18T00:00:00Z", "created_by": "Jose-Gael-Cruz-Lopez" }
+      ]
+    },
+    {
+      "slug": "auth-classes", "section": "reference", "space": "canopy",
+      "title": "Three auth classes", "current_version": 2,
+      "updated_at": "2026-06-20T00:00:00Z", "updated_by": "lpcooper-arch",
+      "body": "Session cookie (humans, signed), bearer token (agents at /mcp, hashed with a canopy_mcp_ prefix), and the GitHub webhook (HMAC-SHA256 over the raw body). Each is kept strictly separate; /mcp is bearer-only and returns a bare 401 with no OAuth discovery.",
+      "versions": [
+        { "version": 1, "body": "Session cookie, bearer token, webhook HMAC.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-05-02T00:00:00Z", "created_by": "lpcooper-arch" },
+        { "version": 2, "body": "Session cookie (humans, signed), bearer token (agents at /mcp, hashed with a canopy_mcp_ prefix), and the GitHub webhook (HMAC-SHA256 over the raw body). Each is kept strictly separate; /mcp is bearer-only and returns a bare 401 with no OAuth discovery.", "summary": "Detail each auth class", "status": "promoted", "confidence": "high", "created_at": "2026-06-20T00:00:00Z", "created_by": "lpcooper-arch" }
+      ]
+    },
+    {
+      "slug": "my-work-projection", "section": "reference", "space": "canopy",
+      "title": "My Work projection", "current_version": 1,
+      "updated_at": "2026-07-02T00:00:00Z", "updated_by": "AndresL230",
+      "body": "My Work is a D1-only projection over captured events: previousActivity (summarized merged/closed PRs) and todo (open assigned issues, 5 most recent). Each PR and issue is summarized once at capture time into structured columns (PR: title/what/why/impact; issue: title/summary/next_step).",
+      "versions": [
+        { "version": 1, "body": "My Work is a D1-only projection over captured events: previousActivity (summarized merged/closed PRs) and todo (open assigned issues, 5 most recent). Each PR and issue is summarized once at capture time into structured columns (PR: title/what/why/impact; issue: title/summary/next_step).", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-07-02T00:00:00Z", "created_by": "AndresL230" }
       ]
     },
     {
       "slug": "product-overview", "section": "context", "space": "canopy",
       "title": "Product Overview", "current_version": 1,
-      "updated_at": "2026-06-10T00:00:00Z", "updated_by": "sanaok",
-      "body": "Canopy is the shared source of truth and working memory for Sapling, a four-person software team.",
+      "updated_at": "2026-06-10T00:00:00Z", "updated_by": "lpcooper-arch",
+      "body": "Canopy is the shared source of truth and working memory for Sapling, a four-person software team. Agents propose context through a reconciling gate; humans confirm the consequential changes in Triage.",
       "versions": [
-        { "version": 1, "body": "Canopy is the shared source of truth and working memory for Sapling, a four-person software team.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-10T00:00:00Z", "created_by": "sanaok" }
+        { "version": 1, "body": "Canopy is the shared source of truth and working memory for Sapling, a four-person software team. Agents propose context through a reconciling gate; humans confirm the consequential changes in Triage.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-10T00:00:00Z", "created_by": "lpcooper-arch" }
+      ]
+    },
+    {
+      "slug": "team-workflow", "section": "context", "space": "canopy",
+      "title": "How the team works", "current_version": 1,
+      "updated_at": "2026-06-14T00:00:00Z", "updated_by": "Darkest-Teddy",
+      "body": "Orient with load-context before touching an area, work, then record-session at the end to stage one reconciled batch. Trust live results; scrutinize anything staged, unpromoted, or draft.",
+      "versions": [
+        { "version": 1, "body": "Orient with load-context before touching an area, work, then record-session at the end to stage one reconciled batch. Trust live results; scrutinize anything staged, unpromoted, or draft.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-14T00:00:00Z", "created_by": "Darkest-Teddy" }
+      ]
+    },
+    {
+      "slug": "onboarding", "section": "context", "space": "canopy",
+      "title": "Onboarding a new agent", "current_version": 1,
+      "updated_at": "2026-06-28T00:00:00Z", "updated_by": "AndresL230",
+      "body": "Get added to the SaplingLearn org, sign in to Canopy, then mint an MCP bearer token in Settings. Point your agent at /mcp with the bearer; the connection is stateless.",
+      "versions": [
+        { "version": 1, "body": "Get added to the SaplingLearn org, sign in to Canopy, then mint an MCP bearer token in Settings. Point your agent at /mcp with the bearer; the connection is stateless.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-28T00:00:00Z", "created_by": "AndresL230" }
       ]
     },
     {
       "slug": "postgres-store", "section": "decisions", "space": "canopy",
-      "title": "ADR-001 · Postgres for the store", "current_version": 1,
-      "updated_at": "2026-06-02T00:00:00Z", "updated_by": "sanaok",
-      "body": "Use a single Postgres instance as the store. Sections, versions, feed entries, and decisions are all rows.",
+      "title": "ADR-001 · D1 for the store", "current_version": 2,
+      "updated_at": "2026-06-15T00:00:00Z", "updated_by": "lpcooper-arch",
+      "body": "Use a single Cloudflare D1 database as the store. Sections, versions, feed entries, events, and decisions are all rows. One Worker on one origin serves the API, MCP, webhook, and static web.",
       "versions": [
-        { "version": 1, "body": "Use a single Postgres instance as the store. Sections, versions, feed entries, and decisions are all rows.", "summary": "Initial ADR", "status": "promoted", "confidence": "high", "created_at": "2026-06-02T00:00:00Z", "created_by": "sanaok" }
+        { "version": 1, "body": "Use a single Postgres instance as the store.", "summary": "Initial ADR", "status": "promoted", "confidence": "high", "created_at": "2026-06-02T00:00:00Z", "created_by": "lpcooper-arch" },
+        { "version": 2, "body": "Use a single Cloudflare D1 database as the store. Sections, versions, feed entries, events, and decisions are all rows. One Worker on one origin serves the API, MCP, webhook, and static web.", "summary": "Switch Postgres to D1 after the Workers move", "status": "promoted", "confidence": "high", "created_at": "2026-06-15T00:00:00Z", "created_by": "lpcooper-arch" }
+      ]
+    },
+    {
+      "slug": "sapling-architecture", "section": "reference", "space": "sapling",
+      "title": "Sapling platform architecture", "current_version": 1,
+      "updated_at": "2026-06-11T00:00:00Z", "updated_by": "Jose-Gael-Cruz-Lopez",
+      "body": "The Sapling learning platform is a Next.js frontend backed by a Workers API and D1. Lessons are authored as MDX, compiled at build, and served from the edge. Progress and streaks live in Durable Objects.",
+      "versions": [
+        { "version": 1, "body": "The Sapling learning platform is a Next.js frontend backed by a Workers API and D1. Lessons are authored as MDX, compiled at build, and served from the edge. Progress and streaks live in Durable Objects.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-11T00:00:00Z", "created_by": "Jose-Gael-Cruz-Lopez" }
+      ]
+    },
+    {
+      "slug": "sapling-content-pipeline", "section": "reference", "space": "sapling",
+      "title": "Content pipeline", "current_version": 1,
+      "updated_at": "2026-06-22T00:00:00Z", "updated_by": "Darkest-Teddy",
+      "body": "Authors write lessons in MDX in the sapling repo. A GitHub Action validates frontmatter against the schema, renders previews, and on merge publishes to R2. Broken links fail the check.",
+      "versions": [
+        { "version": 1, "body": "Authors write lessons in MDX in the sapling repo. A GitHub Action validates frontmatter against the schema, renders previews, and on merge publishes to R2. Broken links fail the check.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-22T00:00:00Z", "created_by": "Darkest-Teddy" }
+      ]
+    },
+    {
+      "slug": "sapling-api", "section": "reference", "space": "sapling",
+      "title": "Sapling public API", "current_version": 2,
+      "updated_at": "2026-06-30T00:00:00Z", "updated_by": "AndresL230",
+      "body": "The public API exposes /courses, /lessons, and /progress. Auth is a per-learner JWT. Rate limits are 120 req/min per token. All responses are cache-friendly with ETags.",
+      "versions": [
+        { "version": 1, "body": "The public API exposes /courses and /lessons.", "summary": "Initial page", "status": "promoted", "confidence": "high", "created_at": "2026-06-05T00:00:00Z", "created_by": "AndresL230" },
+        { "version": 2, "body": "The public API exposes /courses, /lessons, and /progress. Auth is a per-learner JWT. Rate limits are 120 req/min per token. All responses are cache-friendly with ETags.", "summary": "Add /progress, JWT auth, rate limits", "status": "promoted", "confidence": "high", "created_at": "2026-06-30T00:00:00Z", "created_by": "AndresL230" },
+        { "version": 3, "body": "The public API exposes /courses, /lessons, /progress, and /certificates. Auth is a per-learner JWT with refresh. Rate limits are 120 req/min per token; 429s carry Retry-After.", "summary": "Add /certificates + refresh tokens + Retry-After", "status": "staged", "confidence": "medium", "created_at": "2026-07-04T00:00:00Z", "created_by": "Darkest-Teddy", "change_kind": "edit", "base_version": 2, "low_confidence": 1 }
       ]
     }
   ]

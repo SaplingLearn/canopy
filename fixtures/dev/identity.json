@@ -1,5 +1,6 @@
 {
   "identity_tasks": [
-    { "login": "octo-drifter", "first_seen": "2026-06-22T16:01:00Z", "status": "pending" }
+    { "login": "octo-drifter", "first_seen": "2026-06-22T16:01:00Z", "status": "pending" },
+    { "login": "sky-42", "first_seen": "2026-06-21T13:01:00Z", "status": "pending" }
   ]
 }

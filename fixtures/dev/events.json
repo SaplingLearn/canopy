@@ -1,34 +1,96 @@
 {
   "events": [
     {
-      "semantic_key": "gh:pr:145:merged", "event_type": "pr_merged", "ref_number": 145, "subject_login": "AndresL230",
-      "provenance": "backfill", "occurred_at": "2026-06-25T11:30:00Z", "recorded_at": "2026-06-25T11:31:00Z",
-      "raw": { "pr": { "number": 145, "title": "Render Mermaid + D2 in the Docs reader", "body": "## What\n\nFenced mermaid/d2 blocks render to inline SVG client-side.\n\nCloses #133.", "html_url": "https://github.com/SaplingLearn/sapling/pull/145", "merged": true, "merged_at": "2026-06-25T11:30:00Z", "closed_at": "2026-06-25T11:30:00Z", "user": { "login": "AndresL230" }, "milestone": null } },
-      "pr_summary": "Renders fenced mermaid and d2 diagram blocks to inline SVG in the Docs reader, with the source block as a fallback."
+      "semantic_key": "gh:pr:162:merged", "event_type": "pr_merged", "ref_number": 162, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-05T14:00:00Z", "recorded_at": "2026-07-05T14:01:00Z",
+      "raw": { "pr": { "number": 162, "title": "Render My Work cards from structured summary fields", "body": "## What\n\nThe PR and to-do cards now read title/what/why/impact and title/summary/next_step from the DTO. Deletes the What-changed regex convention.\n\nCloses #155.", "html_url": "https://github.com/SaplingLearn/sapling/pull/162", "merged": true, "merged_at": "2026-07-05T14:00:00Z", "closed_at": "2026-07-05T14:00:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Render My Work cards from structured summary fields", "what": "Rewrote the PR and to-do cards to render the structured summary columns directly and removed the old What-changed regex.", "why": "The regex broke whenever the summary prose drifted from its expected shape.", "impact": "My Work cards now show a stable humanized title, what changed, and a next step without brittle parsing." }
+    },
+    {
+      "semantic_key": "gh:pr:158:merged", "event_type": "pr_merged", "ref_number": 158, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-04T16:20:00Z", "recorded_at": "2026-07-04T16:21:00Z",
+      "raw": { "pr": { "number": 158, "title": "Widen captured event raw with PR base.ref and issue milestone", "body": "Records the PR base branch and the issue milestone title/due_on at capture so My Work can render them with no live GitHub call.", "html_url": "https://github.com/SaplingLearn/sapling/pull/158", "merged": true, "merged_at": "2026-07-04T16:20:00Z", "closed_at": "2026-07-04T16:20:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Capture PR base branch and issue milestone in the event", "what": "Widened the captured event raw to include the PR base.ref and the issue milestone title and due date.", "why": "My Work needed those fields to render footers and milestone chips without a render-time GitHub call.", "impact": "Cards can now show 'into main' and a milestone with its due date entirely from D1." }
+    },
+    {
+      "semantic_key": "gh:pr:153:merged", "event_type": "pr_merged", "ref_number": 153, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-29T11:00:00Z", "recorded_at": "2026-06-29T11:01:00Z",
+      "raw": { "pr": { "number": 153, "title": "Milestone progress bars on the Roadmap page", "body": "Each milestone renders a closed/total bar from the stored progress cache.", "html_url": "https://github.com/SaplingLearn/sapling/pull/153", "merged": true, "merged_at": "2026-06-29T11:00:00Z", "closed_at": "2026-06-29T11:00:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Add milestone progress bars to the Roadmap", "what": "Rendered a closed/total progress bar per milestone from the stored progress cache.", "why": null, "impact": "The Roadmap now shows how far each milestone is along at a glance." }
+    },
+    {
+      "semantic_key": "gh:pr:149:merged", "event_type": "pr_merged", "ref_number": 149, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-27T09:15:00Z", "recorded_at": "2026-06-27T09:16:00Z",
+      "raw": { "pr": { "number": 149, "title": "Roadmap FTS so query() stops being roadmap-blind", "body": "Adds a standalone roadmap_fts over the plan narrative and milestones.", "html_url": "https://github.com/SaplingLearn/sapling/pull/149", "merged": true, "merged_at": "2026-06-27T09:15:00Z", "closed_at": "2026-06-27T09:15:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Index the roadmap for search", "what": "Added a standalone roadmap_fts virtual table over the plan narrative and milestones and wired it into query().", "why": "Search returned docs, decisions, and feed but never surfaced roadmap items.", "impact": "Searching now finds milestones and the plan narrative alongside everything else." }
+    },
+    {
+      "semantic_key": "gh:pr:146:merged", "event_type": "pr_merged", "ref_number": 146, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-26T18:45:00Z", "recorded_at": "2026-06-26T18:46:00Z",
+      "raw": { "pr": { "number": 146, "title": "Scheduled progress recompute backstop", "body": "A cron recomputes milestone progress off the render path in case a webhook delivery is missed.", "html_url": "https://github.com/SaplingLearn/sapling/pull/146", "merged": true, "merged_at": "2026-06-26T18:45:00Z", "closed_at": "2026-06-26T18:45:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Add a scheduled progress recompute backstop", "what": "Added a cron that recomputes milestone progress off the render path using absolute closed/total counts.", "why": "A missed webhook delivery could leave milestone progress stale.", "impact": "Progress self-heals within the cron interval even if a webhook is dropped." }
     },
     {
       "semantic_key": "gh:pr:142:merged", "event_type": "pr_merged", "ref_number": 142, "subject_login": "AndresL230",
       "provenance": "backfill", "occurred_at": "2026-06-25T10:00:00Z", "recorded_at": "2026-06-25T10:01:00Z",
-      "raw": { "pr": { "number": 142, "title": "Constant-time MCP token comparison", "body": "Replaces the early-return string compare flagged in #138. Adds a timing test.", "html_url": "https://github.com/SaplingLearn/sapling/pull/142", "merged": true, "merged_at": "2026-06-25T10:00:00Z", "closed_at": "2026-06-25T10:00:00Z", "user": { "login": "AndresL230" }, "milestone": null } },
-      "pr_summary": "Switches MCP bearer-token comparison to a constant-time check and adds a timing test that fails on the old implementation."
+      "raw": { "pr": { "number": 142, "title": "Constant-time MCP token comparison", "body": "Replaces the early-return string compare flagged in #138. Adds a timing test.", "html_url": "https://github.com/SaplingLearn/sapling/pull/142", "merged": true, "merged_at": "2026-06-25T10:00:00Z", "closed_at": "2026-06-25T10:00:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Compare MCP tokens in constant time", "what": "Switched bearer-token comparison to a constant-time check and added a timing test that fails on the old code.", "why": "The early-return string compare in #138 leaked timing information.", "impact": "Token verification no longer leaks a timing side channel." }
     },
     {
-      "semantic_key": "gh:issue:160:assigned:AndresL230:2026-06-24T14:00:00Z", "event_type": "issue", "ref_number": 160, "subject_login": "AndresL230",
-      "provenance": "backfill", "occurred_at": "2026-06-24T14:00:00Z", "recorded_at": "2026-06-24T14:01:00Z",
-      "raw": { "action": "assigned", "issue": { "number": 160, "title": "[P1] Add token revoke endpoint", "body": "Revoke a bearer token from Settings; hash-match then soft-delete.", "html_url": "https://github.com/SaplingLearn/sapling/issues/160", "state": "open", "updated_at": "2026-06-24T14:00:00Z", "user": { "login": "sanaok" }, "assignees": [{ "login": "AndresL230" }], "labels": ["auth"], "milestone": { "number": 2, "open_issues": 1, "closed_issues": 2 } } },
-      "issue_summary": "Build the Settings action that revokes a bearer token by hash-match then soft-delete."
+      "semantic_key": "gh:pr:139:closed", "event_type": "pr_closed", "ref_number": 139, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-24T09:00:00Z", "recorded_at": "2026-06-24T09:01:00Z",
+      "raw": { "pr": { "number": 139, "title": "Spike: Durable Object session cache for MCP", "body": "Abandoned — the stateless per-request server is simpler and the SDK guards reuse.", "html_url": "https://github.com/SaplingLearn/sapling/pull/139", "merged": false, "merged_at": null, "closed_at": "2026-06-24T09:00:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Close the Durable Object MCP session spike", "what": "Closed the spike that explored caching MCP sessions in a Durable Object without merging.", "why": "The stateless per-request server proved simpler and the SDK already guards against reuse.", "impact": null }
+    },
+
+    {
+      "semantic_key": "gh:issue:180:assigned:AndresL230:2026-07-05T18:00:00Z", "event_type": "issue", "ref_number": 180, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-05T18:00:00Z", "recorded_at": "2026-07-05T18:01:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 180, "title": "[P0] Bearer token revoke + audit endpoint", "body": "Revoke a bearer token from Settings (hash-match then soft-delete) and record the revocation in the audit log.", "html_url": "https://github.com/SaplingLearn/sapling/issues/180", "state": "open", "updated_at": "2026-07-05T18:00:00Z", "user": { "login": "lpcooper-arch" }, "assignees": [{ "login": "AndresL230" }], "labels": ["auth", "backend"], "milestone": { "title": "Token rotation & audit log", "due_on": "2026-06-10T00:00:00Z" } } },
+      "issue_summary": { "title": "Bearer token revoke and audit endpoint", "summary": "Add a Settings action that revokes a bearer token by hash-matching then soft-deleting it, and records the revocation.", "next_step": "Wire the revoke route to the audit log write and cover it with a hash-match test." }
     },
     {
-      "semantic_key": "gh:issue:175:assigned:AndresL230:2026-06-25T09:30:00Z", "event_type": "issue", "ref_number": 175, "subject_login": "AndresL230",
-      "provenance": "backfill", "occurred_at": "2026-06-25T09:30:00Z", "recorded_at": "2026-06-25T09:31:00Z",
-      "raw": { "action": "assigned", "issue": { "number": 175, "title": "[P2] Roadmap progress cache backstop", "body": "Scheduled recompute of milestone progress in case a webhook delivery is missed.", "html_url": "https://github.com/SaplingLearn/sapling/issues/175", "state": "open", "updated_at": "2026-06-25T09:30:00Z", "user": { "login": "meilin" }, "assignees": [{ "login": "AndresL230" }], "labels": ["infra"], "milestone": { "number": 2, "open_issues": 1, "closed_issues": 2 } } },
-      "issue_summary": "Add a scheduled recompute backstop for the milestone progress cache."
+      "semantic_key": "gh:issue:181:assigned:AndresL230:2026-07-05T12:00:00Z", "event_type": "issue", "ref_number": 181, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-05T12:00:00Z", "recorded_at": "2026-07-05T12:01:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 181, "title": "[P1] Per-token audit log query", "body": "Expose a queryable read trail of every MCP write, filterable by token.", "html_url": "https://github.com/SaplingLearn/sapling/issues/181", "state": "open", "updated_at": "2026-07-05T12:00:00Z", "user": { "login": "AndresL230" }, "assignees": [{ "login": "AndresL230" }], "labels": ["auth", "api"], "milestone": { "title": "Token rotation & audit log", "due_on": "2026-06-10T00:00:00Z" } } },
+      "issue_summary": { "title": "Per-token audit log query", "summary": "Provide a read trail of every MCP write that can be filtered by the token that made it.", "next_step": "Design the audit row shape and add a token-scoped query behind the session gate." }
     },
+    {
+      "semantic_key": "gh:issue:184:assigned:AndresL230:2026-07-04T11:30:00Z", "event_type": "issue", "ref_number": 184, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-04T11:30:00Z", "recorded_at": "2026-07-04T11:31:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 184, "title": "[P1] read-plan: diff the plan against captured events", "body": "read-plan should check the authored roadmap against captured events and stored progress, flagging drift.", "html_url": "https://github.com/SaplingLearn/sapling/issues/184", "state": "open", "updated_at": "2026-07-04T11:30:00Z", "user": { "login": "Darkest-Teddy" }, "assignees": [{ "login": "AndresL230" }], "labels": ["data"], "milestone": { "title": "Roadmap reads itself against reality", "due_on": "2026-07-25T00:00:00Z" } } },
+      "issue_summary": { "title": "read-plan diffs the plan against reality", "summary": "Have the read-plan skill compare the authored roadmap to captured events and stored progress and report where they diverge.", "next_step": "Enumerate the milestone github_refs and compare their event-derived progress to the authored status." }
+    },
+    {
+      "semantic_key": "gh:issue:186:assigned:AndresL230:2026-07-03T10:30:00Z", "event_type": "issue", "ref_number": 186, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-03T10:30:00Z", "recorded_at": "2026-07-03T10:31:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 186, "title": "[P2] Namespace Sapling and Canopy slugs in Search", "body": "Sapling lesson slugs and Canopy doc slugs collide in Search results. Namespace them so a query can disambiguate.", "html_url": "https://github.com/SaplingLearn/sapling/issues/186", "state": "open", "updated_at": "2026-07-03T10:30:00Z", "user": { "login": "lpcooper-arch" }, "assignees": [{ "login": "AndresL230" }], "labels": ["api", "data"], "milestone": null } },
+      "issue_summary": { "title": "Namespace Sapling and Canopy slugs in Search", "summary": "Disambiguate colliding lesson and doc slugs in Search results by namespacing them per space.", "next_step": null }
+    },
+    {
+      "semantic_key": "gh:issue:188:assigned:AndresL230:2026-07-02T15:45:00Z", "event_type": "issue", "ref_number": 188, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-07-02T15:45:00Z", "recorded_at": "2026-07-02T15:46:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 188, "title": "[P2] Vectorize spike for semantic search", "body": "Prototype a semantic candidate stream and merge it with FTS via Reciprocal Rank Fusion.", "html_url": "https://github.com/SaplingLearn/sapling/issues/188", "state": "open", "updated_at": "2026-07-02T15:45:00Z", "user": { "login": "Jose-Gael-Cruz-Lopez" }, "assignees": [{ "login": "AndresL230" }], "labels": ["architecture"], "milestone": { "title": "Semantic search ranking", "due_on": "2026-09-18T00:00:00Z" } } },
+      "issue_summary": { "title": "Vectorize spike for semantic search", "summary": "Prototype a Vectorize-backed semantic candidate stream and fuse it with the existing FTS results.", "next_step": "Stand up a throwaway Vectorize index and compare RRF-fused results against FTS-only on a few queries." }
+    },
+    {
+      "semantic_key": "gh:issue:190:assigned:AndresL230:2026-06-30T09:00:00Z", "event_type": "issue", "ref_number": 190, "subject_login": "AndresL230",
+      "provenance": "backfill", "occurred_at": "2026-06-30T09:00:00Z", "recorded_at": "2026-06-30T09:01:00Z",
+      "raw": { "action": "assigned", "issue": { "number": 190, "title": "[P3] Docs: self-host guide outline", "body": "Draft an outline for running the whole store on your own Cloudflare account.", "html_url": "https://github.com/SaplingLearn/sapling/issues/190", "state": "open", "updated_at": "2026-06-30T09:00:00Z", "user": { "login": "Darkest-Teddy" }, "assignees": [{ "login": "AndresL230" }], "labels": ["infra"], "milestone": { "title": "Self-host & deploy guide", "due_on": "2026-10-20T00:00:00Z" } } },
+      "issue_summary": { "title": "Outline the self-host guide", "summary": "Sketch the sections a self-host guide needs: provisioning D1, setting secrets, applying migrations, and deploying.", "next_step": "List the required secrets and bindings as the first section." }
+    },
+
     {
       "semantic_key": "gh:pr:151:merged", "event_type": "pr_merged", "ref_number": 151, "subject_login": "octo-drifter",
       "provenance": "backfill", "occurred_at": "2026-06-22T16:00:00Z", "recorded_at": "2026-06-22T16:01:00Z",
-      "raw": { "pr": { "number": 151, "title": "Fix typo in onboarding doc", "body": "One-line copy fix.", "html_url": "https://github.com/SaplingLearn/sapling/pull/151", "merged": true, "merged_at": "2026-06-22T16:00:00Z", "closed_at": "2026-06-22T16:00:00Z", "user": { "login": "octo-drifter" }, "milestone": null } },
-      "pr_summary": "Fixes a one-line typo in the onboarding doc."
+      "raw": { "pr": { "number": 151, "title": "Fix typo in onboarding doc", "body": "One-line copy fix.", "html_url": "https://github.com/SaplingLearn/sapling/pull/151", "merged": true, "merged_at": "2026-06-22T16:00:00Z", "closed_at": "2026-06-22T16:00:00Z", "user": { "login": "octo-drifter" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Fix a typo in the onboarding doc", "what": "Corrected a one-line typo in the onboarding documentation.", "why": null, "impact": null }
+    },
+    {
+      "semantic_key": "gh:pr:205:merged", "event_type": "pr_merged", "ref_number": 205, "subject_login": "sky-42",
+      "provenance": "backfill", "occurred_at": "2026-06-21T13:00:00Z", "recorded_at": "2026-06-21T13:01:00Z",
+      "raw": { "pr": { "number": 205, "title": "Bump lesson schema validator to v3", "body": "Upgrades the MDX frontmatter validator in the Sapling content pipeline.", "html_url": "https://github.com/SaplingLearn/sapling/pull/205", "merged": true, "merged_at": "2026-06-21T13:00:00Z", "closed_at": "2026-06-21T13:00:00Z", "user": { "login": "sky-42" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Bump the lesson schema validator to v3", "what": "Upgraded the MDX frontmatter validator used by the content pipeline to v3.", "why": null, "impact": "Lessons are now validated against the newer frontmatter schema." }
     }
   ]
 }

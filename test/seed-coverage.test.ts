@@ -27,15 +27,24 @@ describe("dev seed lights up every surface", () => {
     expect(mw.person).toBe("Andres");
     expect(mw.previousActivity.length).toBeGreaterThan(0);
     expect(mw.todo.length).toBeGreaterThan(0);
-    // Priority tag parsed + stripped from an assigned issue.
+    // Priority tags parsed + stripped from assigned issues.
+    expect(mw.todo.some((t) => t.priority === "P0")).toBe(true);
     expect(mw.todo.some((t) => t.priority === "P1")).toBe(true);
+    // Structured summaries (0018) reach the DTO, not just the prose mirror.
+    expect(mw.previousActivity.some((p) => p.what !== null && p.displayTitle !== null)).toBe(true);
+    expect(mw.previousActivity.some((p) => p.baseRef === "main")).toBe(true);
+    expect(mw.todo.some((t) => t.displayTitle !== null && t.nextStep !== null)).toBe(true);
+    // Widened issue raw (0018): milestone title/due_on renders on a card.
+    expect(mw.todo.some((t) => t.milestone !== null && t.milestone.title.length > 0)).toBe(true);
   });
 
   it("Roadmap: narrative + milestones carrying progress", async () => {
     const plan = await get_plan(env.DB);
     expect(plan.narrative.length).toBeGreaterThan(0);
-    expect(plan.milestones.length).toBe(3);
+    expect(plan.milestones.length).toBe(7);
     expect(plan.milestones.some((m) => m.progress && m.progress.total > 0)).toBe(true);
+    // Milestones span multiple roadmap phases.
+    expect(new Set(plan.milestones.map((m) => m.phase)).size).toBeGreaterThan(1);
   });
 
   it("Search: ranked hits for a known term", async () => {
