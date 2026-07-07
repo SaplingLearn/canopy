@@ -1033,11 +1033,11 @@ function settingsView(s: AppState): string {
 }
 
 // ── my work (personal dashboard) ──────────────────────────────────────────────
-const MW_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)";
+const MW_LABEL = "font-size:13px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--fg)";
 
 // Option-2a card anatomy (design_handoff_mywork_cards): roomy card, title +
 // number pill row, then hairline-separated 96px-label section rows, footer meta.
-const MW_CARD = "border:1px solid var(--border);border-radius:16px;padding:20px 22px 14px;background:color-mix(in srgb,var(--fg) 2.5%,transparent)";
+const MW_CARD = "border:1px solid var(--border);border-radius:16px;padding:20px 22px 14px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);display:flex;flex-direction:column;height:100%";
 const MW_ROW = "display:grid;grid-template-columns:96px 1fr;gap:12px;padding:11px 0;border-top:1px solid var(--border)";
 const MW_ROW_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);padding-top:2px";
 const MW_ROW_BODY = "font-size:13.5px;line-height:1.6;color:var(--fg-70)";
@@ -1046,7 +1046,7 @@ const MW_ARROW_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none
 const MW_FLAG_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="flex:none"><path d="M12 2v20"></path><path d="M12 4h7l-2 3 2 3h-7"></path></svg>`;
 
 function wrapMyWork(inner: string): string {
-  return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 32px 100px">${inner}</div>`;
+  return `<div class="cnpy-scroll" style="max-width:1120px;margin:0 auto;padding:32px 32px 100px">${inner}</div>`;
 }
 function greetingFor(): string {
   const h = new Date().getHours();
@@ -1055,7 +1055,10 @@ function greetingFor(): string {
   return "Good evening";
 }
 function mwSection(label: string, body: string): string {
-  return `<section style="margin-top:26px"><div style="${MW_LABEL};margin-bottom:12px">${label}</div>${body}</section>`;
+  return `<section style="margin-top:44px">
+    <div style="padding-bottom:13px;margin-bottom:18px;border-bottom:1px solid var(--border-strong)">
+      <span style="${MW_LABEL}">${label}</span>
+    </div>${body}</section>`;
 }
 /** Dashed-card empty-state hint (existing idiom, e.g. old "no focus set yet"). */
 function mwEmptyHint(text: string): string {
@@ -1090,7 +1093,7 @@ function mwMdBody(body: string, markdownFn: (body: string) => string): string {
 }
 /** Footer meta row closing a card (chips left, timestamp right via margin-left:auto). */
 function mwFooter(inner: string, gap: number): string {
-  return `<div style="padding:12px 0 2px;border-top:1px solid var(--border);display:flex;align-items:center;gap:${gap}px">${inner}</div>`;
+  return `<div style="margin-top:auto;padding:12px 0 2px;border-top:1px solid var(--border);display:flex;align-items:center;gap:${gap}px">${inner}</div>`;
 }
 /** Human-short date for a milestone due date, e.g. "Jul 20" (the same short
  *  format relTime falls back to; date-only ISO pinned to noon to dodge TZ shift). */
@@ -1120,9 +1123,9 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
     : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
   const into = pr.baseRef ? ` · into <span style="font-family:var(--mono)">${esc(pr.baseRef)}</span>` : "";
   const footer = mwFooter(`${chip}<span style="font-size:11.5px;color:var(--fg-40)">${relTime(pr.occurredAt)}${into}</span>`, 9);
-  return `<div class="cnpy-card" style="${MW_CARD};margin-bottom:10px">
+  return `<div class="cnpy-card" style="${MW_CARD}">
     ${mwTitleRow(pr.displayTitle ?? pr.title, pr.number, pr.url)}
-    <div style="display:flex;flex-direction:column">${rows.join("")}${footer}</div>
+    <div style="display:flex;flex-direction:column;flex:1">${rows.join("")}${footer}</div>
   </div>`;
 }
 
@@ -1144,7 +1147,7 @@ export function todoCard(t: MyWorkTodo): string {
   const footer = mwFooter(`${prio}${labels}<span style="font-size:11px;color:var(--fg-40);margin-left:auto">updated ${relTime(t.updatedAt)}</span>`, 6);
   return `<div class="cnpy-card" style="${MW_CARD}">
     ${mwTitleRow(t.displayTitle ?? t.title, t.number, t.url)}
-    <div style="display:flex;flex-direction:column">${rows.join("")}${footer}</div>
+    <div style="display:flex;flex-direction:column;flex:1">${rows.join("")}${footer}</div>
   </div>`;
 }
 
@@ -1164,13 +1167,13 @@ function myWorkView(s: AppState): string {
     ? mwDegradedHint("Couldn't load your recent activity right now.")
     : d.previousActivity.length === 0
       ? mwEmptyHint("No merged or closed PRs yet.")
-      : d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("");
+      : `<div class="cnpy-mw-grid">${d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("")}</div>`;
 
   const todoBody = d.degraded
     ? mwDegradedHint("Couldn't load your to-do list right now.")
     : d.todo.length === 0
       ? mwEmptyHint("No open issues assigned to you.")
-      : `<div style="display:flex;flex-direction:column;gap:8px">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
+      : `<div class="cnpy-mw-grid">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
 
   const activity = mwSection("Previous activity", activityBody);
   const todo = mwSection("To-do", todoBody);

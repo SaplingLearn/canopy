@@ -79,7 +79,7 @@ function issueEvent(over: {
 }
 
 describe("getMyWork — previous activity cap", () => {
-  it("returns only the 5 most recent merged/closed PR events, with the stored summary joined", async () => {
+  it("returns only the 6 most recent merged/closed PR events, with the stored summary joined", async () => {
     for (let n = 1; n <= 7; n++) {
       await ingestEvent(env.DB, prEvent({ number: n, login: "AndresL230", occurred_at: daysBefore(NOW, 7 - n) }), "github-webhook");
     }
@@ -88,7 +88,7 @@ describe("getMyWork — previous activity cap", () => {
     const work = await getMyWork(env.DB, "AndresL230");
     expect(work.degraded).toBe(false);
     expect(work.person).toBe("Andres");
-    expect(work.previousActivity.map((p) => p.number)).toEqual([7, 6, 5, 4, 3]); // newest first, oldest two cut
+    expect(work.previousActivity.map((p) => p.number)).toEqual([7, 6, 5, 4, 3, 2]); // newest first, oldest one cut
     expect(work.previousActivity[0]).toMatchObject({
       number: 7,
       title: "PR 7",
@@ -172,7 +172,7 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
 });
 
 describe("getMyWork — todo cap", () => {
-  it("returns only the 5 most recently updated open assigned issues, newest first", async () => {
+  it("returns only the 6 most recently updated open assigned issues, newest first", async () => {
     for (let n = 1; n <= 7; n++) {
       await ingestEvent(
         env.DB,
@@ -188,7 +188,7 @@ describe("getMyWork — todo cap", () => {
     }
 
     const work = await getMyWork(env.DB, "AndresL230");
-    expect(work.todo.map((t) => t.number)).toEqual([7, 6, 5, 4, 3]); // newest first, oldest two cut — mirrors the PR cap
+    expect(work.todo.map((t) => t.number)).toEqual([7, 6, 5, 4, 3, 2]); // newest first, oldest one cut — mirrors the PR cap
   });
 });
 
