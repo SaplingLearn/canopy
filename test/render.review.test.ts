@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { lineDiff, collapsedLineDiff } from "../web/src/diff";
-import { reviewView, reviewDetail, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
+import { reviewView, reviewDetail, reviewCard, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
 import { maintenanceView, assignPanel, personPicker, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
 
 // ── lineDiff ──────────────────────────────────────────────────────────────────
@@ -208,6 +208,25 @@ describe("reviewDetail — restructured header", () => {
     expect(html.indexOf("Append-only feed as the record")).toBeLessThan(html.indexOf("DRAFT"));
     expect(html.indexOf("DRAFT")).toBeLessThan(html.indexOf("Reject"));
     expect(html.indexOf("Reject")).toBeLessThan(html.indexOf("Ratify"));
+  });
+});
+
+describe("reviewCard — restructured to match the detail header", () => {
+  it("leads with the title, badge up-right, folds type/id/author/date into one byline", () => {
+    const html = reviewCard(makeItem({
+      eyebrow: "DECISION · ADR-005", badge: "DRAFT", badgeColor: "var(--blue)",
+      title: "A decision card title", agent: "AndresL230", time: "Jun 25",
+    }), false);
+    // The uppercase eyebrow line above the title is gone.
+    expect(html).not.toContain("DECISION · ADR-005");
+    // Title is first — before the byline record type and before the badge.
+    expect(html.indexOf("A decision card title")).toBeLessThan(html.indexOf(">Decision<"));
+    expect(html.indexOf("A decision card title")).toBeLessThan(html.indexOf("DRAFT"));
+    // Byline folds type/id/author/date; identifier in monospace.
+    expect(html).toContain(">Decision<");
+    expect(html).toMatch(/font-family:var\(--mono\)[^>]*>ADR-005</);
+    expect(html).toContain("AndresL230");
+    expect(html).toContain("Jun 25");
   });
 });
 
