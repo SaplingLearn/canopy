@@ -58,7 +58,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
   `0015_drop_user_token` [drops `users.github_token`], `0016_identity_tasks`, then
   `0017_issue_summaries` [assigned-issue summaries], `0018_structured_summaries` [structured summary
-  columns]).
+  columns], `0019_drop_pr_summary` [retires the legacy prose `pr_summaries.summary` — PR cards are
+  structured-only]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started) served via the ASSETS binding; `web/src/markdown.ts` renders PR summaries and the
   roadmap narrative as styled HTML.
@@ -173,9 +174,13 @@ subject, 5 most recent) and `todo` (their open assigned issues, 5 most recently 
 built from `events` (+ `pr_summaries`, `issue_summaries`, `people`), no live GitHub. `person` resolves via
 the `people` identity map; an unmapped login yields an empty projection (`degraded:false`); any D1 failure
 yields empty `degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at capture time
-(`tools/summarize.ts`: Workers AI `env.AI` emits one validated JSON object — PR:
-title/what/why/impact; issue: title/summary/next_step — with a deterministic excerpt
-fallback that writes prose-only rows), stored as columns on `pr_summaries` /
+(`tools/summarize.ts`: Google Gemini `gemini-2.5-flash-lite` via `GEMINI_API_KEY` — a REST
+`generateContent` call, not a Cloudflare binding — emits one validated JSON object — PR:
+title/what/why/impact; issue: title/summary/next_step). On AI failure the **issue**
+path writes a deterministic prose excerpt (`issue_summaries.summary`); the **PR** path
+is structured-only (the prose `pr_summaries.summary` column was dropped in `0019`), so
+its fallback is a content-less marker row (`model='excerpt'`, null structured columns)
+that renders a "No summary recorded" placeholder. Stored as columns on `pr_summaries` /
 `issue_summaries` and regenerable via Sync (a row is "done" only when
 `model != 'excerpt' AND title IS NOT NULL`) — never truth, never generated at render.
 
@@ -196,6 +201,7 @@ fallback that writes prose-only rows), stored as columns on `pr_summaries` /
 Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s),
 `GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress recompute — absent → `scheduled()`
-no-ops). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`). Bindings: `DB`
-(D1), `ASSETS` (static), `AI` (Workers AI — capture-time PR summaries only, never at render).
-`[triggers] crons` drives the progress recompute backstop.
+no-ops), `GEMINI_API_KEY` (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt
+fallback). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`). Bindings: `DB`
+(D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
+not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` drives the progress recompute backstop.

@@ -8,8 +8,8 @@ const jsonLit = (obj) => (obj === null || obj === undefined ? "NULL" : q(JSON.st
 
 // Provenance stamped on structured summary rows so they read as "done" (My Work's
 // Sync skip-check treats a row as generated only when model != 'excerpt' AND
-// title IS NOT NULL). Matches WORKERS_AI_MODEL in src/tools/summarize.ts.
-const STRUCTURED_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+// title IS NOT NULL). Matches GEMINI_MODEL in src/tools/summarize.ts.
+const STRUCTURED_MODEL = "gemini-2.5-flash-lite";
 
 /** True iff the loader was asked to touch remote D1 — the loader must refuse. */
 export const targetsRemote = (argv) => argv.includes("--remote");
@@ -21,6 +21,14 @@ export const targetsRemote = (argv) => argv.includes("--remote");
  */
 export function buildSeedStatements(fx) {
   const s = [...RESET_STATEMENTS];
+
+  // Register every section the doc fixtures reference so the `docs.section`
+  // foreign key (→ sections.name) is satisfied for any taxonomy the fixtures
+  // use. INSERT OR IGNORE keeps the migration-seeded vocab intact. Local seed
+  // only — never runs against remote.
+  for (const name of [...new Set((fx.docs?.docs ?? []).map((d) => d.section))]) {
+    s.push(`INSERT OR IGNORE INTO sections (name, description) VALUES (${q(name)}, ${q(name)})`);
+  }
 
   for (const d of fx.docs?.docs ?? []) {
     s.push(
@@ -94,15 +102,16 @@ export function buildSeedStatements(fx) {
       `INSERT INTO events (semantic_key, event_type, ref_number, subject_login, raw, provenance, occurred_at, recorded_at, recorded_by) VALUES (` +
         `${q(e.semantic_key)}, ${q(e.event_type)}, ${num(e.ref_number)}, ${q(e.subject_login)}, ${jsonLit(e.raw)}, ${q(e.provenance ?? "backfill")}, ${q(e.occurred_at)}, ${q(e.recorded_at)}, ${q(e.recorded_by ?? "github-webhook")})`
     );
-    // Structured summaries (0018): fixtures carry an object; `summary` (the NOT
-    // NULL prose mirror) is `what`/`summary`, and title/what/why/impact | next_step
-    // land in their own columns. A bare `model:"excerpt"` fixture stays prose-only.
+    // Structured summaries (0018): fixtures carry an object. PRs are structured-
+    // only (the prose `summary` column was dropped in 0019) — title/what/why/impact
+    // land in their own columns; issues keep `summary` (issue_summaries). A bare
+    // `model:"excerpt"` PR fixture leaves the structured columns null.
     if (e.pr_summary) {
       const p = e.pr_summary;
       const model = p.model ?? STRUCTURED_MODEL;
       s.push(
-        `INSERT INTO pr_summaries (semantic_key, pr_number, summary, model, created_at, title, what, why, impact) VALUES (` +
-          `${q(e.semantic_key)}, ${num(e.ref_number)}, ${q(p.what)}, ${q(model)}, ${q(e.recorded_at)}, ${q(p.title)}, ${q(p.what)}, ${q(p.why)}, ${q(p.impact)})`
+        `INSERT INTO pr_summaries (semantic_key, pr_number, model, created_at, title, what, why, impact) VALUES (` +
+          `${q(e.semantic_key)}, ${num(e.ref_number)}, ${q(model)}, ${q(e.recorded_at)}, ${q(p.title)}, ${q(p.what)}, ${q(p.why)}, ${q(p.impact)})`
       );
     }
     if (e.issue_summary) {

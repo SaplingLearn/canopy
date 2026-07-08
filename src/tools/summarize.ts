@@ -28,20 +28,19 @@ export interface Summarizer<T> {
   summarize(input: { title: string; body: string }): Promise<T | null>;
 }
 
-// @cf/meta/llama-3.1-8b-instruct was retired from the Workers AI catalog
-// (silently — every call threw "model not found," caught by the try/catch
-// below, always falling back to the excerpt summarizer). gemma-4-26b-a4b-it
-// is Google's current flagship open model on Workers AI — comfortably within
-// the free daily Neuron allocation for this workload (~5 neurons/call).
-const WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+// Capture-time summaries come from Google Gemini (gemini-2.5-flash-lite) over the
+// REST generateContent endpoint — the same provider sapling standardizes on, so
+// this reuses one team-wide GEMINI_API_KEY. Flash-Lite is fast and cheap; a
+// healthy call resolves in ~1s. The prior Workers AI path (gemma-4-26b) started
+// fast-failing once the daily Neuron budget was exhausted, silently regressing
+// every live capture to the excerpt fallback.
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
-// The 26B model is slow but bounded — a healthy call resolves in a few seconds.
-// When the daily Neuron budget is exhausted or the model is overloaded, ai.run
-// has been observed to hang indefinitely (never resolves, never rejects), which
-// would wedge the /admin/backfill request the browser waits on. This ceiling
-// races every call against a timer so a hang degrades to the excerpt fallback
-// instead of a permanent stall; 15s is comfortably above a healthy call's latency.
-export const WORKERS_AI_TIMEOUT_MS = 15000;
+// The summarizer runs INLINE on the webhook/backfill request, so a slow or hung
+// call must never wedge capture. Every call is raced against this timeout via an
+// AbortSignal (aborting the in-flight fetch), degrading to the excerpt fallback
+// instead of stalling; 10s is comfortably above a healthy Flash-Lite latency.
+export const GEMINI_TIMEOUT_MS = 10000;
 
 export const SUMMARIZER_SYSTEM_PROMPT =
   "Summarize this pull request for a team activity feed — what shipped. " +
@@ -63,18 +62,13 @@ export const ISSUE_SUMMARIZER_SYSTEM_PROMPT =
   '"next_step": what needs doing, ONLY where the issue states or clearly implies an action; if the issue is vague, aspirational, or states no clear action, use null — never invent a next step, a plan, or a scope the issue never stated. ' +
   'If the description is empty or too thin, use the title verbatim for "title" and "summary" and null for "next_step".';
 
-// Workers AI model families shape ai.run()'s resolved value differently:
-// older/smaller models return the classic flat {response: string}; newer
-// ones (e.g. gemma-4-26b-a4b-it) return an OpenAI-style Chat Completions
-// shape ({choices: [{message: {content: string}}]}). A model swap that
-// changes which shape comes back must not silently regress to the excerpt
-// fallback forever, so both are recognized here.
-function extractResponseText(result: unknown): string | null {
-  const r = result as { response?: unknown; choices?: Array<{ message?: { content?: unknown } }> } | null;
-  if (typeof r?.response === "string") return r.response;
-  const chatContent = r?.choices?.[0]?.message?.content;
-  if (typeof chatContent === "string") return chatContent;
-  return null;
+// Gemini's generateContent nests the model text under
+// candidates[0].content.parts[0].text. Anything else (a safety block that
+// returns no candidate, a malformed shape) yields null → the excerpt fallback.
+function extractGeminiText(data: unknown): string | null {
+  const t = (data as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> } | null)
+    ?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return typeof t === "string" ? t : null;
 }
 
 /** Extracts the single JSON object a summarizer prompt demands. Strips an
@@ -127,76 +121,81 @@ export function validateIssueSummary(o: Record<string, unknown>): IssueSummary |
   return { title, summary, next_step };
 }
 
-/** Shared Workers AI call machinery for both summarizers — only the prompt and
- *  validator differ. Never throws: any failure (network, empty output, prose
- *  instead of JSON, malformed/mistyped fields) resolves to null so the caller
- *  falls back to excerptSummary. */
-function makeWorkersAiSummarizer<T>(
-  ai: Ai,
+/** Injectable overrides for both Gemini summarizers — the model string, the
+ *  inline-call timeout, and the fetch impl (stubbed in tests, never the network). */
+export interface GeminiOpts {
+  model?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+/** Shared Gemini call machinery for both summarizers — only the prompt and
+ *  validator differ. Never throws: any failure (network, non-2xx, timeout,
+ *  empty output, prose instead of JSON, malformed/mistyped fields) resolves to
+ *  null so the caller falls back to excerptSummary.
+ *
+ *  The call runs inline on the webhook/backfill request the browser waits on, so
+ *  it's raced against a timeout via an AbortSignal — when the timer fires it
+ *  aborts the in-flight fetch (whose rejection lands in the catch) and degrades
+ *  to the excerpt fallback instead of wedging capture. clearTimeout in finally so
+ *  a healthy call doesn't leave the timer pending. */
+function makeGeminiSummarizer<T>(
+  apiKey: string,
   systemPrompt: string,
   validate: (o: Record<string, unknown>) => T | null,
-  timeoutMs: number = WORKERS_AI_TIMEOUT_MS
+  opts?: GeminiOpts
 ): Summarizer<T> {
+  const model = opts?.model ?? GEMINI_MODEL;
+  const timeoutMs = opts?.timeoutMs ?? GEMINI_TIMEOUT_MS;
+  const doFetch = opts?.fetchImpl ?? fetch;
   return {
-    model: WORKERS_AI_MODEL,
+    model,
     async summarize({ title, body }) {
-      // A hung ai.run neither resolves nor rejects, so the try/catch alone can't
-      // save us — race it against a timer whose rejection lands in the same catch
-      // and degrades to the excerpt fallback. Promise.race only stops WAITING,
-      // though; the losing ai.run keeps its inference subrequest alive and keeps
-      // consuming capacity. So thread an AbortSignal into the call and abort it
-      // when the timer wins, actually cancelling the in-flight request. clearTimeout
-      // in finally so a healthy call doesn't leave the timer pending.
       const controller = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const result = await Promise.race([
-          ai.run(
-            WORKERS_AI_MODEL,
-            {
-              messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: `Title: ${title}\n\nBody: ${body}` },
-              ],
-            },
-            { signal: controller.signal }
-          ),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              controller.abort();
-              reject(new Error(`Workers AI timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
-          }),
-        ]);
-        const response = extractResponseText(result);
-        if (response === null) return null;
-        const obj = parseStructuredJson(response);
-        if (obj === null) return null;
-        return validate(obj);
+        const res = await doFetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: systemPrompt }] },
+              contents: [{ role: "user", parts: [{ text: `Title: ${title}\n\nBody: ${body}` }] }],
+              generationConfig: { response_mime_type: "application/json", temperature: 0 },
+            }),
+            signal: controller.signal,
+          }
+        );
+        if (!res.ok) return null;
+        const text = extractGeminiText(await res.json());
+        if (text === null) return null;
+        const obj = parseStructuredJson(text);
+        return obj === null ? null : validate(obj);
       } catch (err) {
-        // A timeout, a thrown error (e.g. model-not-found), or malformed output
-        // all land here and degrade to the excerpt fallback. Logged so a spike in
-        // timeouts (exhausted Neuron budget) is visible in `wrangler tail`.
+        // A timeout/abort, a network error, or malformed output all land here and
+        // degrade to the excerpt fallback. Logged so a spike (bad key, Gemini
+        // outage) is visible in `wrangler tail`.
         const kind = systemPrompt === SUMMARIZER_SYSTEM_PROMPT ? "pr" : "issue";
-        console.error(`workersAiSummarizer (${kind}) failed:`, err instanceof Error ? err.message : err);
+        console.error(`geminiSummarizer (${kind}) failed:`, err instanceof Error ? err.message : err);
         return null;
       } finally {
-        if (timer !== undefined) clearTimeout(timer);
+        clearTimeout(timer);
       }
     },
   };
 }
 
 /** PR summarizer. Bounded to that PR's own title+body — no other context is sent.
- *  `timeoutMs` (injectable for tests) caps the ai.run call; a hang → null → excerpt. */
-export function workersAiPrSummarizer(ai: Ai, timeoutMs?: number): Summarizer<PrSummary> {
-  return makeWorkersAiSummarizer(ai, SUMMARIZER_SYSTEM_PROMPT, validatePrSummary, timeoutMs);
+ *  `opts` (injectable for tests) overrides model/timeout/fetch; any failure → null → excerpt. */
+export function geminiPrSummarizer(apiKey: string, opts?: GeminiOpts): Summarizer<PrSummary> {
+  return makeGeminiSummarizer(apiKey, SUMMARIZER_SYSTEM_PROMPT, validatePrSummary, opts);
 }
 
 /** Issue summarizer. Bounded to that issue's own title+body — no other context is sent.
- *  `timeoutMs` (injectable for tests) caps the ai.run call; a hang → null → excerpt. */
-export function workersAiIssueSummarizer(ai: Ai, timeoutMs?: number): Summarizer<IssueSummary> {
-  return makeWorkersAiSummarizer(ai, ISSUE_SUMMARIZER_SYSTEM_PROMPT, validateIssueSummary, timeoutMs);
+ *  `opts` (injectable for tests) overrides model/timeout/fetch; any failure → null → excerpt. */
+export function geminiIssueSummarizer(apiKey: string, opts?: GeminiOpts): Summarizer<IssueSummary> {
+  return makeGeminiSummarizer(apiKey, ISSUE_SUMMARIZER_SYSTEM_PROMPT, validateIssueSummary, opts);
 }
 
 const EXCERPT_MAX = 280;
@@ -211,11 +210,12 @@ export function excerptSummary(title: string, body: string): string {
 }
 
 /**
- * Try the summarizer, fall back to excerptSummary (model:'excerpt', NULL
- * structured columns) on any null/throw. On structured success `summary`
- * mirrors `what` — sane prose for any reader of the old column. INSERT OR
- * REPLACE keeps one row per semantic_key. NEVER throws — a summary failure
- * must not fail the webhook capture that triggered it.
+ * Try the summarizer; on any null/throw store a marker row (model:'excerpt',
+ * NULL structured columns) with no content — a PR is structured-only, so the
+ * fallback is just a "not summarized yet" marker that Sync retries (not a prose
+ * excerpt). On success, title/what/why/impact are stored. INSERT OR REPLACE
+ * keeps one row per semantic_key. NEVER throws — a summary failure must not fail
+ * the webhook capture that triggered it.
  */
 export async function storePrSummary(
   db: DB,
@@ -232,15 +232,13 @@ export async function storePrSummary(
       structured = null;
     }
   }
-  const summary = structured ? structured.what : excerptSummary(pr.title, pr.body);
   const created_at = nowIso();
   await run(
     db,
-    `INSERT OR REPLACE INTO pr_summaries (semantic_key, pr_number, summary, model, created_at, title, what, why, impact)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO pr_summaries (semantic_key, pr_number, model, created_at, title, what, why, impact)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     pr.semantic_key,
     pr.pr_number,
-    summary,
     model,
     created_at,
     structured?.title ?? null,
@@ -251,7 +249,6 @@ export async function storePrSummary(
   return {
     semantic_key: pr.semantic_key,
     pr_number: pr.pr_number,
-    summary,
     model,
     created_at,
     title: structured?.title ?? null,
