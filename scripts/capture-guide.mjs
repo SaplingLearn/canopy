@@ -7,8 +7,10 @@
 //   1. seed + run the app:   npm run seed && npm run dev   (DEV_LOGIN=AndresL230 in .dev.vars)
 //   2. capture every figure:  node scripts/capture-guide.mjs
 //
-// Writes web/public/guide/<name>.png for each surface below. Override the target dir
-// with CANOPY_SHOT_DIR, the base URL with CANOPY_URL, the Chrome binary with CHROME_BIN.
+// Writes web/public/guide/<name>-<theme>.png for each surface × theme (dark/light/midnight),
+// so the guide can show the variant matching the viewer's active theme. Override the target
+// dir with CANOPY_SHOT_DIR, the base URL with CANOPY_URL, the Chrome binary with CHROME_BIN,
+// or the theme list with CANOPY_THEMES (comma-separated).
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,19 +46,17 @@ async function forgeCookie() {
 // query, scroll a section into view), and how long to let async fetches + layout settle.
 const SHOTS = [
   { name: "mywork", settle: 1600,
-    setup: `window.scrollTo(0,0)` },
+    // Explicit nav — a per-theme reload may restore a different screen from the URL hash.
+    setup: `document.querySelector('[data-act=goMyWork]').click(); window.scrollTo(0,0)` },
   { name: "roadmap", settle: 1500,
     setup: `document.querySelector('[data-act=goRoadmap]').click()` },
   { name: "feed", settle: 1500,
     setup: `document.querySelector('[data-act=goFeed]').click()` },
-  { name: "docs", settle: 2100,
-    // Canopy space → open mcp-server (it has a staged version, so the reader shows the
-    // "newer proposal awaiting review" banner) → expand Version history, so the shot
-    // shows both the staging and the non-destructive versioning model in one frame.
-    setup: `document.querySelector('[data-act=goDocs]').click();
-            setTimeout(()=>{const s=document.querySelector('[data-act=setDocSpace][data-arg="canopy"]'); if(s) s.click();}, 500);
-            setTimeout(()=>{const b=document.querySelector('[data-act=openDoc][data-arg="mcp-server"]'); if(b) b.click();}, 1000);
-            setTimeout(()=>{const h=document.querySelector('[data-act=toggleHistory]'); if(h) h.click();}, 1600)` },
+  { name: "docs", settle: 1900,
+    // Docs opens on the Technical space and auto-selects the first doc (sapling-architecture)
+    // with its heading outline expanded in the tree. That doc also has a staged version, so
+    // one frame shows the new per-page outline tree AND the "proposal awaiting review" banner.
+    setup: `document.querySelector('[data-act=goDocs]').click()` },
   { name: "search", settle: 1700,
     setup: `document.querySelector('[data-act=goSearch]').click();
             setTimeout(()=>{const i=document.querySelector('input[data-act=setSearch]'); if(i){i.value='gate'; i.dispatchEvent(new Event('input',{bubbles:true}));}}, 500)` },
@@ -113,15 +113,25 @@ await cmd("Emulation.setDeviceMetricsOverride", { ...VIEW, mobile: false });
 const host = new URL(BASE).hostname;
 await cmd("Network.setCookie", { name: "session", value: COOKIE, domain: host, path: "/" });
 await cmd("Page.navigate", { url: BASE });
-await sleep(2600); // SPA boot (getMe) + first data fetch
+await sleep(2600); // SPA boot (getMe) + first data fetch — establishes the origin for localStorage
 
-for (const shot of shots) {
-  await cmd("Runtime.evaluate", { expression: shot.setup });
-  await sleep(shot.settle);
-  const png = await cmd("Page.captureScreenshot", { format: "png" });
-  const path = join(OUT_DIR, `${shot.name}.png`);
-  writeFileSync(path, Buffer.from(png.result.data, "base64"));
-  process.stdout.write(`${path}\n`);
+// Capture every surface in each theme, so the guide can pick the variant matching the
+// viewer's active theme. The SPA reads localStorage 'canopy.theme' on boot, so we set it
+// then reload; filenames get a -<theme> suffix.
+const THEMES = (process.env.CANOPY_THEMES ?? "dark,light,midnight").split(",").map((t) => t.trim()).filter(Boolean);
+
+for (const theme of THEMES) {
+  await cmd("Runtime.evaluate", { expression: `localStorage.setItem('canopy.theme', ${JSON.stringify(theme)})` });
+  await cmd("Page.reload", {});
+  await sleep(2600); // re-boot in the new theme
+  for (const shot of shots) {
+    await cmd("Runtime.evaluate", { expression: shot.setup });
+    await sleep(shot.settle);
+    const png = await cmd("Page.captureScreenshot", { format: "png" });
+    const path = join(OUT_DIR, `${shot.name}-${theme}.png`);
+    writeFileSync(path, Buffer.from(png.result.data, "base64"));
+    process.stdout.write(`${path}\n`);
+  }
 }
 
 chrome.kill();
