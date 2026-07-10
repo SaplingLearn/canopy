@@ -13,7 +13,7 @@ import type { NeedsTriageRow } from "@shared/rows";
 function makeProposal(overrides: Partial<StagedProposal> = {}): StagedProposal {
   return {
     slug: "deploy-runbook", version: 7, title: "Deployment Runbook",
-    section: "reference", space: "sapling", summary: "Rollback rewritten.",
+    section: "reference", space: "technical", summary: "Rollback rewritten.",
     author: "octo-agent", confidence: "high", status: "staged",
     change_kind: "edit", low_confidence: 0, base_version: 6, current_version: 6,
     created_at: "2026-07-01T10:00:00Z",
@@ -44,7 +44,7 @@ describe("proposalReviewItem", () => {
   it("derives the eyebrow from real space/section and fixes kind/badge", () => {
     const item = proposalReviewItem(makeProposal());
     expect(item.kind).toBe("proposal");
-    expect(item.eyebrow).toBe("PROPOSAL · SAPLING / REFERENCE");
+    expect(item.eyebrow).toBe("PROPOSAL · TECHNICAL / REFERENCE");
     expect(item.badge).toBe("STAGED");
     expect(item.liveVersion).toBe("LIVE (v6)");
   });
@@ -216,7 +216,7 @@ describe("ASSIGN_OPTIONS", () => {
   it("offers the four gate kinds and only real assignable sections", () => {
     expect(ASSIGN_OPTIONS.kinds.map((k) => k.key)).toEqual(["doc", "adr", "milestone", "feed"]);
     expect(ASSIGN_OPTIONS.sections).toEqual(["reference", "context", "decisions"]); // never needs-triage
-    expect(ASSIGN_OPTIONS.spaces).toEqual(["sapling", "canopy"]);
+    expect(ASSIGN_OPTIONS.spaces).toEqual(["technical", "product"]);
     expect(ASSIGN_OPTIONS.tags).toContain("auth");
   });
 });

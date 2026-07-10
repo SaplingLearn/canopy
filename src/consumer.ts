@@ -178,7 +178,7 @@ export async function ingestDocProposal(db: DB, proposal: DocProposal, author: s
       body: proposal.body,
       change_summary: proposal.change_summary,
       confidence: proposal.confidence,
-      space: proposal.space ?? "canopy",
+      space: proposal.space ?? "technical",
       content_hash: hash,
       base_version,
       change_kind,

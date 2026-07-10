@@ -717,7 +717,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const target: AssignTarget = { type: kind };
       if (kind === "doc") {
         target.section = state.assignSection ?? undefined;
-        target.space = state.assignSpace === "sapling" || state.assignSpace === "canopy" ? state.assignSpace : undefined;
+        target.space = state.assignSpace === "technical" || state.assignSpace === "product" ? state.assignSpace : undefined;
       }
       if (kind === "feed") target.tags = state.assignTags;
       assignTriage(id, target)

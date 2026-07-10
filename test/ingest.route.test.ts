@@ -95,7 +95,7 @@ describe("live POST /ingest route", () => {
       `SELECT * FROM docs WHERE slug = 'route-doc'`
     );
     expect(doc).not.toBeNull();
-    expect(doc?.space).toBe("canopy"); // default space when not specified
+    expect(doc?.space).toBe("technical"); // default space when not specified
 
     const version = await first<DocVersionRow>(
       env.DB,

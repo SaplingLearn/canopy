@@ -49,7 +49,7 @@ export async function propose_doc_update(
     change_summary: string;
     confidence: "high" | "low";
     // Reconciler-computed metadata (set by the gate; defaulted for direct callers).
-    space?: "sapling" | "canopy";
+    space?: "technical" | "product";
     content_hash?: string | null;
     base_version?: number | null;
     change_kind?: "new" | "edit" | "rewrite" | null;
@@ -63,7 +63,7 @@ export async function propose_doc_update(
   if (!existing) {
     // Title resolution on first creation only: proposal.title ?? humanizeSlug(slug).
     // (On an existing doc we never rewrite title/section — a human may have set them.)
-    // `space` (audit F4) is persisted on the INSERT, defaulting to 'canopy'.
+    // `space` (audit F4) is persisted on the INSERT, defaulting to 'technical'.
     const title = proposal.title ?? humanizeSlug(proposal.slug);
     await run(
       db,
@@ -74,7 +74,7 @@ export async function propose_doc_update(
       title,
       created_at,
       author,
-      proposal.space ?? "canopy"
+      proposal.space ?? "technical"
     );
   }
 
@@ -410,7 +410,7 @@ export type AssignType = "doc" | "adr" | "milestone" | "feed";
 export interface AssignTarget {
   type?: AssignType;
   section?: string;          // doc: the corrected section (the human's placement)
-  space?: "sapling" | "canopy";
+  space?: "technical" | "product";
   tags?: string[];           // feed: corrected tags
 }
 
@@ -460,7 +460,7 @@ export async function assign_triage(
       ...raw,
       section,
       confidence: "high",            // human-vouched on assign
-      space: target.space ?? (raw.space as "sapling" | "canopy" | undefined),
+      space: target.space ?? (raw.space as "technical" | "product" | undefined),
     });
     const r = await ingestDocProposal(db, proposal, by, ledger);
     if (r.outcome === "triaged") throw new Error(`could not place doc: ${r.reason}`);

@@ -144,25 +144,65 @@ describe("registered MCP propose_doc_update tool — reconciler behaviors", () =
     expect(versions.length).toBe(2);
   });
 
-  it("space:'sapling' persists on the docs row (audit A4: previously proven only at gate level)", async () => {
+  it("an explicit space:'product' persists on the docs row instead of the default (audit A4)", async () => {
     const result = await propose({
-      slug: "sapling-doc",
+      slug: "product-space-doc",
       section: "reference",
-      body: "sapling content here",
+      body: "product content here",
       change_summary: "init",
       confidence: "high",
-      space: "sapling",
+      space: "product",
     });
 
     expect(result.outcome).toBe("written");
 
-    // The docs row must carry space='sapling', not the default 'canopy'.
+    // The docs row must carry space='product', not the default 'technical'.
     const doc = await first<DocRow>(
       env.DB,
-      `SELECT * FROM docs WHERE slug = 'sapling-doc'`
+      `SELECT * FROM docs WHERE slug = 'product-space-doc'`
     );
     expect(doc).not.toBeNull();
-    expect(doc?.space).toBe("sapling");
+    expect(doc?.space).toBe("product");
+  });
+
+  it("omitted space defaults to 'technical' on the docs row", async () => {
+    const result = await propose({
+      slug: "default-space-doc",
+      section: "reference",
+      body: "content with no space specified",
+      change_summary: "init",
+      confidence: "high",
+    });
+    expect(result.outcome).toBe("written");
+
+    const doc = await first<DocRow>(
+      env.DB,
+      `SELECT * FROM docs WHERE slug = 'default-space-doc'`
+    );
+    expect(doc?.space).toBe("technical");
+  });
+
+  it("an off-vocab space is rejected at the tool boundary (hard enum — never written, never triaged)", async () => {
+    // The registered tool's Zod enum is exactly {technical, product}; a foreign
+    // value fails validation before the gate runs, so the tab set can't be widened
+    // by a write. (Contrast: an out-of-vocab section is triaged, not rejected.)
+    const { isError } = await callTool("propose_doc_update", {
+      slug: "bad-space-doc",
+      section: "reference",
+      body: "should never be written",
+      change_summary: "init",
+      confidence: "high",
+      space: "sapling",
+    });
+    expect(isError).toBeTruthy();
+
+    // Nothing was written and nothing was triaged — validation short-circuited the call.
+    expect(
+      (await all<DocRow>(env.DB, `SELECT * FROM docs WHERE slug = 'bad-space-doc'`)).length
+    ).toBe(0);
+    expect(
+      (await all<NeedsTriageRow>(env.DB, `SELECT * FROM needs_triage`)).length
+    ).toBe(0);
   });
 
   it("low-confidence new slug: routed to needs_triage, no docs or doc_versions row", async () => {

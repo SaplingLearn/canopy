@@ -113,7 +113,7 @@ export const ASSIGN_OPTIONS: AssignOptions = {
     { key: "feed", label: "Feed update" },
   ],
   sections: SECTIONS.filter((s) => s !== "needs-triage"),
-  spaces: ["sapling", "canopy"],
+  spaces: ["technical", "product"],
   tags: [...TAGS],
 };
 

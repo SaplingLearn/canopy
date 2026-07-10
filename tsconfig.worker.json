@@ -8,5 +8,5 @@
   // Tests that import web/src code (render + triage-map mapping tests) are type-checked
   // under tsconfig.web.json (DOM lib) — never with worker fetch types. Vitest still runs
   // them in the pool-workers harness at runtime (file discovery ignores tsconfig).
-  "exclude": ["test/render.review.test.ts", "test/render.mywork.test.ts", "test/render.roadmap.test.ts", "test/triage-map.test.ts"]
+  "exclude": ["test/render.review.test.ts", "test/render.mywork.test.ts", "test/render.roadmap.test.ts", "test/render.docs.test.ts", "test/triage-map.test.ts"]
 }

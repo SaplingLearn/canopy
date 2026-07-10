@@ -397,9 +397,8 @@ function header(s: AppState): string {
 
   const spaceTab = (k: DocSpace) =>
     `<button data-act="setDocSpace" data-arg="${attr(k)}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${esc(spaceLabel(k))}</button>`;
-  const docSpaces = orderedSpaces(s.docsList.data);
-  const docsControls = s.screen === "docs" && docSpaces.length > 1
-    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${docSpaces.map(spaceTab).join("")}</div>`
+  const docsControls = s.screen === "docs"
+    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${DOC_SPACES.map(spaceTab).join("")}</div>`
     : "";
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
@@ -495,13 +494,11 @@ const sectionRank = (sec: string): number => {
   return i < 0 ? DOC_SECTION_ORDER.length : i;
 };
 
-// Preferred order for the space toggle; unlisted spaces follow alphabetically.
-const DOC_SPACE_ORDER = ["technical", "product", "sapling", "canopy"];
+// The Docs space toggle is a FIXED two-tab set, in this order — the tabs are NOT
+// derived from the data, so a stray/foreign `space` value can never add or change
+// a tab. New docs are constrained to these values at the write boundary too.
+export const DOC_SPACES = ["technical", "product"] as const;
 const spaceLabel = (k: string): string => (k ? k.charAt(0).toUpperCase() + k.slice(1) : k);
-function orderedSpaces(docs: DocRow[]): string[] {
-  const rank = (k: string) => { const i = DOC_SPACE_ORDER.indexOf(k); return i < 0 ? DOC_SPACE_ORDER.length : i; };
-  return [...new Set(docs.map((d) => d.space))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-}
 
 /** First doc of a space in tree display order (section rank, then title) — the
  *  page opened by default when the docs list loads or the space toggles. */
