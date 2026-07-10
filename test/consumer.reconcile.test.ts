@@ -119,11 +119,11 @@ describe("reconciler — confidence + space", () => {
     expect(v2?.low_confidence).toBe(1);
   });
 
-  it("persists `space` on doc creation (default canopy, explicit sapling)", async () => {
+  it("persists `space` on doc creation (default technical, explicit product)", async () => {
     await ingestDocProposal(env.DB, { slug: "default-space", section: "reference", body: "x", change_summary: "s", confidence: "high" }, AUTHOR);
-    await ingestDocProposal(env.DB, { slug: "sap", section: "reference", body: "x", change_summary: "s", confidence: "high", space: "sapling" }, AUTHOR);
-    expect((await first<DocRow>(env.DB, `SELECT * FROM docs WHERE slug = 'default-space'`))?.space).toBe("canopy");
-    expect((await first<DocRow>(env.DB, `SELECT * FROM docs WHERE slug = 'sap'`))?.space).toBe("sapling");
+    await ingestDocProposal(env.DB, { slug: "prod", section: "reference", body: "x", change_summary: "s", confidence: "high", space: "product" }, AUTHOR);
+    expect((await first<DocRow>(env.DB, `SELECT * FROM docs WHERE slug = 'default-space'`))?.space).toBe("technical");
+    expect((await first<DocRow>(env.DB, `SELECT * FROM docs WHERE slug = 'prod'`))?.space).toBe("product");
   });
 });
 

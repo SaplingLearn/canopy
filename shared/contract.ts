@@ -25,7 +25,7 @@ export const DocProposal = z.object({
   body: z.string(),                      // markdown, or mermaid/d2 for diagrams
   change_summary: z.string(),
   confidence: z.enum(["high", "low"]),
-  space: z.enum(["sapling", "canopy"]).optional(),  // server defaults canopy on first creation
+  space: z.enum(["technical", "product"]).optional(),  // server defaults technical on first creation
   base_version: z.number().optional(),   // the current_version the writer read before editing
   force: z.boolean().optional(),         // escape hatch: stage even if the body hash is unchanged
 });
@@ -73,7 +73,7 @@ export const QueryRequest = z.object({
   q: z.string().default(""),
   types: z.array(z.enum(["doc", "decision", "feed", "milestone"])).optional(), // default all
   section: z.string().optional(),
-  space: z.enum(["sapling", "canopy"]).optional(),
+  space: z.enum(["technical", "product"]).optional(),
   include_staged: z.boolean().optional(), // caller sets the default (MCP true, HTTP false)
   limit: z.number().optional(),           // full-body primary count (default 6)
   pointer_limit: z.number().optional(),   // ranked snippet count (default 20)

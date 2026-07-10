@@ -222,7 +222,7 @@ export function rejectMilestoneProposal(id: number): Promise<{ ok: true }> {
 export function discardTriage(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/needs-triage/${id}/discard`);
 }
-export interface AssignTarget { type?: "doc" | "adr" | "milestone" | "feed"; section?: string; space?: "sapling" | "canopy"; tags?: string[]; }
+export interface AssignTarget { type?: "doc" | "adr" | "milestone" | "feed"; section?: string; space?: "technical" | "product"; tags?: string[]; }
 export function assignTriage(id: number, target: AssignTarget): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/needs-triage/${id}/assign`, target);
 }

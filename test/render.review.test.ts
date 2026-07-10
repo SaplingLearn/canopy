@@ -354,7 +354,7 @@ function makeMaintProps(overrides: Partial<MaintenanceProps> = {}): MaintenanceP
         { key: "feed", label: "Feed update" },
       ],
       sections: ["reference", "context", "decisions"],
-      spaces: ["sapling", "canopy"],
+      spaces: ["technical", "product"],
       tags: ["auth", "infra"],
     },
     assignOpen: null, assignKind: null, assignSection: null, assignSpace: null, assignTags: [],

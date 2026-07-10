@@ -63,7 +63,7 @@ app.get("/search", async (c) => {
         t === "doc" || t === "decision" || t === "feed" || t === "milestone"))
     : undefined;
   const spaceRaw = c.req.query("space");
-  const space = spaceRaw === "sapling" || spaceRaw === "canopy" ? spaceRaw : undefined;
+  const space = spaceRaw === "technical" || spaceRaw === "product" ? spaceRaw : undefined;
   const limit = c.req.query("limit");
   const result = await query(c.env.DB, {
     q: c.req.query("q") ?? "",
@@ -165,7 +165,7 @@ app.post("/needs-triage/:id/assign", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   const body = (await c.req.json().catch(() => ({}))) as {
-    type?: AssignType; section?: string; space?: "sapling" | "canopy"; tags?: string[];
+    type?: AssignType; section?: string; space?: "technical" | "product"; tags?: string[];
   } | null;
   try {
     const res = await assign_triage(c.env.DB, id, c.get("principal").login, {

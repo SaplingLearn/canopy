@@ -10,7 +10,7 @@ export interface DocRow {
   current_version: number;
   updated_at: string | null;
   updated_by: string | null;
-  space: string;   // 'canopy' (tooling docs) | 'sapling' (product docs) — UI grouping, not access
+  space: string;   // 'technical' | 'product' — the Docs tab this doc lives under (UI grouping, not access)
 }
 
 export interface DocVersionRow {
