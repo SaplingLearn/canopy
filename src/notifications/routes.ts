@@ -3,7 +3,7 @@
 // sessionGate; admin routes additionally check isAdmin. NEVER MCP tools.
 import { Hono } from "hono";
 import { z } from "zod";
-import { Cadence } from "@shared/notifications";
+import { Cadence, type PrefsKindView, type PrefsView, type PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationPolicyRow, NotificationSettingsRow, UserRow } from "@shared/rows";
 import { type AppEnv, isAdmin } from "../auth/principal";
 import { type DB, all, first, run, nowIso } from "../db";
@@ -15,20 +15,6 @@ export const notificationsApp = new Hono<AppEnv>();
 
 // ── per-user prefs ────────────────────────────────────────────────────────────
 
-export interface PrefsKindView {
-  id: string;
-  label: string;
-  description: string;
-  allowedCadences: Cadence[];
-  cadence: Cadence;     // resolved (pref → policy → registry)
-  orgDefault: Cadence;  // what "reset to default" would resolve to
-  inherited: boolean;   // no pref row
-}
-export interface PrefsView {
-  email: string | null;
-  unsubscribed: boolean;
-  kinds: PrefsKindView[]; // ENABLED kinds only — a policy-disabled kind is absent, never greyed
-}
 
 export async function prefsView(db: DB, login: string): Promise<PrefsView> {
   const user = await first<UserRow>(db, `SELECT * FROM users WHERE github_login = ?`, login);
@@ -96,17 +82,6 @@ adminOnly.use("/settings", async (c, next) => (isAdmin(c.env, c.get("principal")
 adminOnly.use("/outbox", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
 adminOnly.use("/users/*", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
 
-export interface PolicyKindView {
-  id: string;
-  label: string;
-  description: string;
-  allowedCadences: Cadence[];
-  registryDefault: Cadence;
-  enabled: boolean;
-  default_cadence: Cadence;
-  updated_at: string | null;
-  updated_by: string | null;
-}
 
 async function policyView(db: DB): Promise<{ kinds: PolicyKindView[] }> {
   const policies = await loadPolicies(db);

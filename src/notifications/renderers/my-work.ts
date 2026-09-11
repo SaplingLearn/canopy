@@ -86,7 +86,7 @@ async function render(db: DB, login: string, window: Window): Promise<Section | 
 export const myWorkKind: NotificationKind<DB> = {
   id: "my_work",
   label: "My Work",
-  description: "Your merged PRs in the window and your open assigned issues.",
+  description: "Your merged PRs and the issues assigned to you.",
   defaultCadence: "daily",
   allowedCadences: ["daily", "weekly", "off"],
   render,

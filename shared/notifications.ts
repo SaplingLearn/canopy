@@ -59,3 +59,34 @@ export type NotificationKindMeta = z.infer<typeof NotificationKindMeta>;
 export interface NotificationKind<Ctx = unknown> extends NotificationKindMeta {
   render(ctx: Ctx, userId: string, window: Window): Promise<Section | null>;
 }
+
+// ── HTTP view DTOs (src/notifications/routes.ts ↔ web/src) ───────────────────
+
+/** One Settings row: a kind the org has enabled, resolved for this user. */
+export interface PrefsKindView {
+  id: string;
+  label: string;
+  description: string;
+  allowedCadences: Cadence[];
+  cadence: Cadence;     // resolved (pref → policy → registry)
+  orgDefault: Cadence;  // what "reset to default" resolves to
+  inherited: boolean;   // no pref row
+}
+export interface PrefsView {
+  email: string | null;
+  unsubscribed: boolean;
+  kinds: PrefsKindView[]; // ENABLED kinds only — a policy-disabled kind is absent, never greyed
+}
+
+/** One Maintenance policy row: registry metadata + the stored policy. */
+export interface PolicyKindView {
+  id: string;
+  label: string;
+  description: string;
+  allowedCadences: Cadence[];
+  registryDefault: Cadence;
+  enabled: boolean;
+  default_cadence: Cadence;
+  updated_at: string | null;
+  updated_by: string | null;
+}

@@ -8,6 +8,8 @@ import type {
   FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, EventRow,
 } from "@shared/rows";
 import type { DashboardData } from "@shared/dashboard";
+import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
+import type { NotificationOutboxRow, NotificationSettingsRow } from "@shared/rows";
 
 export class Unauthorized extends Error {
   constructor() { super("unauthorized"); }
@@ -28,6 +30,22 @@ async function getJson<T>(path: string): Promise<T> {
 async function postJson<T>(path: string, body: unknown = {}): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) throw new Unauthorized();
+  if (!res.ok) {
+    let msg = String(res.status);
+    try { const j = (await res.json()) as { error?: string }; if (j.error) msg = j.error; } catch { /* non-JSON */ }
+    throw new ApiError(res.status, msg);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function putJson<T>(path: string, body: unknown = {}): Promise<T> {
+  const res = await fetch(path, {
+    method: "PUT",
     credentials: "same-origin",
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(body),
@@ -234,6 +252,30 @@ export function mapIdentity(login: string, person: string): Promise<{ ok: true; 
   return postJson(`/identity-tasks/${encodeURIComponent(login)}/map`, { person });
 }
 
+// ── email notifications (cookie-gated /api/notifications/*) ──────────────────
+export function getNotificationPrefs(): Promise<PrefsView> {
+  return getJson<PrefsView>("/api/notifications/prefs");
+}
+export interface PrefsWrite { email?: string; unsubscribed?: boolean; prefs?: Record<string, Cadence | null>; }
+export function putNotificationPrefs(body: PrefsWrite): Promise<PrefsView> {
+  return putJson<PrefsView>("/api/notifications/prefs", body);
+}
+export function getNotificationPolicy(): Promise<{ kinds: PolicyKindView[] }> {
+  return getJson<{ kinds: PolicyKindView[] }>("/api/notifications/policy");
+}
+export function putNotificationPolicy(body: { kind: string; enabled?: boolean; default_cadence?: Cadence }): Promise<{ kinds: PolicyKindView[] }> {
+  return putJson<{ kinds: PolicyKindView[] }>("/api/notifications/policy", body);
+}
+export function getNotificationSettings(): Promise<NotificationSettingsRow> {
+  return getJson<NotificationSettingsRow>("/api/notifications/settings");
+}
+export function putNotificationSettings(body: Partial<Pick<NotificationSettingsRow, "send_hour" | "timezone" | "from_address">>): Promise<NotificationSettingsRow> {
+  return putJson<NotificationSettingsRow>("/api/notifications/settings", body);
+}
+export function listNotificationOutbox(limit = 50): Promise<{ rows: NotificationOutboxRow[] }> {
+  return getJson<{ rows: NotificationOutboxRow[] }>(`/api/notifications/outbox?limit=${limit}`);
+}
+
 export function logout(): Promise<{ ok: true }> {
   return postJson<{ ok: true }>("/auth/logout");
 }
@@ -244,3 +286,4 @@ export function mintMcpToken(): Promise<{ token: string }> {
 // Re-export the row types the UI renders, so screens import shapes from one place.
 export type { FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow };
 export type { DashboardData };
+export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow };

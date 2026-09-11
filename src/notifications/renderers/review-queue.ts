@@ -42,7 +42,7 @@ async function render(db: DB): Promise<Section | null> {
 export const reviewQueueKind: NotificationKind<DB> = {
   id: "review_queue",
   label: "Review queue",
-  description: "Proposals and decisions waiting for a human to confirm.",
+  description: "What is waiting on your review in Triage.",
   defaultCadence: "daily",
   allowedCadences: ["daily", "off"],
   render,

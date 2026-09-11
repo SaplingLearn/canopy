@@ -11,6 +11,8 @@ import {
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
+  getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
+  getNotificationSettings, putNotificationSettings, listNotificationOutbox, type PrefsWrite,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
@@ -137,7 +139,7 @@ function persist(key: string, value: string): void {
 }
 
 // ── screen ↔ URL hash (so a reload stays on the current page) ─────────────────
-const SCREENS: Screen[] = ["mywork", "feed", "docs", "roadmap", "review", "maintenance", "search", "settings", "guide"];
+const SCREENS: Screen[] = ["mywork", "feed", "docs", "roadmap", "review", "maintenance", "search", "settings", "guide", "unsubscribe"];
 function screenFromHash(): Screen {
   const h = location.hash.replace(/^#/, "") as Screen;
   return SCREENS.includes(h) ? h : "mywork";
@@ -149,10 +151,12 @@ function loadForScreen(screen: Screen): void {
     case "docs": loadDocsIfNeeded(); break;
     case "roadmap": loadRoadmapIfNeeded(); loadFeedIfNeeded(); break;
     case "review": loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); break;
-    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); break;
+    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); break;
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
-    default: rerender(); break; // settings, guide — no data load
+    case "settings": loadNotifPrefsIfNeeded(); break;
+    case "unsubscribe": runUnsubscribe(); break;
+    default: rerender(); break; // guide — no data load
   }
 }
 
@@ -197,6 +201,79 @@ function loadMyWork(): void {
 function loadMyWorkIfNeeded(): void {
   if (state.mywork.status === "idle") loadMyWork();
   else rerender();
+}
+
+// ── email notifications ──────────────────────────────────────────────────────
+function loadNotifPrefs(): void {
+  state.notifPrefs = { status: "loading", data: state.notifPrefs.data };
+  rerender();
+  getNotificationPrefs()
+    .then((data) => { state.notifPrefs = { status: "ok", data }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.notifPrefs = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadNotifPrefsIfNeeded(): void {
+  if (state.notifPrefs.status === "idle") loadNotifPrefs();
+  else rerender();
+}
+/** One prefs write, then the server's fresh view replaces the slice. */
+function writePrefs(body: PrefsWrite, done: string | null): void {
+  putNotificationPrefs(body)
+    .then((data) => { state.notifPrefs = { status: "ok", data }; if (done) flash(done); rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      flash(e instanceof ApiError ? e.message : "Could not save email settings");
+    });
+}
+function loadNotifAdmin(): void {
+  if (!state.me?.admin) return;
+  state.notifPolicy = { status: "loading", data: state.notifPolicy.data };
+  state.notifSettings = { status: "loading", data: state.notifSettings.data };
+  state.notifOutbox = { status: "loading", data: state.notifOutbox.data };
+  rerender();
+  const unauth = (e: unknown) => { if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); } };
+  getNotificationPolicy()
+    .then(({ kinds }) => { state.notifPolicy = { status: "ok", data: kinds }; rerender(); })
+    .catch((e) => { unauth(e); state.notifPolicy = { status: "error", data: [], error: String(e) }; rerender(); });
+  getNotificationSettings()
+    .then((data) => { state.notifSettings = { status: "ok", data }; rerender(); })
+    .catch((e) => { unauth(e); state.notifSettings = { status: "error", data: null, error: String(e) }; rerender(); });
+  listNotificationOutbox()
+    .then(({ rows }) => { state.notifOutbox = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => { unauth(e); state.notifOutbox = { status: "error", data: [], error: String(e) }; rerender(); });
+}
+function loadNotifAdminIfNeeded(): void {
+  if (state.me?.admin && state.notifPolicy.status === "idle") loadNotifAdmin();
+  else rerender();
+}
+function writeSettings(body: Parameters<typeof putNotificationSettings>[0], done: string): void {
+  putNotificationSettings(body)
+    .then((data) => { state.notifSettings = { status: "ok", data }; state.fromDraft = null; flash(done); rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      flash(e instanceof ApiError ? e.message : "Could not save schedule");
+      rerender();
+    });
+}
+/**
+ * The #unsubscribe screen (the footer link's GET /u/<token> redirects here):
+ * flips email_unsubscribed through the cookie-gated prefs route, then shows
+ * the confirmation. A Settings "preview" shows the same screen without a flip.
+ */
+function runUnsubscribe(): void {
+  if (state.unsub.preview) { rerender(); return; }
+  state.unsub = { pending: true, error: null, preview: false };
+  rerender();
+  putNotificationPrefs({ unsubscribed: true })
+    .then((data) => { state.notifPrefs = { status: "ok", data }; state.unsub = { pending: false, error: null, preview: false }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.unsub = { pending: false, error: e instanceof ApiError ? e.message : "Something went wrong.", preview: false };
+      rerender();
+    });
 }
 
 function loadDoc(slug: string): void {
@@ -521,6 +598,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
     // auth state navigation (how the screens become reachable)
     case "signIn":
+      // Return-to: the hash never reaches the server, so stash it for the boot
+      // after /auth/callback lands on "/" (an email deep link survives sign-in).
+      try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
       window.location.href = "/auth/login";
       return;
     case "previewNonMember": state.authStep = "nonmember"; break;
@@ -544,9 +624,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
     case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
-    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); return;
+    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
-    case "goSettings": state.screen = "settings"; break;
+    case "goSettings": state.screen = "settings"; state.unsub.preview = false; loadNotifPrefsIfNeeded(); return;
     case "goGuide": state.screen = "guide"; break;
 
     // chrome: theme + sidebar
@@ -775,6 +855,60 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         });
       return;
     }
+    // ── Settings › Email notifications ───────────────────────────────────────
+    case "emailStartEdit": state.emailEditing = true; state.emailDraft = state.notifPrefs.data?.email ?? ""; break;
+    case "emailCancel": state.emailEditing = false; state.emailDraft = ""; break;
+    case "setEmailDraft": state.emailDraft = value ?? ""; return; // echoes live; no rerender needed
+    case "emailSave": {
+      const v = state.emailDraft.trim();
+      state.emailEditing = false;
+      writePrefs({ email: v }, v ? "Digest address saved" : "Address removed — digests paused");
+      return;
+    }
+    case "setKindCadence": {
+      const [kind, cadence] = (arg ?? "").split(":");
+      const row = state.notifPrefs.data?.kinds.find((k) => k.id === kind);
+      if (!row || (cadence !== "daily" && cadence !== "weekly" && cadence !== "off")) return;
+      // Picking the org default is a reset (design: no override row is kept for it).
+      writePrefs({ prefs: { [kind]: cadence === row.orgDefault ? null : cadence } }, null);
+      return;
+    }
+    case "resetKind": if (arg) writePrefs({ prefs: { [arg]: null } }, "Reset to org default"); return;
+    case "toggleAllOff": {
+      const next = !(state.notifPrefs.data?.unsubscribed ?? false);
+      writePrefs({ unsubscribed: next }, next ? "Email is off" : "Email is back on");
+      return;
+    }
+    case "previewUnsub": state.unsub = { pending: false, error: null, preview: true }; state.screen = "unsubscribe"; break;
+    case "unsubGoSettings": state.screen = "settings"; state.unsub = { pending: false, error: null, preview: false }; loadNotifPrefsIfNeeded(); return;
+
+    // ── Maintenance › Notifications (admin) ──────────────────────────────────
+    case "policyToggle": {
+      const row = state.notifPolicy.data.find((k) => k.id === arg);
+      if (!row) return;
+      putNotificationPolicy({ kind: row.id, enabled: !row.enabled })
+        .then(({ kinds }) => { state.notifPolicy = { status: "ok", data: kinds }; flash(row.enabled ? `${row.label} turned off org-wide` : `${row.label} turned on`); rerender(); })
+        .catch((e) => flash(e instanceof ApiError ? e.message : "Could not update policy"));
+      return;
+    }
+    case "policyCadence": {
+      if (!arg || (value !== "daily" && value !== "weekly" && value !== "off")) return;
+      putNotificationPolicy({ kind: arg, default_cadence: value })
+        .then(({ kinds }) => { state.notifPolicy = { status: "ok", data: kinds }; flash("Default cadence saved"); rerender(); })
+        .catch((e) => flash(e instanceof ApiError ? e.message : "Could not update policy"));
+      return;
+    }
+    case "schedHour": { const h = Number(value); if (Number.isInteger(h)) writeSettings({ send_hour: h }, "Send hour saved"); return; }
+    case "schedTz": if (value) writeSettings({ timezone: value }, "Timezone saved"); return;
+    case "schedFrom": state.fromDraft = value ?? ""; return; // live echo; commits on change (blur/enter)
+    case "schedFromCommit": {
+      const v = (value ?? "").trim();
+      if (!v || v === state.notifSettings.data?.from_address) { state.fromDraft = null; break; }
+      writeSettings({ from_address: v }, "From address saved");
+      return;
+    }
+    case "outboxToggle": state.outboxExpanded = state.outboxExpanded === arg ? null : arg; break;
+
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()
@@ -823,6 +957,10 @@ mount.addEventListener("change", (e) => {
   if (el instanceof HTMLSelectElement && el.dataset.act) {
     dispatch(el.dataset.act, el.dataset.arg ?? null, el.value);
   }
+  // Text inputs that save on commit (blur / Enter) dispatch "<act>Commit".
+  if (el instanceof HTMLInputElement && el.dataset.act && el.dataset.commit) {
+    dispatch(`${el.dataset.act}Commit`, el.dataset.arg ?? null, el.value);
+  }
 });
 
 mount.addEventListener("input", (e) => {
@@ -848,6 +986,11 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
       state.me = me;
       state.displayName = me.name ?? me.login;
       state.view = "app";
+      // Return-to after sign-in (see "signIn"): re-apply the stashed hash once.
+      try {
+        const back = sessionStorage.getItem("canopy.returnHash");
+        if (back) { sessionStorage.removeItem("canopy.returnHash"); history.replaceState(null, "", back); }
+      } catch { /* ignore */ }
       // Restore the screen from the URL hash (reload stays put) instead of always My Work.
       state.screen = screenFromHash();
       loadForScreen(state.screen);
