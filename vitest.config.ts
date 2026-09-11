@@ -30,6 +30,7 @@ export default defineConfig({
           GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
           ADMIN_LOGINS: "admin-user", // the admin allowlist the admin-gated route + isAdmin() test against
           DEV_LOGIN: "", // override .dev.vars: tests exercise REAL auth, never the dev bypass
+          NOTIFICATIONS_MODE: "", // override wrangler.toml [vars]: tests always run email in LOCAL mode
         },
       },
     })),
