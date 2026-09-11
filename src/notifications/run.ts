@@ -3,18 +3,23 @@
 // FIRST (the idempotency key is the unique constraint — a conflict means this
 // window already ran for them), render, drop nulls, then skip or send.
 import type { NotificationKind, RunCadence, Section, Window } from "@shared/notifications";
-import type { NotificationSettingsRow } from "@shared/rows";
-import { type DB, all, first, run, nowIso } from "../db";
+import { type DB, all, run, nowIso } from "../db";
 import { REGISTRY } from "./registry";
 import { loadPolicies, loadPrefs, resolveWith } from "./resolve";
 import { computeWindow } from "./window";
 import { assembleMessage } from "./assemble";
 import type { Delivery } from "./delivery";
+import { loadSettings } from "./cron";
 
-export interface RunOptions {
+export interface DeliverOptions {
   delivery: Delivery;
-  registry?: readonly NotificationKind<DB>[];
   origin?: string; // absolute prefix for deep links
+  /** The https one-click unsubscribe target for a login; defaults to the Settings deep link. */
+  unsubscribeUrl?: (login: string) => Promise<string>;
+}
+
+export interface RunOptions extends DeliverOptions {
+  registry?: readonly NotificationKind<DB>[];
 }
 
 export interface RunReport {
@@ -27,8 +32,6 @@ export interface RunReport {
 }
 
 interface Recipient { github_login: string; email: string; }
-
-const DEFAULT_TZ = "America/New_York";
 
 async function setStatus(db: DB, key: string, patch: { status: string; kinds?: string[]; resend_id?: string | null; error?: string | null; sent_at?: string | null }): Promise<void> {
   await run(
@@ -43,11 +46,57 @@ async function setStatus(db: DB, key: string, patch: { status: string; kinds?: s
   );
 }
 
+export interface ClaimedRow {
+  key: string;
+  login: string;
+  email: string;
+  kinds: readonly NotificationKind<DB>[];
+  window: Window;
+  timeZone: string;
+}
+
+/**
+ * Render the claimed kinds for one outbox row, drop nulls, then skip or send,
+ * recording the outcome on the row. Shared by the run and the retry job.
+ */
+export async function deliverRow(db: DB, row: ClaimedRow, opts: DeliverOptions): Promise<"sent" | "skipped" | "failed"> {
+  const origin = opts.origin ?? "";
+  const sections: Section[] = [];
+  const rendered: string[] = [];
+  try {
+    for (const k of row.kinds) {
+      const s = await k.render(db, row.login, row.window);
+      if (s) {
+        sections.push(s);
+        rendered.push(k.id);
+      }
+    }
+  } catch (e) {
+    await setStatus(db, row.key, { status: "failed", error: `render: ${String((e as Error)?.message ?? e)}` });
+    return "failed";
+  }
+
+  if (sections.length === 0) {
+    await setStatus(db, row.key, { status: "skipped", kinds: [] });
+    return "skipped";
+  }
+
+  const unsubscribeUrl = opts.unsubscribeUrl ? await opts.unsubscribeUrl(row.login) : `${origin}/#settings`;
+  const msg = assembleMessage({ sections, window: row.window, timeZone: row.timeZone, origin, login: row.login, unsubscribeUrl });
+  try {
+    const { id } = await opts.delivery.send({ idempotencyKey: row.key, userId: row.login, to: row.email, unsubscribeUrl, ...msg });
+    await setStatus(db, row.key, { status: "sent", kinds: rendered, resend_id: id, sent_at: nowIso() });
+    return "sent";
+  } catch (e) {
+    await setStatus(db, row.key, { status: "failed", kinds: rendered, error: `send: ${String((e as Error)?.message ?? e)}` });
+    return "failed";
+  }
+}
+
 export async function runDigest(db: DB, cadence: RunCadence, now: Date, opts: RunOptions): Promise<RunReport> {
   const registry = opts.registry ?? REGISTRY;
-  const origin = opts.origin ?? "";
-  const settings = await first<NotificationSettingsRow>(db, `SELECT * FROM notification_settings WHERE id = 1`);
-  const timeZone = settings?.timezone ?? DEFAULT_TZ;
+  const settings = await loadSettings(db);
+  const timeZone = settings.timezone;
   const window = computeWindow(cadence, now, timeZone);
   const report: RunReport = { window, eligible: 0, alreadyRan: 0, sent: 0, skipped: 0, failed: 0 };
 
@@ -80,37 +129,8 @@ export async function runDigest(db: DB, cadence: RunCadence, now: Date, opts: Ru
       continue;
     }
 
-    const sections: Section[] = [];
-    const rendered: string[] = [];
-    try {
-      for (const k of selected) {
-        const s = await k.render(db, who.github_login, window);
-        if (s) {
-          sections.push(s);
-          rendered.push(k.id);
-        }
-      }
-    } catch (e) {
-      await setStatus(db, key, { status: "failed", error: `render: ${String((e as Error)?.message ?? e)}` });
-      report.failed++;
-      continue;
-    }
-
-    if (sections.length === 0) {
-      await setStatus(db, key, { status: "skipped", kinds: [] });
-      report.skipped++;
-      continue;
-    }
-
-    const msg = assembleMessage({ sections, window, timeZone, origin });
-    try {
-      const { id } = await opts.delivery.send({ idempotencyKey: key, to: who.email, ...msg });
-      await setStatus(db, key, { status: "sent", kinds: rendered, resend_id: id, sent_at: nowIso() });
-      report.sent++;
-    } catch (e) {
-      await setStatus(db, key, { status: "failed", kinds: rendered, error: `send: ${String((e as Error)?.message ?? e)}` });
-      report.failed++;
-    }
+    const outcome = await deliverRow(db, { key, login: who.github_login, email: who.email, kinds: selected, window, timeZone }, opts);
+    report[outcome]++;
   }
   return report;
 }

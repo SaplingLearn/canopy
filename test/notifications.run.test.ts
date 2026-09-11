@@ -222,3 +222,23 @@ describe("runDigest (local mode)", () => {
     expect(await bodies()).toHaveLength(0);
   });
 });
+
+describe("assembled message follows the designed template", () => {
+  it("carries a preheader, the section sublines, the footer unsubscribe link, and the text layout", async () => {
+    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('AndresL230', 'a', 'x', 'andres@example.com')`);
+    await ingestAdrDraft(env.DB, { title: "Pending decision", context: "c", decision: "d", rationale: "r", confidence: "high" }, "agent");
+    await ingestEvent(env.DB, openIssue(1, "AndresL230"), "github-webhook");
+    await runDigest(env.DB, "daily", FRI, {
+      delivery: localDelivery(env.DB), origin: "https://canopy.example",
+      unsubscribeUrl: async (login) => `https://canopy.example/u/${login}.sig`,
+    });
+    const [b] = await bodies();
+    expect(b.html).toContain("1 assigned issue open");           // section subline
+    expect(b.html).toContain("1 decision waiting");                // review subline
+    expect(b.html).toContain(`href="https://canopy.example/u/AndresL230.sig"`); // footer
+    expect(b.html).toContain("daily Canopy digest for AndresL230");
+    expect(b.text).toContain("CANOPY DAILY — SEP 11");
+    expect(b.text).toContain("Unsubscribe: https://canopy.example/u/AndresL230.sig");
+    expect(b.text).toMatch(/open\s+#1\s+Issue 1/);
+  });
+});

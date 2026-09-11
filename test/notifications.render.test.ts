@@ -152,8 +152,7 @@ describe("review_queue renderer", () => {
 
     expect(s).not.toBeNull();
     expect(s!.deepLink).toBe("/#review");
-    expect(s!.text).toContain("1 proposal");
-    expect(s!.text).toContain("1 decision");
+    expect(s!.summary).toBe("1 proposal, 1 decision waiting on review");
     expect(s!.html).toContain("Auth flow");
     expect(s!.html).toContain("Use D1 for outbox");
     expect(s!.html).not.toContain("Already ratified");
@@ -195,9 +194,9 @@ describe("roadmap_plan renderer", () => {
 
     expect(s).not.toBeNull();
     expect(s!.deepLink).toBe("/#roadmap");
-    expect(s!.text).toMatch(/Added.*M2 new/);
+    expect(s!.text).toMatch(/added\s+M2 new/);
     expect(s!.html).toContain("M2 new");
-    expect(s!.html).not.toMatch(/Added.*M1/);
+    expect(s!.html).not.toMatch(/ADDED.*M1/);
   });
 
   it("reports title and description changes", async () => {
@@ -208,8 +207,8 @@ describe("roadmap_plan renderer", () => {
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
-    expect(s!.text).toMatch(/Renamed.*Old title.*New title/);
-    expect(s!.text).toMatch(/Description changed.*New title/);
+    expect(s!.text).toMatch(/changed\s+Old title → New title/);
+    expect(s!.text).toMatch(/changed\s+New title — description updated/);
   });
 
   it("reports a reorder when target dates swap the milestone order", async () => {
@@ -223,7 +222,7 @@ describe("roadmap_plan renderer", () => {
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
-    expect(s!.text).toMatch(/Reordered/);
+    expect(s!.text).toMatch(/reordered\s+.*First/);
     expect(s!.text).toContain("First");
   });
 
@@ -234,7 +233,7 @@ describe("roadmap_plan renderer", () => {
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
-    expect(s!.text).toMatch(/Confirmed done.*Ship it/);
+    expect(s!.text).toMatch(/done\s+Ship it — confirmed complete/);
   });
 
   it("diffs the latest in-window version against the last version BEFORE the window, not the previous version", async () => {
@@ -247,8 +246,8 @@ describe("roadmap_plan renderer", () => {
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
-    expect(s!.text).toMatch(/Added.*M2/);
-    expect(s!.text).toMatch(/Added.*M3/);
+    expect(s!.text).toMatch(/added\s+M2/);
+    expect(s!.text).toMatch(/added\s+M3/);
   });
 
   it("returns null when an in-window version changed nothing at the milestone level", async () => {
@@ -263,6 +262,6 @@ describe("roadmap_plan renderer", () => {
     await write_plan(env.DB, { narrative: "n", milestones: [{ title: "Genesis", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
     const s = await kind().render(env.DB, LOGIN, WINDOW);
-    expect(s!.text).toMatch(/Added.*Genesis/);
+    expect(s!.text).toMatch(/added\s+Genesis/);
   });
 });

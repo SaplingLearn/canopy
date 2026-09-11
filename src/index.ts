@@ -4,6 +4,7 @@ import { handleGithubWebhook } from "./webhook";
 import { resolveBearerPrincipal } from "./auth/principal";
 import { recomputeAllProgress } from "./tools/progress";
 import { ensureNotificationPolicySeeded } from "./notifications/policy";
+import { DAILY_CRON, WEEKLY_CRON, handleNotificationCron } from "./notifications/cron";
 import type { Env } from "./env";
 
 export default {
@@ -33,11 +34,18 @@ export default {
     return app.fetch(request, env, ctx);
   },
 
-  // Backstop: recompute per-milestone progress from GitHub on a schedule with the
-  // app-level service token — a computed direct writer (promote class), never on
-  // the render path.
-  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+  // Dispatched by cron expression (see wrangler.toml [triggers]):
+  //  • the two notification triggers → the digest runner, gated in code by
+  //    notification_settings (send_hour + timezone) at fire time;
+  //  • everything else → the progress-cache backstop: recompute per-milestone
+  //    progress from GitHub with the app-level service token — a computed direct
+  //    writer (promote class), never on the render path.
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     await ensureNotificationPolicySeeded(env.DB).catch(() => undefined);
+    if (controller.cron === DAILY_CRON || controller.cron === WEEKLY_CRON) {
+      await handleNotificationCron(env, controller.cron, new Date(controller.scheduledTime));
+      return;
+    }
     if (!env.GITHUB_SERVICE_TOKEN || !env.GITHUB_REPO) return;
     await recomputeAllProgress(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO });
   },

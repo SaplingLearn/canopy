@@ -23,12 +23,16 @@ export const Window = z.object({
 export type Window = z.infer<typeof Window>;
 
 // One rendered section of a digest. `deepLink` is a site-relative path into the
-// SPA (`/#mywork`); the assembler prefixes the origin.
+// SPA (`/#mywork`); the assembler prefixes the origin. `summary` is the one-line
+// subline under the heading (also the preheader); `linkLabel` names the surface
+// the deep link opens ("Open My Work →").
 export const Section = z.object({
   heading: z.string().min(1),
   html: z.string().min(1),
   text: z.string().min(1),
   deepLink: z.string().min(1),
+  summary: z.string().optional(),
+  linkLabel: z.string().optional(),
 });
 export type Section = z.infer<typeof Section>;
 
