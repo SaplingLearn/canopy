@@ -209,7 +209,7 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   or `failed` (with the error). `retry.ts` re-attempts `failed` rows only. Windows (`window.ts`) are computed
   in the org timezone: daily = previous 24h (72h on Monday), weekly = previous 7 days.
 - **Cron** (`cron.ts`, `wrangler.toml [triggers]`): two hourly triggers (`0 * * * *` daily candidate,
-  `0 * * * 0,1` weekly candidate) dispatched by expression in `scheduled()`, gated in code on
+  `0 * * * SUN,MON` weekly candidate) dispatched by expression in `scheduled()`, gated in code on
   `notification_settings.send_hour` + `timezone` at fire time (static crons cannot read D1 or follow DST).
 - **Delivery gate** (`resend.ts`): `NOTIFICATIONS_MODE` absent/`local` → bodies go to the dev-only
   `notification_outbox_bodies` table and Resend is NEVER called; `resend` requires `RESEND_API_KEY` (a config
