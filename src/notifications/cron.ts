@@ -13,7 +13,7 @@ import { deliveryFor } from "./resend";
 import { unsubscribeUrl } from "./unsubscribe";
 
 export const DAILY_CRON = "0 * * * *";     // hourly, every day — gated to Mon–Fri local
-export const WEEKLY_CRON = "0 * * * 0,1";  // hourly Sun+Mon UTC — gated to Monday local
+export const WEEKLY_CRON = "0 * * * SUN,MON";  // hourly Sun+Mon UTC — gated to Monday local
 
 export const DEFAULT_SETTINGS: NotificationSettingsRow = {
   id: 1, send_hour: 8, timezone: "America/New_York", from_address: "Canopy <canopy@canopy.saplinglearn.com>",
