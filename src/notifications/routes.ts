@@ -3,13 +3,18 @@
 // sessionGate; admin routes additionally check isAdmin. NEVER MCP tools.
 import { Hono } from "hono";
 import { z } from "zod";
-import { Cadence, type PrefsKindView, type PrefsView, type PolicyKindView } from "@shared/notifications";
+import { Cadence, RunCadence, type PrefsKindView, type PrefsView, type PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationPolicyRow, NotificationSettingsRow, UserRow } from "@shared/rows";
 import { type AppEnv, isAdmin } from "../auth/principal";
 import { type DB, all, first, run, nowIso } from "../db";
 import { REGISTRY, getKind } from "./registry";
 import { loadPolicies, loadPrefs, resolveWith } from "./resolve";
 import { loadSettings } from "./cron";
+import { computeWindow } from "./window";
+import { renderSections, buildMessage, deliverRow } from "./run";
+import { deliveryFor } from "./resend";
+import { unsubscribeUrl } from "./unsubscribe";
+import { sampleSections } from "./sample";
 
 export const notificationsApp = new Hono<AppEnv>();
 
@@ -81,6 +86,8 @@ const adminOnly = notificationsApp.use("/policy", async (c, next) => (isAdmin(c.
 adminOnly.use("/settings", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
 adminOnly.use("/outbox", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
 adminOnly.use("/users/*", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/preview", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/test-send", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
 
 
 async function policyView(db: DB): Promise<{ kinds: PolicyKindView[] }> {
@@ -172,4 +179,81 @@ notificationsApp.put("/users/:login", async (c) => {
   const res = await run(c.env.DB, `UPDATE users SET email = ? WHERE github_login = ?`, parsed.data.email === "" ? null : parsed.data.email, c.req.param("login"));
   if ((res.meta.changes ?? 0) === 0) return c.json({ error: "no such user" }, 404);
   return c.json({ ok: true, login: c.req.param("login"), email: parsed.data.email || null });
+});
+
+// ── admin: preview + test send ───────────────────────────────────────────────
+// Both render for the CALLER over every policy-enabled kind (prefs ignored —
+// the admin wants to see everything), for the window a run at `now` would use.
+
+async function enabledKinds(db: DB) {
+  const policies = await loadPolicies(db);
+  return REGISTRY.filter((k) => (policies.get(k.id)?.enabled ?? 1) === 1);
+}
+
+/** GET /preview?cadence=daily|weekly[&format=html|text][&sample=1] → the rendered digest, no outbox row. */
+notificationsApp.get("/preview", async (c) => {
+  const cadence = RunCadence.safeParse(c.req.query("cadence") ?? "daily");
+  if (!cadence.success) return c.json({ error: "cadence must be daily or weekly" }, 400);
+  const login = c.get("principal").login;
+  const settings = await loadSettings(c.env.DB);
+  const window = computeWindow(cadence.data, new Date(), settings.timezone);
+  const kinds = await enabledKinds(c.env.DB);
+  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+  const sections = c.req.query("sample") === "1" ? sampleSections() : (await renderSections(c.env.DB, login, kinds, window)).sections;
+  if (sections.length === 0) {
+    return c.html(`<!DOCTYPE html><meta charset="utf-8"><body style="font-family:system-ui;padding:32px;color:#444"><h2>Nothing to render</h2><p>No section had anything to say for <b>${login}</b> in the ${cadence.data} window (${window.id}). A real run would mark this user <code>skipped</code>. Add <code>&amp;sample=1</code> to see the layout with sample data.</p></body>`);
+  }
+  const msg = await buildMessage(sections, { login, window, timeZone: settings.timezone }, {
+    delivery: { send: async () => ({ id: null }) },
+    origin,
+    unsubscribeUrl: (l) => unsubscribeUrl(origin, l, c.env.COOKIE_SECRET),
+  });
+  return c.req.query("format") === "text" ? c.text(msg.text) : c.html(msg.html);
+});
+
+const TestSend = z.object({ cadence: RunCadence, sample: z.boolean().optional() });
+
+/**
+ * POST /test-send {cadence, sample?} → sends the caller's digest to the caller's
+ * address through the REAL delivery gate (local mode → bodies table; resend
+ * mode → Resend). Logged as its own outbox row keyed `login:cadence:test-<ts>`
+ * so it never claims (or is blocked by) the scheduled window.
+ */
+notificationsApp.post("/test-send", async (c) => {
+  const parsed = TestSend.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  const login = c.get("principal").login;
+  const user = await first<UserRow>(c.env.DB, `SELECT * FROM users WHERE github_login = ?`, login);
+  if (!user?.email) return c.json({ error: "no email on file for you — set one in Settings first" }, 400);
+
+  const settings = await loadSettings(c.env.DB);
+  const window = computeWindow(parsed.data.cadence, new Date(), settings.timezone);
+  const kinds = await enabledKinds(c.env.DB);
+  const preset = parsed.data.sample ? sampleSections() : undefined;
+  if (!preset) {
+    const probe = await renderSections(c.env.DB, login, kinds, window);
+    if (probe.sections.length === 0) return c.json({ error: `nothing to render for ${login} in the ${parsed.data.cadence} window (${window.id}); pass sample:true to send the sample digest` }, 400);
+  }
+
+  let delivery;
+  try {
+    delivery = deliveryFor(c.env, { from: settings.from_address });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 503);
+  }
+  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+  const key = `${login}:${parsed.data.cadence}:test-${nowIso().replace(/[:.]/g, "-")}`;
+  await run(
+    c.env.DB,
+    `INSERT INTO notification_outbox (idempotency_key, user_id, cadence, window_id, kinds, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    key, login, parsed.data.cadence, `${window.id} (test)`, JSON.stringify(kinds.map((k) => k.id)), nowIso()
+  );
+  const status = await deliverRow(
+    c.env.DB,
+    { key, login, email: user.email, kinds, window, timeZone: settings.timezone },
+    { delivery, origin, unsubscribeUrl: (l) => unsubscribeUrl(origin, l, c.env.COOKIE_SECRET) },
+    preset
+  );
+  const row = await first<{ resend_id: string | null; error: string | null }>(c.env.DB, `SELECT resend_id, error FROM notification_outbox WHERE idempotency_key = ?`, key);
+  return c.json({ ok: status === "sent", status, key, mode: delivery.mode, to: user.email, resend_id: row?.resend_id ?? null, error: row?.error ?? null });
 });

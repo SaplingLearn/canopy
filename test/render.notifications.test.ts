@@ -131,3 +131,14 @@ describe("notificationsMaintenanceSections", () => {
     expect(v).toContain("No sends yet");
   });
 });
+
+describe("maintenance schedule — preview + test send controls", () => {
+  it("offers preview links for daily, weekly and sample, and test-send buttons for both cadences", () => {
+    const v = notificationsMaintenanceSections({ policy: [], settings: { id: 1, send_hour: 8, timezone: "UTC", from_address: "a@b.co" }, outbox: [], outboxExpanded: null, fromDraft: null });
+    expect(v).toContain('href="/api/notifications/preview?cadence=daily"');
+    expect(v).toContain('href="/api/notifications/preview?cadence=weekly"');
+    expect(v).toContain('href="/api/notifications/preview?cadence=daily&amp;sample=1"');
+    expect(v).toContain('data-act="testSend" data-arg="daily"');
+    expect(v).toContain('data-act="testSend" data-arg="weekly"');
+  });
+});

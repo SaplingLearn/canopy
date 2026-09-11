@@ -12,7 +12,7 @@ import {
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
-  getNotificationSettings, putNotificationSettings, listNotificationOutbox, type PrefsWrite,
+  getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
@@ -908,6 +908,20 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "outboxToggle": state.outboxExpanded = state.outboxExpanded === arg ? null : arg; break;
+    case "testSend": {
+      if (arg !== "daily" && arg !== "weekly") return;
+      const cadence = arg;
+      flash(`Sending ${cadence} test…`);
+      // Real data first; if nothing renders, fall back to the sample digest so the layout is still checked.
+      testSendNotification(cadence)
+        .catch((e) => (e instanceof ApiError && /nothing to render/i.test(e.message) ? testSendNotification(cadence, true) : Promise.reject(e)))
+        .then((r) => {
+          flash(r.ok ? `Test ${cadence} sent to ${r.to}${r.mode === "local" ? " (local mode: see outbox bodies)" : ""}` : `Test send ${r.status}: ${r.error ?? "unknown error"}`);
+          listNotificationOutbox().then(({ rows }) => { state.notifOutbox = { status: "ok", data: rows }; rerender(); }).catch(() => undefined);
+        })
+        .catch((e) => flash(e instanceof ApiError ? e.message : "Could not send test"));
+      return;
+    }
 
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":

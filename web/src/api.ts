@@ -272,6 +272,10 @@ export function getNotificationSettings(): Promise<NotificationSettingsRow> {
 export function putNotificationSettings(body: Partial<Pick<NotificationSettingsRow, "send_hour" | "timezone" | "from_address">>): Promise<NotificationSettingsRow> {
   return putJson<NotificationSettingsRow>("/api/notifications/settings", body);
 }
+export interface TestSendResult { ok: boolean; status: string; key: string; mode: string; to: string; resend_id: string | null; error: string | null; }
+export function testSendNotification(cadence: "daily" | "weekly", sample = false): Promise<TestSendResult> {
+  return postJson<TestSendResult>("/api/notifications/test-send", { cadence, sample });
+}
 export function listNotificationOutbox(limit = 50): Promise<{ rows: NotificationOutboxRow[] }> {
   return getJson<{ rows: NotificationOutboxRow[] }>(`/api/notifications/outbox?limit=${limit}`);
 }

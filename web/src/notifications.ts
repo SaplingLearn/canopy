@@ -227,7 +227,18 @@ export function notificationsMaintenanceSections(p: NotifMaintenanceProps): stri
       <input data-act="schedFrom" data-field="schedFrom" data-commit="1" value="${attr(p.fromDraft ?? s?.from_address ?? "")}"${s ? "" : " disabled"} style="width:100%;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;${MONO};outline:none" />
     </div>
   </div>
-  <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">Digests assemble on the hour. A window with nothing to say is skipped, not sent empty. The from address saves when you leave the field.</div>`;
+  <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">Digests assemble on the hour. A window with nothing to say is skipped, not sent empty. The from address saves when you leave the field.</div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px">
+    <span style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">PREVIEW</span>
+    <a href="/api/notifications/preview?cadence=daily" target="_blank" rel="noopener" class="cnpy-ghostbtn" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg);text-decoration:none">Daily</a>
+    <a href="/api/notifications/preview?cadence=weekly" target="_blank" rel="noopener" class="cnpy-ghostbtn" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg);text-decoration:none">Weekly</a>
+    <a href="/api/notifications/preview?cadence=daily&amp;sample=1" target="_blank" rel="noopener" class="cnpy-ghostbtn" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:500;color:var(--fg-55);text-decoration:none">Sample data</a>
+    <span style="width:1px;height:18px;background:var(--border)"></span>
+    <span style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">SEND TEST TO ME</span>
+    <button data-act="testSend" data-arg="daily" class="cnpy-accentbtn" style="padding:6px 12px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12px;font-weight:600">Daily</button>
+    <button data-act="testSend" data-arg="weekly" class="cnpy-accentbtn" style="padding:6px 12px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12px;font-weight:600">Weekly</button>
+  </div>
+  <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Preview renders your own digest with live data (prefs ignored). A test send goes to your address through the real delivery path and shows up in the outbox below; when nothing has changed it falls back to sample data.</div>`;
 
   const outbox = p.outbox.length
     ? `<div style="display:grid;grid-template-columns:1.1fr .6fr 1fr .9fr .9fr;gap:12px;padding:10px 0 8px;border-bottom:1px solid var(--border);${MONO};font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">
