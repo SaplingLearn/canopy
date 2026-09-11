@@ -21,6 +21,7 @@ export const RESET_STATEMENTS = [
   "DELETE FROM identity_tasks",
   "DELETE FROM people",
   "INSERT INTO people (login, person) VALUES ('AndresL230', 'Andres'), ('Jose-Gael-Cruz-Lopez', 'Jose'), ('lpcooper-arch', 'Luke'), ('Darkest-Teddy', 'Jack')",
+  "DELETE FROM notification_outbox_bodies",
   "DELETE FROM notification_outbox",
   "DELETE FROM notification_prefs",
   "DELETE FROM notification_policy",
