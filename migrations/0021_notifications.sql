@@ -24,7 +24,7 @@ CREATE TABLE notification_settings (
 -- from_address in Maintenance before the first live send (§7: a dedicated
 -- sending subdomain).
 INSERT INTO notification_settings (id, send_hour, timezone, from_address)
-  VALUES (1, 8, 'America/New_York', 'Canopy <canopy@mail.canopy.saplinglearn.com>');
+  VALUES (1, 8, 'America/New_York', 'Canopy <canopy@canopy.saplinglearn.com>');
 
 -- Sparse per-user overrides. Absence = inherit (policy, then registry default).
 CREATE TABLE notification_prefs (

@@ -25,7 +25,7 @@ export const RESET_STATEMENTS = [
   "DELETE FROM notification_outbox",
   "DELETE FROM notification_prefs",
   "DELETE FROM notification_policy",
-  "UPDATE notification_settings SET send_hour = 8, timezone = 'America/New_York', from_address = 'Canopy <canopy@mail.canopy.saplinglearn.com>' WHERE id = 1",
+  "UPDATE notification_settings SET send_hour = 8, timezone = 'America/New_York', from_address = 'Canopy <canopy@canopy.saplinglearn.com>' WHERE id = 1",
   "DELETE FROM sessions",
   "DELETE FROM mcp_tokens",
   "DELETE FROM users",
