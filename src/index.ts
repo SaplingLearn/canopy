@@ -3,10 +3,14 @@ import { handleMcp } from "./mcp";
 import { handleGithubWebhook } from "./webhook";
 import { resolveBearerPrincipal } from "./auth/principal";
 import { recomputeAllProgress } from "./tools/progress";
+import { ensureNotificationPolicySeeded } from "./notifications/policy";
 import type { Env } from "./env";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Startup seeding (once per isolate): notification_policy gets a row for
+    // any registry kind missing one. Never overwrites; never fails a request.
+    await ensureNotificationPolicySeeded(env.DB).catch(() => undefined);
     const url = new URL(request.url);
     // Static assets are served by the assets binding before this handler runs.
     if (url.pathname === "/mcp") {
@@ -33,6 +37,7 @@ export default {
   // app-level service token — a computed direct writer (promote class), never on
   // the render path.
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await ensureNotificationPolicySeeded(env.DB).catch(() => undefined);
     if (!env.GITHUB_SERVICE_TOKEN || !env.GITHUB_REPO) return;
     await recomputeAllProgress(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO });
   },
