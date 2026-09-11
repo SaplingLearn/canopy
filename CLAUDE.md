@@ -52,17 +52,21 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `src/` — the Worker. `index.ts` (fetch entry: `/mcp` by bearer, `/webhook/github` by HMAC, everything
   else to the Hono app; plus the `scheduled()` progress backstop), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
-  `plan.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `db.ts` (D1 helpers), `auth/`, `env.ts`.
+  `plan.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
+  Email notifications section), `db.ts` (D1 helpers), `auth/`, `env.ts`.
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
   `0015_drop_user_token` [drops `users.github_token`], `0016_identity_tasks`, then
   `0017_issue_summaries` [assigned-issue summaries], `0018_structured_summaries` [structured summary
   columns], `0019_drop_pr_summary` [retires the legacy prose `pr_summaries.summary` — PR cards are
-  structured-only]).
+  structured-only], `0020_docs_space_vocab`, then `0021_notifications` [notification_policy /
+  notification_settings / notification_prefs / notification_outbox + `users.email`,
+  `users.email_unsubscribed`], `0022_notification_bodies` [dev-only rendered-message store]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
-  Settings, Get Started) served via the ASSETS binding; `web/src/markdown.ts` renders PR summaries and the
-  roadmap narrative as styled HTML.
+  Settings, Get Started, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
+  `web/src/markdown.ts` renders PR summaries and the roadmap narrative as styled HTML;
+  `web/src/notifications.ts` holds the Settings › Email notifications and Maintenance › Notifications views.
 - `.claude/skills/` — Claude Code skills: `canopy`, `load-context`, `record-session`, and the roadmap/
   my-work skills `read-plan`, `update-plan`, `my-work`. Described in the Working memory section above.
 
@@ -184,15 +188,54 @@ that renders a "No summary recorded" placeholder. Stored as columns on `pr_summa
 `issue_summaries` and regenerable via Sync (a row is "done" only when
 `model != 'excerpt' AND title IS NOT NULL`) — never truth, never generated at render.
 
+## Email notifications — a read-side projection, never a writer (spec: `docs/superpowers/specs/2026-09-11-canopy-email.md`)
+
+Digests are assembled from D1 and sent via Resend; the pipeline never writes to the store (only to its own
+`notification_*` tables). Everything lives in `src/notifications/`:
+
+- **Registry in code, not D1** (`registry.ts` + `shared/notifications.ts`): one `NotificationKind` per digest
+  section — `my_work` (event spine: merged PRs in the window + open assigned issues, summarized exactly as My
+  Work does), `review_queue` (open Proposals + draft Decisions), `roadmap_plan` (diffs `plan_versions` in the
+  window against the last pre-window version; progress rows never surface). A renderer is a **pure read**
+  (`render(db, login, window)` → `Section | null`; null = nothing to say, dropped). Adding a kind = one entry +
+  one renderer; `notification_policy` is seeded from the registry per isolate (`policy.ts`, INSERT OR IGNORE,
+  never overwrites).
+- **Cadences are `daily` / `weekly` / `off` — there is NO immediate tier.** Resolution (`resolve.ts`): user pref
+  → policy `default_cadence` → registry default; `policy.enabled = 0` short-circuits to `off` before the user
+  layer. A pref must be in the kind's `allowedCadences` (validated at write time).
+- **Runs** (`run.ts`): per eligible user (address on file, `email_unsubscribed = 0`) the outbox row is claimed
+  FIRST by `INSERT OR IGNORE` on `user:cadence:window_id` — a conflict skips the user, so a double fire is
+  harmless. Then render, drop nulls, `skipped` on zero sections, else one message → `sent` (with `resend_id`)
+  or `failed` (with the error). `retry.ts` re-attempts `failed` rows only. Windows (`window.ts`) are computed
+  in the org timezone: daily = previous 24h (72h on Monday), weekly = previous 7 days.
+- **Cron** (`cron.ts`, `wrangler.toml [triggers]`): two hourly triggers (`0 * * * *` daily candidate,
+  `0 * * * 0,1` weekly candidate) dispatched by expression in `scheduled()`, gated in code on
+  `notification_settings.send_hour` + `timezone` at fire time (static crons cannot read D1 or follow DST).
+- **Delivery gate** (`resend.ts`): `NOTIFICATIONS_MODE` absent/`local` → bodies go to the dev-only
+  `notification_outbox_bodies` table and Resend is NEVER called; `resend` requires `RESEND_API_KEY` (a config
+  error otherwise, never a silent fallback). Headers: `List-Unsubscribe` (mailto + https) and
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click`.
+- **Unsubscribe** (`unsubscribe.ts`): `/u/<login.sig>` (HMAC over the login with `COOKIE_SECRET`) is the
+  single signed-token exception — handled in `src/index.ts` outside `sessionGate`; POST can ONLY set
+  `email_unsubscribed = 1`; GET redirects to the cookie-gated `#unsubscribe` screen. Prefs survive unsubscribe.
+- **HTTP** (`routes.ts`, mounted at `/api/notifications`, session-cookie only, NEVER MCP): `prefs` (GET/PUT,
+  own row only), admin-only `policy`, `settings`, `outbox`, `users/:login`.
+- **Address**: seeded at first login from `GET /user/emails` (primary + verified; scope `user:email`) via
+  `recordLogin` with `COALESCE(users.email, …)` — never overwrites a user/admin-edited value.
+- Tests assert on outbox/bodies rows, never mocks (`test/notifications.*.test.ts`, `test/render.notifications.test.ts`).
+
 ## Conventions & gotchas
 
 - `shared/vocabulary.ts` MUST match `migrations/0002_seed_vocab.sql` — it's the gate's source of truth.
 - D1 helpers live in `src/db.ts` (`first` / `all` / `run` / `nowIso`); writers in `src/tools/writes.ts`.
-- Tests use real Miniflare D1; `test/apply-migrations.ts` truncates data tables `beforeEach` (add new
-  tables — `events`, `pr_summaries`, `milestone_progress`, `people`, `plan`, `plan_versions` — there).
+- Tests use real Miniflare D1; `test/apply-migrations.ts` truncates data tables `beforeEach` via
+  `scripts/seed/reset.mjs` (add new tables — `events`, `pr_summaries`, `milestone_progress`, `people`, `plan`,
+  `plan_versions`, `notification_*` — there).
   GitHub I/O and the PR summarizer are dependency-injected (`fetchImpl?: typeof fetch`, `summarizer`)
   because the vitest pool exports no fetch/AI mock — stub at the `Response`/`Summarizer` level, never hit
   the network in tests.
+- A `GEMINI_API_KEY` in your local `.dev.vars` leaks into the vitest pool and fails ONE summarizer test
+  ("GEMINI_API_KEY unset in tests → excerpt"); it is environmental, not a regression.
 - **Deferred seams — do NOT activate:** Cloudflare Queue, Vectorize, the GitHub OAuth provider for MCP.
   They exist as `// SEAM:` comments only.
 
@@ -202,6 +245,9 @@ Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GI
 `COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s),
 `GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress recompute — absent → `scheduled()`
 no-ops), `GEMINI_API_KEY` (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt
-fallback). Vars (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`). Bindings: `DB`
+fallback), `RESEND_API_KEY` (email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`). Vars
+(`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`), `ADMIN_LOGINS`, `PUBLIC_ORIGIN`
+(absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`). Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
-not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` drives the progress recompute backstop.
+not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` drives the progress recompute backstop (`0 */6 * * *`) and the two hourly digest
+candidates (see Email notifications).

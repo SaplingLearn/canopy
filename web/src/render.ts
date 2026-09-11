@@ -14,13 +14,15 @@ import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
+import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow } from "./api";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromLogins } from "./triage-map";
 
 // A docs "space" is a free-form top-level grouping shown as a toggle (e.g.
 // Technical | Product). Values come from the data, not a fixed union.
 export type DocSpace = string;
 
-export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide";
+export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide" | "unsubscribe";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -76,6 +78,18 @@ export interface AppState {
   displayName: string;
   revealedToken: string | null;
   tokenCopied: boolean;
+  // Email notifications (Settings) — the user's resolved prefs + the address edit form.
+  notifPrefs: Loadable<PrefsView | null>;
+  emailEditing: boolean;
+  emailDraft: string;
+  // Email notifications (Maintenance, admin) — policy / schedule / recent outbox.
+  notifPolicy: Loadable<PolicyKindView[]>;
+  notifSettings: Loadable<NotificationSettingsRow | null>;
+  notifOutbox: Loadable<NotificationOutboxRow[]>;
+  outboxExpanded: string | null;
+  fromDraft: string | null;
+  /** The #unsubscribe screen: the flip in flight, its error, or a Settings preview (no flip). */
+  unsub: { pending: boolean; error: string | null; preview: boolean };
   confirmedMilestones: Record<string, boolean>;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
@@ -124,6 +138,15 @@ export function initialState(): AppState {
     displayName: "",
     revealedToken: null,
     tokenCopied: false,
+    notifPrefs: { status: "idle", data: null },
+    emailEditing: false,
+    emailDraft: "",
+    notifPolicy: { status: "idle", data: [] },
+    notifSettings: { status: "idle", data: null },
+    notifOutbox: { status: "idle", data: [] },
+    outboxExpanded: null,
+    fromDraft: null,
+    unsub: { pending: false, error: null, preview: false },
     confirmedMilestones: {},
     toast: null,
     backfillSync: null,
@@ -361,7 +384,7 @@ function sidebar(s: AppState): string {
 }
 
 function header(s: AppState): string {
-  const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", review: "Review", maintenance: "Maintenance", search: "Search", settings: "Settings", guide: "Get Started" };
+  const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", review: "Review", maintenance: "Maintenance", search: "Search", settings: "Settings", guide: "Get Started", unsubscribe: "Unsubscribe" };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
 
@@ -1108,6 +1131,14 @@ function settingsView(s: AppState): string {
       <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
     </section>
 
+    ${emailNotificationsSection({
+      prefs: s.notifPrefs.data,
+      loading: s.notifPrefs.status === "idle" || s.notifPrefs.status === "loading",
+      error: s.notifPrefs.error ?? null,
+      emailEditing: s.emailEditing,
+      emailDraft: s.emailDraft,
+    })}
+
     <section style="margin-bottom:14px;margin-top:34px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">MCP access tokens</div>
@@ -1304,7 +1335,20 @@ function maintenanceScreen(s: AppState): string {
   const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
     : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
     : "";
-  return `${hint}${maintenanceView(maintenanceProps(s))}`;
+  const notif = s.me?.admin
+    ? notificationsMaintenanceSections({
+        policy: s.notifPolicy.data,
+        settings: s.notifSettings.data,
+        outbox: s.notifOutbox.data,
+        outboxExpanded: s.outboxExpanded,
+        fromDraft: s.fromDraft,
+      })
+    : "";
+  // The maintenance view closes its own container; the notification sections
+  // share that column, so they are spliced in before its closing tag.
+  const base = maintenanceView(maintenanceProps(s));
+  const cut = base.lastIndexOf("</div>");
+  return `${hint}${base.slice(0, cut)}${notif}${base.slice(cut)}`;
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
@@ -1369,7 +1413,7 @@ function backfillSyncModal(sync: BackfillSyncState): string {
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
   return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
-    ${s.view === "auth" ? authView(s) : appView(s)}
+    ${s.view === "auth" ? authView(s) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.login ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
   </div>`;

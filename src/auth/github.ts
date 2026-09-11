@@ -13,7 +13,9 @@ export function buildAuthorizeUrl(opts: {
   const u = new URL("https://github.com/login/oauth/authorize");
   u.searchParams.set("client_id", opts.clientId);
   u.searchParams.set("redirect_uri", opts.redirectUri);
-  u.searchParams.set("scope", "read:org read:user");
+  // user:email: the teammate email is seeded from GET /user/emails at first login
+  // (canopy-email.md §7) — the profile email is unreliable (private / noreply).
+  u.searchParams.set("scope", "read:org read:user user:email");
   u.searchParams.set("state", opts.state);
   u.searchParams.set("code_challenge", opts.challenge);
   u.searchParams.set("code_challenge_method", "S256");
@@ -61,4 +63,19 @@ export async function isActiveOrgMember(token: string): Promise<boolean> {
   if (!res.ok) return false; // 404 => not a member
   const data = (await res.json()) as { state?: string };
   return data.state === "active"; // a pending invite does not count
+}
+
+/**
+ * The user's primary, verified GitHub address from GET /user/emails (needs the
+ * user:email scope — this is how a PRIVATE profile email is still reachable).
+ * null when none qualifies or the call fails; fetchImpl is injectable for tests.
+ */
+export async function getPrimaryEmail(token: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  const res = await fetchImpl("https://api.github.com/user/emails", {
+    headers: { authorization: `Bearer ${token}`, accept: GH_API, "user-agent": USER_AGENT },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { email?: string; primary?: boolean; verified?: boolean }[];
+  const hit = Array.isArray(data) ? data.find((e) => e.primary === true && e.verified === true && e.email) : undefined;
+  return hit?.email ?? null;
 }

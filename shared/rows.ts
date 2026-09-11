@@ -78,6 +78,9 @@ export interface UserRow {
   github_login: string;
   name: string | null;
   created_at: string;
+  avatar_url: string | null;          // (0006)
+  email: string | null;               // notification address, user/admin-set — NOT GitHub's (0021)
+  email_unsubscribed: number;         // 1 = hard gate above cadence resolution; prefs survive (0021)
 }
 
 export interface SessionRow {
@@ -218,4 +221,45 @@ export interface PlanVersionRow {
   milestones_json: string;
   created_at: string;
   created_by: string;
+}
+
+// ── Email notifications (0021) ─────────────────────────────────────────────────
+
+// Org-wide per-kind policy, seeded from the registry, admin-edited.
+export interface NotificationPolicyRow {
+  kind: string;
+  default_cadence: "daily" | "weekly" | "off";
+  enabled: number;                    // 0 = off for everyone; user layer not consulted
+  updated_at: string;
+  updated_by: string;
+}
+
+// The org-level schedule singleton (id = 1).
+export interface NotificationSettingsRow {
+  id: 1;
+  send_hour: number;
+  timezone: string;
+  from_address: string;
+}
+
+// Sparse per-user override; absence inherits.
+export interface NotificationPrefRow {
+  user_id: string;
+  kind: string;
+  cadence: "daily" | "weekly" | "off";
+  updated_at: string;
+}
+
+// One row per (user, cadence, window) — the run idempotency ledger.
+export interface NotificationOutboxRow {
+  idempotency_key: string;            // user:cadence:window_id
+  user_id: string;
+  cadence: "daily" | "weekly";
+  window_id: string;
+  kinds: string;                      // JSON array of kind ids rendered
+  status: "pending" | "sent" | "skipped" | "failed";
+  resend_id: string | null;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
 }
