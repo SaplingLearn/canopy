@@ -142,13 +142,13 @@ Progress-layer changes are excluded. They derive from PR merges already covered 
 - Resend via HTTPS from the Worker. API key in a Worker secret.
 - Sending domain is a subdomain (e.g. `mail.canopy.saplinglearn.com`) with SPF, DKIM, DMARC. Apex reputation stays isolated.
 - Headers: `List-Unsubscribe` (mailto and https) and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. The https target is a cookie-gated route that flips `email_unsubscribed`; one-click POST from mail clients is handled by a signed unsubscribe path, which is the single exception to the no-token rule because the only action it can perform is turning email off.
-- Addresses: GitHub OAuth primary email is unreliable (private or noreply alias). Email is a field on the teammate record, editable by the user in Settings and by admin in Maintenance. Users with no address are skipped at run time and see a prompt in Settings.
+- Addresses: the teammate record's email column is seeded at first login from GitHub. The OAuth scope must include user:email, and the address comes from GET /user/emails, taking the entry with primary: true and verified: true. Users can edit the address in Settings afterward; admin can edit it in Maintenance. Because seeding guarantees a value, there is no missing-address state in Settings.
 - Subject: `Canopy daily, Sep 11` / `Canopy weekly, Sep 7 to 11`. Plain text alternative always included.
 
 ## 8. Surfaces
 
 Settings (per user):
-- Email address field with verification state (set, missing).
+- Email address field, seeded from GitHub, editable.
 - One row per enabled registry kind: label, description, cadence control limited to `allowedCadences`. Shows inherited value with an "org default" marker until overridden; "reset to default" clears the pref row.
 - Kinds with `policy.enabled = 0` are hidden, not shown disabled.
 - Global unsubscribe toggle.
@@ -170,6 +170,7 @@ Tests assert on rows, not mocks:
 - Kind with `policy.enabled = 0` is never rendered regardless of user pref.
 - User pref of `weekly` on `my_work` excludes that section from the daily run and includes it in the weekly run.
 - Roadmap renderer returns null when only progress rows changed in the window.
+- First login for a user with a private GitHub email still produces a non-null email column.
 
 Per existing posture: any test that stays green if the fix is reverted is broken.
 
