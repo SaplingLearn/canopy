@@ -1,0 +1,57 @@
+// Email notification contract (canopy-email.md §2). Lives in shared/ so the
+// Worker (registry, resolver, run assembler) and the web build (Settings and
+// Maintenance iterate the registry metadata) agree on the shape.
+//
+// Cadences are daily, weekly, off — there is deliberately NO immediate tier.
+import { z } from "zod";
+
+export const Cadence = z.enum(["daily", "weekly", "off"]);
+export type Cadence = z.infer<typeof Cadence>;
+
+// A run is always daily or weekly; 'off' is a preference, never a run.
+export const RunCadence = z.enum(["daily", "weekly"]);
+export type RunCadence = z.infer<typeof RunCadence>;
+
+// The window a run covers: [start, end). `id` is the idempotency component
+// (`YYYY-MM-DD` daily, `YYYY-Www` weekly — §4).
+export const Window = z.object({
+  cadence: RunCadence,
+  start: z.date(),
+  end: z.date(),
+  id: z.string().min(1),
+});
+export type Window = z.infer<typeof Window>;
+
+// One rendered section of a digest. `deepLink` is a site-relative path into the
+// SPA (`/#mywork`); the assembler prefixes the origin.
+export const Section = z.object({
+  heading: z.string().min(1),
+  html: z.string().min(1),
+  text: z.string().min(1),
+  deepLink: z.string().min(1),
+});
+export type Section = z.infer<typeof Section>;
+
+// The data half of a registry entry: everything Settings/Maintenance need and
+// everything the resolver validates a user pref against. `id` is the D1 key.
+export const NotificationKindMeta = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9_]*$/),
+    label: z.string().min(1),
+    description: z.string().min(1),
+    defaultCadence: Cadence,
+    allowedCadences: z.array(Cadence).min(1),
+  })
+  .refine((k) => k.allowedCadences.includes("off"), { message: "allowedCadences must include 'off'", path: ["allowedCadences"] })
+  .refine((k) => k.allowedCadences.includes(k.defaultCadence), {
+    message: "defaultCadence must be one of allowedCadences",
+    path: ["defaultCadence"],
+  });
+export type NotificationKindMeta = z.infer<typeof NotificationKindMeta>;
+
+// A full registry entry: metadata plus the renderer. The renderer is a PURE
+// READ over `ctx` (the Worker binds it to D1): no writes, no events, no GitHub.
+// Returns null when there is nothing to say for this user in this window.
+export interface NotificationKind<Ctx = unknown> extends NotificationKindMeta {
+  render(ctx: Ctx, userId: string, window: Window): Promise<Section | null>;
+}

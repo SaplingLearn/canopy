@@ -25,7 +25,7 @@ function stripPriority(title: string): string {
   return title.replace(/^\s*\[P[0-3]\]\s*/, "").trim();
 }
 
-interface PrEventJoinRow extends EventRow {
+export interface PrEventJoinRow extends EventRow {
   s_title: string | null;
   s_what: string | null;
   s_why: string | null;
@@ -57,6 +57,69 @@ interface IssueSnapshotRow {
   s_next_step: string | null;
 }
 
+/** One captured PR event (+ its summary join) → the My Work card shape. Shared
+ *  with the my_work email renderer so both surfaces summarize identically. */
+export function toMyWorkPr(row: PrEventJoinRow): MyWorkPr {
+  const parsed = JSON.parse(row.raw) as RawPr;
+  return {
+    number: parsed.pr.number,
+    title: parsed.pr.title,
+    url: parsed.pr.html_url,
+    merged: parsed.pr.merged,
+    occurredAt: row.occurred_at ?? row.recorded_at,
+    displayTitle: row.s_title,
+    what: row.s_what,
+    why: row.s_why,
+    impact: row.s_impact,
+    baseRef: parsed.pr.base?.ref ?? null,
+  };
+}
+
+/**
+ * Every open issue assigned to `login`, newest-updated first, uncapped. Built
+ * from the latest snapshot per ref_number across ALL issue events (not scoped
+ * to a known set of numbers — every issue ever captured is a todo candidate).
+ * The dashboard caps this; the email renderer lists it whole.
+ */
+export async function listOpenAssignedIssues(db: DB, login: string): Promise<MyWorkTodo[]> {
+  const issueRows = await all<IssueSnapshotRow>(
+    db,
+    `SELECT e.ref_number, e.raw, s.summary AS summary, s.title AS s_title, s.next_step AS s_next_step
+     FROM (
+       SELECT ref_number, raw, ROW_NUMBER() OVER (PARTITION BY ref_number ORDER BY occurred_at DESC, id DESC) rn
+       FROM events WHERE event_type = 'issue'
+     ) e
+     LEFT JOIN issue_summaries s ON s.issue_number = e.ref_number
+     WHERE e.rn = 1
+     ORDER BY e.ref_number ASC`
+  );
+  const todo: MyWorkTodo[] = [];
+  for (const row of issueRows) {
+    const parsed = JSON.parse(row.raw) as RawIssue;
+    const issue = parsed.issue;
+    if (issue.state !== "open") continue;
+    if (!issue.assignees.some((a) => a.login === login)) continue;
+    const m = issue.milestone;
+    todo.push({
+      number: issue.number,
+      title: stripPriority(issue.title),
+      priority: priorityOf(issue.title),
+      labels: issue.labels,
+      url: issue.html_url,
+      updatedAt: issue.updated_at,
+      summary: row.summary,
+      displayTitle: row.s_title,
+      // legacy raws captured before 0018 lack a milestone title — hide the row.
+      milestone: m?.title ? { title: m.title, dueOn: m.due_on ?? null } : null,
+      nextStep: row.s_next_step,
+    });
+  }
+  // Most recently updated first (updated_at is a GitHub ISO-8601 UTC string —
+  // lexicographic order is chronological).
+  todo.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  return todo;
+}
+
 /**
  * The personal My Work projection for `login`. person comes from `people`
  * (the admin-maintained identity map); an unmapped login is a captured-but-
@@ -80,60 +143,8 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
         LIMIT ${PR_LIMIT}`,
       login
     );
-    const previousActivity: MyWorkPr[] = prRows.map((row) => {
-      const parsed = JSON.parse(row.raw) as RawPr;
-      return {
-        number: parsed.pr.number,
-        title: parsed.pr.title,
-        url: parsed.pr.html_url,
-        merged: parsed.pr.merged,
-        occurredAt: row.occurred_at ?? row.recorded_at,
-        displayTitle: row.s_title,
-        what: row.s_what,
-        why: row.s_why,
-        impact: row.s_impact,
-        baseRef: parsed.pr.base?.ref ?? null,
-      };
-    });
-
-    // Latest snapshot per ref_number across ALL issue events (not scoped to a
-    // known set of numbers — every issue ever captured is a todo candidate).
-    const issueRows = await all<IssueSnapshotRow>(
-      db,
-      `SELECT e.ref_number, e.raw, s.summary AS summary, s.title AS s_title, s.next_step AS s_next_step
-       FROM (
-         SELECT ref_number, raw, ROW_NUMBER() OVER (PARTITION BY ref_number ORDER BY occurred_at DESC, id DESC) rn
-         FROM events WHERE event_type = 'issue'
-       ) e
-       LEFT JOIN issue_summaries s ON s.issue_number = e.ref_number
-       WHERE e.rn = 1
-       ORDER BY e.ref_number ASC`
-    );
-    const todo: MyWorkTodo[] = [];
-    for (const row of issueRows) {
-      const parsed = JSON.parse(row.raw) as RawIssue;
-      const issue = parsed.issue;
-      if (issue.state !== "open") continue;
-      if (!issue.assignees.some((a) => a.login === login)) continue;
-      const m = issue.milestone;
-      todo.push({
-        number: issue.number,
-        title: stripPriority(issue.title),
-        priority: priorityOf(issue.title),
-        labels: issue.labels,
-        url: issue.html_url,
-        updatedAt: issue.updated_at,
-        summary: row.summary,
-        displayTitle: row.s_title,
-        // legacy raws captured before 0018 lack a milestone title — hide the row.
-        milestone: m?.title ? { title: m.title, dueOn: m.due_on ?? null } : null,
-        nextStep: row.s_next_step,
-      });
-    }
-    // Same cap as previousActivity: the 6 most recently updated, newest first
-    // (updated_at is a GitHub ISO-8601 UTC string — lexicographic order is
-    // chronological). The dashboard is a glance surface, not the full backlog.
-    todo.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+    const previousActivity: MyWorkPr[] = prRows.map(toMyWorkPr);
+    const todo = await listOpenAssignedIssues(db, login);
 
     return { person: personRow.person, previousActivity, todo: todo.slice(0, TODO_LIMIT), degraded: false };
   } catch {
