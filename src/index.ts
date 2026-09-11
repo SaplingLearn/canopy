@@ -5,6 +5,8 @@ import { resolveBearerPrincipal } from "./auth/principal";
 import { recomputeAllProgress } from "./tools/progress";
 import { ensureNotificationPolicySeeded } from "./notifications/policy";
 import { DAILY_CRON, WEEKLY_CRON, handleNotificationCron } from "./notifications/cron";
+import { verifyUnsubscribeToken } from "./notifications/unsubscribe";
+import { run } from "./db";
 import type { Env } from "./env";
 
 export default {
@@ -30,6 +32,18 @@ export default {
     // body against GITHUB_WEBHOOK_SECRET. Never touches sessionGate.
     if (url.pathname === "/webhook/github" && request.method === "POST") {
       return handleGithubWebhook(request, env);
+    }
+    // Signed one-click unsubscribe (canopy-email.md §7): the single token
+    // exception. POST (what List-Unsubscribe-Post mail clients send) verifies the
+    // HMAC and can ONLY set email_unsubscribed = 1 for the login it names. A
+    // human GET (the footer link) is redirected to the cookie-gated in-app screen
+    // and flips nothing. Never touches sessionGate.
+    if (url.pathname.startsWith("/u/")) {
+      if (request.method !== "POST") return Response.redirect(new URL("/#unsubscribe", url).toString(), 302);
+      const login = await verifyUnsubscribeToken(url.pathname.slice(3), env.COOKIE_SECRET);
+      if (!login) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
+      await run(env.DB, `UPDATE users SET email_unsubscribed = 1 WHERE github_login = ?`, login);
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return app.fetch(request, env, ctx);
   },

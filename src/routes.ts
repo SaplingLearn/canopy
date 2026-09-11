@@ -3,6 +3,7 @@ import { IngestPayload } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
+import { notificationsApp } from "./notifications/routes";
 import { consume } from "./consumer";
 import { runBackfill } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals, list_identity_tasks } from "./tools/reads";
@@ -19,6 +20,11 @@ app.use("*", sessionGate);
 
 // Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
 app.route("/auth", authApp);
+
+// Email notification prefs/policy/settings/outbox (session-gated; admin routes
+// re-check isAdmin inside). The signed one-click unsubscribe POST is NOT here —
+// it lives in src/index.ts, outside the gate, and can only turn email off.
+app.route("/api/notifications", notificationsApp);
 
 app.post("/ingest", async (c) => {
   const json = await c.req.json().catch(() => null);
