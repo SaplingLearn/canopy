@@ -25,7 +25,7 @@ PUBLIC_ORIGIN = "https://canopy.saplinglearn.com"
 # Email delivery gate: "local" (default when absent — bodies go to the dev-only
 # notification_outbox_bodies table, Resend is never called) or "resend"
 # (requires the RESEND_API_KEY secret). Set to "resend" only in production.
-# NOTIFICATIONS_MODE = "resend"
+NOTIFICATIONS_MODE = "resend"
 
 [observability]
 enabled = true
