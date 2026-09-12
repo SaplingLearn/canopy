@@ -55,21 +55,41 @@ export interface ClaimedRow {
   timeZone: string;
 }
 
-/**
- * Render the claimed kinds for one outbox row, drop nulls, then skip or send,
- * recording the outcome on the row. Shared by the run and the retry job.
- */
-export async function deliverRow(db: DB, row: ClaimedRow, opts: DeliverOptions): Promise<"sent" | "skipped" | "failed"> {
-  const origin = opts.origin ?? "";
+/** Render every kind for a login/window and drop nulls. Pure read; throws on a renderer error. */
+export async function renderSections(db: DB, login: string, kinds: readonly NotificationKind<DB>[], window: Window): Promise<{ sections: Section[]; rendered: string[] }> {
   const sections: Section[] = [];
   const rendered: string[] = [];
+  for (const k of kinds) {
+    const s = await k.render(db, login, window);
+    if (s) {
+      sections.push(s);
+      rendered.push(k.id);
+    }
+  }
+  return { sections, rendered };
+}
+
+/** Assemble the one message for a login from already-rendered sections. */
+export async function buildMessage(sections: Section[], row: Pick<ClaimedRow, "login" | "window" | "timeZone">, opts: DeliverOptions) {
+  const origin = opts.origin ?? "";
+  const unsubscribeUrl = opts.unsubscribeUrl ? await opts.unsubscribeUrl(row.login) : `${origin}/#settings`;
+  return { unsubscribeUrl, ...assembleMessage({ sections, window: row.window, timeZone: row.timeZone, origin, login: row.login, unsubscribeUrl }) };
+}
+
+/**
+ * Render the claimed kinds for one outbox row, drop nulls, then skip or send,
+ * recording the outcome on the row. Shared by the run, the retry job and the
+ * admin test send. `presetSections` skips rendering (the sample preview).
+ */
+export async function deliverRow(db: DB, row: ClaimedRow, opts: DeliverOptions, presetSections?: Section[]): Promise<"sent" | "skipped" | "failed"> {
+  let sections: Section[];
+  let rendered: string[];
   try {
-    for (const k of row.kinds) {
-      const s = await k.render(db, row.login, row.window);
-      if (s) {
-        sections.push(s);
-        rendered.push(k.id);
-      }
+    if (presetSections) {
+      sections = presetSections;
+      rendered = row.kinds.map((k) => k.id);
+    } else {
+      ({ sections, rendered } = await renderSections(db, row.login, row.kinds, row.window));
     }
   } catch (e) {
     await setStatus(db, row.key, { status: "failed", error: `render: ${String((e as Error)?.message ?? e)}` });
@@ -81,8 +101,7 @@ export async function deliverRow(db: DB, row: ClaimedRow, opts: DeliverOptions):
     return "skipped";
   }
 
-  const unsubscribeUrl = opts.unsubscribeUrl ? await opts.unsubscribeUrl(row.login) : `${origin}/#settings`;
-  const msg = assembleMessage({ sections, window: row.window, timeZone: row.timeZone, origin, login: row.login, unsubscribeUrl });
+  const { unsubscribeUrl, ...msg } = await buildMessage(sections, row, opts);
   try {
     const { id } = await opts.delivery.send({ idempotencyKey: row.key, userId: row.login, to: row.email, unsubscribeUrl, ...msg });
     await setStatus(db, row.key, { status: "sent", kinds: rendered, resend_id: id, sent_at: nowIso() });
