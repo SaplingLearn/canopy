@@ -1372,7 +1372,7 @@ function appView(s: AppState): string {
     ${sidebar(s)}
     <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
       ${header(s)}
-      <div class="cnpy-scroll" style="flex:1;overflow-y:auto;min-height:0">${screenBody(s)}</div>
+      <div id="cnpy-main" class="cnpy-scroll" style="flex:1;overflow-y:auto;min-height:0">${screenBody(s)}</div>
     </main>
   </div>`;
 }
