@@ -39,12 +39,14 @@ const issueStub = (s: IssueSummary): Summarizer<IssueSummary> => ({ model: "stub
 describe("My Work items (ledger layout)", () => {
   const kind = () => getKind("my_work")!;
 
-  it("renders a merged PR as a ledger item: #number column linking out, title, What changed / Why / Impact rows, MERGED chip into main", async () => {
+  it("renders a merged PR as a ledger item: #number pill leading the title, What changed / Why / Impact rows, MERGED chip into main", async () => {
     await ingestEvent(env.DB, prEvent(10, IN_WINDOW, "Raw ten"), "github-webhook");
     await storePrSummary(env.DB, prStub({ title: "Humanized ten", what: "Did the thing", why: "Because reasons", impact: "Users win" }), { semantic_key: "gh:pr:10:merged", pr_number: 10, title: "Raw ten", body: "b" });
     const s = (await kind().render(env.DB, LOGIN, WINDOW))!;
-    // Ledger layout: a two-column item — the #number (the only link) in a narrow left column, the title + rows + footer in the right one. No box.
-    expect(s.html).toMatch(/<table data-item[^>]*>[\s\S]*?<td data-pill-cell[^>]*>\s*<a [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10[\s\S]*?<\/td>\s*<td data-item-inner[^>]*>\s*<div data-title[^>]*>Humanized ten<\/div>/);
+    // Ledger layout: the #number pill (the item's only link, accent-coloured) leads the title line; rows sit flush under it. No box, no side column.
+    expect(s.html).toMatch(/<div data-title[^>]*>\s*<a data-pill [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10<\/a>\s*Humanized ten\s*<\/div>/);
+    expect(s.html).toMatch(new RegExp(`<a data-pill [^>]*style="[^"]*color:${THEME.accentText.light}[^"]*background-color:${THEME.accentSoft.light}`));
+    expect(s.html).not.toContain("data-pill-cell");
     expect(s.html).not.toContain("border-radius:11px");
     expect(s.html).not.toMatch(/data-item[^>]*style="[^"]*border:1px solid/); // items are separated by a hairline, never boxed
     expect(s.html).toMatch(/What changed[\s\S]*Did the thing/);
