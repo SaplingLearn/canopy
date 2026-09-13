@@ -89,6 +89,29 @@ function dateRange(window: Window, timeZone: string): string {
   return from.month === to.month ? `${from.month} ${from.day} to ${to.day}` : `${from.month} ${from.day} to ${to.month} ${to.day}`;
 }
 
+/**
+ * Branded header: the app's three-bar mark (rects 20/14/8 wide, stacked and
+ * centred, top bar accent, bottom bar at half strength) built from plain
+ * blocks because Gmail strips SVG, the wordmark beside it, and the cadence
+ * line underneath. Colours come from the token map so the dark swap flips them.
+ */
+function header(cadence: Window["cadence"], range: string): string {
+  const bar = (n: number, w: number, inset: number, color: string, last = false) =>
+    `<div data-bar="${n}" style="width:${w}px;height:4px;border-radius:2px;background-color:${color};margin:0 0 ${last ? 0 : 2.5}px ${inset}px;font-size:0;line-height:0;"></div>`;
+  const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
+  return (
+    `<tr><td style="padding:28px 28px 24px 28px;border-bottom:1px solid ${C.border};">` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>` +
+    `<td data-mark="canopy" width="24" style="vertical-align:middle;padding-right:11px;">` +
+    bar(1, 22, 0, C.accent) + bar(2, 15, 3.5, C.fg) + bar(3, 9, 6.5, C.fg55, true) +
+    `</td>` +
+    `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${C.fg};">Canopy</td>` +
+    `</tr></table>` +
+    `<div style="${SANS}font-size:13px;line-height:1.4;color:${C.fg55};padding-top:12px;">${label} <span style="color:${C.fg40};">&middot;</span> ${escapeHtml(range)}</div>` +
+    `</td></tr>`
+  );
+}
+
 export function assembleMessage(opts: {
   sections: Section[];
   window: Window;
@@ -128,8 +151,7 @@ export function assembleMessage(opts: {
     (preheader ? `<div style="display:none;max-height:0px;overflow:hidden;">${escapeHtml(preheader)}.</div>` : "") +
     `<table ${EMAIL_STYLE.table} style="background-color:${C.ground};"><tr><td align="center" style="padding:36px 16px;">` +
     `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
-    `<tr><td style="padding:22px 28px 18px 28px;border-bottom:1px solid ${C.border};${SANS}font-size:16px;line-height:1.3;letter-spacing:-0.02em;color:${C.fg};">` +
-    `<strong>Canopy</strong> ${window.cadence} <span style="color:${C.fg40};">&middot;</span> <span style="color:${C.fg55};">${escapeHtml(range)}</span></td></tr>` +
+    header(window.cadence, range) +
     blocks.join("") +
     `<tr><td style="padding:18px 28px 22px 28px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;line-height:1.7;color:${C.fg40};">` +
     `You're getting the ${window.cadence} Canopy digest for ${escapeHtml(login)}. <a href="${escapeHtml(unsubscribeUrl)}" style="color:${C.fg40};text-decoration:underline;text-underline-offset:2px;">Unsubscribe</a><br>` +

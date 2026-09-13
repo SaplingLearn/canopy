@@ -59,3 +59,19 @@ describe("email shell — site theming", () => {
     expect(html).not.toContain("#0a0a0a");
   });
 });
+
+describe("email header — Canopy branding", () => {
+  it("renders the three-bar mark as HTML blocks (no SVG) with the wordmark beside it", () => {
+    const { html } = msg();
+    expect(html).not.toContain("<svg");
+    expect(html).toContain('data-mark="canopy"');
+    expect((html.match(/data-bar="/g) ?? []).length).toBe(3);
+    expect(html).toMatch(/data-mark="canopy"[\s\S]*?Canopy<\/(span|strong|td)>/);
+  });
+
+  it("names the cadence under the wordmark: 'Daily digest · Sep 13'", () => {
+    const { html } = msg();
+    expect(html).toContain("Daily digest");
+    expect(html).toContain("Sep 13");
+  });
+});

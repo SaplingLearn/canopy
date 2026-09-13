@@ -34,7 +34,7 @@ describe("GET /api/notifications/preview", () => {
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
     expect(html).toContain("Pending decision");
-    expect(html).toContain("<strong>Canopy</strong> daily");
+    expect(html).toContain("Daily digest");
     expect(await all(env.DB, `SELECT * FROM notification_outbox`)).toHaveLength(0);
   });
 
