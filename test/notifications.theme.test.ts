@@ -99,3 +99,13 @@ describe("email contrast — action link", () => {
     expect(html).toMatch(new RegExp(`color:${THEME.accentText.light};text-decoration:none;padding:7px 13px`));
   });
 });
+
+describe("dark swap selectors", () => {
+  it("text-colour rules are anchored so they cannot match background-color / border-color declarations", () => {
+    const { html } = msg();
+    const css = html.match(/<style>([\s\S]*?)<\/style>/)![1];
+    expect(css).not.toMatch(/\[style\*="color:#/); // a bare substring match would also hit "background-color:#…"
+    expect(css).toMatch(/\[style\*=";color:#1a1814"\]/);
+    expect(css).toMatch(/\[style\^="color:#1a1814"\]/);
+  });
+});

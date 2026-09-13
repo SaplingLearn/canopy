@@ -21,8 +21,15 @@ export interface AssembledMessage {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Site tokens, light → dark. Every colour in the email comes from here. */
-export const THEME = {
+/** Flatten `fg` at `t` opacity over `bg` to a hex — mail clients get no alpha, the dark swap keys on hex. */
+function mix(fg: string, bg: string, t: number): string {
+  const c = (h: string) => h.replace("#", "").match(/../g)!.map((x) => parseInt(x, 16));
+  const [a, b] = [c(fg), c(bg)];
+  return "#" + a.map((v, i) => Math.round(v * t + b[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
+}
+
+/** Site tokens (web/src/canopy.css), light → dark. Every colour in the email comes from here. */
+const BASE = {
   ground: { light: "#f3f0e9", dark: "#141311" }, // page behind the card (one step past --bg)
   bg: { light: "#faf8f3", dark: "#1c1a16" }, // --bg → card
   fg: { light: "#1a1814", dark: "#ede9e2" }, // --fg
@@ -31,8 +38,21 @@ export const THEME = {
   fg40: { light: "#a09e9a", dark: "#706d68" }, // --fg-40
   border: { light: "#e5e3de", dark: "#33312c" }, // --border
   borderStrong: { light: "#d5d2cd", dark: "#46433f" }, // --border-strong
+  hover: { light: "#f0eee8", dark: "#2c2a25" }, // --hover (code spans)
   accent: { light: "#8a9a5b", dark: "#9aab65" }, // --accent (mark, fills)
   accentText: { light: "#5c6a3a", dark: "#9aab65" }, // accent as small TEXT: the light --accent is ~2.9:1 on --bg, this olive is ~5.6:1
+  green: { light: "#1b6c42", dark: "#5ab86c" }, // --green (MERGED / ADDED)
+  blue: { light: "#3e6f8a", dark: "#6aa8c4" }, // --blue (CHANGED)
+  amber: { light: "#b4562c", dark: "#d98a52" }, // --amber (priority / LOW CONFIDENCE)
+} as const;
+/** Chip fills mirror the app's color-mix(<c> 12%) background and color-mix(<c> 45%) border. */
+const soft = (k: "accentText" | "green" | "blue" | "amber", t: number) => ({ light: mix(BASE[k].light, BASE.bg.light, t), dark: mix(BASE[k].dark, BASE.bg.dark, t) });
+export const THEME = {
+  ...BASE,
+  accentSoft: soft("accentText", 0.12), accentLine: soft("accentText", 0.45),
+  greenSoft: soft("green", 0.12), greenLine: soft("green", 0.45),
+  blueSoft: soft("blue", 0.12), blueLine: soft("blue", 0.45),
+  amberSoft: soft("amber", 0.12), amberLine: soft("amber", 0.45),
 } as const;
 const C = Object.fromEntries(Object.entries(THEME).map(([k, v]) => [k, v.light])) as { [K in keyof typeof THEME]: string };
 
@@ -57,12 +77,63 @@ export const EMAIL_STYLE = {
   table: `role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"`,
 };
 
+/** Chip palette names → (text, fill, line) tokens. `muted` is an outline-only chip. */
+export type ChipTone = "green" | "blue" | "amber" | "accent" | "muted";
+const CHIP_TONES: Record<ChipTone, { fg: string; bg: string; bd: string }> = {
+  green: { fg: C.green, bg: C.greenSoft, bd: C.greenLine },
+  blue: { fg: C.blue, bg: C.blueSoft, bd: C.blueLine },
+  amber: { fg: C.amber, bg: C.amberSoft, bd: C.amberLine },
+  accent: { fg: C.accentText, bg: C.accentSoft, bd: C.accentLine },
+  muted: { fg: C.fg55, bg: C.bg, bd: C.border },
+};
+
+/**
+ * Email versions of the app's My Work card pieces (web/src/render.ts: mwTitleRow /
+ * mwRow / chips / mwFooter). Nested tables + inline styles only; every colour is
+ * a THEME token so the dark swap applies. Callers escape their own text.
+ */
+export const EMAIL_CARD = {
+  open: `<table ${EMAIL_STYLE.table} style="margin-top:10px;border:1px solid ${C.border};border-radius:11px;"><tr><td style="padding:14px 16px 12px 16px;">`,
+  close: `</td></tr></table>`,
+  /** Small mono chip, e.g. MERGED / P1 / ADDED — callers pass the case they want (status chips uppercase, labels as-is). */
+  chip(text: string, tone: ChipTone): string {
+    const t = CHIP_TONES[tone];
+    return `<span style="display:inline-block;${MONO}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
+  },
+  /** Title left, the #number pill (the card's only link) right. */
+  title(title: string, number: number | null, url: string | null): string {
+    const pill = number !== null && url
+      ? `<td align="right" width="1" style="white-space:nowrap;vertical-align:top;padding-left:10px;"><a href="${url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 8px;text-decoration:none;">#${number} &nearr;</a></td>`
+      : "";
+    return `<table ${EMAIL_STYLE.table}><tr><td style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:${C.fg};vertical-align:top;">${title}</td>${pill}</tr></table>`;
+  },
+  /** One labelled row: 96px mono label + body; `tone` colours the label (Next step is accent). */
+  row(label: string, body: string, tone: "muted" | "accent" = "muted"): string {
+    return `<tr><td width="96" style="${EMAIL_STYLE.label}color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:7px 10px 7px 0;border-top:1px solid ${C.border};">${label}</td><td style="${SANS}font-size:13px;line-height:1.55;color:${C.fg70};padding:7px 0;border-top:1px solid ${C.border};">${body}</td></tr>`;
+  },
+  rows(rows: string[]): string {
+    return rows.length ? `<table ${EMAIL_STYLE.table} style="margin-top:12px;">${rows.join("")}</table>` : "";
+  },
+  /** Footer: chips + a muted note, hairline above. */
+  footer(inner: string): string {
+    return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;color:${C.fg40};">${inner}</div>`;
+  },
+  /** Escaped prose with backtick spans styled as code (escape FIRST — bodies never inject HTML). */
+  prose(escaped: string): string {
+    return escaped.replace(/`([^`]+)`/g, `<code style="${MONO}font-size:12px;background-color:${C.hover};border-radius:4px;padding:1px 4px;">$1</code>`);
+  },
+  card(inner: string): string {
+    return `${EMAIL_CARD.open}${inner}${EMAIL_CARD.close}`;
+  },
+};
+
 /** The dark swap: one rule per token, matched on the inline style substring. */
 function darkCss(): string {
   const rules: string[] = [`body{background-color:${THEME.ground.dark}!important;}`];
   for (const t of Object.values(THEME)) {
     rules.push(`[style*="background-color:${t.light}"]{background-color:${t.dark}!important;}`);
-    rules.push(`[style*="color:${t.light}"]{color:${t.dark}!important;}`);
+    // Anchored on the declaration start: a bare `[style*="color:X"]` would also match `background-color:X`.
+    rules.push(`[style^="color:${t.light}"],[style*=";color:${t.light}"]{color:${t.dark}!important;}`);
     rules.push(`[style*="solid ${t.light}"]{border-color:${t.dark}!important;}`);
   }
   return `@media (prefers-color-scheme: dark){${rules.join("")}}`;

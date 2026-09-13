@@ -2,7 +2,7 @@ import type { NotificationKind, Section } from "@shared/notifications";
 import type { DB } from "../../db";
 import { list_proposals, list_adrs } from "../../tools/reads";
 import { escapeHtml } from "../html";
-import { EMAIL_STYLE as S } from "../assemble";
+import { EMAIL_STYLE as S, EMAIL_CARD as K, THEME } from "../assemble";
 
 const DEEP_LINK = "/#review";
 const TOP = 5;
@@ -20,19 +20,38 @@ async function render(db: DB): Promise<Section | null> {
   const decisions = await list_adrs(db, "draft");
   if (proposals.length === 0 && decisions.length === 0) return null;
 
-  const lines: { main: string; meta: string }[] = [
+  const items = [
     ...proposals.slice(0, TOP).map((p) => ({
-      main: `${cap(p.section)} / ${p.title} — ${p.summary ?? `${p.change_kind ?? "edit"} v${p.version}`}`,
-      meta: `(${p.author}${p.confidence ? `, ${p.confidence} confidence` : ""})`,
+      kind: "proposal" as const,
+      title: `${cap(p.section)} / ${p.title}`,
+      summary: p.summary ?? `${p.change_kind ?? "edit"} v${p.version}`,
+      meta: `by ${p.author}${p.confidence ? ` · ${p.confidence} confidence` : ""}`,
+      low: Boolean(p.low_confidence) || p.confidence === "low",
     })),
-    ...decisions.slice(0, TOP).map((d) => ({ main: `ADR-${String(d.id).padStart(3, "0")} — ${d.title}, ready to ratify`, meta: `(${d.created_by})` })),
+    ...decisions.slice(0, TOP).map((d) => ({
+      kind: "decision" as const,
+      title: `ADR-${String(d.id).padStart(3, "0")} — ${d.title}`,
+      summary: "ready to ratify",
+      meta: `by ${d.created_by}`,
+      low: false,
+    })),
   ];
 
   const html =
     `<table ${S.table} style="margin-top:12px;">` +
-    lines.map((l) => `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">${escapeHtml(l.main)} <span style="${S.meta}">${escapeHtml(l.meta)}</span></td></tr>`).join("") +
+    items
+      .map(
+        (it, i) =>
+          `<tr><td style="padding:${i === 0 ? "4px" : "11px"} 0 11px 0;${i === 0 ? "" : `border-top:1px solid ${THEME.border.light};`}">` +
+          `<div>${K.chip(it.kind.toUpperCase(), it.kind === "proposal" ? "accent" : "blue")}${it.low ? ` ${K.chip("LOW CONFIDENCE", "amber")}` : ""}` +
+          `<span style="${S.body}font-weight:500;padding-left:8px;">${escapeHtml(it.title)}</span></div>` +
+          `<div style="${S.muted}padding-top:4px;">${escapeHtml(it.summary)}</div>` +
+          `<div style="${S.muted}font-size:11.5px;padding-top:3px;">${escapeHtml(it.meta)}</div>` +
+          `</td></tr>`
+      )
+      .join("") +
     `</table>`;
-  const text = lines.map((l) => `  ${l.main} ${l.meta}`).join("\n");
+  const text = items.map((it) => `  ${it.kind.padEnd(9)} ${it.title} — ${it.summary} (${it.meta}${it.low ? ", LOW CONFIDENCE" : ""})`).join("\n");
   const parts = [proposals.length ? plural(proposals.length, "proposal", "proposals") : null, decisions.length ? plural(decisions.length, "decision", "decisions") : null].filter(Boolean);
   const summary = `${parts.join(", ")} waiting on review`;
 
