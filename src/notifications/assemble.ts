@@ -90,33 +90,35 @@ const CHIP_TONES: Record<ChipTone, { fg: string; bg: string; bd: string }> = {
 /**
  * Email versions of the app's My Work card pieces (web/src/render.ts: mwTitleRow /
  * mwRow / chips / mwFooter). Nested tables + inline styles only; every colour is
- * a THEME token so the dark swap applies. Callers escape their own text.
+ * a THEME token so the dark swap applies. Callers escape their own text. The
+ * `data-item*` / `data-row*` / `data-chip` / `data-pill` attributes are inert
+ * hooks for the admin preview's layout comparison; mail clients ignore them.
  */
 export const EMAIL_CARD = {
-  open: `<table ${EMAIL_STYLE.table} style="margin-top:10px;border:1px solid ${C.border};border-radius:11px;"><tr><td style="padding:14px 16px 12px 16px;">`,
+  open: `<table data-item ${EMAIL_STYLE.table} style="margin-top:10px;border:1px solid ${C.border};border-radius:11px;"><tr><td data-item-inner style="padding:14px 16px 12px 16px;">`,
   close: `</td></tr></table>`,
   /** Small mono chip, e.g. MERGED / P1 / ADDED — callers pass the case they want (status chips uppercase, labels as-is). */
   chip(text: string, tone: ChipTone): string {
     const t = CHIP_TONES[tone];
-    return `<span style="display:inline-block;${MONO}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
+    return `<span data-chip style="display:inline-block;${MONO}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
   },
   /** Title left, the #number pill (the card's only link) right. */
   title(title: string, number: number | null, url: string | null): string {
     const pill = number !== null && url
-      ? `<td align="right" width="1" style="white-space:nowrap;vertical-align:top;padding-left:10px;"><a href="${url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 8px;text-decoration:none;">#${number} &nearr;</a></td>`
+      ? `<td data-pill-cell align="right" width="1" style="white-space:nowrap;vertical-align:top;padding-left:10px;"><a data-pill href="${url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 8px;text-decoration:none;">#${number} &nearr;</a></td>`
       : "";
-    return `<table ${EMAIL_STYLE.table}><tr><td style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:${C.fg};vertical-align:top;">${title}</td>${pill}</tr></table>`;
+    return `<table data-item-title ${EMAIL_STYLE.table}><tr><td data-title style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:${C.fg};vertical-align:top;">${title}</td>${pill}</tr></table>`;
   },
   /** One labelled row: 96px mono label + body; `tone` colours the label (Next step is accent). */
   row(label: string, body: string, tone: "muted" | "accent" = "muted"): string {
-    return `<tr><td width="96" style="${EMAIL_STYLE.label}color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:7px 10px 7px 0;border-top:1px solid ${C.border};">${label}</td><td style="${SANS}font-size:13px;line-height:1.55;color:${C.fg70};padding:7px 0;border-top:1px solid ${C.border};">${body}</td></tr>`;
+    return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:7px 10px 7px 0;border-top:1px solid ${C.border};">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:1.55;color:${C.fg70};padding:7px 0;border-top:1px solid ${C.border};">${body}</td></tr>`;
   },
   rows(rows: string[]): string {
-    return rows.length ? `<table ${EMAIL_STYLE.table} style="margin-top:12px;">${rows.join("")}</table>` : "";
+    return rows.length ? `<table data-item-rows ${EMAIL_STYLE.table} style="margin-top:12px;">${rows.join("")}</table>` : "";
   },
   /** Footer: chips + a muted note, hairline above. */
   footer(inner: string): string {
-    return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;color:${C.fg40};">${inner}</div>`;
+    return `<div data-item-footer style="margin-top:12px;padding-top:10px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;color:${C.fg40};">${inner}</div>`;
   },
   /** Escaped prose with backtick spans styled as code (escape FIRST — bodies never inject HTML). */
   prose(escaped: string): string {

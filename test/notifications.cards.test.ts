@@ -44,7 +44,7 @@ describe("My Work cards", () => {
     await storePrSummary(env.DB, prStub({ title: "Humanized ten", what: "Did the thing", why: "Because reasons", impact: "Users win" }), { semantic_key: "gh:pr:10:merged", pr_number: 10, title: "Raw ten", body: "b" });
     const s = (await kind().render(env.DB, LOGIN, WINDOW))!;
     expect(s.html).toContain(EMAIL_CARD.open);
-    expect(s.html).toMatch(/<a href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10/); // number pill is the link
+    expect(s.html).toMatch(/<a [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10/); // number pill is the link
     expect(s.html).toMatch(/What changed[\s\S]*Did the thing/);
     expect(s.html).toMatch(/Why[\s\S]*Because reasons/);
     expect(s.html).toMatch(/Impact[\s\S]*Users win/);
