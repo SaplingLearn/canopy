@@ -30,7 +30,7 @@ async function render(db: DB): Promise<Section | null> {
 
   const html =
     `<table ${S.table} style="margin-top:12px;">` +
-    lines.map((l) => `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">${escapeHtml(l.main)} <span style="color:#8a8a8a;">${escapeHtml(l.meta)}</span></td></tr>`).join("") +
+    lines.map((l) => `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">${escapeHtml(l.main)} <span style="${S.meta}">${escapeHtml(l.meta)}</span></td></tr>`).join("") +
     `</table>`;
   const text = lines.map((l) => `  ${l.main} ${l.meta}`).join("\n");
   const parts = [proposals.length ? plural(proposals.length, "proposal", "proposals") : null, decisions.length ? plural(decisions.length, "decision", "decisions") : null].filter(Boolean);

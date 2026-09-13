@@ -1,8 +1,13 @@
-// One message per user per run, laid out per the Canopy Email design
-// (email/digest-daily.html, digest.txt): a 600px card, a green-ruled header
-// with the subject, one block per section (heading, subline, body, "Open X →"),
-// and a footer naming the recipient with the unsubscribe link. Plain-text
-// alternative always included.
+// One message per user per run, styled on the site's own tokens (the light
+// theme from web/src/canopy.css flattened to hex, since mail clients have no CSS
+// variables): a 600px cream card with a hairline border and 13px radius, the
+// Canopy wordmark + cadence as the header, one block per section (heading,
+// summary, body, an "Open X →" ghost button), and a footer naming the recipient
+// with the unsubscribe link. A <style> block under prefers-color-scheme: dark
+// swaps every token to the dark theme via [style*=] attribute selectors, so the
+// renderers' inline styles flip too (Apple Mail / iOS / Outlook for Mac honor it;
+// Gmail ignores it and applies its own inversion). Plain-text alternative always
+// included.
 import type { Section, Window } from "@shared/notifications";
 import { escapeHtml } from "./html";
 import { localDate } from "./window";
@@ -16,15 +21,51 @@ export interface AssembledMessage {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAY = 24 * 60 * 60 * 1000;
 
-const SANS = "font-family:Helvetica,Arial,sans-serif;";
-const MONO = "font-family:'Courier New',Courier,monospace;";
+/** Site tokens, light → dark. Every colour in the email comes from here. */
+export const THEME = {
+  ground: { light: "#f3f0e9", dark: "#141311" }, // page behind the card (one step past --bg)
+  bg: { light: "#faf8f3", dark: "#1c1a16" }, // --bg → card
+  fg: { light: "#1a1814", dark: "#ede9e2" }, // --fg
+  fg70: { light: "#595752", dark: "#b2afa9" }, // --fg-70 flattened over --bg
+  fg55: { light: "#7f7d78", dark: "#8f8c86" }, // --fg-55
+  fg40: { light: "#a09e9a", dark: "#706d68" }, // --fg-40
+  border: { light: "#e5e3de", dark: "#33312c" }, // --border
+  borderStrong: { light: "#d5d2cd", dark: "#46433f" }, // --border-strong
+  accent: { light: "#8a9a5b", dark: "#9aab65" }, // --accent
+} as const;
+const C = Object.fromEntries(Object.entries(THEME).map(([k, v]) => [k, v.light])) as { [K in keyof typeof THEME]: string };
+
+const SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
+const MONO = "font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
+export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600&display=swap";
+
+/** Shared inline-style tokens for the section renderers (mirrors the app's text tiers). */
 export const EMAIL_STYLE = {
-  label: `${MONO}font-size:10px;letter-spacing:1px;color:#8a8a8a;`,
-  mono: `${MONO}font-size:12px;color:#6b6b6b;vertical-align:top;padding:4px 0;`,
-  body: `${SANS}font-size:13px;line-height:1.5;color:#0a0a0a;padding:4px 0;`,
-  muted: `${SANS}font-size:12px;line-height:1.5;color:#8a8a8a;`,
+  /** Mono uppercase section label — the app's `.cnpy-treesec` / SECTION_LABEL. */
+  label: `${MONO}font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.fg40};`,
+  /** Mono reference cell (#123). */
+  mono: `${MONO}font-size:12px;color:${C.fg55};vertical-align:top;padding:5px 0;`,
+  /** Row text. */
+  body: `${SANS}font-size:13.5px;line-height:1.5;color:${C.fg};padding:5px 0;`,
+  /** Secondary line under a row. */
+  muted: `${SANS}font-size:12.5px;line-height:1.5;color:${C.fg55};`,
+  /** Inline meta after a row ("(Mei, high confidence)"). */
+  meta: `color:${C.fg55};`,
+  /** Row link: ink, no underline. */
+  link: `color:${C.fg};text-decoration:none;`,
   table: `role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"`,
 };
+
+/** The dark swap: one rule per token, matched on the inline style substring. */
+function darkCss(): string {
+  const rules: string[] = [`body{background-color:${THEME.ground.dark}!important;}`];
+  for (const t of Object.values(THEME)) {
+    rules.push(`[style*="background-color:${t.light}"]{background-color:${t.dark}!important;}`);
+    rules.push(`[style*="color:${t.light}"]{color:${t.dark}!important;}`);
+    rules.push(`[style*="solid ${t.light}"]{border-color:${t.dark}!important;}`);
+  }
+  return `@media (prefers-color-scheme: dark){${rules.join("")}}`;
+}
 
 function dayLabel(d: Date, timeZone: string): { month: string; day: number } {
   const l = localDate(d, timeZone);
@@ -64,26 +105,34 @@ export function assembleMessage(opts: {
   const host = origin.replace(/^https?:\/\//, "") || "canopy";
   const preheader = sections.map((s) => s.summary).filter(Boolean).join(", ");
 
+  const heading = `${SANS}font-size:14.5px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};`;
+  const summary = `${SANS}font-size:12.5px;line-height:1.5;color:${C.fg55};padding-top:3px;`;
+  const button = `display:inline-block;${SANS}font-size:12.5px;font-weight:500;color:${C.accent};text-decoration:none;padding:7px 13px;border:1px solid ${C.borderStrong};border-radius:8px;`;
   const blocks = sections.map(
     (s, i) =>
-      `<tr><td style="padding:${i === 0 ? "26px 32px" : "24px 32px 26px 32px"};${i === 0 ? "" : "border-top:1px solid #e6e6e6;"}">` +
-      `<div style="${SANS}font-size:15px;font-weight:bold;color:#0a0a0a;">${escapeHtml(s.heading)}</div>` +
-      (s.summary ? `<div style="${SANS}font-size:13px;color:#6b6b6b;padding-top:3px;">${escapeHtml(s.summary)}</div>` : "") +
+      `<tr><td style="padding:${i === 0 ? "24px 28px 26px 28px" : "24px 28px 26px 28px"};${i === 0 ? "" : `border-top:1px solid ${C.border};`}">` +
+      `<div style="${heading}">${escapeHtml(s.heading)}</div>` +
+      (s.summary ? `<div style="${summary}">${escapeHtml(s.summary)}</div>` : "") +
       s.html +
-      `<div style="padding-top:16px;"><a href="${escapeHtml(link(s))}" style="${SANS}font-size:13px;font-weight:bold;color:#00A859;text-decoration:none;">Open ${escapeHtml(label(s))} &rarr;</a></div>` +
+      `<div style="padding-top:18px;"><a href="${escapeHtml(link(s))}" style="${button}">Open ${escapeHtml(label(s))} &rarr;</a></div>` +
       `</td></tr>`
   );
 
   const html =
-    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title></head>` +
-    `<body style="margin:0;padding:0;background-color:#f2f2f2;">` +
+    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">` +
+    `<title>${escapeHtml(subject)}</title>` +
+    `<link href="${FONTS_HREF}" rel="stylesheet">` +
+    `<style>:root{color-scheme:light dark;}${darkCss()}</style></head>` +
+    `<body style="margin:0;padding:0;background-color:${C.ground};">` +
     (preheader ? `<div style="display:none;max-height:0px;overflow:hidden;">${escapeHtml(preheader)}.</div>` : "") +
-    `<table ${EMAIL_STYLE.table} style="background-color:#f2f2f2;"><tr><td align="center" style="padding:32px 16px;">` +
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:#ffffff;border:1px solid #e2e2e2;">` +
-    `<tr><td style="padding:24px 32px 20px 32px;border-bottom:2px solid #00A859;${SANS}font-size:19px;line-height:1.3;color:#0a0a0a;"><strong>Canopy</strong> ${window.cadence}, ${escapeHtml(range)}</td></tr>` +
+    `<table ${EMAIL_STYLE.table} style="background-color:${C.ground};"><tr><td align="center" style="padding:36px 16px;">` +
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
+    `<tr><td style="padding:22px 28px 18px 28px;border-bottom:1px solid ${C.border};${SANS}font-size:16px;line-height:1.3;letter-spacing:-0.02em;color:${C.fg};">` +
+    `<strong>Canopy</strong> ${window.cadence} <span style="color:${C.fg40};">&middot;</span> <span style="color:${C.fg55};">${escapeHtml(range)}</span></td></tr>` +
     blocks.join("") +
-    `<tr><td style="padding:18px 32px 22px 32px;border-top:1px solid #e6e6e6;${SANS}font-size:11px;line-height:1.7;color:#8a8a8a;">` +
-    `You're getting the ${window.cadence} Canopy digest for ${escapeHtml(login)}. <a href="${escapeHtml(unsubscribeUrl)}" style="color:#8a8a8a;text-decoration:underline;">Unsubscribe</a><br>` +
+    `<tr><td style="padding:18px 28px 22px 28px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;line-height:1.7;color:${C.fg40};">` +
+    `You're getting the ${window.cadence} Canopy digest for ${escapeHtml(login)}. <a href="${escapeHtml(unsubscribeUrl)}" style="color:${C.fg40};text-decoration:underline;text-underline-offset:2px;">Unsubscribe</a><br>` +
     `Sent by Canopy &middot; ${escapeHtml(host)}</td></tr>` +
     `</table></td></tr></table></body></html>`;
 

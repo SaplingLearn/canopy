@@ -31,9 +31,9 @@ export function sampleSections(): Section[] {
       deepLink: "/#review",
       html:
         `<table ${S.table} style="margin-top:12px;">` +
-        `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">Reference / MCP Server — clarify token rotation <span style="color:#8a8a8a;">(Mei, high confidence)</span></td></tr>` +
-        `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">Context / Glossary — promoted vs staged definitions <span style="color:#8a8a8a;">(Sana)</span></td></tr>` +
-        `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">ADR-003 — Agent write contract, ready to ratify <span style="color:#8a8a8a;">(Dev)</span></td></tr>` +
+        `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">Reference / MCP Server — clarify token rotation <span style="${S.meta}">(Mei, high confidence)</span></td></tr>` +
+        `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">Context / Glossary — promoted vs staged definitions <span style="${S.meta}">(Sana)</span></td></tr>` +
+        `<tr><td style="${S.body}line-height:1.6;padding:3px 0;">ADR-003 — Agent write contract, ready to ratify <span style="${S.meta}">(Dev)</span></td></tr>` +
         `</table>`,
       text: "  Reference / MCP Server — clarify token rotation (Mei, high confidence)\n  Context / Glossary — promoted vs staged definitions (Sana)\n  ADR-003 — Agent write contract, ready to ratify (Dev)",
     },

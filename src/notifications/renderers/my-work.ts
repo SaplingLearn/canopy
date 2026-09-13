@@ -16,7 +16,7 @@ function numberedRows(items: { number: number; url: string; title: string; note:
     items
       .map(
         (i) =>
-          `<tr><td width="48" style="${S.mono}">#${i.number}</td><td style="${S.body}"><a href="${escapeHtml(i.url)}" style="color:#0a0a0a;text-decoration:none;">${escapeHtml(i.title)}</a>` +
+          `<tr><td width="48" style="${S.mono}">#${i.number}</td><td style="${S.body}"><a href="${escapeHtml(i.url)}" style="${S.link}">${escapeHtml(i.title)}</a>` +
           (i.note ? `<div style="${S.muted}">${escapeHtml(i.note)}</div>` : "") +
           `</td></tr>`
       )
