@@ -31,7 +31,8 @@ export const THEME = {
   fg40: { light: "#a09e9a", dark: "#706d68" }, // --fg-40
   border: { light: "#e5e3de", dark: "#33312c" }, // --border
   borderStrong: { light: "#d5d2cd", dark: "#46433f" }, // --border-strong
-  accent: { light: "#8a9a5b", dark: "#9aab65" }, // --accent
+  accent: { light: "#8a9a5b", dark: "#9aab65" }, // --accent (mark, fills)
+  accentText: { light: "#5c6a3a", dark: "#9aab65" }, // accent as small TEXT: the light --accent is ~2.9:1 on --bg, this olive is ~5.6:1
 } as const;
 const C = Object.fromEntries(Object.entries(THEME).map(([k, v]) => [k, v.light])) as { [K in keyof typeof THEME]: string };
 
@@ -130,7 +131,7 @@ export function assembleMessage(opts: {
 
   const heading = `${SANS}font-size:14.5px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};`;
   const summary = `${SANS}font-size:12.5px;line-height:1.5;color:${C.fg55};padding-top:3px;`;
-  const button = `display:inline-block;${SANS}font-size:12.5px;font-weight:500;color:${C.accent};text-decoration:none;padding:7px 13px;border:1px solid ${C.borderStrong};border-radius:8px;`;
+  const button = `display:inline-block;${SANS}font-size:12.5px;font-weight:500;color:${C.accentText};text-decoration:none;padding:7px 13px;border:1px solid ${C.borderStrong};border-radius:8px;`;
   const blocks = sections.map(
     (s, i) =>
       `<tr><td style="padding:${i === 0 ? "24px 28px 26px 28px" : "24px 28px 26px 28px"};${i === 0 ? "" : `border-top:1px solid ${C.border};`}">` +

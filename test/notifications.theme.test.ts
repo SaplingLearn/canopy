@@ -4,7 +4,7 @@
  * #00A859 / #f2f2f2 look from the original email mockup is gone.
  */
 import { describe, it, expect } from "vitest";
-import { assembleMessage, EMAIL_STYLE } from "../src/notifications/assemble";
+import { assembleMessage, EMAIL_STYLE, THEME } from "../src/notifications/assemble";
 import { sampleSections } from "../src/notifications/sample";
 
 const window = { cadence: "daily" as const, id: "2026-09-13", start: new Date("2026-09-12T12:00:00Z"), end: new Date("2026-09-13T12:00:00Z") };
@@ -78,5 +78,24 @@ describe("email header — Canopy branding", () => {
     const { html } = msg();
     expect(html).toContain("Daily digest");
     expect(html).toContain("Sep 13");
+  });
+});
+
+// WCAG 2.x relative luminance / contrast ratio, so the tokens are checked by number, not by eye.
+function lum(hex: string): number {
+  const c = hex.replace("#", "").match(/../g)!.map((h) => parseInt(h, 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const contrast = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+
+describe("email contrast — action link", () => {
+  it("the 'Open X →' text reaches 4.5:1 on the card in both palettes (small text, WCAG AA)", () => {
+    expect(contrast(THEME.accentText.light, THEME.bg.light)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(THEME.accentText.dark, THEME.bg.dark)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the button uses the accentText token, not the raw accent", () => {
+    const { html } = msg();
+    expect(html).toMatch(new RegExp(`color:${THEME.accentText.light};text-decoration:none;padding:7px 13px`));
   });
 });
