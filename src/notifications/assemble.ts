@@ -89,43 +89,49 @@ const CHIP_TONES: Record<ChipTone, { fg: string; bg: string; bd: string }> = {
 
 /**
  * Email versions of the app's My Work card pieces (web/src/render.ts: mwTitleRow /
- * mwRow / chips / mwFooter). Nested tables + inline styles only; every colour is
- * a THEME token so the dark swap applies. Callers escape their own text. The
+ * mwRow / chips / mwFooter) in the LEDGER layout: one continuous list, not boxes.
+ * Each item is a two-column table — the #number (the item's only link) in a
+ * narrow mono column, the title + labelled rows + chip footer beside it — with a
+ * hairline between items. Nested tables + inline styles only; every colour is a
+ * THEME token so the dark swap applies. Callers escape their own text. The
  * `data-item*` / `data-row*` / `data-chip` / `data-pill` attributes are inert
- * hooks for the admin preview's layout comparison; mail clients ignore them.
+ * hooks for the admin preview; mail clients ignore them.
  */
 export const EMAIL_CARD = {
-  open: `<table data-item ${EMAIL_STYLE.table} style="margin-top:10px;border:1px solid ${C.border};border-radius:11px;"><tr><td data-item-inner style="padding:14px 16px 12px 16px;">`,
-  close: `</td></tr></table>`,
   /** Small mono chip, e.g. MERGED / P1 / ADDED — callers pass the case they want (status chips uppercase, labels as-is). */
   chip(text: string, tone: ChipTone): string {
     const t = CHIP_TONES[tone];
     return `<span data-chip style="display:inline-block;${MONO}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
   },
-  /** Title left, the #number pill (the card's only link) right. */
-  title(title: string, number: number | null, url: string | null): string {
-    const pill = number !== null && url
-      ? `<td data-pill-cell align="right" width="1" style="white-space:nowrap;vertical-align:top;padding-left:10px;"><a data-pill href="${url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 8px;text-decoration:none;">#${number} &nearr;</a></td>`
-      : "";
-    return `<table data-item-title ${EMAIL_STYLE.table}><tr><td data-title style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:${C.fg};vertical-align:top;">${title}</td>${pill}</tr></table>`;
-  },
   /** One labelled row: 96px mono label + body; `tone` colours the label (Next step is accent). */
   row(label: string, body: string, tone: "muted" | "accent" = "muted"): string {
-    return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:7px 10px 7px 0;border-top:1px solid ${C.border};">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:1.55;color:${C.fg70};padding:7px 0;border-top:1px solid ${C.border};">${body}</td></tr>`;
+    return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:4px 10px 4px 0;">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:1.55;color:${C.fg70};padding:4px 0;">${body}</td></tr>`;
   },
   rows(rows: string[]): string {
-    return rows.length ? `<table data-item-rows ${EMAIL_STYLE.table} style="margin-top:12px;">${rows.join("")}</table>` : "";
+    return rows.length ? `<table data-item-rows ${EMAIL_STYLE.table} style="margin-top:6px;">${rows.join("")}</table>` : "";
   },
-  /** Footer: chips + a muted note, hairline above. */
+  /** Footer: chips + a muted note. */
   footer(inner: string): string {
-    return `<div data-item-footer style="margin-top:12px;padding-top:10px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;color:${C.fg40};">${inner}</div>`;
+    return `<div data-item-footer style="margin-top:8px;${SANS}font-size:11.5px;color:${C.fg40};">${inner}</div>`;
   },
   /** Escaped prose with backtick spans styled as code (escape FIRST — bodies never inject HTML). */
   prose(escaped: string): string {
     return escaped.replace(/`([^`]+)`/g, `<code style="${MONO}font-size:12px;background-color:${C.hover};border-radius:4px;padding:1px 4px;">$1</code>`);
   },
-  card(inner: string): string {
-    return `${EMAIL_CARD.open}${inner}${EMAIL_CARD.close}`;
+  /** One ledger item. `first` drops the hairline above (the group label sits there instead). */
+  item(o: { title: string; number: number | null; url: string | null; rows: string[]; footer?: string; first?: boolean }): string {
+    const link = o.number !== null && o.url
+      ? `<a data-pill href="${o.url}" style="${MONO}font-size:11.5px;font-weight:500;color:${C.fg55};text-decoration:none;white-space:nowrap;">#${o.number} &nearr;</a>`
+      : "";
+    return (
+      `<table data-item ${EMAIL_STYLE.table} style="${o.first ? "" : `border-top:1px solid ${C.border};`}"><tr>` +
+      `<td data-pill-cell width="52" style="vertical-align:top;padding:12px 10px 12px 0;line-height:1.35;">${link}</td>` +
+      `<td data-item-inner style="vertical-align:top;padding:12px 0;">` +
+      `<div data-title style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:${C.fg};">${o.title}</div>` +
+      EMAIL_CARD.rows(o.rows) +
+      (o.footer ? EMAIL_CARD.footer(o.footer) : "") +
+      `</td></tr></table>`
+    );
   },
 };
 

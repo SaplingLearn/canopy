@@ -12,7 +12,7 @@ import { promote_doc } from "../src/tools/writes";
 import { storePrSummary, storeIssueSummary, type Summarizer, type PrSummary, type IssueSummary } from "../src/tools/summarize";
 import { write_plan } from "../src/tools/plan";
 import { getKind } from "../src/notifications/registry";
-import { THEME, EMAIL_CARD } from "../src/notifications/assemble";
+import { THEME } from "../src/notifications/assemble";
 import type { Window } from "@shared/notifications";
 import type { CapturedEvent } from "@shared/contract";
 
@@ -36,15 +36,17 @@ function issueEvent(number: number, title: string, extra: { labels?: string[]; m
 const prStub = (s: PrSummary): Summarizer<PrSummary> => ({ model: "stub", summarize: async () => s });
 const issueStub = (s: IssueSummary): Summarizer<IssueSummary> => ({ model: "stub", summarize: async () => s });
 
-describe("My Work cards", () => {
+describe("My Work items (ledger layout)", () => {
   const kind = () => getKind("my_work")!;
 
-  it("renders a merged PR as a card: title, number pill linking out, What changed / Why / Impact rows, MERGED chip into main", async () => {
+  it("renders a merged PR as a ledger item: #number column linking out, title, What changed / Why / Impact rows, MERGED chip into main", async () => {
     await ingestEvent(env.DB, prEvent(10, IN_WINDOW, "Raw ten"), "github-webhook");
     await storePrSummary(env.DB, prStub({ title: "Humanized ten", what: "Did the thing", why: "Because reasons", impact: "Users win" }), { semantic_key: "gh:pr:10:merged", pr_number: 10, title: "Raw ten", body: "b" });
     const s = (await kind().render(env.DB, LOGIN, WINDOW))!;
-    expect(s.html).toContain(EMAIL_CARD.open);
-    expect(s.html).toMatch(/<a [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10/); // number pill is the link
+    // Ledger layout: a two-column item — the #number (the only link) in a narrow left column, the title + rows + footer in the right one. No box.
+    expect(s.html).toMatch(/<table data-item[^>]*>[\s\S]*?<td data-pill-cell[^>]*>\s*<a [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10[\s\S]*?<\/td>\s*<td data-item-inner[^>]*>\s*<div data-title[^>]*>Humanized ten<\/div>/);
+    expect(s.html).not.toContain("border-radius:11px");
+    expect(s.html).not.toMatch(/data-item[^>]*style="[^"]*border:1px solid/); // items are separated by a hairline, never boxed
     expect(s.html).toMatch(/What changed[\s\S]*Did the thing/);
     expect(s.html).toMatch(/Why[\s\S]*Because reasons/);
     expect(s.html).toMatch(/Impact[\s\S]*Users win/);
