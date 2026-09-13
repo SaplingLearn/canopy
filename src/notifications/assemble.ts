@@ -1,8 +1,13 @@
-// One message per user per run, laid out per the Canopy Email design
-// (email/digest-daily.html, digest.txt): a 600px card, a green-ruled header
-// with the subject, one block per section (heading, subline, body, "Open X →"),
-// and a footer naming the recipient with the unsubscribe link. Plain-text
-// alternative always included.
+// One message per user per run, styled on the site's own tokens (the light
+// theme from web/src/canopy.css flattened to hex, since mail clients have no CSS
+// variables): a 600px cream card with a hairline border and 13px radius, the
+// Canopy wordmark + cadence as the header, one block per section (heading,
+// summary, body, an "Open X →" ghost button), and a footer naming the recipient
+// with the unsubscribe link. A <style> block under prefers-color-scheme: dark
+// swaps every token to the dark theme via [style*=] attribute selectors, so the
+// renderers' inline styles flip too (Apple Mail / iOS / Outlook for Mac honor it;
+// Gmail ignores it and applies its own inversion). Plain-text alternative always
+// included.
 import type { Section, Window } from "@shared/notifications";
 import { escapeHtml } from "./html";
 import { localDate } from "./window";
@@ -16,15 +21,140 @@ export interface AssembledMessage {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAY = 24 * 60 * 60 * 1000;
 
-const SANS = "font-family:Helvetica,Arial,sans-serif;";
-const MONO = "font-family:'Courier New',Courier,monospace;";
+/** Flatten `fg` at `t` opacity over `bg` to a hex — mail clients get no alpha, the dark swap keys on hex. */
+function mix(fg: string, bg: string, t: number): string {
+  const c = (h: string) => h.replace("#", "").match(/../g)!.map((x) => parseInt(x, 16));
+  const [a, b] = [c(fg), c(bg)];
+  return "#" + a.map((v, i) => Math.round(v * t + b[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
+}
+
+/** Site tokens (web/src/canopy.css), light → dark. Every colour in the email comes from here. */
+const BASE = {
+  ground: { light: "#f3f0e9", dark: "#141311" }, // page behind the card (one step past --bg)
+  bg: { light: "#faf8f3", dark: "#1c1a16" }, // --bg → card
+  fg: { light: "#1a1814", dark: "#ede9e2" }, // --fg
+  fg70: { light: "#595752", dark: "#b2afa9" }, // --fg-70 flattened over --bg
+  fg55: { light: "#7f7d78", dark: "#8f8c86" }, // --fg-55
+  fg40: { light: "#a09e9a", dark: "#706d68" }, // --fg-40
+  border: { light: "#e5e3de", dark: "#33312c" }, // --border
+  borderStrong: { light: "#d5d2cd", dark: "#46433f" }, // --border-strong
+  hover: { light: "#f0eee8", dark: "#2c2a25" }, // --hover (code spans)
+  accent: { light: "#8a9a5b", dark: "#9aab65" }, // --accent (mark, fills)
+  accentText: { light: "#5c6a3a", dark: "#9aab65" }, // accent as small TEXT: the light --accent is ~2.9:1 on --bg, this olive is ~5.6:1
+  green: { light: "#1b6c42", dark: "#5ab86c" }, // --green (MERGED / ADDED)
+  blue: { light: "#3e6f8a", dark: "#6aa8c4" }, // --blue (CHANGED)
+  amber: { light: "#b4562c", dark: "#d98a52" }, // --amber (priority / LOW CONFIDENCE)
+} as const;
+/** Chip fills mirror the app's color-mix(<c> 12%) background and color-mix(<c> 45%) border. */
+const soft = (k: "accentText" | "green" | "blue" | "amber", t: number) => ({ light: mix(BASE[k].light, BASE.bg.light, t), dark: mix(BASE[k].dark, BASE.bg.dark, t) });
+export const THEME = {
+  ...BASE,
+  accentSoft: soft("accentText", 0.12), accentLine: soft("accentText", 0.45),
+  greenSoft: soft("green", 0.12), greenLine: soft("green", 0.45),
+  blueSoft: soft("blue", 0.12), blueLine: soft("blue", 0.45),
+  amberSoft: soft("amber", 0.12), amberLine: soft("amber", 0.45),
+} as const;
+const C = Object.fromEntries(Object.entries(THEME).map(([k, v]) => [k, v.light])) as { [K in keyof typeof THEME]: string };
+
+/**
+ * Spacing scale: an 8pt grid with a 4pt sub-grid (every step a multiple of 4).
+ * Rules applied throughout: line-heights are multiples of 4 (13px/20px body,
+ * 15px/20px headings, 10.5px/16px labels); a heading gets ~3× more space above
+ * than below (24 over / 8 under a group label); the space after a heading equals
+ * the paragraph gap; internal gaps never exceed the external gap around them.
+ */
+export const EMAIL_SPACE = { xs: 4, s: 8, m: 16, l: 24, xl: 32 } as const;
+const SP = EMAIL_SPACE;
+
+const SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
+const MONO = "font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
+export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600&display=swap";
+
+/** Shared inline-style tokens for the section renderers (mirrors the app's text tiers). */
 export const EMAIL_STYLE = {
-  label: `${MONO}font-size:10px;letter-spacing:1px;color:#8a8a8a;`,
-  mono: `${MONO}font-size:12px;color:#6b6b6b;vertical-align:top;padding:4px 0;`,
-  body: `${SANS}font-size:13px;line-height:1.5;color:#0a0a0a;padding:4px 0;`,
-  muted: `${SANS}font-size:12px;line-height:1.5;color:#8a8a8a;`,
+  /** Mono uppercase section label — the app's `.cnpy-treesec` / SECTION_LABEL. */
+  label: `${MONO}font-size:10.5px;line-height:16px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.fg40};`,
+  /** Mono reference cell (#123). */
+  mono: `${MONO}font-size:12px;line-height:20px;color:${C.fg55};vertical-align:top;padding:${SP.xs}px 0;`,
+  /** Row text. */
+  body: `${SANS}font-size:13px;line-height:20px;color:${C.fg};padding:${SP.xs}px 0;`,
+  /** Secondary line under a row. */
+  muted: `${SANS}font-size:13px;line-height:20px;color:${C.fg55};`,
+  /** Inline meta after a row ("(Mei, high confidence)"). */
+  meta: `color:${C.fg55};`,
+  /** Row link: ink, no underline. */
+  link: `color:${C.fg};text-decoration:none;`,
   table: `role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"`,
 };
+
+/** Chip palette names → (text, fill, line) tokens. `muted` is an outline-only chip. */
+export type ChipTone = "green" | "blue" | "amber" | "accent" | "muted";
+const CHIP_TONES: Record<ChipTone, { fg: string; bg: string; bd: string }> = {
+  green: { fg: C.green, bg: C.greenSoft, bd: C.greenLine },
+  blue: { fg: C.blue, bg: C.blueSoft, bd: C.blueLine },
+  amber: { fg: C.amber, bg: C.amberSoft, bd: C.amberLine },
+  accent: { fg: C.accentText, bg: C.accentSoft, bd: C.accentLine },
+  muted: { fg: C.fg55, bg: C.bg, bd: C.border },
+};
+
+/**
+ * Email versions of the app's My Work card pieces (web/src/render.ts: mwTitleRow /
+ * mwRow / chips / mwFooter) in the LEDGER layout: one continuous list, not boxes.
+ * Each item is a table row: title left with the #number pill (the item's only
+ * link, in the app's accent pill style) far right on the same line, the
+ * labelled rows and chip footer flush beneath, a hairline between items. Nested tables + inline styles only; every colour is a
+ * THEME token so the dark swap applies. Callers escape their own text. The
+ * `data-item*` / `data-row*` / `data-chip` / `data-pill` attributes are inert
+ * hooks for the admin preview; mail clients ignore them.
+ */
+export const EMAIL_CARD = {
+  /** Small mono chip, e.g. MERGED / P1 / ADDED — callers pass the case they want (status chips uppercase, labels as-is). */
+  chip(text: string, tone: ChipTone): string {
+    const t = CHIP_TONES[tone];
+    return `<span data-chip style="display:inline-block;${MONO}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
+  },
+  /** One labelled row: 96px mono label + body; `tone` colours the label (Next step is accent). */
+  row(label: string, body: string, tone: "muted" | "accent" = "muted"): string {
+    return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}line-height:20px;color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:${SP.xs}px 10px ${SP.xs}px 0;">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:20px;color:${C.fg70};padding:${SP.xs}px 0;">${body}</td></tr>`;
+  },
+  rows(rows: string[]): string {
+    return rows.length ? `<table data-item-rows ${EMAIL_STYLE.table} style="margin-top:${SP.s}px;">${rows.join("")}</table>` : "";
+  },
+  /** Footer: chips + a muted note. */
+  footer(inner: string): string {
+    return `<div data-item-footer style="margin-top:${SP.m - SP.xs}px;${SANS}font-size:12px;line-height:20px;color:${C.fg40};">${inner}</div>`;
+  },
+  /** Escaped prose with backtick spans styled as code (escape FIRST — bodies never inject HTML). */
+  prose(escaped: string): string {
+    return escaped.replace(/`([^`]+)`/g, `<code style="${MONO}font-size:12px;background-color:${C.hover};border-radius:4px;padding:1px 4px;">$1</code>`);
+  },
+  /** One ledger item: title left, the #number pill (the item's only link) far right on the same line; rows and chips flush beneath. `first` drops the hairline above (the group label sits there instead). */
+  item(o: { title: string; number: number | null; url: string | null; rows: string[]; footer?: string; first?: boolean }): string {
+    const pill = o.number !== null && o.url
+      ? `<td data-pill-cell align="right" width="1" style="vertical-align:top;padding-left:12px;white-space:nowrap;"><a data-pill href="${o.url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;line-height:16px;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:2px 7px;text-decoration:none;white-space:nowrap;">#${o.number}</a></td>`
+      : "";
+    return (
+      `<table data-item ${EMAIL_STYLE.table} style="${o.first ? "" : `border-top:1px solid ${C.border};`}"><tr>` +
+      `<td data-item-inner style="vertical-align:top;padding:${SP.m}px 0;">` +
+      `<table data-item-title ${EMAIL_STYLE.table}><tr><td data-title style="${SANS}font-size:15px;line-height:20px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};vertical-align:top;">${o.title}</td>${pill}</tr></table>` +
+      EMAIL_CARD.rows(o.rows) +
+      (o.footer ? EMAIL_CARD.footer(o.footer) : "") +
+      `</td></tr></table>`
+    );
+  },
+};
+
+/** The dark swap: one rule per token, matched on the inline style substring. */
+function darkCss(): string {
+  const rules: string[] = [`body{background-color:${THEME.ground.dark}!important;}`];
+  for (const t of Object.values(THEME)) {
+    rules.push(`[style*="background-color:${t.light}"]{background-color:${t.dark}!important;}`);
+    // Anchored on the declaration start: a bare `[style*="color:X"]` would also match `background-color:X`.
+    rules.push(`[style^="color:${t.light}"],[style*=";color:${t.light}"]{color:${t.dark}!important;}`);
+    rules.push(`[style*="solid ${t.light}"]{border-color:${t.dark}!important;}`);
+  }
+  return `@media (prefers-color-scheme: dark){${rules.join("")}}`;
+}
 
 function dayLabel(d: Date, timeZone: string): { month: string; day: number } {
   const l = localDate(d, timeZone);
@@ -48,6 +178,29 @@ function dateRange(window: Window, timeZone: string): string {
   return from.month === to.month ? `${from.month} ${from.day} to ${to.day}` : `${from.month} ${from.day} to ${to.month} ${to.day}`;
 }
 
+/**
+ * Branded header: the app's three-bar mark (rects 20/14/8 wide, stacked and
+ * centred, top bar accent, bottom bar at half strength) built from plain
+ * blocks because Gmail strips SVG, the wordmark beside it, and the cadence
+ * line underneath. Colours come from the token map so the dark swap flips them.
+ */
+function header(cadence: Window["cadence"], range: string): string {
+  const bar = (n: number, w: number, inset: number, color: string, last = false) =>
+    `<div data-bar="${n}" style="width:${w}px;height:4px;border-radius:2px;background-color:${color};margin:0 0 ${last ? 0 : 2.5}px ${inset}px;font-size:0;line-height:0;"></div>`;
+  const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
+  return (
+    `<tr><td style="padding:${SP.xl}px 28px ${SP.l}px 28px;border-bottom:1px solid ${C.border};text-align:center;">` +
+    `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>` +
+    `<td data-mark="canopy" width="24" style="vertical-align:middle;padding-right:11px;">` +
+    bar(1, 22, 0, C.accent) + bar(2, 15, 3.5, C.fg) + bar(3, 9, 6.5, C.fg55, true) +
+    `</td>` +
+    `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${C.fg};">Canopy</td>` +
+    `</tr></table>` +
+    `<div style="${SANS}font-size:13px;line-height:20px;color:${C.fg55};padding-top:${SP.s}px;">${label} <span style="color:${C.fg40};">&middot;</span> ${escapeHtml(range)}</div>` +
+    `</td></tr>`
+  );
+}
+
 export function assembleMessage(opts: {
   sections: Section[];
   window: Window;
@@ -64,26 +217,33 @@ export function assembleMessage(opts: {
   const host = origin.replace(/^https?:\/\//, "") || "canopy";
   const preheader = sections.map((s) => s.summary).filter(Boolean).join(", ");
 
+  const heading = `${SANS}font-size:15px;line-height:20px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};`;
+  const summary = `${SANS}font-size:13px;line-height:20px;color:${C.fg55};padding-top:${SP.xs}px;`;
+  const button = `display:inline-block;${SANS}font-size:13px;line-height:20px;font-weight:500;color:${C.accentText};text-decoration:none;padding:6px 12px;border:1px solid ${C.borderStrong};border-radius:8px;`;
   const blocks = sections.map(
     (s, i) =>
-      `<tr><td style="padding:${i === 0 ? "26px 32px" : "24px 32px 26px 32px"};${i === 0 ? "" : "border-top:1px solid #e6e6e6;"}">` +
-      `<div style="${SANS}font-size:15px;font-weight:bold;color:#0a0a0a;">${escapeHtml(s.heading)}</div>` +
-      (s.summary ? `<div style="${SANS}font-size:13px;color:#6b6b6b;padding-top:3px;">${escapeHtml(s.summary)}</div>` : "") +
+      `<tr><td style="padding:${SP.xl}px 28px ${SP.xl}px 28px;${i === 0 ? "" : `border-top:1px solid ${C.border};`}">` +
+      `<div style="${heading}">${escapeHtml(s.heading)}</div>` +
+      (s.summary ? `<div style="${summary}">${escapeHtml(s.summary)}</div>` : "") +
       s.html +
-      `<div style="padding-top:16px;"><a href="${escapeHtml(link(s))}" style="${SANS}font-size:13px;font-weight:bold;color:#00A859;text-decoration:none;">Open ${escapeHtml(label(s))} &rarr;</a></div>` +
+      `<div style="padding-top:${SP.l}px;"><a href="${escapeHtml(link(s))}" style="${button}">Open ${escapeHtml(label(s))} &rarr;</a></div>` +
       `</td></tr>`
   );
 
   const html =
-    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title></head>` +
-    `<body style="margin:0;padding:0;background-color:#f2f2f2;">` +
+    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">` +
+    `<title>${escapeHtml(subject)}</title>` +
+    `<link href="${FONTS_HREF}" rel="stylesheet">` +
+    `<style>:root{color-scheme:light dark;}${darkCss()}</style></head>` +
+    `<body style="margin:0;padding:0;background-color:${C.ground};">` +
     (preheader ? `<div style="display:none;max-height:0px;overflow:hidden;">${escapeHtml(preheader)}.</div>` : "") +
-    `<table ${EMAIL_STYLE.table} style="background-color:#f2f2f2;"><tr><td align="center" style="padding:32px 16px;">` +
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:#ffffff;border:1px solid #e2e2e2;">` +
-    `<tr><td style="padding:24px 32px 20px 32px;border-bottom:2px solid #00A859;${SANS}font-size:19px;line-height:1.3;color:#0a0a0a;"><strong>Canopy</strong> ${window.cadence}, ${escapeHtml(range)}</td></tr>` +
+    `<table ${EMAIL_STYLE.table} style="background-color:${C.ground};"><tr><td align="center" style="padding:36px 16px;">` +
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
+    header(window.cadence, range) +
     blocks.join("") +
-    `<tr><td style="padding:18px 32px 22px 32px;border-top:1px solid #e6e6e6;${SANS}font-size:11px;line-height:1.7;color:#8a8a8a;">` +
-    `You're getting the ${window.cadence} Canopy digest for ${escapeHtml(login)}. <a href="${escapeHtml(unsubscribeUrl)}" style="color:#8a8a8a;text-decoration:underline;">Unsubscribe</a><br>` +
+    `<tr><td style="padding:${SP.l}px 28px ${SP.l}px 28px;border-top:1px solid ${C.border};${SANS}font-size:12px;line-height:20px;color:${C.fg40};">` +
+    `You're getting the ${window.cadence} Canopy digest for ${escapeHtml(login)}. <a href="${escapeHtml(unsubscribeUrl)}" style="color:${C.fg40};text-decoration:underline;text-underline-offset:2px;">Unsubscribe</a><br>` +
     `Sent by Canopy &middot; ${escapeHtml(host)}</td></tr>` +
     `</table></td></tr></table></body></html>`;
 

@@ -3,26 +3,49 @@ import type { NotificationKind, Section, Window } from "@shared/notifications";
 import { type DB, all, first } from "../../db";
 import { listOpenAssignedIssues, toMyWorkPr, type PrEventJoinRow } from "../../tools/mywork";
 import { escapeHtml, isoOf } from "../html";
-import { EMAIL_STYLE as S } from "../assemble";
+import { EMAIL_STYLE as S, EMAIL_CARD as K, EMAIL_SPACE as SP } from "../assemble";
 
 const DEEP_LINK = "/#mywork";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const pad = (s: string, w: number) => s.padEnd(w);
 
-function numberedRows(items: { number: number; url: string; title: string; note: string | null }[]): string {
-  return (
-    `<table ${S.table} style="margin-top:4px;">` +
-    items
-      .map(
-        (i) =>
-          `<tr><td width="48" style="${S.mono}">#${i.number}</td><td style="${S.body}"><a href="${escapeHtml(i.url)}" style="color:#0a0a0a;text-decoration:none;">${escapeHtml(i.title)}</a>` +
-          (i.note ? `<div style="${S.muted}">${escapeHtml(i.note)}</div>` : "") +
-          `</td></tr>`
-      )
-      .join("") +
-    `</table>`
-  );
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "Sep 20" from a date-only or ISO string; empty when unparseable. */
+function shortDate(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}` : "";
+}
+const TOP = 5;
+
+/** A merged PR item, mirroring the app's prActivityCard: #number, title, What changed / Why / Impact rows, MERGED chip. */
+function prItem(pr: ReturnType<typeof toMyWorkPr>, first: boolean): string {
+  const rows: string[] = [];
+  if (pr.what !== null) {
+    rows.push(K.row("What changed", K.prose(escapeHtml(pr.what))));
+    if (pr.why) rows.push(K.row("Why", K.prose(escapeHtml(pr.why))));
+  } else {
+    rows.push(K.row("What changed", "No summary recorded for this PR."));
+  }
+  if (pr.impact) rows.push(K.row("Impact", K.prose(escapeHtml(pr.impact))));
+  const into = pr.baseRef ? `<span style="padding-left:8px;">into <span style="font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">${escapeHtml(pr.baseRef)}</span></span>` : "";
+  return K.item({ title: escapeHtml(pr.displayTitle ?? pr.title), number: pr.number, url: escapeHtml(pr.url), rows, footer: `${K.chip("MERGED", "green")}${into}`, first });
+}
+
+/** An assigned-issue item, mirroring todoCard: Summary / Milestone / Next step rows, priority + label chips. */
+function issueItem(i: Awaited<ReturnType<typeof listOpenAssignedIssues>>[number], first: boolean): string {
+  const rows: string[] = [];
+  if (i.summary) rows.push(K.row("Summary", K.prose(escapeHtml(i.summary))));
+  if (i.milestone) {
+    const due = i.milestone.dueOn ? ` <span style="font-size:11.5px;">&middot; due ${escapeHtml(shortDate(i.milestone.dueOn))}</span>` : "";
+    rows.push(K.row("Milestone", `${escapeHtml(i.milestone.title)}${due}`));
+  }
+  if (i.nextStep) rows.push(K.row("Next step", K.prose(escapeHtml(i.nextStep)), "accent"));
+  const chips = [
+    i.priority ? K.chip(escapeHtml(i.priority), "amber") : "",
+    ...i.labels.slice(0, 3).map((l) => K.chip(escapeHtml(l), "muted")),
+  ].filter(Boolean).join(" ");
+  return K.item({ title: escapeHtml(i.displayTitle ?? i.title), number: i.number, url: escapeHtml(i.url), rows, footer: chips || undefined, first });
 }
 
 /**
@@ -56,23 +79,23 @@ async function render(db: DB, login: string, window: Window): Promise<Section | 
   const html: string[] = [];
   const text: string[] = [];
   if (merged.length) {
-    html.push(`<div style="${S.label}padding-top:16px;">MERGED</div>`);
-    html.push(numberedRows(merged.map((pr) => ({ number: pr.number, url: pr.url, title: pr.displayTitle ?? pr.title, note: pr.what ?? "No summary recorded" }))));
-    for (const pr of merged) text.push(`  ${pad("merged", 7)} ${pad(`#${pr.number}`, 5)} ${pr.displayTitle ?? pr.title}`);
+    const shown = merged.slice(0, TOP);
+    html.push(`<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">MERGED</div>`);
+    html.push(shown.map((pr, i) => prItem(pr, i === 0)).join(""));
+    if (merged.length > TOP) html.push(`<div style="${S.muted}padding-top:${SP.s}px;">+${merged.length - TOP} more in My Work</div>`);
+    for (const pr of shown) {
+      text.push(`  ${pad("merged", 7)} ${pad(`#${pr.number}`, 5)} ${pr.displayTitle ?? pr.title}`);
+      if (pr.what) text.push(`  ${pad("", 13)} What changed: ${pr.what}`);
+    }
+    if (merged.length > TOP) text.push(`  ${pad("", 13)} +${merged.length - TOP} more in My Work`);
   }
   if (todo.length) {
-    html.push(`<div style="${S.label}padding-top:${merged.length ? 12 : 16}px;">OPEN &amp; ASSIGNED</div>`);
-    html.push(
-      numberedRows(
-        todo.map((i) => ({
-          number: i.number,
-          url: i.url,
-          title: `${i.priority ? `[${i.priority}] ` : ""}${i.displayTitle ?? i.title}`,
-          note: i.nextStep,
-        }))
-      )
-    );
-    for (const i of todo) text.push(`  ${pad("open", 7)} ${pad(`#${i.number}`, 5)} ${i.priority ? `[${i.priority}] ` : ""}${i.displayTitle ?? i.title}`);
+    html.push(`<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">OPEN &amp; ASSIGNED</div>`);
+    html.push(todo.map((t, i) => issueItem(t, i === 0)).join(""));
+    for (const i of todo) {
+      text.push(`  ${pad("open", 7)} ${pad(`#${i.number}`, 5)} ${i.priority ? `[${i.priority}] ` : ""}${i.displayTitle ?? i.title}`);
+      if (i.nextStep) text.push(`  ${pad("", 13)} Next step: ${i.nextStep}`);
+    }
   }
 
   const summary = [

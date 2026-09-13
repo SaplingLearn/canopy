@@ -2,9 +2,10 @@ import type { MilestoneRow, PlanVersionRow } from "@shared/rows";
 import type { NotificationKind, Section, Window } from "@shared/notifications";
 import { type DB, first } from "../../db";
 import { escapeHtml, isoOf } from "../html";
-import { EMAIL_STYLE as S } from "../assemble";
+import { EMAIL_STYLE as S, EMAIL_CARD as K, EMAIL_SPACE as SP, type ChipTone } from "../assemble";
 
 const DEEP_LINK = "/#roadmap";
+const PLAN_TONE: Record<PlanDiffLine["label"], ChipTone> = { added: "green", changed: "blue", reordered: "muted", done: "accent" };
 
 // Plan-layer diff between two milestone snapshots. Progress (milestone_progress)
 // is not in a snapshot, so a progress-only change can never surface here.
@@ -70,8 +71,8 @@ async function render(db: DB, _login: string, window: Window): Promise<Section |
   if (lines.length === 0) return null;
 
   const html =
-    `<table ${S.table} style="margin-top:12px;">` +
-    lines.map((l) => `<tr><td width="92" style="${S.label}vertical-align:top;padding:5px 0;">${l.label.toUpperCase()}</td><td style="${S.body}">${escapeHtml(l.text)}</td></tr>`).join("") +
+    `<table ${S.table} style="margin-top:${SP.m}px;">` +
+    lines.map((l) => `<tr><td width="96" style="vertical-align:top;padding:${SP.xs}px 8px ${SP.xs}px 0;">${K.chip(l.label.toUpperCase(), PLAN_TONE[l.label])}</td><td style="${S.body}">${escapeHtml(l.text)}</td></tr>`).join("") +
     `</table>`;
   const text = lines.map((l) => `  ${l.label.padEnd(10)} ${l.text}`).join("\n");
   const n = lines.length;
