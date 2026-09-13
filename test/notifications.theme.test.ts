@@ -69,6 +69,11 @@ describe("email header — Canopy branding", () => {
     expect(html).toMatch(/data-mark="canopy"[\s\S]*?Canopy<\/(span|strong|td)>/);
   });
 
+  it("centres the header block: the mark table is align=center inside a text-align:center cell", () => {
+    const { html } = msg();
+    expect(html).toMatch(/<td[^>]*text-align:center[^>]*>[\s\S]*?<table[^>]*align="center"[^>]*>[\s\S]*?data-mark="canopy"/);
+  });
+
   it("names the cadence under the wordmark: 'Daily digest · Sep 13'", () => {
     const { html } = msg();
     expect(html).toContain("Daily digest");

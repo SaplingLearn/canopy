@@ -100,8 +100,8 @@ function header(cadence: Window["cadence"], range: string): string {
     `<div data-bar="${n}" style="width:${w}px;height:4px;border-radius:2px;background-color:${color};margin:0 0 ${last ? 0 : 2.5}px ${inset}px;font-size:0;line-height:0;"></div>`;
   const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
   return (
-    `<tr><td style="padding:28px 28px 24px 28px;border-bottom:1px solid ${C.border};">` +
-    `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>` +
+    `<tr><td style="padding:28px 28px 24px 28px;border-bottom:1px solid ${C.border};text-align:center;">` +
+    `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>` +
     `<td data-mark="canopy" width="24" style="vertical-align:middle;padding-right:11px;">` +
     bar(1, 22, 0, C.accent) + bar(2, 15, 3.5, C.fg) + bar(3, 9, 6.5, C.fg55, true) +
     `</td>` +
