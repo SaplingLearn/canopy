@@ -39,14 +39,13 @@ const issueStub = (s: IssueSummary): Summarizer<IssueSummary> => ({ model: "stub
 describe("My Work items (ledger layout)", () => {
   const kind = () => getKind("my_work")!;
 
-  it("renders a merged PR as a ledger item: #number pill leading the title, What changed / Why / Impact rows, MERGED chip into main", async () => {
+  it("renders a merged PR as a ledger item: title with the #number pill far right, What changed / Why / Impact rows, MERGED chip into main", async () => {
     await ingestEvent(env.DB, prEvent(10, IN_WINDOW, "Raw ten"), "github-webhook");
     await storePrSummary(env.DB, prStub({ title: "Humanized ten", what: "Did the thing", why: "Because reasons", impact: "Users win" }), { semantic_key: "gh:pr:10:merged", pr_number: 10, title: "Raw ten", body: "b" });
     const s = (await kind().render(env.DB, LOGIN, WINDOW))!;
-    // Ledger layout: the #number pill (the item's only link, accent-coloured) leads the title line; rows sit flush under it. No box, no side column.
-    expect(s.html).toMatch(/<div data-title[^>]*>\s*<a data-pill [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10<\/a>\s*Humanized ten\s*<\/div>/);
+    // Ledger layout: title on the left, the #number pill (the item's only link, accent-coloured) far right on the same line; rows sit flush under. No box.
+    expect(s.html).toMatch(/<td data-title[^>]*>Humanized ten<\/td>\s*<td data-pill-cell[^>]*align="right"[^>]*>\s*<a data-pill [^>]*href="https:\/\/github\.com\/o\/r\/pull\/10"[^>]*>#10<\/a>/);
     expect(s.html).toMatch(new RegExp(`<a data-pill [^>]*style="[^"]*color:${THEME.accentText.light}[^"]*background-color:${THEME.accentSoft.light}`));
-    expect(s.html).not.toContain("data-pill-cell");
     expect(s.html).not.toContain("border-radius:11px");
     expect(s.html).not.toMatch(/data-item[^>]*style="[^"]*border:1px solid/); // items are separated by a hairline, never boxed
     expect(s.html).toMatch(/What changed[\s\S]*Did the thing/);

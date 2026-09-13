@@ -90,9 +90,9 @@ const CHIP_TONES: Record<ChipTone, { fg: string; bg: string; bd: string }> = {
 /**
  * Email versions of the app's My Work card pieces (web/src/render.ts: mwTitleRow /
  * mwRow / chips / mwFooter) in the LEDGER layout: one continuous list, not boxes.
- * Each item is a table row: the #number pill (the item's only link, in the
- * app's accent pill style) leads the title line, the labelled rows and chip
- * footer sit flush beneath, a hairline between items. Nested tables + inline styles only; every colour is a
+ * Each item is a table row: title left with the #number pill (the item's only
+ * link, in the app's accent pill style) far right on the same line, the
+ * labelled rows and chip footer flush beneath, a hairline between items. Nested tables + inline styles only; every colour is a
  * THEME token so the dark swap applies. Callers escape their own text. The
  * `data-item*` / `data-row*` / `data-chip` / `data-pill` attributes are inert
  * hooks for the admin preview; mail clients ignore them.
@@ -118,15 +118,15 @@ export const EMAIL_CARD = {
   prose(escaped: string): string {
     return escaped.replace(/`([^`]+)`/g, `<code style="${MONO}font-size:12px;background-color:${C.hover};border-radius:4px;padding:1px 4px;">$1</code>`);
   },
-  /** One ledger item: the #number pill leads the title line; rows and chips sit flush beneath. `first` drops the hairline above (the group label sits there instead). */
+  /** One ledger item: title left, the #number pill (the item's only link) far right on the same line; rows and chips flush beneath. `first` drops the hairline above (the group label sits there instead). */
   item(o: { title: string; number: number | null; url: string | null; rows: string[]; footer?: string; first?: boolean }): string {
     const pill = o.number !== null && o.url
-      ? `<a data-pill href="${o.url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;line-height:1.2;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 7px;margin-right:8px;text-decoration:none;white-space:nowrap;vertical-align:2px;">#${o.number}</a> `
+      ? `<td data-pill-cell align="right" width="1" style="vertical-align:top;padding-left:12px;white-space:nowrap;"><a data-pill href="${o.url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;line-height:1.2;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 7px;text-decoration:none;white-space:nowrap;">#${o.number}</a></td>`
       : "";
     return (
       `<table data-item ${EMAIL_STYLE.table} style="${o.first ? "" : `border-top:1px solid ${C.border};`}"><tr>` +
       `<td data-item-inner style="vertical-align:top;padding:12px 0;">` +
-      `<div data-title style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.4;color:${C.fg};">${pill}${o.title}</div>` +
+      `<table data-item-title ${EMAIL_STYLE.table}><tr><td data-title style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.4;color:${C.fg};vertical-align:top;">${o.title}</td>${pill}</tr></table>` +
       EMAIL_CARD.rows(o.rows) +
       (o.footer ? EMAIL_CARD.footer(o.footer) : "") +
       `</td></tr></table>`
