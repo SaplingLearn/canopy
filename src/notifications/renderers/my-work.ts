@@ -3,7 +3,7 @@ import type { NotificationKind, Section, Window } from "@shared/notifications";
 import { type DB, all, first } from "../../db";
 import { listOpenAssignedIssues, toMyWorkPr, type PrEventJoinRow } from "../../tools/mywork";
 import { escapeHtml, isoOf } from "../html";
-import { EMAIL_STYLE as S, EMAIL_CARD as K } from "../assemble";
+import { EMAIL_STYLE as S, EMAIL_CARD as K, EMAIL_SPACE as SP } from "../assemble";
 
 const DEEP_LINK = "/#mywork";
 
@@ -80,9 +80,9 @@ async function render(db: DB, login: string, window: Window): Promise<Section | 
   const text: string[] = [];
   if (merged.length) {
     const shown = merged.slice(0, TOP);
-    html.push(`<div style="${S.label}padding-top:16px;padding-bottom:2px;">MERGED</div>`);
+    html.push(`<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">MERGED</div>`);
     html.push(shown.map((pr, i) => prItem(pr, i === 0)).join(""));
-    if (merged.length > TOP) html.push(`<div style="${S.muted}padding-top:10px;">+${merged.length - TOP} more in My Work</div>`);
+    if (merged.length > TOP) html.push(`<div style="${S.muted}padding-top:${SP.s}px;">+${merged.length - TOP} more in My Work</div>`);
     for (const pr of shown) {
       text.push(`  ${pad("merged", 7)} ${pad(`#${pr.number}`, 5)} ${pr.displayTitle ?? pr.title}`);
       if (pr.what) text.push(`  ${pad("", 13)} What changed: ${pr.what}`);
@@ -90,7 +90,7 @@ async function render(db: DB, login: string, window: Window): Promise<Section | 
     if (merged.length > TOP) text.push(`  ${pad("", 13)} +${merged.length - TOP} more in My Work`);
   }
   if (todo.length) {
-    html.push(`<div style="${S.label}padding-top:${merged.length ? 18 : 16}px;padding-bottom:2px;">OPEN &amp; ASSIGNED</div>`);
+    html.push(`<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">OPEN &amp; ASSIGNED</div>`);
     html.push(todo.map((t, i) => issueItem(t, i === 0)).join(""));
     for (const i of todo) {
       text.push(`  ${pad("open", 7)} ${pad(`#${i.number}`, 5)} ${i.priority ? `[${i.priority}] ` : ""}${i.displayTitle ?? i.title}`);

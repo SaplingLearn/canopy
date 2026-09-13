@@ -2,7 +2,7 @@ import type { NotificationKind, Section } from "@shared/notifications";
 import type { DB } from "../../db";
 import { list_proposals, list_adrs } from "../../tools/reads";
 import { escapeHtml } from "../html";
-import { EMAIL_STYLE as S, EMAIL_CARD as K, THEME } from "../assemble";
+import { EMAIL_STYLE as S, EMAIL_CARD as K, EMAIL_SPACE as SP, THEME } from "../assemble";
 
 const DEEP_LINK = "/#review";
 const TOP = 5;
@@ -38,15 +38,15 @@ async function render(db: DB): Promise<Section | null> {
   ];
 
   const html =
-    `<table ${S.table} style="margin-top:12px;">` +
+    `<table ${S.table} style="margin-top:${SP.m}px;">` +
     items
       .map(
         (it, i) =>
-          `<tr><td style="padding:${i === 0 ? "4px" : "11px"} 0 11px 0;${i === 0 ? "" : `border-top:1px solid ${THEME.border.light};`}">` +
+          `<tr><td style="padding:${i === 0 ? 0 : SP.m - SP.xs}px 0 ${SP.m - SP.xs}px 0;${i === 0 ? "" : `border-top:1px solid ${THEME.border.light};`}">` +
           `<div>${K.chip(it.kind.toUpperCase(), it.kind === "proposal" ? "accent" : "blue")}${it.low ? ` ${K.chip("LOW CONFIDENCE", "amber")}` : ""}` +
           `<span style="${S.body}font-weight:500;padding-left:8px;">${escapeHtml(it.title)}</span></div>` +
-          `<div style="${S.muted}padding-top:4px;">${escapeHtml(it.summary)}</div>` +
-          `<div style="${S.muted}font-size:11.5px;padding-top:3px;">${escapeHtml(it.meta)}</div>` +
+          `<div style="${S.muted}padding-top:${SP.xs}px;">${escapeHtml(it.summary)}</div>` +
+          `<div style="${S.muted}font-size:12px;line-height:16px;padding-top:${SP.xs}px;">${escapeHtml(it.meta)}</div>` +
           `</td></tr>`
       )
       .join("") +

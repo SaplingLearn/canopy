@@ -56,6 +56,16 @@ export const THEME = {
 } as const;
 const C = Object.fromEntries(Object.entries(THEME).map(([k, v]) => [k, v.light])) as { [K in keyof typeof THEME]: string };
 
+/**
+ * Spacing scale: an 8pt grid with a 4pt sub-grid (every step a multiple of 4).
+ * Rules applied throughout: line-heights are multiples of 4 (13px/20px body,
+ * 15px/20px headings, 10.5px/16px labels); a heading gets ~3× more space above
+ * than below (24 over / 8 under a group label); the space after a heading equals
+ * the paragraph gap; internal gaps never exceed the external gap around them.
+ */
+export const EMAIL_SPACE = { xs: 4, s: 8, m: 16, l: 24, xl: 32 } as const;
+const SP = EMAIL_SPACE;
+
 const SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
 const MONO = "font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
 export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600&display=swap";
@@ -63,13 +73,13 @@ export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@4
 /** Shared inline-style tokens for the section renderers (mirrors the app's text tiers). */
 export const EMAIL_STYLE = {
   /** Mono uppercase section label — the app's `.cnpy-treesec` / SECTION_LABEL. */
-  label: `${MONO}font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.fg40};`,
+  label: `${MONO}font-size:10.5px;line-height:16px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.fg40};`,
   /** Mono reference cell (#123). */
-  mono: `${MONO}font-size:12px;color:${C.fg55};vertical-align:top;padding:5px 0;`,
+  mono: `${MONO}font-size:12px;line-height:20px;color:${C.fg55};vertical-align:top;padding:${SP.xs}px 0;`,
   /** Row text. */
-  body: `${SANS}font-size:13.5px;line-height:1.5;color:${C.fg};padding:5px 0;`,
+  body: `${SANS}font-size:13px;line-height:20px;color:${C.fg};padding:${SP.xs}px 0;`,
   /** Secondary line under a row. */
-  muted: `${SANS}font-size:12.5px;line-height:1.5;color:${C.fg55};`,
+  muted: `${SANS}font-size:13px;line-height:20px;color:${C.fg55};`,
   /** Inline meta after a row ("(Mei, high confidence)"). */
   meta: `color:${C.fg55};`,
   /** Row link: ink, no underline. */
@@ -105,14 +115,14 @@ export const EMAIL_CARD = {
   },
   /** One labelled row: 96px mono label + body; `tone` colours the label (Next step is accent). */
   row(label: string, body: string, tone: "muted" | "accent" = "muted"): string {
-    return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:4px 10px 4px 0;">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:1.55;color:${C.fg70};padding:4px 0;">${body}</td></tr>`;
+    return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}line-height:20px;color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:${SP.xs}px 10px ${SP.xs}px 0;">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:20px;color:${C.fg70};padding:${SP.xs}px 0;">${body}</td></tr>`;
   },
   rows(rows: string[]): string {
-    return rows.length ? `<table data-item-rows ${EMAIL_STYLE.table} style="margin-top:6px;">${rows.join("")}</table>` : "";
+    return rows.length ? `<table data-item-rows ${EMAIL_STYLE.table} style="margin-top:${SP.s}px;">${rows.join("")}</table>` : "";
   },
   /** Footer: chips + a muted note. */
   footer(inner: string): string {
-    return `<div data-item-footer style="margin-top:8px;${SANS}font-size:11.5px;color:${C.fg40};">${inner}</div>`;
+    return `<div data-item-footer style="margin-top:${SP.m - SP.xs}px;${SANS}font-size:12px;line-height:20px;color:${C.fg40};">${inner}</div>`;
   },
   /** Escaped prose with backtick spans styled as code (escape FIRST — bodies never inject HTML). */
   prose(escaped: string): string {
@@ -121,12 +131,12 @@ export const EMAIL_CARD = {
   /** One ledger item: title left, the #number pill (the item's only link) far right on the same line; rows and chips flush beneath. `first` drops the hairline above (the group label sits there instead). */
   item(o: { title: string; number: number | null; url: string | null; rows: string[]; footer?: string; first?: boolean }): string {
     const pill = o.number !== null && o.url
-      ? `<td data-pill-cell align="right" width="1" style="vertical-align:top;padding-left:12px;white-space:nowrap;"><a data-pill href="${o.url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;line-height:1.2;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:3px 7px;text-decoration:none;white-space:nowrap;">#${o.number}</a></td>`
+      ? `<td data-pill-cell align="right" width="1" style="vertical-align:top;padding-left:12px;white-space:nowrap;"><a data-pill href="${o.url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;line-height:16px;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:2px 7px;text-decoration:none;white-space:nowrap;">#${o.number}</a></td>`
       : "";
     return (
       `<table data-item ${EMAIL_STYLE.table} style="${o.first ? "" : `border-top:1px solid ${C.border};`}"><tr>` +
-      `<td data-item-inner style="vertical-align:top;padding:12px 0;">` +
-      `<table data-item-title ${EMAIL_STYLE.table}><tr><td data-title style="${SANS}font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.4;color:${C.fg};vertical-align:top;">${o.title}</td>${pill}</tr></table>` +
+      `<td data-item-inner style="vertical-align:top;padding:${SP.m}px 0;">` +
+      `<table data-item-title ${EMAIL_STYLE.table}><tr><td data-title style="${SANS}font-size:15px;line-height:20px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};vertical-align:top;">${o.title}</td>${pill}</tr></table>` +
       EMAIL_CARD.rows(o.rows) +
       (o.footer ? EMAIL_CARD.footer(o.footer) : "") +
       `</td></tr></table>`
@@ -179,14 +189,14 @@ function header(cadence: Window["cadence"], range: string): string {
     `<div data-bar="${n}" style="width:${w}px;height:4px;border-radius:2px;background-color:${color};margin:0 0 ${last ? 0 : 2.5}px ${inset}px;font-size:0;line-height:0;"></div>`;
   const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
   return (
-    `<tr><td style="padding:28px 28px 24px 28px;border-bottom:1px solid ${C.border};text-align:center;">` +
+    `<tr><td style="padding:${SP.xl}px 28px ${SP.l}px 28px;border-bottom:1px solid ${C.border};text-align:center;">` +
     `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>` +
     `<td data-mark="canopy" width="24" style="vertical-align:middle;padding-right:11px;">` +
     bar(1, 22, 0, C.accent) + bar(2, 15, 3.5, C.fg) + bar(3, 9, 6.5, C.fg55, true) +
     `</td>` +
     `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${C.fg};">Canopy</td>` +
     `</tr></table>` +
-    `<div style="${SANS}font-size:13px;line-height:1.4;color:${C.fg55};padding-top:12px;">${label} <span style="color:${C.fg40};">&middot;</span> ${escapeHtml(range)}</div>` +
+    `<div style="${SANS}font-size:13px;line-height:20px;color:${C.fg55};padding-top:${SP.s}px;">${label} <span style="color:${C.fg40};">&middot;</span> ${escapeHtml(range)}</div>` +
     `</td></tr>`
   );
 }
@@ -207,16 +217,16 @@ export function assembleMessage(opts: {
   const host = origin.replace(/^https?:\/\//, "") || "canopy";
   const preheader = sections.map((s) => s.summary).filter(Boolean).join(", ");
 
-  const heading = `${SANS}font-size:14.5px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};`;
-  const summary = `${SANS}font-size:12.5px;line-height:1.5;color:${C.fg55};padding-top:3px;`;
-  const button = `display:inline-block;${SANS}font-size:12.5px;font-weight:500;color:${C.accentText};text-decoration:none;padding:7px 13px;border:1px solid ${C.borderStrong};border-radius:8px;`;
+  const heading = `${SANS}font-size:15px;line-height:20px;font-weight:600;letter-spacing:-0.01em;color:${C.fg};`;
+  const summary = `${SANS}font-size:13px;line-height:20px;color:${C.fg55};padding-top:${SP.xs}px;`;
+  const button = `display:inline-block;${SANS}font-size:13px;line-height:20px;font-weight:500;color:${C.accentText};text-decoration:none;padding:6px 12px;border:1px solid ${C.borderStrong};border-radius:8px;`;
   const blocks = sections.map(
     (s, i) =>
-      `<tr><td style="padding:${i === 0 ? "24px 28px 26px 28px" : "24px 28px 26px 28px"};${i === 0 ? "" : `border-top:1px solid ${C.border};`}">` +
+      `<tr><td style="padding:${SP.xl}px 28px ${SP.xl}px 28px;${i === 0 ? "" : `border-top:1px solid ${C.border};`}">` +
       `<div style="${heading}">${escapeHtml(s.heading)}</div>` +
       (s.summary ? `<div style="${summary}">${escapeHtml(s.summary)}</div>` : "") +
       s.html +
-      `<div style="padding-top:18px;"><a href="${escapeHtml(link(s))}" style="${button}">Open ${escapeHtml(label(s))} &rarr;</a></div>` +
+      `<div style="padding-top:${SP.l}px;"><a href="${escapeHtml(link(s))}" style="${button}">Open ${escapeHtml(label(s))} &rarr;</a></div>` +
       `</td></tr>`
   );
 
@@ -232,7 +242,7 @@ export function assembleMessage(opts: {
     `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
     header(window.cadence, range) +
     blocks.join("") +
-    `<tr><td style="padding:18px 28px 22px 28px;border-top:1px solid ${C.border};${SANS}font-size:11.5px;line-height:1.7;color:${C.fg40};">` +
+    `<tr><td style="padding:${SP.l}px 28px ${SP.l}px 28px;border-top:1px solid ${C.border};${SANS}font-size:12px;line-height:20px;color:${C.fg40};">` +
     `You're getting the ${window.cadence} Canopy digest for ${escapeHtml(login)}. <a href="${escapeHtml(unsubscribeUrl)}" style="color:${C.fg40};text-decoration:underline;text-underline-offset:2px;">Unsubscribe</a><br>` +
     `Sent by Canopy &middot; ${escapeHtml(host)}</td></tr>` +
     `</table></td></tr></table></body></html>`;

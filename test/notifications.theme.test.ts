@@ -4,7 +4,7 @@
  * #00A859 / #f2f2f2 look from the original email mockup is gone.
  */
 import { describe, it, expect } from "vitest";
-import { assembleMessage, EMAIL_STYLE, THEME } from "../src/notifications/assemble";
+import { assembleMessage, EMAIL_STYLE, EMAIL_SPACE, THEME } from "../src/notifications/assemble";
 import { sampleSections } from "../src/notifications/sample";
 
 const window = { cadence: "daily" as const, id: "2026-09-13", start: new Date("2026-09-12T12:00:00Z"), end: new Date("2026-09-13T12:00:00Z") };
@@ -96,7 +96,7 @@ describe("email contrast — action link", () => {
 
   it("the button uses the accentText token, not the raw accent", () => {
     const { html } = msg();
-    expect(html).toMatch(new RegExp(`color:${THEME.accentText.light};text-decoration:none;padding:7px 13px`));
+    expect(html).toMatch(new RegExp(`color:${THEME.accentText.light};text-decoration:none;padding:`)); // the "Open X →" button
   });
 });
 
@@ -107,5 +107,26 @@ describe("dark swap selectors", () => {
     expect(css).not.toMatch(/\[style\*="color:#/); // a bare substring match would also hit "background-color:#…"
     expect(css).toMatch(/\[style\*=";color:#1a1814"\]/);
     expect(css).toMatch(/\[style\^="color:#1a1814"\]/);
+  });
+});
+
+describe("email spacing — 8pt grid with a 4pt sub-grid", () => {
+  it("exposes a spacing scale whose every step is a multiple of 4, ascending", () => {
+    const steps = Object.values(EMAIL_SPACE);
+    expect(steps.length).toBeGreaterThanOrEqual(5);
+    for (const v of steps) expect(v % 4).toBe(0);
+    expect([...steps].sort((a, b) => a - b)).toEqual(steps);
+  });
+
+  it("sections breathe at the largest step and section headings sit on a 20px line", () => {
+    const { html } = msg();
+    expect(html).toContain(`padding:${EMAIL_SPACE.xl}px 28px ${EMAIL_SPACE.xl}px 28px;`); // section cell
+    expect(html).toMatch(/font-size:15px;line-height:20px;font-weight:600;[^"]*">My Work</);
+  });
+
+  it("body rows use a 20px line and a 4pt row gap; group labels get 3× more space above than below", () => {
+    expect(EMAIL_STYLE.body).toContain("line-height:20px");
+    const { html } = msg();
+    expect(html).toContain(`padding-top:${EMAIL_SPACE.l}px;padding-bottom:${EMAIL_SPACE.s}px;">MERGED</div>`);
   });
 });
