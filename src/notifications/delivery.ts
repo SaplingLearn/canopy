@@ -9,7 +9,7 @@ export interface OutboundMessage {
   subject: string;
   html: string;
   text: string;
-  unsubscribeUrl: string; // the https List-Unsubscribe target (also in the footer)
+  unsubscribeUrl?: string; // the https List-Unsubscribe target (also in the footer); absent for transactional mail (no unsubscribe headers)
 }
 
 export interface Delivery {

@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
+import { z } from "zod";
 import { IngestPayload } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
@@ -11,6 +13,10 @@ import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_p
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
+import { first } from "./db";
+import { createInvite, revokeInvite, listInvites } from "./auth/invites";
+import { sendInvite } from "./notifications/invite";
+import type { InviteRow } from "@shared/rows";
 
 export const app = new Hono<AppEnv>();
 
@@ -207,6 +213,42 @@ app.post("/identity-tasks/:login/map", async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
+});
+
+// ── Maintenance › People: the invite list (admin, session-cookie only, NEVER MCP) ──
+const InviteWrite = z.object({ email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "invalid email"), name: z.string().trim().max(120).optional() });
+const adminGate = async (c: Context<AppEnv>, next: () => Promise<void>) =>
+  isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403);
+app.use("/invites", adminGate);
+app.use("/invites/*", adminGate);
+app.get("/invites", async (c) => c.json({ invites: await listInvites(c.env.DB) }));
+app.post("/invites", async (c) => {
+  const parsed = InviteWrite.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  let invite: InviteRow;
+  try {
+    invite = await createInvite(c.env.DB, { email: parsed.data.email, name: parsed.data.name ?? null, invitedBy: c.get("principal").handle });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "invite_exists" || msg === "already_a_person") return c.json({ error: msg }, 409);
+    throw e;
+  }
+  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+  const email = await sendInvite(c.env, c.env.DB, { email: invite.email, inviteeName: invite.name, inviterHandle: c.get("principal").handle, origin });
+  return c.json({ ok: true, invite: (await first<InviteRow>(c.env.DB, `SELECT * FROM invites WHERE email = ?`, invite.email))!, email });
+});
+app.post("/invites/:email/revoke", async (c) => {
+  const ok = await revokeInvite(c.env.DB, decodeURIComponent(c.req.param("email")));
+  return ok ? c.json({ ok: true }) : c.json({ error: "no such invite" }, 404);
+});
+app.post("/invites/:email/resend", async (c) => {
+  const email = decodeURIComponent(c.req.param("email")).toLowerCase();
+  const row = await first<InviteRow>(c.env.DB, `SELECT * FROM invites WHERE email = ?`, email);
+  if (!row) return c.json({ error: "no such invite" }, 404);
+  if (row.revoked_at || row.accepted_by) return c.json({ error: row.revoked_at ? "revoked" : "accepted" }, 409);
+  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+  const result = await sendInvite(c.env, c.env.DB, { email: row.email, inviteeName: row.name, inviterHandle: c.get("principal").handle, origin });
+  return c.json({ ok: true, email: result });
 });
 
 // Roadmap read (session-gated): admin narrative + milestones in target-date order,

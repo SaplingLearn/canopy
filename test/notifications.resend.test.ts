@@ -51,6 +51,14 @@ describe("resendDelivery", () => {
     const d = resendDelivery({ apiKey: "re_test", from: "bad", fetchImpl });
     await expect(d.send(MSG)).rejects.toThrow(/422.*Invalid `from` field/);
   });
+
+  it("omits the List-Unsubscribe headers when the message has no unsubscribeUrl (transactional mail)", async () => {
+    const { calls, fetchImpl } = capture();
+    const d = resendDelivery({ apiKey: "re_test", from: "Canopy <c@x>", fetchImpl });
+    await d.send({ ...MSG, unsubscribeUrl: undefined });
+    const body = JSON.parse(String(calls[0].init.body)) as { headers?: unknown };
+    expect(body.headers).toBeUndefined();
+  });
 });
 
 describe("deliveryFor — env gate, default local", () => {
