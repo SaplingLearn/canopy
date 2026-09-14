@@ -51,7 +51,7 @@ export async function createPerson(db: DB, p: { handle: string; name: string | n
     await run(db, `INSERT INTO persons (handle, name, color, avatar_url, email, email_unsubscribed, created_at, onboarded_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
       p.handle, p.name, p.color, p.avatar_url, p.email, now, now);
   } catch (e) {
-    if (/UNIQUE|constraint/i.test(e instanceof Error ? e.message : String(e))) throw new HandleTakenError(p.handle);
+    if (/UNIQUE constraint failed/i.test(e instanceof Error ? e.message : String(e))) throw new HandleTakenError(p.handle);
     throw e;
   }
   return (await getPerson(db, p.handle))!;

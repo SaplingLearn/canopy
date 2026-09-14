@@ -35,6 +35,11 @@ describe("createPerson / recordSignIn", () => {
     expect(p.onboarded_at).toBeTruthy();
     await expect(createPerson(env.DB, { handle: "PRIYA", name: null, color: "moss", avatar_url: null, email: null })).rejects.toBeInstanceOf(HandleTakenError);
   });
+  it("a CHECK violation (invalid color) is not mis-reported as a taken handle", async () => {
+    await expect(
+      createPerson(env.DB, { handle: "zed", name: null, color: "neon" as never, avatar_url: null, email: null })
+    ).rejects.not.toBeInstanceOf(HandleTakenError);
+  });
   it("recordSignIn refreshes name/avatar and never overwrites a set email", async () => {
     await createPerson(env.DB, { handle: "priya", name: "Priya", color: "plum", avatar_url: null, email: "set@example.com" });
     await recordSignIn(env.DB, "priya", { name: "Priya Natarajan", avatar_url: "https://a/p.png", email: "other@example.com" });
