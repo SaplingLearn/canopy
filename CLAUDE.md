@@ -53,7 +53,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   else to the Hono app; plus the `scheduled()` progress backstop), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
   `plan.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
-  Email notifications section), `db.ts` (D1 helpers), `auth/`, `env.ts`.
+  Email notifications section), `db.ts` (D1 helpers), `auth/` (`persons.ts` — the identity root;
+  `google.ts` — second provider; `onboard.ts` — the sign-in fork + onboarding cookie; `invites.ts`),
+  `env.ts`.
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
@@ -62,7 +64,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   columns], `0019_drop_pr_summary` [retires the legacy prose `pr_summaries.summary` — PR cards are
   structured-only], `0020_docs_space_vocab`, then `0021_notifications` [notification_policy /
   notification_settings / notification_prefs / notification_outbox + `users.email`,
-  `users.email_unsubscribed`], `0022_notification_bodies` [dev-only rendered-message store]).
+  `users.email_unsubscribed`], `0022_notification_bodies` [dev-only rendered-message store], then
+  `0023_persons` [persons / identities / invites replace users + people; sessions + mcp_tokens repoint
+  to persons.handle; bodies table loses its outbox FK]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
   `web/src/markdown.ts` renders PR summaries and the roadmap narrative as styled HTML;
@@ -140,13 +144,19 @@ Agents only ever stage; humans confirm via **authenticated HTTP routes that are 
   reconciler metadata: `change_kind`, `low_confidence`, `base_version`). The web triage UI reads this
   instead of per-doc N+1 fetches. These are session-cookie HTTP routes, NEVER MCP tools.
 
-## Auth — three classes, no new flow (fully built — don't add one)
+## Auth — three classes, two providers in the session class (fully built — don't add a class)
 
 GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAPLING_ORG` in
 `src/auth/github.ts` — a real external org, do not rename it). Three auth classes, kept separate:
 
-- **Session cookie** (humans, the Hono app): signed cookie; every route except `/auth/login|callback`
-  passes `sessionGate`. The principal (`{ login }`) is resolved from the session.
+- **Session cookie** (humans, the Hono app): signed cookie; every route except the public auth paths
+  passes `sessionGate`. The principal is `{ handle }`. Two providers feed ONE fork (`src/auth/onboard.ts`
+  `completeSignIn`): **GitHub** (OAuth + PKCE, gated to active `SaplingLearn` members) and **Google**
+  (OAuth + PKCE, ID token verified against Google's JWKS, gated to admin **invites**). The fork: known
+  identity → session; verified email matches a person → link + session; invited (or GitHub member) →
+  onboarding (a sealed 10-minute `onboard` cookie; the person row is created only on `POST /auth/onboard`
+  with handle + color); else denied. Link mode (`?link=1` with a session) attaches a second provider in
+  Settings; the last identity can't be unlinked.
 - **Bearer token** (agents, `/mcp`): per-person tokens stored hashed (`canopy_mcp_` prefix); the principal
   is resolved from the bearer. `/mcp` is **bearer-only** — on bad/missing creds it returns a bare `401`
   with NO `WWW-Authenticate` and NO OAuth discovery. A fresh `McpServer` is constructed per request
@@ -156,6 +166,15 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
   verified in the branch BEFORE the gate; a bad/absent signature (or unset secret) is a bare `401`. The
   writer principal is the fixed string `"github-webhook"`; the delivery's own `subject_login` is trusted
   only post-verify. This branch never touches `sessionGate`.
+
+## Identity — persons, not logins
+
+`persons` (handle PK, chosen once, immutable; name, color, email) is the root. `identities(provider,
+subject) → person` holds the GitHub login and Google `sub`. Event subjects (`events.subject_login`)
+resolve to a person through the github identity row at read time (`resolvePersonForLogin`); an unmapped
+login raises an `identity_tasks` row and Maintenance › Identity links it to an existing handle.
+`ADMIN_LOGINS` holds handles. Every `recorded_by` / `created_by` / `user_id` is a handle. Migrated GitHub
+users kept their login as handle.
 
 ## Roadmap & My Work — authored plan + stored projections, no live GitHub at render
 
@@ -175,9 +194,10 @@ render path). `github_ref` is bare (a milestone number OR a JSON array of issue 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events: two separate lists — `previousActivity` (summarized merged/closed PRs where the person is the
 subject, 5 most recent) and `todo` (their open assigned issues, 5 most recently updated, each carrying its own stored summary) —
-built from `events` (+ `pr_summaries`, `issue_summaries`, `people`), no live GitHub. `person` resolves via
-the `people` identity map; an unmapped login yields an empty projection (`degraded:false`); any D1 failure
-yields empty `degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at capture time
+built from `events` (+ `pr_summaries`, `issue_summaries`, `persons`, `identities`), no live GitHub.
+`person` resolves via the github `identities` row (`resolvePersonForLogin`, see Identity above); an
+unmapped login yields an empty projection (`degraded:false`); any D1 failure yields empty
+`degraded:true` — never a 500. Completed PRs and assigned issues are each summarized ONCE, at capture time
 (`tools/summarize.ts`: Google Gemini `gemini-2.5-flash-lite` via `GEMINI_API_KEY` — a REST
 `generateContent` call, not a Cloudflare binding — emits one validated JSON object — PR:
 title/what/why/impact; issue: title/summary/next_step). On AI failure the **issue**
@@ -219,9 +239,15 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   single signed-token exception — handled in `src/index.ts` outside `sessionGate`; POST can ONLY set
   `email_unsubscribed = 1`; GET redirects to the cookie-gated `#unsubscribe` screen. Prefs survive unsubscribe.
 - **HTTP** (`routes.ts`, mounted at `/api/notifications`, session-cookie only, NEVER MCP): `prefs` (GET/PUT,
-  own row only), admin-only `policy`, `settings`, `outbox`, `users/:login`.
+  own row only), admin-only `policy`, `settings`, `outbox`, `persons/:handle`.
 - **Address**: seeded at first login from `GET /user/emails` (primary + verified; scope `user:email`) via
-  `recordLogin` with `COALESCE(users.email, …)` — never overwrites a user/admin-edited value.
+  `recordSignIn` with `COALESCE(persons.email, …)` — never overwrites a user/admin-edited value.
+- **Invite email** (`src/notifications/invite.ts`): one transactional message per invite/resend through
+  `deliveryFor`; not a kind — no cadence, prefs, or window. Outcome lands on `invites.email_*`. No
+  `List-Unsubscribe` headers (they are optional on `OutboundMessage` now, omitted for invites).
+- **Deferred:** the digest's ledger layout (`EMAIL_CARD.item`) has no avatar chips today, so a person's
+  color does not appear in email yet. When a chip is added there, take the color from `persons.color`
+  via the light hex set documented in §7 of the identity design doc.
 - Tests assert on outbox/bodies rows, never mocks (`test/notifications.*.test.ts`, `test/render.notifications.test.ts`).
 
 ## Conventions & gotchas
@@ -229,8 +255,8 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 - `shared/vocabulary.ts` MUST match `migrations/0002_seed_vocab.sql` — it's the gate's source of truth.
 - D1 helpers live in `src/db.ts` (`first` / `all` / `run` / `nowIso`); writers in `src/tools/writes.ts`.
 - Tests use real Miniflare D1; `test/apply-migrations.ts` truncates data tables `beforeEach` via
-  `scripts/seed/reset.mjs` (add new tables — `events`, `pr_summaries`, `milestone_progress`, `people`, `plan`,
-  `plan_versions`, `notification_*` — there).
+  `scripts/seed/reset.mjs` (add new tables — `events`, `pr_summaries`, `milestone_progress`, `persons`,
+  `identities`, `invites`, `plan`, `plan_versions`, `notification_*` — there).
   GitHub I/O and the PR summarizer are dependency-injected (`fetchImpl?: typeof fetch`, `summarizer`)
   because the vitest pool exports no fetch/AI mock — stub at the `Response`/`Summarizer` level, never hit
   the network in tests.
@@ -242,10 +268,12 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 ## Env / bindings
 
 Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-`COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s),
-`GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress recompute — absent → `scheduled()`
-no-ops), `GEMINI_API_KEY` (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt
-fallback), `RESEND_API_KEY` (email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`). Vars
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Google OAuth client for the second session-class provider —
+absent → `/auth/google/login` returns 503), `COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the
+webhook — absent → the surface 401s), `GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress
+recompute — absent → `scheduled()` no-ops), `GEMINI_API_KEY` (Google Gemini key for capture-time PR/issue
+summaries — absent → the excerpt fallback), `RESEND_API_KEY` (email delivery; needed only when
+`NOTIFICATIONS_MODE = "resend"`). Vars
 (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`), `ADMIN_LOGINS`, `PUBLIC_ORIGIN`
 (absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`). Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
