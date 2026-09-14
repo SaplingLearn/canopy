@@ -70,6 +70,11 @@ describe("identities", () => {
     await createPerson(env.DB, { handle: "priya", name: null, color: "plum", avatar_url: null, email: "Priya@Example.com" });
     expect((await findPersonByEmail(env.DB, "priya@example.com"))?.handle).toBe("priya");
   });
+  it("findPersonByEmail returns null when more than one person shares the address (ambiguous)", async () => {
+    await createPerson(env.DB, { handle: "priya", name: null, color: "plum", avatar_url: null, email: "dup@example.com" });
+    await createPerson(env.DB, { handle: "priyb", name: null, color: "moss", avatar_url: null, email: "DUP@example.com" });
+    expect(await findPersonByEmail(env.DB, "dup@example.com")).toBeNull();
+  });
 });
 
 describe("updateProfile / listPersons", () => {

@@ -28,8 +28,13 @@ export function findIdentity(db: DB, provider: IdentityProvider, subject: string
   return first<IdentityRow>(db, `SELECT * FROM identities WHERE provider = ? AND subject = ?`, provider, subject);
 }
 
-export function findPersonByEmail(db: DB, email: string): Promise<PersonRow | null> {
-  return first<PersonRow>(db, `SELECT * FROM persons WHERE lower(email) = lower(?)`, email);
+/** Ambiguous (more than one person sharing the address, e.g. via the admin-edit path
+ *  bypassing the self-service guard) returns null rather than guessing — every caller
+ *  (the sign-in fork's branch 2, the email-guard checks) falls through to its next
+ *  step (invite/denied, or "address free") instead of auto-linking the wrong person. */
+export async function findPersonByEmail(db: DB, email: string): Promise<PersonRow | null> {
+  const rows = await all<PersonRow>(db, `SELECT * FROM persons WHERE lower(email) = lower(?) LIMIT 2`, email);
+  return rows.length === 1 ? rows[0] : null;
 }
 
 export async function handleAvailable(db: DB, handle: string): Promise<{ available: boolean; reason?: HandleProblem }> {

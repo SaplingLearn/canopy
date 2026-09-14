@@ -165,7 +165,7 @@ export function personPicker(groupId: string, people: Person[], pick: string | n
   return `<div style="display:flex;flex-direction:column;gap:5px">${rows}</div>
     ${confirmNote}
     ${primaryBtn(confirming && pick !== null ? "Confirm mapping" : "Map login", pick !== null, "identityMap", groupId, "width:100%;margin-top:10px")}
-    <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">All captured activity, past and future, flows into their view.</div>`;
+    <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">All captured activity, past and future, flows into their view. Mapping also lets that GitHub account sign in as this person.</div>`;
 }
 
 /** One unmatched login: the activity sample that identifies the person, paired with the picker. */

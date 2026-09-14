@@ -9,6 +9,13 @@ export interface ProviderProfile { provider: IdentityProvider; subject: string; 
 // to hand to it) and is present once a sealed cookie has been opened by openOnboard.
 export interface OnboardPayload extends ProviderProfile { suggested_handle: string; invite_email: string | null; exp?: number }
 export const ONBOARD_COOKIE = "onboard";
+// The sealed cookie deliberately carries the provider gate result (GitHub org
+// membership checked in /auth/callback; the Google admin invite checked in
+// completeSignIn) forward for its lifetime below. It is NOT re-checked for GitHub —
+// the callback's org-membership check is the only gate a GitHub onboard gets. The
+// invite IS re-checked for Google, in POST /auth/onboard, because an invite can be
+// revoked within the 10-minute window and the person row must not be created for a
+// no-longer-invited address.
 export const ONBOARD_TTL_S = 600;
 
 export type ForkResult = { kind: "session"; handle: string } | { kind: "onboard"; payload: OnboardPayload } | { kind: "denied" };
@@ -50,6 +57,13 @@ export async function openOnboard(sealed: string, secret: string, now: () => num
  * The fork both callbacks run after their provider gate passed.
  * 1 known identity → session. 2 verified email matches a person → link + session.
  * 3 live invite (Google) / org member (GitHub) → onboard. 4 otherwise → denied.
+ *
+ * Contract: `p.email` MUST already be provider-verified by the CALLER before this
+ * runs (GitHub: the primary + verified address from `GET /user/emails`; Google:
+ * the ID token claim with `email_verified === true`) or passed as `null` — branch 2
+ * links a new identity onto whichever person owns that address, so an unverified
+ * email here would let an attacker hijack someone else's account by claiming their
+ * address.
  */
 export async function completeSignIn(db: DB, p: ProviderProfile): Promise<ForkResult> {
   const known = await findIdentity(db, p.provider, p.subject);

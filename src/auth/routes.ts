@@ -51,7 +51,12 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
       const me = await resolveSessionPrincipal(c);
       if (!me) return c.json({ error: "unauthorized" }, 403);
       const r = await linkSignIn(c.env.DB, me.handle, profile);
-      return c.redirect(r === "linked" ? "/#settings" : "/?link=conflict#settings", 302);
+      if (r === "linked") return c.redirect("/#settings", 302);
+      // Two distinct conflict states: the identity belongs to someone else (real
+      // conflict) vs. the caller already has an identity of this provider (their own,
+      // just re-clicked) — surfaced as separate query values so the client can flash
+      // the right message instead of one generic "conflict".
+      return c.redirect(r === "provider_already_linked" ? "/?link=already#settings" : "/?link=conflict#settings", 302);
     }
     const r: ForkResult = await completeSignIn(c.env.DB, profile);
     if (r.kind === "denied") return c.redirect(denied, 302);

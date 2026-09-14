@@ -52,4 +52,15 @@ describe("GitHub callback — link mode", () => {
     const idAfterB = await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE subject = 'newdev'`);
     expect(idAfterB?.person).toBe("linker-a"); // unchanged
   });
+
+  it("linking a second GitHub identity when the caller already has one redirects ?link=already (distinct from belongs_to_other)", async () => {
+    const app = mountAuth(fakeGithubFetch({ login: "someone-else", name: "Someone Else", avatar_url: null }));
+    const session = await cookieFor("linker-c"); // default github:true → already has a github identity (subject = handle)
+    const res = await app.request("/auth/callback?code=c&state=st1", {
+      headers: { cookie: `${await txCookie("link", "st1")}; ${session}` },
+    }, env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?link=already#settings");
+    expect(await first(env.DB, `SELECT 1 AS x FROM identities WHERE subject = 'someone-else'`)).toBeNull();
+  });
 });

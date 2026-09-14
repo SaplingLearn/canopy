@@ -201,6 +201,10 @@ export async function map_identity(
   }
   const person = await getPerson(db, personHandle);
   if (!person) throw new Error(`no such person: ${personHandle}`);
+  // Pre-check so a stale/unresolved task pointing at an already-linked login fails
+  // with a clean message instead of surfacing the identities PK's raw SQL error.
+  const existing = await findIdentity(db, "github", login);
+  if (existing) throw new Error(`login already linked to ${existing.person}`);
   await linkIdentity(db, { provider: "github", subject: login, label: login, person: person.handle, linkedBy: by });
   await run(
     db,

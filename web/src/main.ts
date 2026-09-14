@@ -19,7 +19,7 @@ import {
 } from "./api";
 import { decodeReviewId } from "./triage-map";
 import { initialOnboard } from "./people";
-import type { PersonColor } from "@shared/rows";
+import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -527,12 +527,17 @@ function unauth(e: unknown): void {
   if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); }
 }
 
-// A conflicting Link redirects the whole page to /?link=conflict#settings (see
-// src/auth: linking a provider identity already claimed by someone else). Surface
+// A Link attempt that didn't cleanly attach redirects the whole page to
+// /?link=conflict#settings or /?link=already#settings (see src/auth: the identity
+// belongs to someone else, vs. the caller already has one of this provider). Surface
 // it once, then strip the query param so a reload/re-visit doesn't repeat it.
 function checkLinkConflict(): void {
-  if (new URLSearchParams(location.search).get("link") === "conflict") {
+  const link = new URLSearchParams(location.search).get("link");
+  if (link === "conflict") {
     flash("That account is already linked to someone else");
+    history.replaceState(null, "", "/#settings");
+  } else if (link === "already") {
+    flash("You already have that sign-in method linked");
     history.replaceState(null, "", "/#settings");
   }
 }
@@ -672,7 +677,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "onbName": state.onboard.name = value ?? ""; rerender(); return;
-    case "onbColor": if (arg) state.onboard.color = arg as PersonColor; break;
+    case "onbColor": if (arg && (PERSON_COLORS as readonly string[]).includes(arg)) state.onboard.color = arg as PersonColor; break;
     case "onbSubmit": {
       const o = state.onboard;
       if (o.check !== "available" || o.submitting) return;
@@ -1043,7 +1048,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "setMyColor": {
-      if (!arg || !state.me) return;
+      if (!arg || !state.me || !(PERSON_COLORS as readonly string[]).includes(arg)) return;
       const color = arg as PersonColor;
       updateMe({ color }).then(() => { if (state.me) state.me.color = color; loadPersons(); rerender(); })
         .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't save color"); });

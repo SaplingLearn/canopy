@@ -171,7 +171,10 @@ export function identityFromTask(t: IdentityTask): IdentityGroup {
   };
 }
 
-/** The person picker's source: the persons directory. The picked value is the handle. */
+/** The person picker's source: the persons directory. The picked value is the handle.
+ *  Mapping is an identity link, not just an attribution label: it also lets that
+ *  GitHub account sign in as the picked person (personPicker's helper text below
+ *  the button says so). */
 export function peopleFromPersons(persons: PersonSummary[]): Person[] {
   return persons.map((p) => ({ id: p.handle, name: p.name ?? p.handle, initials: initialsOfName(p.name, p.handle), color: p.color, avatar_url: p.avatar_url }));
 }

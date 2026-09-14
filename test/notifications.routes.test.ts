@@ -96,6 +96,22 @@ describe("GET/PUT /api/notifications/prefs", () => {
     await app.request("/api/notifications/prefs", json("PUT", { email: "x@example.com", user_id: "u2" }, cookie), env);
     expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u2'`))!.email).toBe("other@example.com");
   });
+
+  it("PUT refuses an address already on another person's row (409, nothing written), but allows re-saving your own", async () => {
+    const cookie1 = await cookieFor("u1", "taken@example.com");
+    const cookie2 = await cookieFor("u2", "u2@example.com");
+    let res = await app.request("/api/notifications/prefs", json("PUT", { email: "taken@example.com" }, cookie2), env);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "email_in_use" });
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u2'`))!.email).toBe("u2@example.com");
+    // Case-insensitive match too.
+    res = await app.request("/api/notifications/prefs", json("PUT", { email: "TAKEN@example.com" }, cookie2), env);
+    expect(res.status).toBe(409);
+    // The owner can re-save their own address.
+    res = await app.request("/api/notifications/prefs", json("PUT", { email: "taken@example.com" }, cookie1), env);
+    expect(res.status).toBe(200);
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!.email).toBe("taken@example.com");
+  });
 });
 
 describe("admin routes: policy, settings, outbox, user email", () => {
@@ -163,6 +179,16 @@ describe("admin routes: policy, settings, outbox, user email", () => {
     expect(res.status).toBe(200);
     expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!.email).toBe("fixed@example.com");
     expect((await app.request("/api/notifications/persons/ghost", json("PUT", { email: "x@example.com" }, cookie), env)).status).toBe(404);
+  });
+
+  it("PUT persons/:handle refuses an address already on a different person's row (409, nothing written)", async () => {
+    const cookie = await cookieFor("admin-user");
+    await cookieFor("u1", "taken3@example.com");
+    await cookieFor("u2", null);
+    const res = await app.request("/api/notifications/persons/u2", json("PUT", { email: "taken3@example.com" }, cookie), env);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "email_in_use" });
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u2'`))!.email).toBeNull();
   });
 });
 

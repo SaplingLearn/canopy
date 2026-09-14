@@ -1110,7 +1110,6 @@ const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);te
 export function profileSection(s: AppState): string {
   const me = s.me;
   const handle = me?.handle ?? "";
-  const has = (p: "github" | "google") => me?.identities.some((i) => i.provider === p) ?? false;
   const last = (me?.identities.length ?? 0) <= 1;
   const provRow = (p: "github" | "google", label: string) => {
     const id = me?.identities.find((i) => i.provider === p);

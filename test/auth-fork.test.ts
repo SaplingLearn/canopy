@@ -57,6 +57,12 @@ describe("completeSignIn — the fork", () => {
     await seedPerson("priya", { email: null });
     expect(await completeSignIn(env.DB, google({ email: null }))).toEqual({ kind: "denied" });
   });
+  it("5. two persons already share an email (ambiguous) → denied, never auto-linked to either", async () => {
+    await seedPerson("priya", { email: "priya.n@gmail.com" });
+    await seedPerson("priyb", { email: "priya.n@gmail.com", github: false });
+    expect(await completeSignIn(env.DB, google())).toEqual({ kind: "denied" });
+    expect(await first(env.DB, `SELECT 1 AS x FROM identities WHERE subject = 'g-123'`)).toBeNull();
+  });
 });
 
 describe("linkSignIn", () => {

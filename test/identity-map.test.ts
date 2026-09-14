@@ -43,4 +43,16 @@ describe("map_identity — the identities table's human write path", () => {
     await ingestEvent(env.DB, ev({ subject_login: "AndresL230", semantic_key: "gh:pr:8:merged", ref_number: 8 }), "github-webhook");
     expect(await first(env.DB, `SELECT 1 AS x FROM identity_tasks WHERE login = 'AndresL230'`)).toBeNull();
   });
+  it("a login already linked (stale/unresolved task pointing at an existing identity) rejects cleanly, no second row", async () => {
+    await seedPerson("casey", { github: false });
+    await env.DB.prepare(
+      `INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('github', 'mystery-dev', 'mystery-dev', 'casey', '2026-01-01T00:00:00Z', 'seed')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO identity_tasks (login, first_seen, status) VALUES ('mystery-dev', '2026-01-01T00:00:00Z', 'pending')`
+    ).run();
+    await seedPerson("other");
+    await expect(map_identity(env.DB, "mystery-dev", "other", "andres")).rejects.toThrow("login already linked to casey");
+    expect((await all(env.DB, `SELECT * FROM identities WHERE subject = 'mystery-dev'`)).length).toBe(1);
+  });
 });

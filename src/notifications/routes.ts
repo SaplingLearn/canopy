@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Cadence, RunCadence, type PrefsKindView, type PrefsView, type PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationPolicyRow, NotificationSettingsRow, PersonRow } from "@shared/rows";
 import { type AppEnv, isAdmin } from "../auth/principal";
+import { findPersonByEmail } from "../auth/persons";
 import { type DB, all, first, run, nowIso } from "../db";
 import { REGISTRY, getKind } from "./registry";
 import { loadPolicies, loadPrefs, resolveWith } from "./resolve";
@@ -68,6 +69,17 @@ notificationsApp.put("/prefs", async (c) => {
       return c.json({ error: `cadence ${cadence} not allowed for ${kindId} (allowed: ${kind.allowedCadences.join(", ")})` }, 400);
     }
     writes.push({ kind: kindId, cadence });
+  }
+
+  // persons.email is an auth matcher (the sign-in fork's branch 2 links on it) but has
+  // no DB-level UNIQUE constraint — guard it here instead: a non-empty address already
+  // on someone ELSE's row is refused (409) before anything is written. Re-saving your
+  // own address is fine (case-insensitive compare against the caller's own handle).
+  if (body.email) {
+    const existing = await findPersonByEmail(c.env.DB, body.email);
+    if (existing && existing.handle.toLowerCase() !== login.toLowerCase()) {
+      return c.json({ error: "email_in_use" }, 409);
+    }
   }
 
   const now = nowIso();
@@ -176,9 +188,18 @@ const PersonEmailWrite = z.object({ email: Email });
 notificationsApp.put("/persons/:handle", async (c) => {
   const parsed = PersonEmailWrite.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
-  const res = await run(c.env.DB, `UPDATE persons SET email = ? WHERE handle = ?`, parsed.data.email === "" ? null : parsed.data.email, c.req.param("handle"));
+  const handle = c.req.param("handle");
+  // Same email-matcher guard as self-service PUT /prefs: a different handle already
+  // holding this address is refused, never silently reassigned.
+  if (parsed.data.email) {
+    const existing = await findPersonByEmail(c.env.DB, parsed.data.email);
+    if (existing && existing.handle.toLowerCase() !== handle.toLowerCase()) {
+      return c.json({ error: "email_in_use" }, 409);
+    }
+  }
+  const res = await run(c.env.DB, `UPDATE persons SET email = ? WHERE handle = ?`, parsed.data.email === "" ? null : parsed.data.email, handle);
   if ((res.meta.changes ?? 0) === 0) return c.json({ error: "no such person" }, 404);
-  return c.json({ ok: true, handle: c.req.param("handle"), email: parsed.data.email || null });
+  return c.json({ ok: true, handle, email: parsed.data.email || null });
 });
 
 // ── admin: preview + test send ───────────────────────────────────────────────
