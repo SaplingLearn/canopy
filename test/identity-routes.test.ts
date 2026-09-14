@@ -144,4 +144,15 @@ describe("POST /identity-tasks/:login/map", () => {
     expect(after.previousActivity[0].title).toBe("Second PR"); // newest first
     expect(after.degraded).toBe(false);
   });
+
+  it("map to an existing handle links the login; unknown person → 400", async () => {
+    const cookie = await authedCookie("andres");
+    await seedPerson("casey");
+    await ingestEvent(env.DB, prEvent(1, "mystery-dev", "t", "2026-07-01T00:00:00Z"), "github-webhook");
+    const ok = await post("/identity-tasks/mystery-dev/map", cookie, { person: "casey" });
+    expect(ok.status).toBe(200);
+    expect((await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE subject = 'mystery-dev'`))?.person).toBe("casey");
+    await ingestEvent(env.DB, prEvent(2, "other-dev", "t", "2026-07-01T00:00:00Z"), "github-webhook");
+    expect((await post("/identity-tasks/other-dev/map", cookie, { person: "ghost" })).status).toBe(400);
+  });
 });

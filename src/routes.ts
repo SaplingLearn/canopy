@@ -15,6 +15,7 @@ import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
 import { createInvite, revokeInvite, listInvites } from "./auth/invites";
+import { listPersons } from "./auth/persons";
 import { sendInvite } from "./notifications/invite";
 import type { InviteRow } from "@shared/rows";
 
@@ -214,6 +215,9 @@ app.post("/identity-tasks/:login/map", async (c) => {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
 });
+
+// Person directory (session-gated): the avatar-chip source for every screen and the identity picker.
+app.get("/persons", async (c) => c.json({ persons: await listPersons(c.env.DB) }));
 
 // ── Maintenance › People: the invite list (admin, session-cookie only, NEVER MCP) ──
 const InviteWrite = z.object({ email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "invalid email"), name: z.string().trim().max(120).optional() });
