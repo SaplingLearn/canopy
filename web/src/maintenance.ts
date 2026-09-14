@@ -7,7 +7,10 @@
 // interactions dispatch via data-act / data-arg handled in main.ts. No fetching,
 // no inline data.
 
-import { esc, attr, avatarCircle, pickRow, primaryBtn, MONO_LABEL } from "./ui";
+import { esc, attr, pickRow, primaryBtn, MONO_LABEL, relTime } from "./ui";
+import { personChip } from "./people";
+import type { PersonColor, InviteRow } from "@shared/rows";
+import type { PersonSummary } from "./api";
 
 // ── prop shapes (loose for now — reshaped at wire time) ──────────────────────
 export interface UnplacedItem {
@@ -42,7 +45,7 @@ export interface IdentityGroup {
   sample: ActivitySample[];
 }
 
-export interface Person { id: string; name: string; initials: string }
+export interface Person { id: string; name: string; initials: string; color?: PersonColor; avatar_url?: string | null }
 
 export interface MaintenanceProps {
   unplaced: UnplacedItem[];
@@ -148,7 +151,7 @@ export function unplacedRow(u: UnplacedItem, open: boolean, assign: AssignOption
 export function personPicker(groupId: string, people: Person[], pick: string | null, confirming: boolean): string {
   const rows = people
     .map((p) => pickRow(
-      `${avatarCircle(p.initials, 22)}<div style="font-size:13px;font-weight:500">${esc(p.name)}</div>`,
+      `${personChip(p.color ? { handle: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url } : null, 20, p.id)}<div style="font-size:13px;font-weight:500">${esc(p.name)}</div>`,
       pick === p.id,
       "identityPick",
       `${groupId}:${p.id}`,
@@ -188,6 +191,33 @@ export function identityCard(g: IdentityGroup, people: Person[], pick: string | 
       </div>
     </div>
   </div>`;
+}
+
+// ── PEOPLE ───────────────────────────────────────────────────────────────────
+export interface PeopleProps { persons: PersonSummary[]; invites: InviteRow[]; inviteDraft: string; loading: boolean; error: string | null }
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function peopleSection(p: PeopleProps): string {
+  const pending = p.invites.filter((i) => !i.accepted_by && !i.revoked_at);
+  const count = `${p.persons.length} ${p.persons.length === 1 ? "person" : "people"}${pending.length ? ` · ${pending.length} invite${pending.length === 1 ? "" : "s"} pending` : ""}`;
+  const canSend = EMAIL_RE.test(p.inviteDraft.trim());
+  const row = "display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px";
+  const idc = (t: string, tone: "normal" | "pending" = "normal") => `<span style="font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px ${tone === "pending" ? "dashed" : "solid"} var(--border-strong);color:${tone === "pending" ? "var(--amber)" : "var(--fg-55)"};white-space:nowrap">${esc(t)}</span>`;
+  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${esc(x.name ?? x.handle)}</b><span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">@${esc(x.handle)}</span></div><span></span></div>`).join("");
+  const invitesHtml = pending.map((i) => {
+    const status = i.email_error ? `<span style="color:var(--red)">email failed: ${esc(i.email_error)}</span>` : i.email_sent_at ? "email sent" : "email not sent";
+    return `<div style="${row}"><div style="width:28px;height:28px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--fg-40);font-size:12px">?</div>
+      <div style="line-height:1.25"><b style="font-size:13.5px;font-weight:500;color:var(--fg-55);display:block">${esc(i.email)}</b><span style="font-size:11.5px;color:var(--fg-40)">invited ${esc(relTime(i.invited_at))} by ${esc(i.invited_by)} · ${status}</span></div>
+      <div style="display:flex;gap:6px">${idc("pending", "pending")}<button data-act="inviteResend" data-arg="${attr(i.email)}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border)">Resend</button><button data-act="inviteRevoke" data-arg="${attr(i.email)}" class="cnpy-rejectbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border)">Revoke</button></div></div>`;
+  }).join("");
+  return `${maintSectionHeader("PEOPLE", "invite a Google address; everyone with a handle is listed here", count, false)}
+    <div style="display:flex;gap:8px;margin:14px 0 12px">
+      <input data-act="inviteDraft" data-field="inviteDraft" value="${attr(p.inviteDraft)}" placeholder="Invite by Google email…" aria-label="Invite by Google email" class="cnpy-input" style="flex:1;height:38px;padding:0 12px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;outline:none" />
+      <button data-act="inviteSend" class="cnpy-accentbtn" ${canSend ? "" : "disabled "}style="padding:0 14px;height:38px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600;${canSend ? "" : "opacity:.45;cursor:default"}">Invite</button>
+    </div>
+    ${p.error ? `<div style="font-size:12.5px;color:var(--red);margin-bottom:8px">${esc(p.error)}</div>` : ""}
+    ${p.loading && p.persons.length === 0 ? `<div style="font-size:12.5px;color:var(--fg-40);padding:10px 0">Loading people…</div>` : persons}
+    ${invitesHtml}`;
 }
 
 // ── composed surface ─────────────────────────────────────────────────────────

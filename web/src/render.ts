@@ -4,9 +4,9 @@
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
 import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
-import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
-import { initialOnboard, onboardView, type OnboardState } from "./people";
+import { initialOnboard, onboardView, personChip, swatches, type OnboardState } from "./people";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
@@ -14,10 +14,10 @@ import { extractOutline } from "./outline";
 import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
-import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow } from "./api";
-import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromLogins } from "./triage-map";
+import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
 // A docs "space" is a free-form top-level grouping shown as a toggle (e.g.
 // Technical | Product). Values come from the data, not a fixed union.
@@ -184,7 +184,7 @@ export function maintenanceProps(s: AppState): MaintenanceProps {
     assignSpace: s.assignSpace,
     assignTags: s.assignTags,
     identity: s.identityTasks.data.map(identityFromTask),
-    people: peopleFromLogins([...s.feedAuthors, ...(s.me ? [s.me.handle] : [])]),
+    people: peopleFromPersons(s.persons.data),
     mapPicks: s.mapPicks,
     mapConfirm: s.mapConfirm,
   };
@@ -206,6 +206,12 @@ function resolved(s: AppState): "dark" | "light" | "midnight" {
 // Defense-in-depth: external URLs from captured payloads must be http(s) — never javascript:/data:/etc.
 const safeUrl = (u: string): string => (/^https?:\/\//i.test(u) ? u : "#");
 const AVATAR = "border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center";
+/** Look up a captured login (feed author, doc updated_by) in the persons directory
+ *  for its color/avatar — case-insensitive, since GitHub logins are case-preserving
+ *  but case-insensitive for matching. null when unmapped (personChip falls back to initials). */
+function personFor(s: AppState, handle: string): PersonSummary | null {
+  return s.persons.data.find((p) => p.handle.toLowerCase() === handle.toLowerCase()) ?? null;
+}
 
 function logo(size: number): string {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" style="flex:none"><rect x="2" y="4.5" width="20" height="3.4" rx="1.7" fill="var(--accent)"></rect><rect x="5" y="10.3" width="14" height="3.4" rx="1.7" fill="currentColor"></rect><rect x="8" y="16.1" width="8" height="3.4" rx="1.7" fill="currentColor" opacity="0.5"></rect></svg>`;
@@ -412,7 +418,7 @@ function sidebar(s: AppState): string {
     ${expanded ? `<div style="padding:0 21px 8px;font-size:11px;color:var(--fg-40)">agents produce · humans confirm</div>` : ""}
     <div style="padding:10px;border-top:1px solid var(--border)">
       <button data-act="goSettings" title="Settings" class="cnpy-chip">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="30" height="30" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(s.me?.handle ?? "?"))}</div>
+        ${personChip(s.me ? { handle: s.me.handle, name: s.displayName || s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null, 30, s.me?.handle ?? "?")}
         ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.handle ?? ""))}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.me?.handle ?? "")}</div></div>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>` : ""}
       </button>
@@ -521,7 +527,7 @@ function feedView(s: AppState): string {
       : "";
     return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px">
       <div style="display:flex;align-items:flex-start;gap:12px">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${esc(initialsOf(e.author))}</div>
+        <div style="margin-top:1px">${personChip(personFor(s, e.author), 30, e.author)}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${linkifyRefs(e.summary)}</div>
           ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${esc(e.body)}</div>` : ""}
@@ -661,7 +667,7 @@ export function docReaderHtml(s: AppState): string {
     <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:15px;padding-bottom:17px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
-        <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(doc.updated_by ?? ""))}</div>
+        ${personChip(doc.updated_by ? personFor(s, doc.updated_by) : null, 24, doc.updated_by ?? "?")}
         <span>Updated by <b style="color:var(--fg-70);font-weight:500">${esc(doc.updated_by ?? "")}</b> · ${relTime(doc.updated_at)}</span>
       </div>
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
@@ -1097,6 +1103,43 @@ function guideView(s: AppState): string {
 }
 
 // ── settings ─────────────────────────────────────────────────────────────────
+const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
+
+/** Settings › Profile: display name, color, and per-provider sign-in (link/unlink).
+ *  Pure over AppState — exported for the pure render test. */
+export function profileSection(s: AppState): string {
+  const me = s.me;
+  const handle = me?.handle ?? "";
+  const has = (p: "github" | "google") => me?.identities.some((i) => i.provider === p) ?? false;
+  const last = (me?.identities.length ?? 0) <= 1;
+  const provRow = (p: "github" | "google", label: string) => {
+    const id = me?.identities.find((i) => i.provider === p);
+    const btn = id
+      ? `<button data-act="unlinkProvider" data-arg="${p}" class="cnpy-ghostbtn" ${last ? "disabled " : ""}style="font-size:12px;color:var(--fg-40);padding:4px 10px;border-radius:6px;border:1px solid var(--border);${last ? "opacity:.45;cursor:default" : ""}">Unlink</button>`
+      : `<button data-act="linkProvider" data-arg="${p}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-70);padding:4px 10px;border-radius:6px;border:1px solid var(--border-strong)">Link ${label}</button>`;
+    return `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${label}</b><span style="font-family:var(--mono);font-size:11.5px;color:${id ? "var(--fg-55)" : "var(--fg-40)"}">${id ? esc(id.label) : "not linked"}</span></div>${btn}</div>`;
+  };
+  return `<section style="margin-bottom:14px">
+    <div style="${SECTION_LABEL}">Profile</div>
+    <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
+        ${personChip(me ? { handle, name: s.displayName || me.name, color: me.color, avatar_url: me.avatar_url } : null, 56, handle || "?")}
+        <div style="flex:1;min-width:0">
+          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Display name</label>
+          <div style="display:flex;gap:10px">
+            <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
+            <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
+          </div>
+          <div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle <span style="font-family:var(--mono);color:var(--fg-55)">@${esc(handle)}</span> · can't be changed</div>
+        </div>
+      </div>
+      <div style="margin-bottom:22px"><label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Your color</label>${swatches("setMyColor", me?.color ?? "stone", true)}</div>
+      <div style="${SECTION_LABEL};margin-bottom:10px">Sign-in methods <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--fg-40)">· at least one stays linked</span></div>
+      ${provRow("github", "GitHub")}${provRow("google", "Google")}
+    </div>
+  </section>`;
+}
+
 function settingsView(s: AppState): string {
   const themeCards = [
     ["light", "Light"],
@@ -1136,31 +1179,12 @@ function settingsView(s: AppState): string {
   const tokenListBody = `<div style="display:flex;align-items:center;gap:11px;padding:15px 18px;font-size:12.5px;color:var(--fg-40)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;opacity:.8"><circle cx="8" cy="15" r="4.5"></circle><path d="m11.2 11.8 7.3-7.3M16 5l3 3M18.5 7.5l-2.2 2.2"></path></svg><span>Tokens are shown once when minted and never stored in readable form, so they can't be listed here.</span></div>`;
 
   const meLogin = s.me?.handle ?? "";
-  const meName = s.me?.name ?? meLogin;
   const meOrg = s.me?.org ?? "";
 
+  const hasProvider = (p: "github" | "google") => s.me?.identities.some((i) => i.provider === p) ?? false;
+
   return `<div style="max-width:680px;margin:0 auto;padding:32px 24px 100px">
-    <section style="margin-bottom:14px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Profile</div>
-      <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
-        <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
-          <div style="width:56px;height:56px;border-radius:50%;${AVATAR};font-size:18px;font-weight:600;flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="56" height="56" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(meLogin || "?"))}</div>
-          <div>
-            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">${esc(meName)}</span><span style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">GITHUB</span></div>
-            <div style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono);margin-top:3px">${esc(meLogin)}</div>
-            <div style="font-size:11.5px;color:var(--fg-40);margin-top:5px">Avatar is imported from GitHub and can't be changed here.</div>
-          </div>
-        </div>
-        <div>
-          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Display name</label>
-          <div style="display:flex;gap:10px">
-            <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
-            <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
-          </div>
-          <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">This is what shows in the feed and on your identity chip. Defaults to your GitHub login.</div>
-        </div>
-      </div>
-    </section>
+    ${profileSection(s)}
 
     <section style="margin-bottom:14px;margin-top:34px">
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Appearance</div>
@@ -1193,7 +1217,7 @@ function settingsView(s: AppState): string {
           <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="38" height="38" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(meLogin || "?"))}</div>
           <div>
             <div style="font-size:13.5px;font-weight:500">${esc(meLogin)}</div>
-            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Member of <b>${esc(meOrg)}</b></div>
+            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>${hasProvider("github") ? `Member of <b>${esc(meOrg)}</b>` : "Signed in with Google"}</div>
           </div>
         </div>
         <button data-act="signOut" class="cnpy-signout" style="padding:9px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13px;font-weight:500">Sign out</button>
@@ -1372,6 +1396,15 @@ function maintenanceScreen(s: AppState): string {
   const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
     : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
     : "";
+  const people = s.me?.admin
+    ? peopleSection({
+        persons: s.persons.data,
+        invites: s.invites.data,
+        inviteDraft: s.inviteDraft,
+        loading: s.persons.status === "loading" || s.invites.status === "loading",
+        error: s.invites.error ?? null,
+      })
+    : "";
   const notif = s.me?.admin
     ? notificationsMaintenanceSections({
         policy: s.notifPolicy.data,
@@ -1381,11 +1414,11 @@ function maintenanceScreen(s: AppState): string {
         fromDraft: s.fromDraft,
       })
     : "";
-  // The maintenance view closes its own container; the notification sections
-  // share that column, so they are spliced in before its closing tag.
+  // The maintenance view closes its own container; People + the notification
+  // sections share that column, so they are spliced in before its closing tag.
   const base = maintenanceView(maintenanceProps(s));
   const cut = base.lastIndexOf("</div>");
-  return `${hint}${base.slice(0, cut)}${notif}${base.slice(cut)}`;
+  return `${hint}${base.slice(0, cut)}${people}${notif}${base.slice(cut)}`;
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
