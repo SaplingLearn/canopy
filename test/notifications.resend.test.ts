@@ -9,6 +9,7 @@ import { all, run } from "../src/db";
 import { ingestAdrDraft } from "../src/consumer";
 import { resendDelivery, deliveryFor } from "../src/notifications/resend";
 import { runDigest } from "../src/notifications/run";
+import { seedPerson } from "./helpers/persons";
 import type { OutboundMessage } from "../src/notifications/delivery";
 import type { NotificationOutboxRow } from "@shared/rows";
 import type { Env } from "../src/env";
@@ -62,7 +63,10 @@ describe("deliveryFor — env gate, default local", () => {
     expect(() => deliveryFor({ ...base, NOTIFICATIONS_MODE: "resend", RESEND_API_KEY: undefined }, { from: "a@b" })).toThrow(/RESEND_API_KEY/);
   });
   it("in resend mode a run stores the provider id and writes no local body", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('AndresL230', 'a', 'x', 'andres@example.com')`);
+    // AndresL230 is pre-seeded by the global reset (email NULL) — seedPerson is
+    // INSERT OR IGNORE, so force the email with an explicit UPDATE too.
+    await seedPerson("AndresL230", { name: "a", email: "andres@example.com" });
+    await run(env.DB, `UPDATE persons SET email = 'andres@example.com' WHERE handle = 'AndresL230'`);
     await ingestAdrDraft(env.DB, { title: "Pending decision", context: "c", decision: "d", rationale: "r", confidence: "high" }, "agent");
     const { fetchImpl } = capture(200, { id: "em_run" });
     const delivery = deliveryFor({ ...base, NOTIFICATIONS_MODE: "resend", RESEND_API_KEY: "re_x" }, { from: "Canopy <c@mail.example>", fetchImpl });

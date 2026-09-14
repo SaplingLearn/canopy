@@ -42,7 +42,7 @@ export default {
       if (request.method !== "POST") return Response.redirect(new URL("/#unsubscribe", url).toString(), 302);
       const login = await verifyUnsubscribeToken(url.pathname.slice(3), env.COOKIE_SECRET);
       if (!login) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
-      await run(env.DB, `UPDATE users SET email_unsubscribed = 1 WHERE github_login = ?`, login);
+      await run(env.DB, `UPDATE persons SET email_unsubscribed = 1 WHERE handle = ?`, login);
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return app.fetch(request, env, ctx);

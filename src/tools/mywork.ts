@@ -1,10 +1,12 @@
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import type { EventRow, PersonRow } from "@shared/rows";
 import { type DB, all, first } from "../db";
+import { getPerson, listIdentities } from "../auth/persons";
 
 // My Work: a D1-only projection over captured GitHub events (Task 6). No live
 // GitHub reads — this is deliberately the "what already happened + what's
-// open" view built entirely from `events` (+ `pr_summaries`, `issue_summaries`, `people`).
+// open" view built entirely from `events` (+ `pr_summaries`, `issue_summaries`,
+// `persons`/`identities`).
 
 // The projection is structurally the /me/dashboard DTO; the shared type is the
 // single source of truth so the Worker and web build agree on the shape.
@@ -23,6 +25,12 @@ function priorityOf(title: string): "P0" | "P1" | "P2" | "P3" | null {
 }
 function stripPriority(title: string): string {
   return title.replace(/^\s*\[P[0-3]\]\s*/, "").trim();
+}
+
+/** The person a GitHub login belongs to, via the github identity row; null when unmapped. */
+export async function resolvePersonForLogin(db: DB, login: string): Promise<PersonRow | null> {
+  return first<PersonRow>(db,
+    `SELECT p.* FROM identities i JOIN persons p ON p.handle = i.person WHERE i.provider = 'github' AND i.subject = ?`, login);
 }
 
 export interface PrEventJoinRow extends EventRow {
@@ -76,12 +84,13 @@ export function toMyWorkPr(row: PrEventJoinRow): MyWorkPr {
 }
 
 /**
- * Every open issue assigned to `login`, newest-updated first, uncapped. Built
- * from the latest snapshot per ref_number across ALL issue events (not scoped
- * to a known set of numbers — every issue ever captured is a todo candidate).
+ * Every open issue assigned to any of `logins`, newest-updated first, uncapped.
+ * Built from the latest snapshot per ref_number across ALL issue events (not
+ * scoped to a known set of numbers — every issue ever captured is a todo
+ * candidate). `logins` is every GitHub identity of one person (usually one).
  * The dashboard caps this; the email renderer lists it whole.
  */
-export async function listOpenAssignedIssues(db: DB, login: string): Promise<MyWorkTodo[]> {
+export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<MyWorkTodo[]> {
   const issueRows = await all<IssueSnapshotRow>(
     db,
     `SELECT e.ref_number, e.raw, s.summary AS summary, s.title AS s_title, s.next_step AS s_next_step
@@ -98,7 +107,7 @@ export async function listOpenAssignedIssues(db: DB, login: string): Promise<MyW
     const parsed = JSON.parse(row.raw) as RawIssue;
     const issue = parsed.issue;
     if (issue.state !== "open") continue;
-    if (!issue.assignees.some((a) => a.login === login)) continue;
+    if (!issue.assignees.some((a) => logins.includes(a.login))) continue;
     const m = issue.milestone;
     todo.push({
       number: issue.number,
@@ -121,16 +130,22 @@ export async function listOpenAssignedIssues(db: DB, login: string): Promise<MyW
 }
 
 /**
- * The personal My Work projection for `login`. person comes from `people`
- * (the admin-maintained identity map); an unmapped login is a captured-but-
+ * The personal My Work projection for `handle` (a person handle). person comes
+ * from `persons` directly; an unmapped/unknown handle is a captured-but-
  * unsurfaced no-op (empty projection, degraded:false — the events themselves
- * are never dropped). Any D1 failure degrades the whole projection to empty
- * with degraded:true rather than throwing.
+ * are never dropped). The GitHub logins to query are every `identities` row
+ * for the person — usually just the one login that IS their handle. A person
+ * with no GitHub identity at all (e.g. Google-only) surfaces with empty lists.
+ * Any D1 failure degrades the whole projection to empty with degraded:true
+ * rather than throwing.
  */
-export async function getMyWork(db: DB, login: string): Promise<MyWork> {
+export async function getMyWork(db: DB, handle: string): Promise<MyWork> {
   try {
-    const personRow = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
-    if (!personRow) return EMPTY(false);
+    const me = await getPerson(db, handle);
+    if (!me) return EMPTY(false);
+
+    const logins = (await listIdentities(db, handle)).filter((i) => i.provider === "github").map((i) => i.subject);
+    if (logins.length === 0) return { person: me.name ?? me.handle, previousActivity: [], todo: [], degraded: false };
 
     const prRows = await all<PrEventJoinRow>(
       db,
@@ -138,15 +153,15 @@ export async function getMyWork(db: DB, login: string): Promise<MyWork> {
          FROM events e
          LEFT JOIN pr_summaries s ON s.semantic_key = e.semantic_key
         WHERE e.event_type IN ('pr_merged', 'pr_closed')
-          AND e.subject_login = ?
+          AND e.subject_login IN (${logins.map(() => "?").join(",")})
         ORDER BY e.occurred_at DESC, e.id DESC
         LIMIT ${PR_LIMIT}`,
-      login
+      ...logins
     );
     const previousActivity: MyWorkPr[] = prRows.map(toMyWorkPr);
-    const todo = await listOpenAssignedIssues(db, login);
+    const todo = await listOpenAssignedIssues(db, logins);
 
-    return { person: personRow.person, previousActivity, todo: todo.slice(0, TODO_LIMIT), degraded: false };
+    return { person: me.name ?? me.handle, previousActivity, todo: todo.slice(0, TODO_LIMIT), degraded: false };
   } catch {
     return EMPTY(true);
   }

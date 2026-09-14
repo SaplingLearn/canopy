@@ -193,8 +193,8 @@ app.post("/needs-triage/:id/assign", async (c) => {
 // pulled from `events` at read time — activity is never copied onto the task.
 app.get("/identity-tasks", async (c) => c.json({ tasks: await list_identity_tasks(c.env.DB) }));
 
-// Human placement (session-gated): map a login to a person. The `people`
-// table's ONLY runtime write (a direct authored write, not a gate re-run),
+// Human placement (session-gated): link a login to an EXISTING person (by
+// handle) as a github identity (a direct authored write, not a gate re-run),
 // then a soft resolve of the task. My Work picks the mapping up at read time,
 // so every already-captured event for this login surfaces with no backfill.
 app.post("/identity-tasks/:login/map", async (c) => {
