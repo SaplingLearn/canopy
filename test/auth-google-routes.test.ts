@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { buildAuthApp } from "../src/auth/routes";
 import { sessionGate, type AppEnv } from "../src/auth/principal";
 import { hmacSeal } from "../src/auth/crypto";
-import { first } from "../src/db";
+import { first, all } from "../src/db";
 import { createInvite } from "../src/auth/invites";
 import { seedPerson, cookieFor } from "./helpers/persons";
 import { makeGoogleKeys, signIdToken, googleFetch, CLAIMS } from "./helpers/google";
@@ -88,5 +88,11 @@ describe("GET /auth/google/callback", () => {
     const other = await cookieFor("Jose-Gael-Cruz-Lopez");
     const res2 = await app.request("/auth/google/callback?code=c&state=st", { headers: { cookie: `${other}; ${await tx("link")}` } }, env);
     expect(res2.headers.get("location")).toBe("/?link=conflict#settings");
+    // The conflict must be a no-op: still exactly one identities row for this
+    // Google subject, still owned by AndresL230, and Jose gets no google identity.
+    const rows = await all<IdentityRow>(env.DB, `SELECT * FROM identities WHERE provider = 'google' AND subject = 'g-123'`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].person).toBe("AndresL230");
+    expect(await first(env.DB, `SELECT 1 AS x FROM identities WHERE provider = 'google' AND person = 'Jose-Gael-Cruz-Lopez'`)).toBeNull();
   });
 });
