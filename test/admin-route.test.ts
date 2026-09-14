@@ -1,17 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
-import { createSession } from "../src/auth/session";
-import { hmacSeal } from "../src/auth/crypto";
-
-// Seal a session cookie for `login` (mirrors test/dashboard-route.test.ts:9-15).
-async function cookieFor(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
-  const { id } = await createSession(env.DB, login);
-  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
-}
+import { cookieFor } from "./helpers/persons";
 
 describe("POST /admin/backfill (session- + admin-gated)", () => {
   it("401s without a session", async () => {

@@ -7,7 +7,7 @@ import { env } from "cloudflare:test";
 import { all, first, run } from "../src/db";
 import { REGISTRY } from "../src/notifications/registry";
 import { seedNotificationPolicy } from "../src/notifications/policy";
-import type { NotificationPolicyRow, NotificationSettingsRow, UserRow } from "@shared/rows";
+import type { NotificationPolicyRow, NotificationSettingsRow, PersonRow } from "@shared/rows";
 
 async function columns(table: string): Promise<string[]> {
   const rows = await all<{ name: string }>(env.DB, `PRAGMA table_info(${table})`);
@@ -24,11 +24,11 @@ describe("migration 0021 — notification tables", () => {
     ]);
   });
 
-  it("adds email and email_unsubscribed (default 0) to the teammate record", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at) VALUES ('u1', 'U', '2026-09-11T00:00:00Z')`);
-    const u = await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`);
-    expect(u!.email).toBeNull();
-    expect(u!.email_unsubscribed).toBe(0);
+  it("the teammate record (persons, 0023) carries email and email_unsubscribed (default 0)", async () => {
+    await run(env.DB, `INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('u1', 'U', 'stone', '2026-09-11T00:00:00Z', '2026-09-11T00:00:00Z')`);
+    const p = await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`);
+    expect(p!.email).toBeNull();
+    expect(p!.email_unsubscribed).toBe(0);
   });
 
   it("rejects an off-vocabulary cadence on prefs and policy, and an unknown outbox status", async () => {

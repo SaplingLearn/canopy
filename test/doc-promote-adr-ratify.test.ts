@@ -4,8 +4,7 @@ import { propose_doc_update, stage_adr, promote_doc, ratify_adr } from "../src/t
 import { first } from "../src/db";
 import type { DocRow, DocVersionRow, AdrRow } from "@shared/rows";
 import { app } from "../src/routes";
-import { createSession } from "../src/auth/session";
-import { hmacSeal } from "../src/auth/crypto";
+import { cookieFor } from "./helpers/persons";
 
 const base = { slug: "architecture", section: "reference", title: "Architecture", confidence: "high" as const };
 
@@ -61,18 +60,10 @@ describe("ratify_adr", () => {
   });
 });
 
-async function authedCookie(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
-  const { id } = await createSession(env.DB, login);
-  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
-}
-
 describe("promote/ratify HTTP routes (session-gated)", () => {
   it("POST /doc/:slug/promote promotes for an authenticated principal", async () => {
     await propose_doc_update(env.DB, { ...base, body: "# v1", change_summary: "first" }, "andres");
-    const cookie = await authedCookie("andres");
+    const cookie = await cookieFor("andres");
     const res = await app.request(
       "/doc/architecture/promote",
       { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ version: 1 }) },
@@ -93,7 +84,7 @@ describe("promote/ratify HTTP routes (session-gated)", () => {
 
   it("POST /adr/:id/ratify ratifies for an authenticated principal", async () => {
     const id = await stage_adr(env.DB, { title: "t", context: "c", decision: "d", rationale: "r", confidence: "high" }, "andres");
-    const cookie = await authedCookie("andres");
+    const cookie = await cookieFor("andres");
     const res = await app.request(`/adr/${id}/ratify`, { method: "POST", headers: { cookie } }, env);
     expect(res.status).toBe(200);
     const adr = await first<AdrRow>(env.DB, `SELECT * FROM adrs WHERE id = ?`, id);

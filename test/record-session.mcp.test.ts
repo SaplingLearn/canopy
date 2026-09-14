@@ -9,13 +9,13 @@ import { mintToken } from "../src/auth/tokens";
 import { all } from "../src/db";
 import type { FeedRow, DocVersionRow, AdrRow } from "@shared/rows";
 import type { IngestResult } from "../src/consumer";
+import { seedPerson } from "./helpers/persons";
 
 type Env = import("../src/env").Env;
 
 // Seed a member and mint a REAL bearer token for them (hash stored, raw returned once).
 async function seedUserWithBearer(login: string): Promise<string> {
-  await env.DB.prepare(`INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`)
-    .bind(login, login, "2026-01-01T00:00:00Z").run();
+  await seedPerson(login);
   const { raw } = await mintToken(env.DB, login);
   return raw;
 }
@@ -78,7 +78,7 @@ describe("record_session MCP tool — the real bearer-only agent write path", ()
   it("a bearer principal (no cookie) writes a whole session through record_session and gets counts back", async () => {
     const raw = await seedUserWithBearer("bearer-agent");
     const principal = await bearerPrincipal(raw); // real auth resolution, no cookie
-    expect(principal).toEqual({ login: "bearer-agent" });
+    expect(principal).toEqual({ handle: "bearer-agent" });
 
     const { result, isError } = await callRecordSession(principal, fullPayload("record-session-mcp-S1"));
     expect(isError).toBeFalsy();
