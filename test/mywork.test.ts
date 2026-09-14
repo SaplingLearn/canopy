@@ -207,6 +207,15 @@ describe("getMyWork — unmapped login", () => {
   });
 });
 
+describe("getMyWork — person with no GitHub identity (e.g. Google-only)", () => {
+  it("returns an empty, non-degraded projection carrying the person's name, not null", async () => {
+    await seedPerson("priya", { name: "Priya", github: false });
+
+    const work = await getMyWork(env.DB, "priya");
+    expect(work).toEqual({ person: "Priya", previousActivity: [], todo: [], degraded: false });
+  });
+});
+
 describe("getMyWork — todo carries the issue summary", () => {
   it("joins issue_summaries by issue number; null until a summary exists", async () => {
     const assigned = issueEvent({

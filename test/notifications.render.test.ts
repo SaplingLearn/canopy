@@ -11,6 +11,7 @@ import { storePrSummary, type Summarizer, type PrSummary } from "../src/tools/su
 import { write_plan } from "../src/tools/plan";
 import { upsertProgress } from "../src/tools/progress";
 import { getKind } from "../src/notifications/registry";
+import { seedPerson } from "./helpers/persons";
 import type { Window } from "@shared/notifications";
 import type { CapturedEvent } from "@shared/contract";
 
@@ -23,7 +24,7 @@ const WINDOW: Window = {
 };
 const IN_WINDOW = "2026-09-11T03:00:00Z"; // GitHub-style (no millis) — must still fall inside
 const BEFORE_WINDOW = "2026-09-09T03:00:00Z";
-const LOGIN = "AndresL230"; // mapped in `people` by the harness reset
+const LOGIN = "AndresL230"; // resolved via persons + identities by the harness reset
 
 function prEvent(number: number, login: string, occurredAt: string, title = `PR ${number}`): CapturedEvent {
   return {
@@ -124,6 +125,16 @@ describe("my_work renderer", () => {
   it("returns null for a login not in the identity map, matching My Work", async () => {
     await ingestEvent(env.DB, prEvent(40, "unmapped-login", IN_WINDOW), "github-webhook");
     expect(await kind().render(env.DB, "unmapped-login", WINDOW)).toBeNull();
+  });
+
+  it("returns null for a person with no GitHub identity (Google-only), even though the window has other people's content", async () => {
+    await seedPerson("priya", { name: "Priya", github: false, email: "priya@example.com" });
+    // Content exists in the window, but it belongs to someone else — proves the
+    // identity gate short-circuits render before any event is queried for
+    // priya, not merely that there happens to be nothing to show.
+    await ingestEvent(env.DB, prEvent(41, LOGIN, IN_WINDOW), "github-webhook");
+    await ingestEvent(env.DB, issueEvent(42, LOGIN, "open", IN_WINDOW), "github-webhook");
+    expect(await kind().render(env.DB, "priya", WINDOW)).toBeNull();
   });
 });
 
