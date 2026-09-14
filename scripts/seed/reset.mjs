@@ -19,8 +19,6 @@ export const RESET_STATEMENTS = [
   "DELETE FROM adrs",
   "DELETE FROM needs_triage",
   "DELETE FROM identity_tasks",
-  "DELETE FROM people",
-  "INSERT INTO people (login, person) VALUES ('AndresL230', 'Andres'), ('Jose-Gael-Cruz-Lopez', 'Jose'), ('lpcooper-arch', 'Luke'), ('Darkest-Teddy', 'Jack')",
   "DELETE FROM notification_outbox_bodies",
   "DELETE FROM notification_outbox",
   "DELETE FROM notification_prefs",
@@ -28,5 +26,10 @@ export const RESET_STATEMENTS = [
   "UPDATE notification_settings SET send_hour = 8, timezone = 'America/New_York', from_address = 'Canopy <canopy@canopy.saplinglearn.com>' WHERE id = 1",
   "DELETE FROM sessions",
   "DELETE FROM mcp_tokens",
-  "DELETE FROM users",
+  "DELETE FROM identities",
+  "DELETE FROM invites",
+  "DELETE FROM persons",
+  // The dev/test person seed (was the `people` map): four persons, each with their github identity.
+  "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('AndresL230', 'Andres', 'moss', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('Jose-Gael-Cruz-Lopez', 'Jose', 'sky', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('lpcooper-arch', 'Luke', 'fern', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('Darkest-Teddy', 'Jack', 'plum', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+  "INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('github', 'AndresL230', 'AndresL230', 'AndresL230', '2026-01-01T00:00:00Z', 'seed'), ('github', 'Jose-Gael-Cruz-Lopez', 'Jose-Gael-Cruz-Lopez', 'Jose-Gael-Cruz-Lopez', '2026-01-01T00:00:00Z', 'seed'), ('github', 'lpcooper-arch', 'lpcooper-arch', 'lpcooper-arch', '2026-01-01T00:00:00Z', 'seed'), ('github', 'Darkest-Teddy', 'Darkest-Teddy', 'Darkest-Teddy', '2026-01-01T00:00:00Z', 'seed')",
 ];
