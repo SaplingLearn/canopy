@@ -8,12 +8,13 @@ describe("GET /auth/me", () => {
     const cookie = await cookieFor("andres");
     const res = await app.request("/auth/me", { headers: { cookie } }, env);
     expect(res.status).toBe(200);
-    const body = await res.json() as { handle: string; name: string | null; avatar_url: string | null; color: string; org: string };
+    const body = await res.json() as { handle: string; name: string | null; avatar_url: string | null; color: string; org: string; identities: { provider: string; label: string; linked_at: string }[] };
     expect(body.handle).toBe("andres");
     expect(body.name).toBe("andres");
     expect(body.avatar_url).toBeNull();
     expect(body.org).toBe("SaplingLearn");
     expect(body.color).toBe("stone");
+    expect(body.identities).toEqual([{ provider: "github", label: "andres", linked_at: "2026-01-01T00:00:00Z" }]);
   });
 
   it("returns avatar_url when stored", async () => {
