@@ -21,7 +21,7 @@ async function callTool(
 ): Promise<{ text: string; isError?: boolean }> {
   const server = buildCanopyMcpServer(
     env as unknown as import("../src/env").Env,
-    { login: AUTHOR }
+    { handle: AUTHOR }
   );
   const client = new Client({ name: "test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

@@ -105,7 +105,7 @@ app.post("/doc/:slug/promote", async (c) => {
   const version = Number(body?.version);
   if (!Number.isInteger(version)) return c.json({ error: "version (integer) required" }, 400);
   try {
-    const res = await promote_doc(c.env.DB, c.req.param("slug"), version, c.get("principal").login);
+    const res = await promote_doc(c.env.DB, c.req.param("slug"), version, c.get("principal").handle);
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -157,7 +157,7 @@ app.post("/needs-triage/:id/discard", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
-    const res = await resolve_triage(c.env.DB, id, c.get("principal").login, "discarded");
+    const res = await resolve_triage(c.env.DB, id, c.get("principal").handle, "discarded");
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -174,7 +174,7 @@ app.post("/needs-triage/:id/assign", async (c) => {
     type?: AssignType; section?: string; space?: "technical" | "product"; tags?: string[];
   } | null;
   try {
-    const res = await assign_triage(c.env.DB, id, c.get("principal").login, {
+    const res = await assign_triage(c.env.DB, id, c.get("principal").handle, {
       type: body?.type,
       section: body?.section,
       space: body?.space,
@@ -202,7 +202,7 @@ app.post("/identity-tasks/:login/map", async (c) => {
   const person = typeof body?.person === "string" ? body.person.trim() : "";
   if (!person) return c.json({ error: "person (non-empty string) required" }, 400);
   try {
-    const res = await map_identity(c.env.DB, c.req.param("login"), person, c.get("principal").login);
+    const res = await map_identity(c.env.DB, c.req.param("login"), person, c.get("principal").handle);
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -217,7 +217,7 @@ app.get("/roadmap", async (c) => c.json(await get_plan(c.env.DB)));
 // previous activity (summarized merged/closed PRs) + open assigned issues,
 // projected entirely from captured GitHub events. Stored nowhere; never 500s.
 app.get("/me/dashboard", async (c) => {
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   try {
     const data: DashboardData = await getMyWork(c.env.DB, login);
     return c.json(data);
@@ -233,7 +233,7 @@ app.post("/milestone-proposals/:id/promote", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
-    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").login);
+    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").handle);
     return c.json({ ok: true, milestone });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -258,7 +258,7 @@ app.post("/milestone-proposals/:id/reject", async (c) => {
 // trigger it — but every captured event still funnels through the ingestEvent
 // gate fn. Non-admins get 403; a missing service token/repo → 503 with the error.
 app.post("/admin/backfill", async (c) => {
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);

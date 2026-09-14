@@ -4,10 +4,9 @@ import type { AppEnv } from "./principal";
 import { isAdmin } from "./principal";
 import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, getPrimaryEmail, isActiveOrgMember } from "./github";
-import { recordLogin } from "./users";
+import { recordSignIn, getPerson } from "./persons";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
-import { first } from "../db";
 import { SAPLING_ORG } from "./github";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
@@ -62,7 +61,7 @@ authApp.get("/callback", async (c) => {
   if (!(await isActiveOrgMember(token))) return c.redirect("/?denied=1", 302);
 
   // Seed the notification address on first login only (never overwrites).
-  await recordLogin(c.env.DB, ghUser, await getPrimaryEmail(token));
+  await recordSignIn(c.env.DB, ghUser.login, { name: ghUser.name, avatar_url: ghUser.avatar_url, email: await getPrimaryEmail(token) });
 
   const { id } = await createSession(c.env.DB, ghUser.login);
   await setSessionCookie(c, id, c.env.COOKIE_SECRET);
@@ -71,9 +70,9 @@ authApp.get("/callback", async (c) => {
 
 // GATED (by sessionGate in src/routes.ts): return the principal's profile.
 authApp.get("/me", async (c) => {
-  const login = c.get("principal").login;
-  const row = await first<{ name: string | null; avatar_url: string | null }>(c.env.DB, `SELECT name, avatar_url FROM users WHERE github_login = ?`, login);
-  return c.json({ login, name: row?.name ?? null, avatar_url: row?.avatar_url ?? null, org: SAPLING_ORG, admin: isAdmin(c.env, login) });
+  const handle = c.get("principal").handle;
+  const row = await getPerson(c.env.DB, handle);
+  return c.json({ handle, name: row?.name ?? null, avatar_url: row?.avatar_url ?? null, color: row?.color ?? "stone", org: SAPLING_ORG, admin: isAdmin(c.env, handle) });
 });
 
 // GATED (by sessionGate in src/routes.ts): revoke this session.
@@ -86,6 +85,6 @@ authApp.post("/logout", async (c) => {
 
 // GATED: mint a personal MCP bearer token; the raw token is shown ONCE.
 authApp.post("/mcp-token", async (c) => {
-  const { raw } = await mintToken(c.env.DB, c.get("principal").login);
+  const { raw } = await mintToken(c.env.DB, c.get("principal").handle);
   return c.json({ token: raw });
 });

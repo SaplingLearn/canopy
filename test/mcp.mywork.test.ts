@@ -58,7 +58,7 @@ function issueEvent(number: number, login: string): CapturedEvent {
 }
 
 async function callTool(login: string, name: string, args: Record<string, unknown>): Promise<{ text: string; isError?: boolean }> {
-  const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { login });
+  const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { handle: login });
   const client = new Client({ name: "test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

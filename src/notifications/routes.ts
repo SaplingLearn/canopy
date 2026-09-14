@@ -51,10 +51,10 @@ const PrefsWrite = z.object({
   prefs: z.record(z.string(), Cadence.nullable()).optional(), // null = reset (delete the row)
 });
 
-notificationsApp.get("/prefs", async (c) => c.json(await prefsView(c.env.DB, c.get("principal").login)));
+notificationsApp.get("/prefs", async (c) => c.json(await prefsView(c.env.DB, c.get("principal").handle)));
 
 notificationsApp.put("/prefs", async (c) => {
-  const login = c.get("principal").login; // the ONLY row a user can touch
+  const login = c.get("principal").handle; // the ONLY row a user can touch
   const parsed = PrefsWrite.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   const body = parsed.data;
@@ -82,12 +82,12 @@ notificationsApp.put("/prefs", async (c) => {
 
 // ── admin: policy / settings / outbox / teammate address ─────────────────────
 
-const adminOnly = notificationsApp.use("/policy", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/settings", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/outbox", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/users/*", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/preview", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/test-send", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
+const adminOnly = notificationsApp.use("/policy", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/settings", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/outbox", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/users/*", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/preview", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/test-send", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
 
 
 async function policyView(db: DB): Promise<{ kinds: PolicyKindView[] }> {
@@ -128,7 +128,7 @@ notificationsApp.put("/policy", async (c) => {
     default_cadence ?? existing?.default_cadence ?? kind.defaultCadence,
     enabled === undefined ? (existing?.enabled ?? 1) : enabled ? 1 : 0,
     nowIso(),
-    c.get("principal").login
+    c.get("principal").handle
   );
   return c.json(await policyView(c.env.DB));
 });
@@ -194,7 +194,7 @@ async function enabledKinds(db: DB) {
 notificationsApp.get("/preview", async (c) => {
   const cadence = RunCadence.safeParse(c.req.query("cadence") ?? "daily");
   if (!cadence.success) return c.json({ error: "cadence must be daily or weekly" }, 400);
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   const settings = await loadSettings(c.env.DB);
   const window = computeWindow(cadence.data, new Date(), settings.timezone);
   const kinds = await enabledKinds(c.env.DB);
@@ -222,7 +222,7 @@ const TestSend = z.object({ cadence: RunCadence, sample: z.boolean().optional() 
 notificationsApp.post("/test-send", async (c) => {
   const parsed = TestSend.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   const user = await first<UserRow>(c.env.DB, `SELECT * FROM users WHERE github_login = ?`, login);
   if (!user?.email) return c.json({ error: "no email on file for you — set one in Settings first" }, 400);
 

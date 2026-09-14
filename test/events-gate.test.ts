@@ -39,7 +39,7 @@ describe("ingestEvent gate arm", () => {
     const parsed = IngestPayload.parse(structuredClone(payloadWithEvents));
     expect(parsed).not.toHaveProperty("events");
 
-    const result = await consume(env.DB, parsed, { login: "AndresL230" });
+    const result = await consume(env.DB, parsed, { handle: "AndresL230" });
     expect(result).not.toHaveProperty("events");
     expect((await all<EventRow>(env.DB, `SELECT * FROM events`)).length).toBe(0);
   });

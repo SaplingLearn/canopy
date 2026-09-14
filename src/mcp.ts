@@ -91,7 +91,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
         ingestFeedEntry(
           env.DB,
           feedEntryFromMcpArgs({ summary, body, tags, prs, commits, issues }),
-          principal.login,
+          principal.handle,
           ephemeralLedger()
         )
       )
@@ -111,7 +111,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
       base_version: z.number().optional(),
       force: z.boolean().optional(),
     },
-    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.login, ephemeralLedger()))
+    async (proposal) => runTool(() => ingestDocProposal(env.DB, proposal, principal.handle, ephemeralLedger()))
   );
 
   server.tool(
@@ -125,7 +125,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "get_my_work",
     "Your personal My Work projection from captured GitHub events (no live GitHub): previous-activity (your 5 most recent summarized merged/closed PRs) and to-do (your open assigned issues). Read-only.",
     {},
-    async () => runTool(() => getMyWork(env.DB, principal.login))
+    async () => runTool(() => getMyWork(env.DB, principal.handle))
   );
 
   server.tool(
@@ -150,7 +150,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   // (conditional registration means it's absent from tools/list and calling it by
   // name errors tool-not-found, since a fresh server is built per request with the
   // principal already in scope).
-  if (isAdmin(env, principal.login)) {
+  if (isAdmin(env, principal.handle)) {
     server.tool(
       "update_plan",
       "ADMIN plan write: replace the roadmap narrative and create/update milestones (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Milestones not listed are untouched. Use via the update-plan skill.",
@@ -166,7 +166,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
           github_ref: z.union([z.number(), z.array(z.number())]).nullable().optional(),
         })).default([]),
       },
-      async (input) => runTool(() => write_plan(env.DB, input as PlanWrite, principal.login))
+      async (input) => runTool(() => write_plan(env.DB, input as PlanWrite, principal.handle))
     );
   }
 
