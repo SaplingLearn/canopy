@@ -6,6 +6,7 @@ import type { AppEnv } from "./principal";
 import { isAdmin, resolveSessionPrincipal } from "./principal";
 import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, getPrimaryEmail, isActiveOrgMember, SAPLING_ORG } from "./github";
+import { buildGoogleAuthorizeUrl, exchangeGoogleCode, verifyGoogleIdToken } from "./google";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
 import { getPerson, listIdentities, findIdentity, handleAvailable, createPerson, HandleTakenError, linkIdentity, unlinkIdentity, updateProfile } from "./persons";
@@ -93,7 +94,28 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     return finish(c, tx.mode, profile, "/?denied=1");
   });
 
-  // ── Google (Task 7 fills these two in) ──
+  // ── Google ──
+  authApp.get("/google/login", async (c) => {
+    if (!c.env.GOOGLE_CLIENT_ID) return c.json({ error: "google sign-in is not configured" }, 503);
+    const mode: TxMode = c.req.query("link") === "1" && (await resolveSessionPrincipal(c)) ? "link" : "signin";
+    const { state, challenge } = await beginTx(c, mode);
+    return c.redirect(buildGoogleAuthorizeUrl({
+      clientId: c.env.GOOGLE_CLIENT_ID, redirectUri: callbackUrl(c.req.url, "google"), state, challenge,
+      loginHint: c.req.query("login_hint") || undefined, prompt: c.req.query("prompt") || undefined,
+    }), 302);
+  });
+  authApp.get("/google/callback", async (c) => {
+    const tx = await openTx(c);
+    if ("error" in tx) return tx.error;
+    const idToken = await exchangeGoogleCode({ env: c.env, code: tx.code, redirectUri: callbackUrl(c.req.url, "google"), verifier: tx.verifier, fetchImpl: f });
+    if (!idToken) return c.json({ error: "exchange_failed" }, 401);
+    const g = await verifyGoogleIdToken(idToken, { clientId: c.env.GOOGLE_CLIENT_ID ?? "", fetchImpl: f, now: deps.now });
+    if (!g) return c.json({ error: "identity_failed" }, 401);
+    const denied = `/?denied=invite&email=${encodeURIComponent(g.email)}`;
+    if (!g.email_verified) return c.redirect(denied, 302);
+    const profile: ProviderProfile = { provider: "google", subject: g.sub, label: g.email, email: g.email, name: g.name, avatar_url: g.picture };
+    return finish(c, tx.mode, profile, denied);
+  });
 
   // ── Onboarding (gated by the onboard cookie, not the session) ──
   async function onboardPayload(c: Context<AppEnv>) {
