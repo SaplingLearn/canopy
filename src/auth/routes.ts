@@ -8,7 +8,8 @@ import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, getPrimaryEmail, isActiveOrgMember, SAPLING_ORG } from "./github";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
-import { getPerson, listIdentities, handleAvailable, createPerson, HandleTakenError, linkIdentity, unlinkIdentity, updateProfile } from "./persons";
+import { getPerson, listIdentities, findIdentity, handleAvailable, createPerson, HandleTakenError, linkIdentity, unlinkIdentity, updateProfile } from "./persons";
+import { run } from "../db";
 import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, ONBOARD_TTL_S, type ProviderProfile, type ForkResult } from "./onboard";
 import { findLiveInvite, acceptInvite } from "./invites";
 
@@ -114,6 +115,14 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     if (!p) return c.json({ error: "unauthorized" }, 401);
     const parsed = OnboardWrite.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+    // A sealed onboard cookie is a capability, but it can be replayed (a second POST
+    // with the same cookie and a different handle) — once the (provider, subject) pair
+    // is actually linked, treat the cookie as spent instead of racing createPerson into
+    // an orphan persons row that linkIdentity's PK conflict would otherwise leave behind.
+    if (await findIdentity(c.env.DB, p.provider, p.subject)) {
+      deleteCookie(c, ONBOARD_COOKIE, { path: "/" });
+      return c.json({ error: "already_onboarded" }, 409);
+    }
     const avail = await handleAvailable(c.env.DB, parsed.data.handle);
     if (!avail.available) return c.json({ error: avail.reason === "taken" ? "handle_taken" : `handle_${avail.reason}` }, avail.reason === "taken" ? 409 : 400);
     if (p.invite_email && !(await findLiveInvite(c.env.DB, p.invite_email))) return c.json({ error: "invite_revoked" }, 403);
@@ -123,7 +132,16 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
       if (e instanceof HandleTakenError) return c.json({ error: "handle_taken" }, 409);
       throw e;
     }
-    await linkIdentity(c.env.DB, { provider: p.provider, subject: p.subject, label: p.label, person: parsed.data.handle, linkedBy: parsed.data.handle });
+    try {
+      await linkIdentity(c.env.DB, { provider: p.provider, subject: p.subject, label: p.label, person: parsed.data.handle, linkedBy: parsed.data.handle });
+    } catch (e) {
+      // The findIdentity pre-check above closes the common replay window, but a second
+      // request racing between that check and this insert can still collide on the
+      // (provider, subject) primary key — never leave a persons row with no identity.
+      await run(c.env.DB, `DELETE FROM persons WHERE handle = ?`, parsed.data.handle);
+      if (/UNIQUE constraint failed/i.test(e instanceof Error ? e.message : String(e))) return c.json({ error: "already_onboarded" }, 409);
+      throw e;
+    }
     if (p.invite_email) await acceptInvite(c.env.DB, p.invite_email, parsed.data.handle);
     deleteCookie(c, ONBOARD_COOKIE, { path: "/" });
     const { id } = await createSession(c.env.DB, parsed.data.handle);

@@ -1,11 +1,13 @@
 import type { DB } from "../db";
 import type { IdentityProvider } from "@shared/rows";
 import { hmacSeal, hmacUnseal, b64uEncode, b64uDecode } from "./crypto";
-import { findIdentity, findPersonByEmail, linkIdentity, recordSignIn, isValidHandle } from "./persons";
+import { findIdentity, findPersonByEmail, linkIdentity, listIdentities, recordSignIn, isValidHandle } from "./persons";
 import { findLiveInvite } from "./invites";
 
 export interface ProviderProfile { provider: IdentityProvider; subject: string; label: string; email: string | null; name: string | null; avatar_url: string | null }
-export interface OnboardPayload extends ProviderProfile { suggested_handle: string; invite_email: string | null }
+// `exp` is added internally by sealOnboard (not supplied by callers building a payload
+// to hand to it) and is present once a sealed cookie has been opened by openOnboard.
+export interface OnboardPayload extends ProviderProfile { suggested_handle: string; invite_email: string | null; exp?: number }
 export const ONBOARD_COOKIE = "onboard";
 export const ONBOARD_TTL_S = 600;
 
@@ -19,13 +21,29 @@ export function suggestHandle(p: ProviderProfile): string {
   return isValidHandle(h) ? h : "me-" + Math.random().toString(36).slice(2, 8);
 }
 
+/** Seals the payload as a capability token good for ONBOARD_TTL_S from now — the expiry
+ *  is computed here (not trusted from a caller-supplied field) so a sealed cookie can
+ *  never outlive its TTL no matter what the payload passed in looks like. */
 export function sealOnboard(payload: OnboardPayload, secret: string): Promise<string> {
-  return hmacSeal(b64uEncode(JSON.stringify(payload)), `onboard:${secret}`);
+  const withExp: OnboardPayload = { ...payload, exp: Date.now() + ONBOARD_TTL_S * 1000 };
+  return hmacSeal(b64uEncode(JSON.stringify(withExp)), `onboard:${secret}`);
 }
-export async function openOnboard(sealed: string, secret: string): Promise<OnboardPayload | null> {
+
+/** Verifies the HMAC, then the shape (provider/subject/label) and expiry — a sealed
+ *  onboard token is a capability, so a malformed or expired one must be null exactly
+ *  like a tampered one, not merely "trust whatever JSON was inside". `now` is
+ *  injectable for tests. */
+export async function openOnboard(sealed: string, secret: string, now: () => number = Date.now): Promise<OnboardPayload | null> {
   const v = await hmacUnseal(sealed, `onboard:${secret}`);
   if (!v) return null;
-  try { return JSON.parse(b64uDecode(v)) as OnboardPayload; } catch { return null; }
+  let obj: unknown;
+  try { obj = JSON.parse(b64uDecode(v)); } catch { return null; }
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  if (typeof o.exp !== "number" || o.exp <= now()) return null;
+  if (o.provider !== "github" && o.provider !== "google") return null;
+  if (typeof o.subject !== "string" || typeof o.label !== "string") return null;
+  return o as unknown as OnboardPayload;
 }
 
 /**
@@ -54,10 +72,17 @@ export async function completeSignIn(db: DB, p: ProviderProfile): Promise<ForkRe
   return { kind: "denied" };
 }
 
-/** Link mode: attach the identity to the signed-in person unless someone else already owns it. */
-export async function linkSignIn(db: DB, handle: string, p: ProviderProfile): Promise<"linked" | "belongs_to_other"> {
+/**
+ * Link mode: attach the identity to the signed-in person unless someone else already
+ * owns it, or the signed-in person already has an identity of this provider (a person
+ * gets at most one github + one google identity — `unlinkIdentity` couldn't otherwise
+ * disambiguate which one to remove).
+ */
+export async function linkSignIn(db: DB, handle: string, p: ProviderProfile): Promise<"linked" | "belongs_to_other" | "provider_already_linked"> {
   const known = await findIdentity(db, p.provider, p.subject);
   if (known) return known.person.toLowerCase() === handle.toLowerCase() ? "linked" : "belongs_to_other";
+  const mine = await listIdentities(db, handle);
+  if (mine.some((i) => i.provider === p.provider)) return "provider_already_linked";
   await linkIdentity(db, { provider: p.provider, subject: p.subject, label: p.label, person: handle, linkedBy: handle });
   return "linked";
 }

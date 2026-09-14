@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
-import { first } from "../src/db";
+import { first, all } from "../src/db";
 import { sealOnboard, ONBOARD_COOKIE, type OnboardPayload } from "../src/auth/onboard";
 import { createInvite } from "../src/auth/invites";
 import type { PersonRow, IdentityRow, InviteRow } from "@shared/rows";
@@ -65,5 +65,16 @@ describe("POST /auth/onboard", () => {
   it("a GitHub payload (invite_email null) onboards without any invite", async () => {
     const res = await post("/auth/onboard", await cookie({ ...PAYLOAD, provider: "github", subject: "newdev", label: "newdev", invite_email: null }), { handle: "newdev", name: "New", color: "sky" });
     expect(res.status).toBe(200);
+  });
+  it("replaying a GitHub onboard cookie after success is refused; no orphan persons row", async () => {
+    const ghCookie = await cookie({ ...PAYLOAD, provider: "github", subject: "replay-dev", label: "replay-dev", invite_email: null });
+    const first1 = await post("/auth/onboard", ghCookie, { handle: "replaydev", name: "Replay", color: "sky" });
+    expect(first1.status).toBe(200);
+    const replay = await post("/auth/onboard", ghCookie, { handle: "replaydev2", name: "Replay2", color: "sky" });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toEqual({ error: "already_onboarded" });
+    expect(replay.headers.get("set-cookie") ?? "").toMatch(/onboard=;|onboard=.*Max-Age=0/);
+    const rows = await all<PersonRow>(env.DB, `SELECT handle FROM persons WHERE handle IN ('replaydev','replaydev2')`);
+    expect(rows).toEqual([{ handle: "replaydev" }]);
   });
 });

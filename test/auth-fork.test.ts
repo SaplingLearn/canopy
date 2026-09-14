@@ -4,6 +4,7 @@ import { first } from "../src/db";
 import { completeSignIn, linkSignIn, suggestHandle, sealOnboard, openOnboard, type ProviderProfile } from "../src/auth/onboard";
 import { createInvite } from "../src/auth/invites";
 import { seedPerson } from "./helpers/persons";
+import { hmacSeal, b64uEncode } from "../src/auth/crypto";
 import type { IdentityRow, PersonRow } from "@shared/rows";
 
 const google = (over: Partial<ProviderProfile> = {}): ProviderProfile => ({
@@ -65,6 +66,14 @@ describe("linkSignIn", () => {
     expect((await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE subject = 'g-123'`))?.person).toBe("AndresL230");
     expect(await linkSignIn(env.DB, "priya", google())).toBe("belongs_to_other");
   });
+  it("refuses a second identity of the same provider on one person, without writing", async () => {
+    // AndresL230 already has a github identity (seeded). A second github identity for
+    // the same person must be refused — one identity per provider, or unlinkIdentity
+    // could never disambiguate which to remove.
+    const r = await linkSignIn(env.DB, "AndresL230", github({ subject: "alt-login", label: "alt-login" }));
+    expect(r).toBe("provider_already_linked");
+    expect(await first(env.DB, `SELECT 1 AS x FROM identities WHERE subject = 'alt-login'`)).toBeNull();
+  });
 });
 
 describe("suggestHandle + onboard cookie", () => {
@@ -73,11 +82,28 @@ describe("suggestHandle + onboard cookie", () => {
     expect(suggestHandle(google({ email: "Priya.N+x@gmail.com" }))).toBe("priya-n-x");
     expect(suggestHandle(google({ email: "9lives@x.io" }))).toBe("p-9lives");
   });
-  it("seal/open round-trips and rejects tampering", async () => {
+  it("seal/open round-trips (plus a server-added exp) and rejects tampering", async () => {
     const payload = { ...google(), suggested_handle: "priya-n", invite_email: "priya.n@gmail.com" };
     const sealed = await sealOnboard(payload, "s");
-    expect(await openOnboard(sealed, "s")).toEqual(payload);
+    expect(await openOnboard(sealed, "s")).toMatchObject(payload);
     expect(await openOnboard(sealed + "x", "s")).toBeNull();
     expect(await openOnboard(sealed, "other")).toBeNull();
+  });
+  it("rejects an expired payload", async () => {
+    const payload = { ...google(), suggested_handle: "priya-n", invite_email: "priya.n@gmail.com" };
+    const sealed = await sealOnboard(payload, "s");
+    // 10 minutes + 1s past the seal time — past ONBOARD_TTL_S.
+    expect(await openOnboard(sealed, "s", () => Date.now() + 601_000)).toBeNull();
+  });
+  it("rejects a sealed value with no exp field (bypassing sealOnboard)", async () => {
+    const payload = { ...google(), suggested_handle: "priya-n", invite_email: "priya.n@gmail.com" };
+    const rawSealed = await hmacSeal(b64uEncode(JSON.stringify(payload)), "onboard:s");
+    expect(await openOnboard(rawSealed, "s")).toBeNull();
+  });
+  it("rejects a shape that isn't a valid provider profile", async () => {
+    const badProvider = await hmacSeal(b64uEncode(JSON.stringify({ ...google(), provider: "facebook", exp: Date.now() + 600_000 })), "onboard:s");
+    expect(await openOnboard(badProvider, "s")).toBeNull();
+    const badSubject = await hmacSeal(b64uEncode(JSON.stringify({ ...google(), subject: 123, exp: Date.now() + 600_000 })), "onboard:s");
+    expect(await openOnboard(badSubject, "s")).toBeNull();
   });
 });
