@@ -11,11 +11,14 @@ import {
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
+  getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
+import { initialOnboard } from "./people";
+import type { PersonColor } from "@shared/rows";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -593,6 +596,21 @@ function fallbackCopy(text: string): boolean {
   }
 }
 
+// ── onboarding: debounced, sequence-guarded handle availability check ────────
+let handleCheckTimer: number | null = null;
+let handleCheckSeq = 0;
+function scheduleHandleCheck(): void {
+  if (handleCheckTimer !== null) clearTimeout(handleCheckTimer);
+  const seq = ++handleCheckSeq;
+  const h = state.onboard.handle;
+  if (!h) return;
+  handleCheckTimer = window.setTimeout(() => {
+    checkHandle(h)
+      .then((r) => { if (seq !== handleCheckSeq) return; state.onboard.check = r.available ? "available" : (r.reason ?? "invalid"); rerender(); })
+      .catch(() => { if (seq !== handleCheckSeq) return; state.onboard.check = "idle"; rerender(); });
+  }, 250);
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -603,6 +621,36 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
       window.location.href = "/auth/login";
       return;
+    case "signInGoogle":
+      try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
+      window.location.href = "/auth/google/login";
+      return;
+    case "signInGoogleSwitch": window.location.href = "/auth/google/login?prompt=select_account"; return;
+    case "onbHandle": {
+      state.onboard.handle = (value ?? "").trim();
+      state.onboard.check = state.onboard.handle ? "checking" : "idle";
+      scheduleHandleCheck();
+      rerender();
+      return;
+    }
+    case "onbName": state.onboard.name = value ?? ""; rerender(); return;
+    case "onbColor": if (arg) state.onboard.color = arg as PersonColor; break;
+    case "onbSubmit": {
+      const o = state.onboard;
+      if (o.check !== "available" || o.submitting) return;
+      o.submitting = true; o.error = null; rerender();
+      submitOnboard({ handle: o.handle, name: o.name.trim() || null, color: o.color })
+        .then(() => { window.location.href = "/"; })
+        .catch((e) => {
+          o.submitting = false;
+          if (e instanceof ApiError && e.message === "handle_taken") { o.check = "taken"; }
+          else if (e instanceof ApiError && e.message === "invite_revoked") { o.error = "This invite was revoked. Ask an admin to invite you again."; }
+          else if (e instanceof Unauthorized) { o.error = "This sign-in expired. Start again."; }
+          else { o.error = "Couldn't finish sign-up. Try again."; }
+          rerender();
+        });
+      return;
+    }
     case "previewNonMember": state.authStep = "nonmember"; break;
     case "backToLogin":
       state.authStep = "login";
@@ -985,11 +1033,38 @@ mount.addEventListener("input", (e) => {
 });
 
 // ── boot: detect session via /auth/me ────────────────────────────────────────
-if (new URLSearchParams(location.search).get("denied") === "1") {
-  // Non-member: /auth/callback redirected here after org check failed
+const params = new URLSearchParams(location.search);
+if (params.get("denied") === "1") {
+  // Non-member: /auth/callback redirected here after the GitHub org check failed
   state.view = "auth";
   state.authStep = "nonmember";
   rerender();
+} else if (params.get("denied") === "invite") {
+  // Google account not invited (or unverified email): /auth/google/callback redirected here
+  state.view = "auth";
+  state.authStep = "notinvited";
+  state.deniedEmail = params.get("email");
+  rerender();
+} else if (location.hash === "#onboard") {
+  // Fresh Google/GitHub sign-in with no existing person: the sealed `onboard`
+  // cookie is set, and /auth/onboard reads it. A signed-in reload on #onboard
+  // with no (or an expired) cookie falls back to the login card — #onboard is
+  // never a Screen, so screenFromHash() would never route here on its own.
+  state.view = "auth";
+  state.authStep = "verifying";
+  rerender();
+  getOnboardPrefill()
+    .then((p) => {
+      state.onboard = { ...initialOnboard(), prefill: p, handle: p.suggested_handle, name: p.name ?? "", check: "checking" };
+      state.authStep = "onboard";
+      scheduleHandleCheck();
+      rerender();
+    })
+    .catch(() => {
+      state.authStep = "login";
+      history.replaceState(null, "", "/");
+      rerender();
+    });
 } else {
   // Show "verifying" while we check if a session cookie exists
   state.view = "auth";
@@ -998,7 +1073,7 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
   getMe()
     .then((me) => {
       state.me = me;
-      state.displayName = me.name ?? me.login;
+      state.displayName = me.name ?? me.handle;
       state.view = "app";
       // Return-to after sign-in (see "signIn"): re-apply the stashed hash once.
       try {

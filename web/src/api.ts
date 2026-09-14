@@ -6,6 +6,7 @@
 // the MCP bearer is for /mcp only and never appears here.
 import type {
   FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, EventRow,
+  PersonColor, InviteRow,
 } from "@shared/rows";
 import type { DashboardData } from "@shared/dashboard";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
@@ -137,10 +138,33 @@ export function listMilestoneProposals(): Promise<MilestoneProposalRow[]> {
   return getJson<{ proposals: MilestoneProposalRow[] }>("/milestone-proposals").then((r) => r.proposals);
 }
 
-export interface Me { login: string; name: string | null; avatar_url: string | null; org: string; admin: boolean; }
+export interface MeIdentity { provider: "github" | "google"; label: string; linked_at: string }
+export interface Me { handle: string; name: string | null; avatar_url: string | null; color: PersonColor; identities: MeIdentity[]; org: string; admin: boolean }
 export function getMe(): Promise<Me> {
   return getJson<Me>("/auth/me");
 }
+
+// ── onboarding (sealed `onboard` cookie; 401 → Unauthorized) ─────────────────
+export interface OnboardPrefill { provider: "github" | "google"; label: string; email: string | null; name: string | null; avatar_url: string | null; suggested_handle: string }
+export function getOnboardPrefill(): Promise<OnboardPrefill> { return getJson<OnboardPrefill>("/auth/onboard"); }
+export function checkHandle(handle: string): Promise<{ available: boolean; reason?: "invalid" | "reserved" | "taken" }> {
+  return getJson(`/auth/handle-check?handle=${encodeURIComponent(handle)}`);
+}
+export function submitOnboard(b: { handle: string; name: string | null; color: PersonColor }): Promise<{ ok: true; handle: string }> { return postJson("/auth/onboard", b); }
+
+// ── profile + identities ──────────────────────────────────────────────────────
+export function updateMe(b: { name?: string | null; color?: PersonColor }): Promise<{ ok: true; name: string | null; color: PersonColor }> { return putJson("/auth/me", b); }
+export function unlinkIdentity(provider: "github" | "google"): Promise<{ ok: true }> { return postJson(`/auth/identities/${provider}/unlink`); }
+
+// ── persons directory ─────────────────────────────────────────────────────────
+export interface PersonSummary { handle: string; name: string | null; color: PersonColor; avatar_url: string | null }
+export function listPersons(): Promise<PersonSummary[]> { return getJson<{ persons: PersonSummary[] }>("/persons").then((r) => r.persons); }
+
+// ── invites (admin) ───────────────────────────────────────────────────────────
+export function listInvites(): Promise<InviteRow[]> { return getJson<{ invites: InviteRow[] }>("/invites").then((r) => r.invites); }
+export function createInvite(email: string, name?: string): Promise<{ ok: true; invite: InviteRow; email: { status: "sent" | "failed"; error: string | null } }> { return postJson("/invites", { email, name }); }
+export function revokeInvite(email: string): Promise<{ ok: true }> { return postJson(`/invites/${encodeURIComponent(email)}/revoke`); }
+export function resendInvite(email: string): Promise<{ ok: true; email: { status: "sent" | "failed"; error: string | null } }> { return postJson(`/invites/${encodeURIComponent(email)}/resend`); }
 
 // ADMIN action: trigger the server-side GitHub backfill (admin-only route). The
 // worker holds the service token and fetches GitHub directly — no webhook secret.
@@ -291,3 +315,4 @@ export function mintMcpToken(): Promise<{ token: string }> {
 export type { FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow };
 export type { DashboardData };
 export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow };
+export type { InviteRow, PersonColor };
