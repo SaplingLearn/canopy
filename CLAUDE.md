@@ -240,8 +240,10 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   `email_unsubscribed = 1`; GET redirects to the cookie-gated `#unsubscribe` screen. Prefs survive unsubscribe.
 - **HTTP** (`routes.ts`, mounted at `/api/notifications`, session-cookie only, NEVER MCP): `prefs` (GET/PUT,
   own row only), admin-only `policy`, `settings`, `outbox`, `persons/:handle`.
-- **Address**: seeded at first login from `GET /user/emails` (primary + verified; scope `user:email`) via
-  `recordSignIn` with `COALESCE(persons.email, …)` — never overwrites a user/admin-edited value.
+- **Address**: seeded at first sign-in, per provider — GitHub from `GET /user/emails` (primary +
+  verified; scope `user:email`), Google from the verified `email` claim on the ID token (unverified
+  emails are denied before the fork) — both through `recordSignIn`'s `COALESCE(email, …)` write, which
+  never overwrites a user/admin-edited value.
 - **Invite email** (`src/notifications/invite.ts`): one transactional message per invite/resend through
   `deliveryFor`; not a kind — no cadence, prefs, or window. Outcome lands on `invites.email_*`. No
   `List-Unsubscribe` headers (they are optional on `OutboundMessage` now, omitted for invites).
@@ -268,12 +270,13 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 ## Env / bindings
 
 Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Google OAuth client for the second session-class provider —
-absent → `/auth/google/login` returns 503), `COOKIE_SECRET`, `GITHUB_WEBHOOK_SECRET` (HMAC for the
-webhook — absent → the surface 401s), `GITHUB_SERVICE_TOKEN` (app-level token for the scheduled progress
-recompute — absent → `scheduled()` no-ops), `GEMINI_API_KEY` (Google Gemini key for capture-time PR/issue
-summaries — absent → the excerpt fallback), `RESEND_API_KEY` (email delivery; needed only when
-`NOTIFICATIONS_MODE = "resend"`). Vars
+`GOOGLE_CLIENT_ID` (Google OAuth client id for the second session-class provider — absent →
+`/auth/google/login` itself returns 503), `GOOGLE_CLIENT_SECRET` (absent → the login redirect still
+happens, but the code exchange fails and `/auth/google/callback` 401s `exchange_failed`), `COOKIE_SECRET`,
+`GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s), `GITHUB_SERVICE_TOKEN`
+(app-level token for the scheduled progress recompute — absent → `scheduled()` no-ops), `GEMINI_API_KEY`
+(Google Gemini key for capture-time PR/issue summaries — absent → the excerpt fallback), `RESEND_API_KEY`
+(email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`). Vars
 (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`), `ADMIN_LOGINS`, `PUBLIC_ORIGIN`
 (absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`). Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
