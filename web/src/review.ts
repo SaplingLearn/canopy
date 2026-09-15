@@ -8,6 +8,8 @@
 // no inline data.
 
 import { esc, attr, statusBadge, selectChip, dashedCard, MONO_LABEL } from "./ui";
+import { personChip, handleTag } from "./people";
+import type { PersonColor } from "@shared/rows";
 
 // ── prop shapes (loose for now — reshaped at wire time) ──────────────────────
 export type ReviewKind = "proposal" | "decision";
@@ -30,6 +32,10 @@ export interface ReviewItem {
   summary: string;
   agent: string;
   agentInitials: string;
+  /** The agent's mapped-person color/avatar — set by the mapping layer via personFor.
+   *  Undefined → unmapped login, rendered as a muted handleTag. */
+  agentColor?: PersonColor;
+  agentAvatar?: string | null;
   time: string;
   /** Gate's scrutinize signal: staged with low_confidence = 1. Rendered as a small marker. */
   flagged?: boolean;
@@ -74,11 +80,18 @@ export function reviewCard(it: ReviewItem, selected: boolean): string {
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11.5px;color:var(--fg-55)">
         ${type ? `<span>${esc(type)}</span>` : ""}
         ${id ? `${dot}<span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">${esc(id)}</span>` : ""}
-        ${dot}<span>${esc(it.agent)}</span>
+        ${dot}<span style="display:inline-flex;align-items:center;gap:6px">${agentBit(it, 18)}</span>
         ${dot}<span style="color:var(--fg-40)">${esc(it.time)}</span>
       </div>
     </div>
   </button>`;
+}
+
+/** The agent byline piece: a colored chip + handleTag when mapped to a person,
+ *  else a bare muted handleTag (personChip falls back to initials). */
+function agentBit(it: ReviewItem, chipSize: number): string {
+  const p = it.agentColor ? { handle: it.agent, color: it.agentColor, avatar_url: it.agentAvatar } : null;
+  return `${personChip(p, chipSize, it.agent)}${handleTag(p, it.agent)}`;
 }
 
 export function reviewListEmpty(): string {
@@ -241,7 +254,7 @@ export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px;font-size:12px;color:var(--fg-55)">
           ${type ? `<span>${esc(type)}</span>` : ""}
           ${id ? `${dot}<span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">${esc(id)}</span>` : ""}
-          ${dot}<span>${esc(it.agent)}</span>
+          ${dot}<span style="display:inline-flex;align-items:center;gap:6px">${agentBit(it, 18)}</span>
           ${dot}<span style="color:var(--fg-40)">${esc(it.time)}</span>
         </div>
       </div>

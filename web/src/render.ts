@@ -6,7 +6,7 @@
 import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
 import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
-import { initialOnboard, onboardView, personChip, swatches, type OnboardState } from "./people";
+import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
@@ -174,7 +174,10 @@ export function initialState(): AppState {
 // ── triage surface data (real reads — the mapping layer lives in triage-map.ts) ──
 export function reviewProps(s: AppState): ReviewProps {
   return {
-    items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data),
+    items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data).map((it) => {
+      const p = personFor(s, it.agent);
+      return p ? { ...it, agentColor: p.color, agentAvatar: p.avatar_url } : it;
+    }),
     filter: s.reviewFilter,
     selectedId: s.reviewSel,
     diffView: s.reviewDiffView,
@@ -426,7 +429,7 @@ function sidebar(s: AppState): string {
     <div style="padding:10px;border-top:1px solid var(--border)">
       <button data-act="goSettings" title="Settings" class="cnpy-chip">
         ${personChip(s.me ? { handle: s.me.handle, name: s.displayName || s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null, 30, s.me?.handle ?? "?")}
-        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.handle ?? ""))}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.me?.handle ?? "")}</div></div>
+        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.handle ?? ""))}</div><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.me ? handleTag({ handle: s.me.handle, color: s.me.color }, s.me.handle, 11) : handleTag(null, "", 11)}</div></div>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>` : ""}
       </button>
     </div>
@@ -448,12 +451,12 @@ function header(s: AppState): string {
   // Author chips are derived from the authors actually present in the feed (captured on
   // the unfiltered load), not a hardcoded people list. Active chip is styled inline
   // because the login set is dynamic (the old `[data-author=…] .a-<login>` CSS can't match).
-  const achip = (key: string, label: string): string => {
+  const achip = (key: string, labelHtml: string): string => {
     const active = s.feedAuthor === key;
     const activeStyle = active ? "border-color:var(--accent);color:var(--accent);background:var(--accent-soft)" : "";
-    return `<button data-act="setAuthor" data-arg="${attr(key)}" class="cnpy-achip" style="${activeStyle}">${label}</button>`;
+    return `<button data-act="setAuthor" data-arg="${attr(key)}" class="cnpy-achip" style="${activeStyle}">${labelHtml}</button>`;
   };
-  const authorChips = [achip("all", "All"), ...s.feedAuthors.map((a) => achip(a, a))].join("");
+  const authorChips = [achip("all", "All"), ...s.feedAuthors.map((a) => achip(a, handleTag(personFor(s, a), a, 12)))].join("");
 
   const feedControls = s.screen === "feed" ? `<div style="display:flex;align-items:center;gap:6px">
       <span style="font-size:11px;color:var(--fg-40);text-transform:uppercase;letter-spacing:.08em;margin-right:2px">Author</span>
@@ -539,7 +542,7 @@ function feedView(s: AppState): string {
           <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${linkifyRefs(e.summary)}</div>
           ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${esc(e.body)}</div>` : ""}
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px">
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${esc(e.author)}</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)">${handleTag(personFor(s, e.author), e.author)}</div>
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 5px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M12 8V4M8 13h.01M16 13h.01"></path></svg>agent</span>
             <span style="font-size:12px;color:var(--fg-40)">&middot;</span>
             <span style="font-size:12px;color:var(--fg-40)">${relTime(e.created_at)}</span>
@@ -663,7 +666,7 @@ export function docReaderHtml(s: AppState): string {
       ${versions.map((v) => `<div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:7px">
         <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:26px">v${v.version}</span>
         <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${esc(v.summary ?? "")}</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">${esc(v.created_by)} · ${relTime(v.created_at)}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg-40)">${personChip(personFor(s, v.created_by), 16, v.created_by)}${handleTag(personFor(s, v.created_by), v.created_by, 11)} · ${relTime(v.created_at)}</span>
         ${v.version === doc.current_version ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
       </div>`).join("")}
     </div>` : "";
@@ -675,7 +678,7 @@ export function docReaderHtml(s: AppState): string {
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:15px;padding-bottom:17px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
         ${personChip(doc.updated_by ? personFor(s, doc.updated_by) : null, 24, doc.updated_by ?? "?")}
-        <span>Updated by <b style="color:var(--fg-70);font-weight:500">${esc(doc.updated_by ?? "")}</b> · ${relTime(doc.updated_at)}</span>
+        <span>Updated by ${doc.updated_by ? handleTag(personFor(s, doc.updated_by), doc.updated_by) : ""} · ${relTime(doc.updated_at)}</span>
       </div>
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
     </div>
@@ -879,7 +882,7 @@ function roadmapDigest(s: AppState): string {
     const chips = feedArtifacts(e.artifacts);
     return `<tr style="border-top:1px solid var(--border)">
       <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${relTime(e.created_at)}</td>
-      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)">${esc(e.author)}</td>
+      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)"><span style="display:inline-flex;align-items:center;gap:6px">${personChip(personFor(s, e.author), 18, e.author)}${handleTag(personFor(s, e.author), e.author, 11.5)}</span></td>
       <td style="padding:11px 0;vertical-align:top;font-size:13px;color:var(--fg);line-height:1.5">${linkifyRefs(e.summary)}${chips.length ? ` <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:4px;vertical-align:middle">${chips.map(ghChip).join("")}</span>` : ""}</td>
     </tr>`;
   }).join("");
@@ -1146,7 +1149,7 @@ export function profileSection(s: AppState): string {
         <button data-act="handleCancel" class="cnpy-ghostbtn" style="padding:0 14px;height:32px;border-radius:8px;border:1px solid var(--border);font-size:12.5px;color:var(--fg-55)">Cancel</button>
       </div>
     </div>`;
-  })() : `<div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle <span style="font-family:var(--mono);color:var(--fg-55)">@${esc(handle)}</span> <button data-act="handleEdit" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-55);text-decoration:underline;text-underline-offset:2px;margin-left:6px">Change</button></div>`;
+  })() : `<div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle ${me ? handleTag({ handle, color: me.color }, handle, 12) : handleTag(null, handle, 12)} <button data-act="handleEdit" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-55);text-decoration:underline;text-underline-offset:2px;margin-left:6px">Change</button></div>`;
   const provRow = (p: "github" | "google", label: string) => {
     const id = me?.identities.find((i) => i.provider === p);
     const btn = id

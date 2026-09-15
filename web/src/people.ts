@@ -25,6 +25,12 @@ export function initialsOfName(name: string | null | undefined, fallback: string
   return initialsOf(fallback);
 }
 
+/** `@handle` in the person's color (mono, 500). Unmapped → muted, no color. */
+export function handleTag(p: { handle: string; color: PersonColor } | null, fallback: string, size = 12): string {
+  if (!p) return `<span style="font-family:var(--mono);font-size:${size}px;color:var(--fg-55)">@${esc(fallback)}</span>`;
+  return `<span style="font-family:var(--mono);font-size:${size}px;font-weight:500;color:var(--p-${p.color})">@${esc(p.handle)}</span>`;
+}
+
 export function personChip(p: { handle: string; name?: string | null; color: PersonColor; avatar_url?: string | null } | null, size: number, fallback: string): string {
   const font = Math.max(9, Math.round(size * 0.36));
   if (!p) {
@@ -44,7 +50,7 @@ export function swatches(act: string, selected: PersonColor, compact = false): s
 export function feedPreviewRow(p: { name: string; handle: string; color: PersonColor }): string {
   return `<div style="display:flex;align-items:flex-start;gap:11px">
     ${personChip({ handle: p.handle, name: p.name, color: p.color }, 30, p.handle || "?")}
-    <div><div style="font-size:12.5px;color:var(--fg-55)"><b style="color:var(--fg);font-weight:600">${esc(p.name || "Your name")}</b> · <span style="font-family:var(--mono);color:var(--p-${p.color});font-weight:500">@${esc(p.handle || "…")}</span> · 2 min ago</div>
+    <div><div style="font-size:12.5px;color:var(--fg-55)"><b style="color:var(--fg);font-weight:600">${esc(p.name || "Your name")}</b> · ${handleTag({ handle: p.handle || "…", color: p.color }, p.handle || "…")} · 2 min ago</div>
     <div style="font-size:13.5px;margin-top:3px;color:var(--fg-70)">Drafted the fall enrollment email sequence; needs a review before Monday.</div></div>
   </div>`;
 }

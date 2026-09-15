@@ -8,7 +8,7 @@
 // no inline data.
 
 import { esc, attr, pickRow, primaryBtn, MONO_LABEL, relTime } from "./ui";
-import { personChip } from "./people";
+import { personChip, handleTag } from "./people";
 import type { PersonColor, InviteRow } from "@shared/rows";
 import type { PersonSummary } from "./api";
 
@@ -151,7 +151,7 @@ export function unplacedRow(u: UnplacedItem, open: boolean, assign: AssignOption
 export function personPicker(groupId: string, people: Person[], pick: string | null, confirming: boolean): string {
   const rows = people
     .map((p) => pickRow(
-      `${personChip(p.color ? { handle: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url } : null, 20, p.id)}<div style="font-size:13px;font-weight:500">${esc(p.name)}</div>`,
+      `${personChip(p.color ? { handle: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url } : null, 20, p.id)}<div style="font-size:13px;font-weight:500">${esc(p.name)}</div>${p.color ? handleTag({ handle: p.id, color: p.color }, p.id, 11) : ""}`,
       pick === p.id,
       "identityPick",
       `${groupId}:${p.id}`,
@@ -203,7 +203,7 @@ export function peopleSection(p: PeopleProps): string {
   const canSend = EMAIL_RE.test(p.inviteDraft.trim());
   const row = "display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px";
   const idc = (t: string, tone: "normal" | "pending" = "normal") => `<span style="font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px ${tone === "pending" ? "dashed" : "solid"} var(--border-strong);color:${tone === "pending" ? "var(--amber)" : "var(--fg-55)"};white-space:nowrap">${esc(t)}</span>`;
-  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${esc(x.name ?? x.handle)}</b><span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">@${esc(x.handle)}</span></div><span></span></div>`).join("");
+  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${esc(x.name ?? x.handle)}</b>${handleTag(x, x.handle, 11.5)}</div><span></span></div>`).join("");
   const invitesHtml = pending.map((i) => {
     const status = i.email_error ? `<span style="color:var(--red)">email failed: ${esc(i.email_error)}</span>` : i.email_sent_at ? "email sent" : "email not sent";
     return `<div style="${row}"><div style="width:28px;height:28px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--fg-40);font-size:12px">?</div>

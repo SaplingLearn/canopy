@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { peopleSection } from "../web/src/maintenance";
 import { profileSection, initialState } from "../web/src/render";
 import { peopleFromPersons } from "../web/src/triage-map";
+import { handleTag } from "../web/src/people";
 
 const persons = [
   { handle: "AndresL230", name: "Andres", color: "moss" as const, avatar_url: null },
@@ -64,6 +65,20 @@ describe("profileSection", () => {
     s.handleCheck = "taken";
     const taken = profileSection(s);
     expect(taken).toMatch(/data-act="handleSave"[^>]*disabled/);
+  });
+});
+
+describe("handleTag", () => {
+  it("renders the handle in the person's color when mapped", () => {
+    const html = handleTag({ handle: "priya", color: "plum" }, "priya");
+    expect(html).toContain("var(--p-plum)");
+    expect(html).toContain("@priya");
+  });
+
+  it("falls back to a muted, uncolored tag when unmapped", () => {
+    const html = handleTag(null, "mystery-dev");
+    expect(html).toContain("@mystery-dev");
+    expect(html).not.toContain("var(--p-");
   });
 });
 
