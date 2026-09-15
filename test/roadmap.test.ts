@@ -8,12 +8,11 @@ import { fetchMilestoneProgress, upsertProgress } from "../src/tools/progress";
 import { get_plan, write_plan } from "../src/tools/plan";
 import { promote_milestone_proposal, complete_milestone, stage_milestone_proposal } from "../src/tools/writes";
 import { app } from "../src/routes";
-import { createSession } from "../src/auth/session";
-import { hmacSeal } from "../src/auth/crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildCanopyMcpServer } from "../src/mcp";
 import type { Env } from "../src/env";
+import { cookieFor } from "./helpers/persons";
 
 const sessionMeta = { id: "sess-roadmap", author: "x", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
 
@@ -70,7 +69,7 @@ describe("milestone proposal gate", () => {
     const payload = IngestPayload.parse(rawPayload);
     expect((payload as Record<string, unknown>).milestone_proposals).toBeUndefined();
 
-    await consume(env.DB, payload, { login: "andres" });
+    await consume(env.DB, payload, { handle: "andres" });
     expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
   });
 });
@@ -145,14 +144,6 @@ describe("promote_milestone_proposal + complete_milestone", () => {
   });
 });
 
-async function cookieFor(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
-  const { id } = await createSession(env.DB, login);
-  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
-}
-
 describe("roadmap HTTP routes (session-gated)", () => {
   it("GET /roadmap reads the plan store — narrative + milestones + cached progress, no live GitHub — and 401s without a session", async () => {
     const { milestones } = await write_plan(
@@ -200,7 +191,7 @@ describe("registered MCP get_roadmap tool", () => {
     );
     await upsertProgress(env.DB, milestones[0].id, 4, 6, "event");
 
-    const server = buildCanopyMcpServer(env as unknown as Env, { login: "andres" });
+    const server = buildCanopyMcpServer(env as unknown as Env, { handle: "andres" });
     const client = new Client({ name: "test", version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);

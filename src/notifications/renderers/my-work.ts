@@ -1,7 +1,7 @@
-import type { PersonRow } from "@shared/rows";
 import type { NotificationKind, Section, Window } from "@shared/notifications";
-import { type DB, all, first } from "../../db";
+import { type DB, all } from "../../db";
 import { listOpenAssignedIssues, toMyWorkPr, type PrEventJoinRow } from "../../tools/mywork";
+import { getPerson, listIdentities } from "../../auth/persons";
 import { escapeHtml, isoOf } from "../html";
 import { EMAIL_STYLE as S, EMAIL_CARD as K, EMAIL_SPACE as SP } from "../assemble";
 
@@ -52,11 +52,14 @@ function issueItem(i: Awaited<ReturnType<typeof listOpenAssignedIssues>>[number]
  * my_work — the event spine, scoped to the window: merged PRs whose occurred_at
  * falls in [start, end), summarized exactly as My Work does (same join, same
  * mapping), plus the user's open assigned issues (not windowed — it is their
- * plate). Same identity gate as the dashboard: an unmapped login renders null.
+ * plate). Same identity gate as the dashboard: an unknown handle, or one with
+ * no GitHub identity, renders null.
  */
-async function render(db: DB, login: string, window: Window): Promise<Section | null> {
-  const person = await first<PersonRow>(db, `SELECT * FROM people WHERE login = ?`, login);
-  if (!person) return null;
+async function render(db: DB, handle: string, window: Window): Promise<Section | null> {
+  const me = await getPerson(db, handle);
+  if (!me) return null;
+  const logins = (await listIdentities(db, handle)).filter((i) => i.provider === "github").map((i) => i.subject);
+  if (logins.length === 0) return null;
 
   const prRows = await all<PrEventJoinRow>(
     db,
@@ -64,16 +67,16 @@ async function render(db: DB, login: string, window: Window): Promise<Section | 
        FROM events e
        LEFT JOIN pr_summaries s ON s.semantic_key = e.semantic_key
       WHERE e.event_type = 'pr_merged'
-        AND e.subject_login = ?
+        AND e.subject_login IN (${logins.map(() => "?").join(",")})
         AND datetime(e.occurred_at) >= datetime(?)
         AND datetime(e.occurred_at) <  datetime(?)
       ORDER BY e.occurred_at DESC, e.id DESC`,
-    login,
+    ...logins,
     isoOf(window.start),
     isoOf(window.end)
   );
   const merged = prRows.map(toMyWorkPr);
-  const todo = await listOpenAssignedIssues(db, login);
+  const todo = await listOpenAssignedIssues(db, logins);
   if (merged.length === 0 && todo.length === 0) return null;
 
   const html: string[] = [];

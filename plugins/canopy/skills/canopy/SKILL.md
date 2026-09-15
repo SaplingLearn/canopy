@@ -34,7 +34,8 @@ orient (load-context)  →   do the work   →   record (record-session)
 
 ## Authority is load-bearing
 
-Every read result is flagged. Treat anything that is not `live` as not-yet-settled:
+The writer identity behind every read/write is the person's **handle** (the GitHub login, for migrated
+engineers). Every read result is flagged. Treat anything that is not `live` as not-yet-settled:
 
 - `live` — settled. Trust it.
 - `staged_pending` — a newer version is staged but unpromoted; the body you see is still the live one.

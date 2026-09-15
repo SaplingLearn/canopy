@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
-import { createSession } from "../src/auth/session";
-import { hmacSeal } from "../src/auth/crypto";
 import {
   route_triage,
   stage_adr,
@@ -15,14 +13,7 @@ import {
   list_adrs,
   list_milestone_proposals,
 } from "../src/tools/reads";
-
-async function authedCookie(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
-  const { id } = await createSession(env.DB, login);
-  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
-}
+import { cookieFor as authedCookie, seedPerson } from "./helpers/persons";
 
 // ---------------------------------------------------------------------------
 // 2. list_needs_triage
@@ -157,9 +148,7 @@ describe("list_milestone_proposals", () => {
     const id1 = await stage_milestone_proposal(env.DB, proposalBase, "andres");
     await stage_milestone_proposal(env.DB, { ...proposalBase, title: "Launch v2" }, "andres");
     // promote first one
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-    ).bind("andres", "andres", "2026-01-01T00:00:00Z").run();
+    await seedPerson("andres");
     await promote_milestone_proposal(env.DB, id1, "andres");
 
     const proposals = await list_milestone_proposals(env.DB);
@@ -169,9 +158,7 @@ describe("list_milestone_proposals", () => {
   });
 
   it("returns empty when all proposals are promoted", async () => {
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-    ).bind("andres", "andres", "2026-01-01T00:00:00Z").run();
+    await seedPerson("andres");
     const id = await stage_milestone_proposal(env.DB, proposalBase, "andres");
     await promote_milestone_proposal(env.DB, id, "andres");
     const proposals = await list_milestone_proposals(env.DB);
@@ -181,9 +168,7 @@ describe("list_milestone_proposals", () => {
 
 describe("GET /milestone-proposals", () => {
   it("returns { proposals: [...] } with only staged proposals", async () => {
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-    ).bind("andres", "andres", "2026-01-01T00:00:00Z").run();
+    await seedPerson("andres");
     const id1 = await stage_milestone_proposal(env.DB, proposalBase, "andres");
     await stage_milestone_proposal(env.DB, { ...proposalBase, title: "Launch v2" }, "andres");
     await promote_milestone_proposal(env.DB, id1, "andres");

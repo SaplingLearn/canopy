@@ -230,6 +230,20 @@ describe("reviewCard — restructured to match the detail header", () => {
   });
 });
 
+describe("reviewView — agent handle carries the mapped person's color", () => {
+  it("renders the agent's colored handle tag when agentColor is set, muted when it isn't", () => {
+    const colored = makeItem({ agent: "AndresL230", agentColor: "sky" });
+    const html = reviewView(makeReviewProps({ items: [colored] }));
+    expect(html).toContain("var(--p-sky)");
+    expect(html).toContain("@AndresL230");
+
+    const uncolored = makeItem();
+    const plain = reviewView(makeReviewProps({ items: [uncolored] }));
+    expect(plain).toContain(`@${uncolored.agent}`);
+    expect(plain).not.toContain("var(--p-");
+  });
+});
+
 describe("splitDiffRows", () => {
   it("pairs a del run with an add run side by side", () => {
     const rows = splitDiffRows([{ t: "del", s: "old" }, { t: "add", s: "new" }]);

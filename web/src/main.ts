@@ -11,11 +11,15 @@ import {
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
+  getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
+  listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
+import { initialOnboard } from "./people";
+import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -151,7 +155,7 @@ function loadForScreen(screen: Screen): void {
     case "docs": loadDocsIfNeeded(); break;
     case "roadmap": loadRoadmapIfNeeded(); loadFeedIfNeeded(); break;
     case "review": loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); break;
-    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); break;
+    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); break;
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
     case "settings": loadNotifPrefsIfNeeded(); break;
@@ -518,6 +522,48 @@ function loadIdentityTasksIfNeeded(): void {
   else rerender();
 }
 
+// ── auth-expired transition (shared by every loader/write below) ────────────
+function unauth(e: unknown): void {
+  if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); }
+}
+
+// A Link attempt that didn't cleanly attach redirects the whole page to
+// /?link=conflict#settings or /?link=already#settings (see src/auth: the identity
+// belongs to someone else, vs. the caller already has one of this provider). Surface
+// it once, then strip the query param so a reload/re-visit doesn't repeat it.
+function checkLinkConflict(): void {
+  const link = new URLSearchParams(location.search).get("link");
+  if (link === "conflict") {
+    flash("That account is already linked to someone else");
+    history.replaceState(null, "", "/#settings");
+  } else if (link === "already") {
+    flash("You already have that sign-in method linked");
+    history.replaceState(null, "", "/#settings");
+  }
+}
+
+// ── persons directory + invites (Settings › Profile, Maintenance › People) ──
+let personsSeq = 0;
+function loadPersons(): void {
+  const seq = ++personsSeq;
+  state.persons = { status: "loading", data: state.persons.data };
+  listPersons()
+    .then((rows) => { if (seq !== personsSeq) return; state.persons = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } if (seq !== personsSeq) return; state.persons = { status: "error", data: state.persons.data, error: String(e) }; rerender(); });
+}
+let invitesSeq = 0;
+function loadInvites(): void {
+  if (!state.me?.admin) return;
+  const seq = ++invitesSeq;
+  state.invites = { status: "loading", data: state.invites.data };
+  listInvites()
+    .then((rows) => { if (seq !== invitesSeq) return; state.invites = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } if (seq !== invitesSeq) return; state.invites = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) }; rerender(); });
+}
+function refreshMe(): void {
+  getMe().then((me) => { state.me = me; state.displayName = me.name ?? me.handle; rerender(); }).catch(() => undefined);
+}
+
 function flash(msg: string): void {
   state.toast = msg;
   rerender();
@@ -593,6 +639,38 @@ function fallbackCopy(text: string): boolean {
   }
 }
 
+// ── onboarding: debounced, sequence-guarded handle availability check ────────
+let handleCheckTimer: number | null = null;
+let handleCheckSeq = 0;
+function scheduleHandleCheck(): void {
+  if (handleCheckTimer !== null) clearTimeout(handleCheckTimer);
+  const seq = ++handleCheckSeq;
+  const h = state.onboard.handle;
+  if (!h) return;
+  handleCheckTimer = window.setTimeout(() => {
+    checkHandle(h)
+      .then((r) => { if (seq !== handleCheckSeq) return; state.onboard.check = r.available ? "available" : (r.reason ?? "invalid"); rerender(); })
+      .catch(() => { if (seq !== handleCheckSeq) return; state.onboard.check = "idle"; rerender(); });
+  }, 250);
+}
+
+// ── Settings › Profile: debounced, sequence-guarded rename-target check ──────
+// Mirrors scheduleHandleCheck above (same debounce + sequence-guard shape),
+// targeting the rename draft instead of the onboarding handle.
+let renameCheckTimer: number | null = null;
+let renameCheckSeq = 0;
+function scheduleRenameCheck(): void {
+  if (renameCheckTimer !== null) clearTimeout(renameCheckTimer);
+  const seq = ++renameCheckSeq;
+  const h = state.handleDraft;
+  if (!h) return;
+  renameCheckTimer = window.setTimeout(() => {
+    checkHandle(h)
+      .then((r) => { if (seq !== renameCheckSeq) return; state.handleCheck = r.available ? "available" : (r.reason ?? "invalid"); rerender(); })
+      .catch(() => { if (seq !== renameCheckSeq) return; state.handleCheck = "idle"; rerender(); });
+  }, 250);
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -603,6 +681,36 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
       window.location.href = "/auth/login";
       return;
+    case "signInGoogle":
+      try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
+      window.location.href = "/auth/google/login";
+      return;
+    case "signInGoogleSwitch": window.location.href = "/auth/google/login?prompt=select_account"; return;
+    case "onbHandle": {
+      state.onboard.handle = (value ?? "").trim();
+      state.onboard.check = state.onboard.handle ? "checking" : "idle";
+      scheduleHandleCheck();
+      rerender();
+      return;
+    }
+    case "onbName": state.onboard.name = value ?? ""; rerender(); return;
+    case "onbColor": if (arg && (PERSON_COLORS as readonly string[]).includes(arg)) state.onboard.color = arg as PersonColor; break;
+    case "onbSubmit": {
+      const o = state.onboard;
+      if (o.check !== "available" || o.submitting) return;
+      o.submitting = true; o.error = null; rerender();
+      submitOnboard({ handle: o.handle, name: o.name.trim() || null, color: o.color })
+        .then(() => { window.location.href = "/"; })
+        .catch((e) => {
+          o.submitting = false;
+          if (e instanceof ApiError && e.message === "handle_taken") { o.check = "taken"; }
+          else if (e instanceof ApiError && e.message === "invite_revoked") { o.error = "This invite was revoked. Ask an admin to invite you again."; }
+          else if (e instanceof Unauthorized) { o.error = "This sign-in expired. Start again."; }
+          else { o.error = "Couldn't finish sign-up. Try again."; }
+          rerender();
+        });
+      return;
+    }
     case "previewNonMember": state.authStep = "nonmember"; break;
     case "backToLogin":
       state.authStep = "login";
@@ -624,9 +732,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
     case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
-    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); return;
+    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
-    case "goSettings": state.screen = "settings"; state.unsub.preview = false; loadNotifPrefsIfNeeded(); return;
+    case "goSettings": state.screen = "settings"; state.unsub.preview = false; loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
     // chrome: theme + sidebar
@@ -848,6 +956,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         .then(() => {
           flash(`Mapped — ${arg} → ${person}; their captured activity is now attributed`);
           loadIdentityTasks();
+          loadPersons();
         })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
@@ -945,9 +1054,85 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       return;
     }
     case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
-    // INERT — no backend route for saving display name or revoking tokens
-    case "saveProfile": return;
+    // INERT — no backend route for revoking tokens
     case "revokeToken": return;
+
+    // ── Settings › Profile (display name, color, link/unlink) ───────────────
+    case "saveProfile": {
+      const name = state.displayName.trim() || null;
+      updateMe({ name }).then((r) => { if (state.me) state.me.name = r.name; flash("Profile saved"); rerender(); })
+        .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't save profile"); });
+      return;
+    }
+    case "setMyColor": {
+      if (!arg || !state.me || !(PERSON_COLORS as readonly string[]).includes(arg)) return;
+      const color = arg as PersonColor;
+      updateMe({ color }).then(() => { if (state.me) state.me.color = color; loadPersons(); rerender(); })
+        .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't save color"); });
+      return;
+    }
+    case "linkProvider": window.location.href = arg === "google" ? "/auth/google/login?link=1" : "/auth/login?link=1"; return;
+    case "unlinkProvider": {
+      if (arg !== "github" && arg !== "google") return;
+      unlinkIdentity(arg).then(() => { flash(`${arg === "google" ? "Google" : "GitHub"} unlinked`); refreshMe(); })
+        .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash(e instanceof ApiError && e.message === "last_identity" ? "You need at least one sign-in method" : "Couldn't unlink"); });
+      return;
+    }
+
+    // ── Settings › Profile: self-service handle rename ───────────────────────
+    case "handleEdit":
+      state.handleEdit = true;
+      state.handleDraft = state.me?.handle ?? "";
+      state.handleCheck = "idle";
+      break;
+    case "handleCancel":
+      state.handleEdit = false;
+      state.handleDraft = "";
+      state.handleCheck = "idle";
+      break;
+    case "handleDraft": {
+      const draft = (value ?? "").trim();
+      state.handleDraft = draft;
+      const current = state.me?.handle ?? "";
+      if (draft.toLowerCase() === current.toLowerCase()) { state.handleCheck = "same"; }
+      else { state.handleCheck = draft ? "checking" : "idle"; scheduleRenameCheck(); }
+      break;
+    }
+    case "handleSave": {
+      if (state.handleCheck !== "available") return;
+      const draft = state.handleDraft;
+      renameHandle(draft)
+        .then((r) => {
+          if (state.me) state.me.handle = r.handle;
+          state.handleEdit = false;
+          state.handleDraft = "";
+          state.handleCheck = "idle";
+          flash(`Handle changed to @${r.handle}`);
+          loadPersons();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { unauth(e); return; }
+          if (e instanceof ApiError && e.message === "handle_taken") { state.handleCheck = "taken"; rerender(); return; }
+          if (e instanceof ApiError && e.message === "admin_handle_not_allowlisted") { flash("Add the new handle to ADMIN_LOGINS first"); return; }
+          flash("Couldn't change handle");
+        });
+      return;
+    }
+
+    // ── Maintenance › People (invites) ───────────────────────────────────────
+    case "inviteDraft": state.inviteDraft = value ?? ""; rerender(); return;
+    case "inviteSend": {
+      const email = state.inviteDraft.trim();
+      if (!email) return;
+      createInvite(email).then((r) => {
+        state.inviteDraft = "";
+        flash(r.email.status === "sent" ? `Invited ${r.invite.email} — email sent` : `Invited ${r.invite.email} — email failed: ${r.email.error ?? "unknown"}`);
+        loadInvites();
+      }).catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash(e instanceof ApiError && e.message === "invite_exists" ? "Already invited" : e instanceof ApiError && e.message === "already_a_person" ? "That address already belongs to a person" : "Couldn't invite"); });
+      return;
+    }
+    case "inviteResend": { if (!arg) return; resendInvite(arg).then((r) => { flash(r.email.status === "sent" ? "Invite resent" : `Resend failed: ${r.email.error ?? "unknown"}`); loadInvites(); }).catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't resend"); }); return; }
+    case "inviteRevoke": { if (!arg) return; revokeInvite(arg).then(() => { flash("Invite revoked"); loadInvites(); }).catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't revoke"); }); return; }
 
     default:
       return;
@@ -985,11 +1170,38 @@ mount.addEventListener("input", (e) => {
 });
 
 // ── boot: detect session via /auth/me ────────────────────────────────────────
-if (new URLSearchParams(location.search).get("denied") === "1") {
-  // Non-member: /auth/callback redirected here after org check failed
+const params = new URLSearchParams(location.search);
+if (params.get("denied") === "1") {
+  // Non-member: /auth/callback redirected here after the GitHub org check failed
   state.view = "auth";
   state.authStep = "nonmember";
   rerender();
+} else if (params.get("denied") === "invite") {
+  // Google account not invited (or unverified email): /auth/google/callback redirected here
+  state.view = "auth";
+  state.authStep = "notinvited";
+  state.deniedEmail = params.get("email");
+  rerender();
+} else if (location.hash === "#onboard") {
+  // Fresh Google/GitHub sign-in with no existing person: the sealed `onboard`
+  // cookie is set, and /auth/onboard reads it. A signed-in reload on #onboard
+  // with no (or an expired) cookie falls back to the login card — #onboard is
+  // never a Screen, so screenFromHash() would never route here on its own.
+  state.view = "auth";
+  state.authStep = "verifying";
+  rerender();
+  getOnboardPrefill()
+    .then((p) => {
+      state.onboard = { ...initialOnboard(), prefill: p, handle: p.suggested_handle, name: p.name ?? "", check: "checking" };
+      state.authStep = "onboard";
+      scheduleHandleCheck();
+      rerender();
+    })
+    .catch(() => {
+      state.authStep = "login";
+      history.replaceState(null, "", "/");
+      rerender();
+    });
 } else {
   // Show "verifying" while we check if a session cookie exists
   state.view = "auth";
@@ -998,7 +1210,7 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
   getMe()
     .then((me) => {
       state.me = me;
-      state.displayName = me.name ?? me.login;
+      state.displayName = me.name ?? me.handle;
       state.view = "app";
       // Return-to after sign-in (see "signIn"): re-apply the stashed hash once.
       try {
@@ -1008,12 +1220,18 @@ if (new URLSearchParams(location.search).get("denied") === "1") {
       // Restore the screen from the URL hash (reload stays put) instead of always My Work.
       state.screen = screenFromHash();
       loadForScreen(state.screen);
+      // A conflicting Link redirect lands here directly (full page load to
+      // /?link=conflict#settings), not through the goSettings dispatch case.
+      checkLinkConflict();
       // Boot-time loads for the sidebar triage badges — the counts must be
       // right on every screen, not just after visiting Review/Maintenance.
       loadProposals();
       loadDraftAdrs();
       loadNeedsTriage();
       loadIdentityTasks();
+      // The persons directory backs every colored chip (sidebar, feed, docs,
+      // Settings › Profile, Maintenance › People) — load it on every screen too.
+      loadPersons();
     })
     .catch(() => {
       // Unauthorized or any error → show login

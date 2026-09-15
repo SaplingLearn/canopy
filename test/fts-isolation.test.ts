@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all, run, nowIso } from "../src/db";
+import { RESET_STATEMENTS } from "../scripts/seed/reset.mjs";
 
 // Isolation proof for migration 0008_fts.sql.
 //
@@ -12,8 +13,9 @@ import { all, run, nowIso } from "../src/db";
 // (no leak from a prior test) and (b) the harness's exact truncation statement
 // leaves zero leaked FTS rows.
 
-const HARNESS_TRUNCATION =
-  "DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;";
+// The EXACT statement test/apply-migrations.ts runs beforeEach — imported, not
+// hand-duplicated, so it can never drift from the real reset.
+const HARNESS_TRUNCATION = RESET_STATEMENTS.join("; ") + ";";
 
 async function ftsCounts() {
   const docs = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM docs_fts`);

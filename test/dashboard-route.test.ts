@@ -5,13 +5,12 @@ import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
 import { ingestEvent } from "../src/consumer";
 import { storePrSummary } from "../src/tools/summarize";
+import { seedPerson } from "./helpers/persons";
 import type { CapturedEvent } from "@shared/contract";
 import type { DashboardData } from "@shared/dashboard";
 
 async function cookieFor(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
+  await seedPerson(login);
   const { id } = await createSession(env.DB, login);
   return `session=${await hmacSeal(id, "test-cookie-secret")}`;
 }
@@ -87,7 +86,7 @@ describe("GET /me/dashboard (session-gated)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as DashboardData;
 
-    expect(body.person).toBe("Andres"); // login mapped server-side via the people table
+    expect(body.person).toBe("Andres"); // handle resolved server-side via persons
     expect(body.degraded).toBe(false);
 
     expect(body.previousActivity).toHaveLength(1);

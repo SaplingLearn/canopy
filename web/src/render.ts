@@ -3,9 +3,10 @@
 // `.map().join('')`, `sc-if` to ternaries, and `onClick="{{ fn }}"` to
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
-import type { Me, StagedProposal, IdentityTask } from "./api";
-import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow } from "@shared/rows";
+import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
+import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
@@ -13,10 +14,10 @@ import { extractOutline } from "./outline";
 import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
-import { maintenanceView, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow } from "./api";
-import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromLogins } from "./triage-map";
+import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
 // A docs "space" is a free-form top-level grouping shown as a toggle (e.g.
 // Technical | Product). Values come from the data, not a fixed union.
@@ -33,7 +34,12 @@ export interface Loadable<T> {
 
 export interface AppState {
   view: "auth" | "app";
-  authStep: "login" | "verifying" | "nonmember";
+  authStep: "login" | "verifying" | "nonmember" | "notinvited" | "onboard";
+  deniedEmail: string | null;
+  onboard: OnboardState;
+  persons: Loadable<PersonSummary[]>;
+  invites: Loadable<InviteRow[]>;
+  inviteDraft: string;
   me: Me | null;
   mywork: Loadable<DashboardData | null>;
   screen: Screen;
@@ -78,6 +84,10 @@ export interface AppState {
   displayName: string;
   revealedToken: string | null;
   tokenCopied: boolean;
+  // Settings › Profile: the handle rename editor.
+  handleEdit: boolean;
+  handleDraft: string;
+  handleCheck: "idle" | "checking" | "available" | "invalid" | "reserved" | "taken" | "same";
   // Email notifications (Settings) — the user's resolved prefs + the address edit form.
   notifPrefs: Loadable<PrefsView | null>;
   emailEditing: boolean;
@@ -108,6 +118,11 @@ export type BackfillSyncState =
 export function initialState(): AppState {
   return {
     view: "auth", authStep: "login",
+    deniedEmail: null,
+    onboard: initialOnboard(),
+    persons: { status: "idle", data: [] },
+    invites: { status: "idle", data: [] },
+    inviteDraft: "",
     me: null,
     screen: "mywork",
     theme: "dark", systemDark: true,
@@ -138,6 +153,9 @@ export function initialState(): AppState {
     displayName: "",
     revealedToken: null,
     tokenCopied: false,
+    handleEdit: false,
+    handleDraft: "",
+    handleCheck: "idle",
     notifPrefs: { status: "idle", data: null },
     emailEditing: false,
     emailDraft: "",
@@ -156,7 +174,10 @@ export function initialState(): AppState {
 // ── triage surface data (real reads — the mapping layer lives in triage-map.ts) ──
 export function reviewProps(s: AppState): ReviewProps {
   return {
-    items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data),
+    items: reviewItemsFromReads(s.proposals.data, s.draftAdrs.data).map((it) => {
+      const p = personFor(s, it.agent);
+      return p ? { ...it, agentColor: p.color, agentAvatar: p.avatar_url } : it;
+    }),
     filter: s.reviewFilter,
     selectedId: s.reviewSel,
     diffView: s.reviewDiffView,
@@ -173,7 +194,7 @@ export function maintenanceProps(s: AppState): MaintenanceProps {
     assignSpace: s.assignSpace,
     assignTags: s.assignTags,
     identity: s.identityTasks.data.map(identityFromTask),
-    people: peopleFromLogins([...s.feedAuthors, ...(s.me ? [s.me.login] : [])]),
+    people: peopleFromPersons(s.persons.data),
     mapPicks: s.mapPicks,
     mapConfirm: s.mapConfirm,
   };
@@ -195,6 +216,12 @@ function resolved(s: AppState): "dark" | "light" | "midnight" {
 // Defense-in-depth: external URLs from captured payloads must be http(s) — never javascript:/data:/etc.
 const safeUrl = (u: string): string => (/^https?:\/\//i.test(u) ? u : "#");
 const AVATAR = "border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center";
+/** Look up a captured login (feed author, doc updated_by) in the persons directory
+ *  for its color/avatar — case-insensitive, since GitHub logins are case-preserving
+ *  but case-insensitive for matching. null when unmapped (personChip falls back to initials). */
+function personFor(s: AppState, handle: string): PersonSummary | null {
+  return s.persons.data.find((p) => p.handle.toLowerCase() === handle.toLowerCase()) ?? null;
+}
 
 function logo(size: number): string {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" style="flex:none"><rect x="2" y="4.5" width="20" height="3.4" rx="1.7" fill="var(--accent)"></rect><rect x="5" y="10.3" width="14" height="3.4" rx="1.7" fill="currentColor"></rect><rect x="8" y="16.1" width="8" height="3.4" rx="1.7" fill="currentColor" opacity="0.5"></rect></svg>`;
@@ -259,7 +286,9 @@ function authView(s: AppState): string {
   return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px">
     ${s.authStep === "login" ? loginCard() : ""}
     ${s.authStep === "nonmember" ? nonmemberCard() : ""}
+    ${s.authStep === "notinvited" ? notInvitedCard(s.deniedEmail) : ""}
     ${s.authStep === "verifying" ? verifyingCard() : ""}
+    ${s.authStep === "onboard" ? onboardView(s.onboard) : ""}
   </div>`;
 }
 
@@ -277,8 +306,13 @@ function loginCard(): string {
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.21 11.16.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.72-4.04-1.61-4.04-1.61-.55-1.38-1.34-1.75-1.34-1.75-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.23 1.84 1.23 1.07 1.83 2.81 1.3 3.49.99.11-.77.42-1.3.76-1.6-2.67-.3-5.47-1.32-5.47-5.87 0-1.3.47-2.36 1.23-3.19-.12-.3-.53-1.51.12-3.15 0 0 1.01-.32 3.3 1.22a11.5 11.5 0 0 1 6 0c2.29-1.54 3.3-1.22 3.3-1.22.65 1.64.24 2.85.12 3.15.77.83 1.23 1.89 1.23 3.19 0 4.56-2.81 5.57-5.49 5.86.43.37.81 1.1.81 2.22 0 1.6-.01 2.89-.01 3.29 0 .32.22.7.83.58A12.01 12.01 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"></path></svg>
         Sign in with GitHub
       </button>
+      <div style="display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40)"><span style="flex:1;height:1px;background:var(--border)"></span>or<span style="flex:1;height:1px;background:var(--border)"></span></div>
+      <button data-act="signInGoogle" class="cnpy-outlinebtn" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:14px;font-weight:600;color:var(--fg)">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5c-.3 1.5-1.1 2.7-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.7z"/><path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.2v3.1C3.2 21.3 7.3 24 12 24z"/><path fill="#FBBC05" d="M5.3 14.3c-.5-1.5-.5-3.1 0-4.6V6.6H1.2c-1.6 3.3-1.6 7.3 0 10.6l4.1-2.9z"/><path fill="#EA4335" d="M12 4.7c1.7 0 3.3.6 4.5 1.7l3.4-3.4C17.9 1.1 15.1 0 12 0 7.3 0 3.2 2.7 1.2 6.6l4.1 3.1c.9-2.9 3.6-5 6.7-5z"/></svg>
+        Continue with Google
+      </button>
     </div>
-    <div style="text-align:center;margin-top:22px;font-size:12.5px;color:var(--fg-40);line-height:1.5">The shared source of truth for the Sapling team.</div>
+    <div style="text-align:center;margin-top:22px;font-size:12.5px;color:var(--fg-40);line-height:1.5">GitHub for engineers. Google for everyone else on the team, by invitation.</div>
     <div style="text-align:center;margin-top:18px"><button data-act="previewNonMember" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-40);text-decoration:underline;text-underline-offset:3px">Preview the non-member screen</button></div>
   </div>`;
 }
@@ -298,6 +332,25 @@ function nonmemberCard(): string {
         <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono)">octo-stranger</div></div>
       </div>
       <button data-act="backToLogin" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Sign out &amp; switch account</button>
+    </div>
+  </div>`;
+}
+
+function notInvitedCard(email: string | null): string {
+  return `<div style="width:400px">
+    <div style="border:1px solid var(--border);border-radius:14px;padding:34px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center">
+      <div style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+      </div>
+      <div>
+        <div style="font-size:18px;font-weight:600;letter-spacing:-0.01em">This Google account hasn't been invited yet.</div>
+        <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Canopy is limited to the Sapling team. Ask an admin to invite <span style="font-family:var(--mono);font-size:12.5px">${esc(email ?? "your address")}</span>, then sign in again.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 14px 9px 9px;border:1px solid var(--border);border-radius:999px">
+        <div style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">${esc(initialsOf(email ?? "?"))}</div>
+        <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in with Google as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono)">${esc(email ?? "unknown")}</div></div>
+      </div>
+      <button data-act="signInGoogleSwitch" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Try a different account</button>
     </div>
   </div>`;
 }
@@ -375,8 +428,8 @@ function sidebar(s: AppState): string {
     ${expanded ? `<div style="padding:0 21px 8px;font-size:11px;color:var(--fg-40)">agents produce · humans confirm</div>` : ""}
     <div style="padding:10px;border-top:1px solid var(--border)">
       <button data-act="goSettings" title="Settings" class="cnpy-chip">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:11px;font-weight:600;color:var(--fg);flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="30" height="30" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(s.me?.login ?? "?"))}</div>
-        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.login ?? ""))}</div><div style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.me?.login ?? "")}</div></div>
+        ${personChip(s.me ? { handle: s.me.handle, name: s.displayName || s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null, 30, s.me?.handle ?? "?")}
+        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.handle ?? ""))}</div><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.me ? handleTag({ handle: s.me.handle, color: s.me.color }, s.me.handle, 11) : handleTag(null, "", 11)}</div></div>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>` : ""}
       </button>
     </div>
@@ -398,12 +451,12 @@ function header(s: AppState): string {
   // Author chips are derived from the authors actually present in the feed (captured on
   // the unfiltered load), not a hardcoded people list. Active chip is styled inline
   // because the login set is dynamic (the old `[data-author=…] .a-<login>` CSS can't match).
-  const achip = (key: string, label: string): string => {
+  const achip = (key: string, labelHtml: string): string => {
     const active = s.feedAuthor === key;
     const activeStyle = active ? "border-color:var(--accent);color:var(--accent);background:var(--accent-soft)" : "";
-    return `<button data-act="setAuthor" data-arg="${attr(key)}" class="cnpy-achip" style="${activeStyle}">${label}</button>`;
+    return `<button data-act="setAuthor" data-arg="${attr(key)}" class="cnpy-achip" style="${activeStyle}">${labelHtml}</button>`;
   };
-  const authorChips = [achip("all", "All"), ...s.feedAuthors.map((a) => achip(a, a))].join("");
+  const authorChips = [achip("all", "All"), ...s.feedAuthors.map((a) => achip(a, handleTag(personFor(s, a), a, 12)))].join("");
 
   const feedControls = s.screen === "feed" ? `<div style="display:flex;align-items:center;gap:6px">
       <span style="font-size:11px;color:var(--fg-40);text-transform:uppercase;letter-spacing:.08em;margin-right:2px">Author</span>
@@ -484,12 +537,12 @@ function feedView(s: AppState): string {
       : "";
     return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px">
       <div style="display:flex;align-items:flex-start;gap:12px">
-        <div style="width:30px;height:30px;border-radius:50%;${AVATAR};font-size:10.5px;font-weight:600;color:var(--fg);flex:none;margin-top:1px">${esc(initialsOf(e.author))}</div>
+        <div style="margin-top:1px">${personChip(personFor(s, e.author), 30, e.author)}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${linkifyRefs(e.summary)}</div>
           ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${esc(e.body)}</div>` : ""}
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px">
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)"><span style="font-weight:500;color:var(--fg-70)">${esc(e.author)}</span></div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)">${handleTag(personFor(s, e.author), e.author)}</div>
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 5px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M12 8V4M8 13h.01M16 13h.01"></path></svg>agent</span>
             <span style="font-size:12px;color:var(--fg-40)">&middot;</span>
             <span style="font-size:12px;color:var(--fg-40)">${relTime(e.created_at)}</span>
@@ -613,7 +666,7 @@ export function docReaderHtml(s: AppState): string {
       ${versions.map((v) => `<div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:7px">
         <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:26px">v${v.version}</span>
         <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${esc(v.summary ?? "")}</span>
-        <span style="font-size:11.5px;color:var(--fg-40)">${esc(v.created_by)} · ${relTime(v.created_at)}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg-40)">${personChip(personFor(s, v.created_by), 16, v.created_by)}${handleTag(personFor(s, v.created_by), v.created_by, 11)} · ${relTime(v.created_at)}</span>
         ${v.version === doc.current_version ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
       </div>`).join("")}
     </div>` : "";
@@ -624,8 +677,8 @@ export function docReaderHtml(s: AppState): string {
     <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:15px;padding-bottom:17px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
-        <div style="width:24px;height:24px;border-radius:50%;${AVATAR};font-size:9.5px;font-weight:600;color:var(--fg)">${esc(initialsOf(doc.updated_by ?? ""))}</div>
-        <span>Updated by <b style="color:var(--fg-70);font-weight:500">${esc(doc.updated_by ?? "")}</b> · ${relTime(doc.updated_at)}</span>
+        ${personChip(doc.updated_by ? personFor(s, doc.updated_by) : null, 24, doc.updated_by ?? "?")}
+        <span>Updated by ${doc.updated_by ? handleTag(personFor(s, doc.updated_by), doc.updated_by) : ""} · ${relTime(doc.updated_at)}</span>
       </div>
       <button data-act="toggleHistory" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:7px;padding:5px 11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</button>
     </div>
@@ -829,7 +882,7 @@ function roadmapDigest(s: AppState): string {
     const chips = feedArtifacts(e.artifacts);
     return `<tr style="border-top:1px solid var(--border)">
       <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${relTime(e.created_at)}</td>
-      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)">${esc(e.author)}</td>
+      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)"><span style="display:inline-flex;align-items:center;gap:6px">${personChip(personFor(s, e.author), 18, e.author)}${handleTag(personFor(s, e.author), e.author, 11.5)}</span></td>
       <td style="padding:11px 0;vertical-align:top;font-size:13px;color:var(--fg);line-height:1.5">${linkifyRefs(e.summary)}${chips.length ? ` <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:4px;vertical-align:middle">${chips.map(ghChip).join("")}</span>` : ""}</td>
     </tr>`;
   }).join("");
@@ -1060,6 +1113,71 @@ function guideView(s: AppState): string {
 }
 
 // ── settings ─────────────────────────────────────────────────────────────────
+const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
+
+/** Handle-check status wording, shared with onboarding's STATUS map (people.ts) —
+ *  "same" (draft equals the current handle) and "idle" both render blank. */
+function handleStatusText(check: AppState["handleCheck"]): { text: string; color: string } {
+  switch (check) {
+    case "checking": return { text: "checking…", color: "var(--fg-40)" };
+    case "available": return { text: "available", color: "var(--green)" };
+    case "invalid": return { text: "invalid", color: "var(--red)" };
+    case "reserved": return { text: "reserved", color: "var(--red)" };
+    case "taken": return { text: "taken", color: "var(--red)" };
+    default: return { text: "", color: "var(--fg-40)" }; // idle, same
+  }
+}
+
+/** Settings › Profile: display name, color, and per-provider sign-in (link/unlink).
+ *  Pure over AppState — exported for the pure render test. */
+export function profileSection(s: AppState): string {
+  const me = s.me;
+  const handle = me?.handle ?? "";
+  const last = (me?.identities.length ?? 0) <= 1;
+  const handleRow = s.handleEdit ? (() => {
+    const st = handleStatusText(s.handleCheck);
+    const canSave = s.handleCheck === "available" && s.handleDraft.trim().toLowerCase() !== handle.toLowerCase();
+    return `<div style="margin-top:8px">
+      <div style="display:flex;align-items:center;border:1px solid var(--border-strong);border-radius:9px;background:var(--bg);overflow:hidden;max-width:280px">
+        <span style="font-family:var(--mono);font-size:13px;color:var(--fg-40);padding-left:10px">@</span>
+        <input data-act="handleDraft" data-field="handleDraft" value="${attr(s.handleDraft)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font-size:13px;padding:9px 4px;font-family:var(--mono)" />
+        <span style="font-family:var(--mono);font-size:11px;padding:0 10px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px;line-height:1.5">Every entry you've written is re-attributed to the new handle. Links to the old one stop working.</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button data-act="handleSave" class="cnpy-accentbtn" ${canSave ? "" : "disabled "}style="padding:0 14px;height:32px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;${canSave ? "" : "opacity:.45;cursor:default"}">Save</button>
+        <button data-act="handleCancel" class="cnpy-ghostbtn" style="padding:0 14px;height:32px;border-radius:8px;border:1px solid var(--border);font-size:12.5px;color:var(--fg-55)">Cancel</button>
+      </div>
+    </div>`;
+  })() : `<div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle ${me ? handleTag({ handle, color: me.color }, handle, 12) : handleTag(null, handle, 12)} <button data-act="handleEdit" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-55);text-decoration:underline;text-underline-offset:2px;margin-left:6px">Change</button></div>`;
+  const provRow = (p: "github" | "google", label: string) => {
+    const id = me?.identities.find((i) => i.provider === p);
+    const btn = id
+      ? `<button data-act="unlinkProvider" data-arg="${p}" class="cnpy-ghostbtn" ${last ? "disabled " : ""}style="font-size:12px;color:var(--fg-40);padding:4px 10px;border-radius:6px;border:1px solid var(--border);${last ? "opacity:.45;cursor:default" : ""}">Unlink</button>`
+      : `<button data-act="linkProvider" data-arg="${p}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-70);padding:4px 10px;border-radius:6px;border:1px solid var(--border-strong)">Link ${label}</button>`;
+    return `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${label}</b><span style="font-family:var(--mono);font-size:11.5px;color:${id ? "var(--fg-55)" : "var(--fg-40)"}">${id ? esc(id.label) : "not linked"}</span></div>${btn}</div>`;
+  };
+  return `<section style="margin-bottom:14px">
+    <div style="${SECTION_LABEL}">Profile</div>
+    <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
+        ${personChip(me ? { handle, name: s.displayName || me.name, color: me.color, avatar_url: me.avatar_url } : null, 56, handle || "?")}
+        <div style="flex:1;min-width:0">
+          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Display name</label>
+          <div style="display:flex;gap:10px">
+            <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
+            <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
+          </div>
+          ${handleRow}
+        </div>
+      </div>
+      <div style="margin-bottom:22px"><label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Your color</label>${swatches("setMyColor", me?.color ?? "stone", true)}</div>
+      <div style="${SECTION_LABEL};margin-bottom:10px">Sign-in methods <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--fg-40)">· at least one stays linked</span></div>
+      ${provRow("github", "GitHub")}${provRow("google", "Google")}
+    </div>
+  </section>`;
+}
+
 function settingsView(s: AppState): string {
   const themeCards = [
     ["light", "Light"],
@@ -1098,32 +1216,13 @@ function settingsView(s: AppState): string {
   // No GET route for existing tokens — list is empty with a note.
   const tokenListBody = `<div style="display:flex;align-items:center;gap:11px;padding:15px 18px;font-size:12.5px;color:var(--fg-40)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;opacity:.8"><circle cx="8" cy="15" r="4.5"></circle><path d="m11.2 11.8 7.3-7.3M16 5l3 3M18.5 7.5l-2.2 2.2"></path></svg><span>Tokens are shown once when minted and never stored in readable form, so they can't be listed here.</span></div>`;
 
-  const meLogin = s.me?.login ?? "";
-  const meName = s.me?.name ?? meLogin;
+  const meLogin = s.me?.handle ?? "";
   const meOrg = s.me?.org ?? "";
 
+  const hasProvider = (p: "github" | "google") => s.me?.identities.some((i) => i.provider === p) ?? false;
+
   return `<div style="max-width:680px;margin:0 auto;padding:32px 24px 100px">
-    <section style="margin-bottom:14px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Profile</div>
-      <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
-        <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
-          <div style="width:56px;height:56px;border-radius:50%;${AVATAR};font-size:18px;font-weight:600;flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="56" height="56" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(meLogin || "?"))}</div>
-          <div>
-            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px;font-weight:600">${esc(meName)}</span><span style="font-size:10px;font-weight:600;font-family:var(--mono);color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">GITHUB</span></div>
-            <div style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono);margin-top:3px">${esc(meLogin)}</div>
-            <div style="font-size:11.5px;color:var(--fg-40);margin-top:5px">Avatar is imported from GitHub and can't be changed here.</div>
-          </div>
-        </div>
-        <div>
-          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Display name</label>
-          <div style="display:flex;gap:10px">
-            <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
-            <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
-          </div>
-          <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">This is what shows in the feed and on your identity chip. Defaults to your GitHub login.</div>
-        </div>
-      </div>
-    </section>
+    ${profileSection(s)}
 
     <section style="margin-bottom:14px;margin-top:34px">
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Appearance</div>
@@ -1156,7 +1255,7 @@ function settingsView(s: AppState): string {
           <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="38" height="38" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(meLogin || "?"))}</div>
           <div>
             <div style="font-size:13.5px;font-weight:500">${esc(meLogin)}</div>
-            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Member of <b>${esc(meOrg)}</b></div>
+            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>${hasProvider("github") ? `Member of <b>${esc(meOrg)}</b>` : "Signed in with Google"}</div>
           </div>
         </div>
         <button data-act="signOut" class="cnpy-signout" style="padding:9px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13px;font-weight:500">Sign out</button>
@@ -1290,7 +1389,7 @@ function myWorkView(s: AppState): string {
   const d = slice.data;
   if (!d) return wrapMyWork(notice("Nothing to show yet."));
 
-  const name = esc(s.displayName || s.me?.name || s.me?.login || "there");
+  const name = esc(s.displayName || s.me?.name || s.me?.handle || "there");
   const hero = `<div style="margin-bottom:24px">
     <h2 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0">${greetingFor()}, ${name}</h2>
   </div>`;
@@ -1335,6 +1434,15 @@ function maintenanceScreen(s: AppState): string {
   const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
     : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
     : "";
+  const people = s.me?.admin
+    ? peopleSection({
+        persons: s.persons.data,
+        invites: s.invites.data,
+        inviteDraft: s.inviteDraft,
+        loading: s.persons.status === "loading" || s.invites.status === "loading",
+        error: s.invites.error ?? null,
+      })
+    : "";
   const notif = s.me?.admin
     ? notificationsMaintenanceSections({
         policy: s.notifPolicy.data,
@@ -1344,11 +1452,11 @@ function maintenanceScreen(s: AppState): string {
         fromDraft: s.fromDraft,
       })
     : "";
-  // The maintenance view closes its own container; the notification sections
-  // share that column, so they are spliced in before its closing tag.
+  // The maintenance view closes its own container; People + the notification
+  // sections share that column, so they are spliced in before its closing tag.
   const base = maintenanceView(maintenanceProps(s));
   const cut = base.lastIndexOf("</div>");
-  return `${hint}${base.slice(0, cut)}${notif}${base.slice(cut)}`;
+  return `${hint}${base.slice(0, cut)}${people}${notif}${base.slice(cut)}`;
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
@@ -1413,7 +1521,7 @@ function backfillSyncModal(sync: BackfillSyncState): string {
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
   return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
-    ${s.view === "auth" ? authView(s) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.login ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
+    ${s.view === "auth" ? authView(s) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
   </div>`;

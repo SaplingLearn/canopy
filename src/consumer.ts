@@ -298,7 +298,7 @@ export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: stri
  * directly (src/webhook.ts), never through this bearer/cookie-authenticated path.
  */
 export async function consume(db: DB, payload: IngestPayload, principal: Principal): Promise<IngestResult> {
-  const author = principal.login; // authenticated principal; payload.session.author is advisory and ignored
+  const author = principal.handle; // authenticated principal; payload.session.author is advisory and ignored
   const sessionId = payload.session.id;
   const result: IngestResult = {
     feed: { written: 0, unchanged: 0, triaged: 0 },

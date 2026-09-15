@@ -28,8 +28,10 @@ export async function exchangeCode(opts: {
   code: string;
   redirectUri: string;
   verifier: string;
+  fetchImpl?: typeof fetch;
 }): Promise<string | null> {
-  const res = await fetch("https://github.com/login/oauth/access_token", {
+  const f = opts.fetchImpl ?? fetch;
+  const res = await f("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", "user-agent": USER_AGENT },
     body: JSON.stringify({
@@ -46,8 +48,8 @@ export async function exchangeCode(opts: {
 }
 
 /** The authenticated user's login + name + avatar_url; null on failure. */
-export async function getUser(token: string): Promise<{ login: string; name: string | null; avatar_url: string | null } | null> {
-  const res = await fetch("https://api.github.com/user", {
+export async function getUser(token: string, fetchImpl: typeof fetch = fetch): Promise<{ login: string; name: string | null; avatar_url: string | null } | null> {
+  const res = await fetchImpl("https://api.github.com/user", {
     headers: { authorization: `Bearer ${token}`, accept: GH_API, "user-agent": USER_AGENT },
   });
   if (!res.ok) return null;
@@ -56,8 +58,8 @@ export async function getUser(token: string): Promise<{ login: string; name: str
 }
 
 /** True only if the token's owner is an ACTIVE member of SAPLING_ORG. */
-export async function isActiveOrgMember(token: string): Promise<boolean> {
-  const res = await fetch(`https://api.github.com/user/memberships/orgs/${SAPLING_ORG}`, {
+export async function isActiveOrgMember(token: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
+  const res = await fetchImpl(`https://api.github.com/user/memberships/orgs/${SAPLING_ORG}`, {
     headers: { authorization: `Bearer ${token}`, accept: GH_API, "user-agent": USER_AGENT },
   });
   if (!res.ok) return false; // 404 => not a member

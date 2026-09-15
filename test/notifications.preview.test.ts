@@ -10,10 +10,11 @@ import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
 import { all, run } from "../src/db";
 import { ingestAdrDraft } from "../src/consumer";
+import { seedPerson } from "./helpers/persons";
 import type { NotificationOutboxRow } from "@shared/rows";
 
 async function cookieFor(login: string, email: string | null = "me@example.com"): Promise<string> {
-  await run(env.DB, `INSERT OR IGNORE INTO users (github_login, name, created_at, email) VALUES (?, ?, '2026-01-01T00:00:00Z', ?)`, login, login, email);
+  await seedPerson(login, { email });
   const { id } = await createSession(env.DB, login);
   return `session=${await hmacSeal(id, "test-cookie-secret")}`;
 }
@@ -104,7 +105,7 @@ describe("POST /api/notifications/test-send", () => {
   it("400s when the admin has no address, and when nothing renders (unless sample=true)", async () => {
     const cookie = await cookieFor("admin-user", null);
     expect((await send(cookie, { cadence: "daily" })).status).toBe(400);
-    await run(env.DB, `UPDATE users SET email = 'admin@example.com' WHERE github_login = 'admin-user'`);
+    await run(env.DB, `UPDATE persons SET email = 'admin@example.com' WHERE handle = 'admin-user'`);
     const empty = await send(cookie, { cadence: "daily" });
     expect(empty.status).toBe(400);
     expect(((await empty.json()) as { error: string }).error).toMatch(/nothing to render/i);

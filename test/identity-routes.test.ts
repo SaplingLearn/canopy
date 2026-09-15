@@ -6,14 +6,13 @@ import { hmacSeal } from "../src/auth/crypto";
 import { all, first } from "../src/db";
 import { ingestEvent } from "../src/consumer";
 import { getMyWork } from "../src/tools/mywork";
+import { seedPerson } from "./helpers/persons";
 import type { IdentityTaskWithSample } from "../src/tools/reads";
-import type { IdentityTaskRow, PersonRow } from "@shared/rows";
+import type { IdentityTaskRow, IdentityRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
 
 async function authedCookie(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
+  await seedPerson(login);
   const { id } = await createSession(env.DB, login);
   return `session=${await hmacSeal(id, "test-cookie-secret")}`;
 }
@@ -83,12 +82,13 @@ describe("POST /identity-tasks/:login/map", () => {
   it("maps the login, resolves the task, and drops it from the pending list", async () => {
     const cookie = await authedCookie("andres");
     await ingestEvent(env.DB, prEvent(1, "mystery-dev", "t", "2026-07-01T10:00:00Z"), "github-webhook");
+    await seedPerson("casey");
 
-    const res = await post("/identity-tasks/mystery-dev/map", cookie, { person: "Casey" });
+    const res = await post("/identity-tasks/mystery-dev/map", cookie, { person: "casey" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, login: "mystery-dev", person: "Casey", status: "resolved" });
+    expect(await res.json()).toMatchObject({ ok: true, login: "mystery-dev", person: "casey", status: "resolved" });
 
-    expect((await first<PersonRow>(env.DB, `SELECT * FROM people WHERE login = 'mystery-dev'`))?.person).toBe("Casey");
+    expect((await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE provider = 'github' AND subject = 'mystery-dev'`))?.person).toBe("casey");
     const { tasks } = await getJson<{ tasks: unknown[] }>("/identity-tasks", cookie);
     expect(tasks.length).toBe(0); // leaves the queue
     const row = await first<IdentityTaskRow>(env.DB, `SELECT * FROM identity_tasks WHERE login = 'mystery-dev'`);
@@ -96,26 +96,29 @@ describe("POST /identity-tasks/:login/map", () => {
     expect(row?.resolved_by).toBe("andres");
   });
 
-  it("400 on a missing/empty person and on an unknown login", async () => {
+  it("400 on a missing/empty person, an unknown person, and an unknown login", async () => {
     const cookie = await authedCookie("andres");
     await ingestEvent(env.DB, prEvent(1, "mystery-dev", "t", "2026-07-01T10:00:00Z"), "github-webhook");
+    await seedPerson("casey");
     expect((await post("/identity-tasks/mystery-dev/map", cookie, {})).status).toBe(400);
     expect((await post("/identity-tasks/mystery-dev/map", cookie, { person: "   " })).status).toBe(400);
-    expect((await post("/identity-tasks/nobody-here/map", cookie, { person: "Ghost" })).status).toBe(400);
+    expect((await post("/identity-tasks/mystery-dev/map", cookie, { person: "ghost" })).status).toBe(400); // no such person
+    expect((await post("/identity-tasks/nobody-here/map", cookie, { person: "casey" })).status).toBe(400); // no such identity task
   });
 
   it("returns 401 without a session cookie (and does not mutate)", async () => {
     await ingestEvent(env.DB, prEvent(1, "mystery-dev", "t", "2026-07-01T10:00:00Z"), "github-webhook");
     const res = await app.request("/identity-tasks/mystery-dev/map", { method: "POST" }, env);
     expect(res.status).toBe(401);
-    expect(await first<PersonRow>(env.DB, `SELECT * FROM people WHERE login = 'mystery-dev'`)).toBeNull();
+    expect(await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE provider = 'github' AND subject = 'mystery-dev'`)).toBeNull();
   });
 
   // Settled decision 5: identity mapping is retroactive for free — My Work
-  // resolves login→person at READ time, so one people row surfaces all of the
-  // login's already-captured events with no backfill job.
+  // resolves login→person at READ time via `identities`, so one linked identity
+  // surfaces all of the login's already-captured events with no backfill job.
   it("retroactively surfaces already-captured events in My Work — no backfill", async () => {
     const cookie = await authedCookie("andres");
+    await seedPerson("casey");
     // Computed relative to the real clock (not fixed 2026-07-01/02 dates) so this
     // test never goes red once the real date passes getMyWork's 14-day recency
     // window. Do not pass getMyWork's opts.now here — that parameter is being
@@ -127,17 +130,29 @@ describe("POST /identity-tasks/:login/map", () => {
     await ingestEvent(env.DB, prEvent(1, "mystery-dev", "First PR", twoDaysAgo), "github-webhook");
     await ingestEvent(env.DB, prEvent(2, "mystery-dev", "Second PR", oneDayAgo), "github-webhook");
 
-    // Before mapping: captured but unsurfaced (empty projection, degraded:false).
+    // Before mapping: captured but unsurfaced — "mystery-dev" is not (yet) any
+    // person's handle or identity, so it resolves to nothing.
     const before = await getMyWork(env.DB, "mystery-dev");
     expect(before).toEqual({ person: null, previousActivity: [], todo: [], degraded: false });
 
-    expect((await post("/identity-tasks/mystery-dev/map", cookie, { person: "Casey" })).status).toBe(200);
+    expect((await post("/identity-tasks/mystery-dev/map", cookie, { person: "casey" })).status).toBe(200);
 
-    // After mapping: BOTH pre-existing events surface, purely at read time.
-    const after = await getMyWork(env.DB, "mystery-dev");
-    expect(after.person).toBe("Casey");
+    // After mapping: BOTH pre-existing events surface for the PERSON, purely at read time.
+    const after = await getMyWork(env.DB, "casey");
+    expect(after.person).toBe("casey");
     expect(after.previousActivity.length).toBe(2);
     expect(after.previousActivity[0].title).toBe("Second PR"); // newest first
     expect(after.degraded).toBe(false);
+  });
+
+  it("map to an existing handle links the login; unknown person → 400", async () => {
+    const cookie = await authedCookie("andres");
+    await seedPerson("casey");
+    await ingestEvent(env.DB, prEvent(1, "mystery-dev", "t", "2026-07-01T00:00:00Z"), "github-webhook");
+    const ok = await post("/identity-tasks/mystery-dev/map", cookie, { person: "casey" });
+    expect(ok.status).toBe(200);
+    expect((await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE subject = 'mystery-dev'`))?.person).toBe("casey");
+    await ingestEvent(env.DB, prEvent(2, "other-dev", "t", "2026-07-01T00:00:00Z"), "github-webhook");
+    expect((await post("/identity-tasks/other-dev/map", cookie, { person: "ghost" })).status).toBe(400);
   });
 });

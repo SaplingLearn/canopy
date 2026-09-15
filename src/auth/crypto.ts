@@ -53,3 +53,18 @@ export async function hmacUnseal(sealed: string, secret: string): Promise<string
   const expected = await hmacSeal(value, secret);
   return expected === sealed ? value : null;
 }
+
+/** UTF-8 string → base64url (dot-free; safe inside hmacSeal values). */
+export function b64uEncode(s: string): string {
+  return toBase64Url(enc.encode(s));
+}
+export function b64uToBytes(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+export function b64uDecode(s: string): string {
+  return new TextDecoder().decode(b64uToBytes(s));
+}

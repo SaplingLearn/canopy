@@ -1,20 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
-import { createSession } from "../src/auth/session";
-import { hmacSeal } from "../src/auth/crypto";
 import { all, first } from "../src/db";
 import type { DocVersionRow, AdrRow, NeedsTriageRow, MilestoneProposalRow } from "@shared/rows";
 import { ingestDocProposal } from "../src/consumer";
 import { propose_doc_update, promote_doc, stage_adr, ratify_adr, route_triage, stage_milestone_proposal, promote_milestone_proposal, reject_milestone_proposal } from "../src/tools/writes";
-
-async function authedCookie(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  ).bind(login, login, "2026-01-01T00:00:00Z").run();
-  const { id } = await createSession(env.DB, login);
-  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
-}
+import { cookieFor as authedCookie } from "./helpers/persons";
 
 const post = (path: string, cookie: string, body?: unknown) =>
   app.request(

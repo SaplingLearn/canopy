@@ -9,6 +9,7 @@ import { all, run } from "../src/db";
 import { ingestAdrDraft } from "../src/consumer";
 import { resendDelivery, deliveryFor } from "../src/notifications/resend";
 import { runDigest } from "../src/notifications/run";
+import { seedPerson } from "./helpers/persons";
 import type { OutboundMessage } from "../src/notifications/delivery";
 import type { NotificationOutboxRow } from "@shared/rows";
 import type { Env } from "../src/env";
@@ -50,6 +51,14 @@ describe("resendDelivery", () => {
     const d = resendDelivery({ apiKey: "re_test", from: "bad", fetchImpl });
     await expect(d.send(MSG)).rejects.toThrow(/422.*Invalid `from` field/);
   });
+
+  it("omits the List-Unsubscribe headers when the message has no unsubscribeUrl (transactional mail)", async () => {
+    const { calls, fetchImpl } = capture();
+    const d = resendDelivery({ apiKey: "re_test", from: "Canopy <c@x>", fetchImpl });
+    await d.send({ ...MSG, unsubscribeUrl: undefined });
+    const body = JSON.parse(String(calls[0].init.body)) as { headers?: unknown };
+    expect(body.headers).toBeUndefined();
+  });
 });
 
 describe("deliveryFor — env gate, default local", () => {
@@ -62,7 +71,10 @@ describe("deliveryFor — env gate, default local", () => {
     expect(() => deliveryFor({ ...base, NOTIFICATIONS_MODE: "resend", RESEND_API_KEY: undefined }, { from: "a@b" })).toThrow(/RESEND_API_KEY/);
   });
   it("in resend mode a run stores the provider id and writes no local body", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('AndresL230', 'a', 'x', 'andres@example.com')`);
+    // AndresL230 is pre-seeded by the global reset (email NULL) — seedPerson is
+    // INSERT OR IGNORE, so force the email with an explicit UPDATE too.
+    await seedPerson("AndresL230", { name: "a", email: "andres@example.com" });
+    await run(env.DB, `UPDATE persons SET email = 'andres@example.com' WHERE handle = 'AndresL230'`);
     await ingestAdrDraft(env.DB, { title: "Pending decision", context: "c", decision: "d", rationale: "r", confidence: "high" }, "agent");
     const { fetchImpl } = capture(200, { id: "em_run" });
     const delivery = deliveryFor({ ...base, NOTIFICATIONS_MODE: "resend", RESEND_API_KEY: "re_x" }, { from: "Canopy <c@mail.example>", fetchImpl });

@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all, run } from "../src/db";
+import { all } from "../src/db";
 import { ingestEvent } from "../src/consumer";
 import { storePrSummary, storeIssueSummary, type Summarizer, type PrSummary, type IssueSummary } from "../src/tools/summarize";
 import { getMyWork } from "../src/tools/mywork";
+import { seedPerson } from "./helpers/persons";
 import type { EventRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
 
@@ -206,6 +207,15 @@ describe("getMyWork — unmapped login", () => {
   });
 });
 
+describe("getMyWork — person with no GitHub identity (e.g. Google-only)", () => {
+  it("returns an empty, non-degraded projection carrying the person's name, not null", async () => {
+    await seedPerson("priya", { name: "Priya", github: false });
+
+    const work = await getMyWork(env.DB, "priya");
+    expect(work).toEqual({ person: "Priya", previousActivity: [], todo: [], degraded: false });
+  });
+});
+
 describe("getMyWork — todo carries the issue summary", () => {
   it("joins issue_summaries by issue number; null until a summary exists", async () => {
     const assigned = issueEvent({
@@ -228,7 +238,7 @@ describe("getMyWork — todo carries the issue summary", () => {
 
 describe("getMyWork — structured fields", () => {
   it("projects the structured PR summary columns and base.ref into the DTO", async () => {
-    await run(env.DB, `INSERT INTO people (login, person) VALUES ('dev', 'Dev')`);
+    await seedPerson("dev", { name: "Dev" });
     await ingestEvent(env.DB, prEvent({ number: 7, login: "dev", baseRef: "main" }), "github-webhook");
     const stub: Summarizer<PrSummary> = {
       model: "stub-model",
@@ -248,7 +258,7 @@ describe("getMyWork — structured fields", () => {
   });
 
   it("projects the structured issue summary columns and the milestone into the todo", async () => {
-    await run(env.DB, `INSERT INTO people (login, person) VALUES ('dev', 'Dev')`);
+    await seedPerson("dev", { name: "Dev" });
     await ingestEvent(
       env.DB,
       issueEvent({ number: 9, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" } }),
@@ -271,7 +281,7 @@ describe("getMyWork — structured fields", () => {
   });
 
   it("yields nulls for a legacy raw (no base, milestone without title) and a prose-era summary row", async () => {
-    await run(env.DB, `INSERT INTO people (login, person) VALUES ('dev', 'Dev')`);
+    await seedPerson("dev", { name: "Dev" });
     await ingestEvent(env.DB, prEvent({ number: 8, login: "dev" }), "github-webhook");
     await ingestEvent(
       env.DB,

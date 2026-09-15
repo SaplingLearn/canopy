@@ -13,7 +13,7 @@ const AUTHOR = "admin-user";
 // client/server pair — the same closure production runs (mirrors
 // test/mcp.append_feed.test.ts's callTool helper).
 async function withClient<T>(login: string, fn: (client: Client) => Promise<T>): Promise<T> {
-  const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { login });
+  const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { handle: login });
   const client = new Client({ name: "test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

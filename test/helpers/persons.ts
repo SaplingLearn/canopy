@@ -1,0 +1,23 @@
+import { env } from "cloudflare:test";
+import { run } from "../../src/db";
+import { createSession } from "../../src/auth/session";
+import { hmacSeal } from "../../src/auth/crypto";
+import type { PersonColor } from "@shared/rows";
+
+export interface SeedPersonOpts { name?: string | null; email?: string | null; unsubscribed?: 0 | 1; color?: PersonColor; avatar_url?: string | null; github?: boolean }
+
+/** Insert if missing (INSERT OR IGNORE; pass explicit UPDATEs for pre-seeded handles) a person, and by default its github identity = handle. Idempotent. */
+export async function seedPerson(handle: string, o: SeedPersonOpts = {}): Promise<void> {
+  await run(env.DB, `INSERT OR IGNORE INTO persons (handle, name, color, avatar_url, email, email_unsubscribed, created_at, onboarded_at) VALUES (?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+    handle, o.name === undefined ? handle : o.name, o.color ?? "stone", o.avatar_url ?? null, o.email ?? null, o.unsubscribed ?? 0);
+  if (o.github !== false) {
+    await run(env.DB, `INSERT OR IGNORE INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('github', ?, ?, ?, '2026-01-01T00:00:00Z', 'seed')`, handle, handle, handle);
+  }
+}
+
+/** A signed session cookie for `handle`, seeding the person if needed. */
+export async function cookieFor(handle: string, o: SeedPersonOpts = {}): Promise<string> {
+  await seedPerson(handle, o);
+  const { id } = await createSession(env.DB, handle);
+  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
+}

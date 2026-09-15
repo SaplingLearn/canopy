@@ -164,3 +164,15 @@ input, select { font-family: inherit; }
 .cnpy-md td { border-bottom:1px solid var(--border); }
 .cnpy-md tbody tr:last-child td { border-bottom:none; }
 .cnpy-md th:first-child, .cnpy-md td:first-child { padding-left:2px; }
+
+/* ── person colors (0023): stored by name; one set per theme, midnight reuses dark ── */
+[data-cnpy-theme="light"] { --p-moss:#6f8a3a; --p-fern:#2f7d57; --p-sky:#3e6f8a; --p-slate:#5b6b8c; --p-plum:#7a4f8f; --p-rose:#a84a68; --p-rust:#b4562c; --p-ochre:#a8791e; --p-clay:#8c5a3c; --p-stone:#6b665e; }
+[data-cnpy-theme="dark"], [data-cnpy-theme="midnight"] { --p-moss:#9aab65; --p-fern:#5ab88a; --p-sky:#6aa8c4; --p-slate:#8d9bc0; --p-plum:#b48ac8; --p-rose:#d47a97; --p-rust:#d98a52; --p-ochre:#d4a84a; --p-clay:#c2895f; --p-stone:#9a958d; }
+.cnpy-sw { display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 6px 8px; border-radius:10px; border:1px solid transparent; transition:border-color .12s ease, background .12s ease; }
+.cnpy-sw:hover { background:var(--hover); }
+.cnpy-sw i { width:28px; height:28px; border-radius:50%; background:var(--c); display:block; box-shadow:0 0 0 2px var(--bg), 0 0 0 3px transparent; }
+.cnpy-sw span { font-family:var(--mono); font-size:10.5px; color:var(--fg-55); }
+.cnpy-sw.is-on { border-color:var(--border-strong); background:var(--hover); }
+.cnpy-sw.is-on i { box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--c); }
+.cnpy-sw.is-on span { color:var(--fg); }
+.cnpy-sw.compact { padding:6px 2px; } .cnpy-sw.compact i { width:22px; height:22px; } .cnpy-sw.compact span { display:none; }

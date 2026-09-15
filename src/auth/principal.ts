@@ -4,7 +4,7 @@ import { readSessionCookie, getSessionUser } from "./session";
 import { resolveToken } from "./tokens";
 
 export interface Principal {
-  login: string;
+  handle: string;
 }
 
 export type AppEnv = { Bindings: Env; Variables: { principal: Principal } };
@@ -20,13 +20,17 @@ export function isAdmin(env: Env, login: string): boolean {
 }
 
 // The only routes reachable without a session. Everything else is gated.
-const PUBLIC_PATHS = new Set(["/auth/login", "/auth/callback"]);
+const PUBLIC_PATHS = new Set([
+  "/auth/login", "/auth/callback",
+  "/auth/google/login", "/auth/google/callback",
+  "/auth/onboard", "/auth/handle-check", // gate themselves on the onboard cookie
+]);
 
 export async function resolveSessionPrincipal(c: Context<AppEnv>): Promise<Principal | null> {
   const id = await readSessionCookie(c, c.env.COOKIE_SECRET);
   if (!id) return null;
-  const login = await getSessionUser(c.env.DB, id);
-  return login ? { login } : null;
+  const handle = await getSessionUser(c.env.DB, id);
+  return handle ? { handle } : null;
 }
 
 export async function resolveBearerPrincipal(request: Request, env: Env): Promise<Principal | null> {
@@ -47,7 +51,7 @@ export const sessionGate: MiddlewareHandler<AppEnv> = async (c, next) => {
   // and act as that seeded user — lets the UI be exercised over `wrangler dev` without
   // the real GitHub flow. Mirrors scripts/dev-cookie.mjs, but with zero cookie fuss.
   if (c.env.DEV_LOGIN) {
-    c.set("principal", { login: c.env.DEV_LOGIN });
+    c.set("principal", { handle: c.env.DEV_LOGIN });
     return next();
   }
   const principal = await resolveSessionPrincipal(c);

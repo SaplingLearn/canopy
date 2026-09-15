@@ -74,25 +74,59 @@ export interface NeedsTriageRow {
   assigned_ref: string | null;   // what an 'assigned' item materialized into (e.g. "doc:slug@2")
 }
 
-export interface UserRow {
-  github_login: string;
+export const PERSON_COLORS = ["moss", "fern", "sky", "slate", "plum", "rose", "rust", "ochre", "clay", "stone"] as const;
+export type PersonColor = (typeof PERSON_COLORS)[number];
+
+// The root identity (0023). handle is chosen once at onboarding (migrated
+// GitHub users keep their login). email is the notification address (0021 rule:
+// never overwrites a user/admin-set value).
+export interface PersonRow {
+  handle: string;
   name: string | null;
+  color: PersonColor;
+  avatar_url: string | null;
+  email: string | null;
+  email_unsubscribed: number;
   created_at: string;
-  avatar_url: string | null;          // (0006)
-  email: string | null;               // notification address, user/admin-set — NOT GitHub's (0021)
-  email_unsubscribed: number;         // 1 = hard gate above cadence resolution; prefs survive (0021)
+  onboarded_at: string;
+}
+
+export type IdentityProvider = "github" | "google";
+
+// One sign-in method attached to a person (0023). github.subject = login;
+// google.subject = the stable `sub` claim. label is what a human sees.
+export interface IdentityRow {
+  provider: IdentityProvider;
+  subject: string;
+  label: string;
+  person: string;
+  linked_at: string;
+  linked_by: string;
+}
+
+// The Google gate (0023): only an invited, verified address may create a person.
+export interface InviteRow {
+  email: string;
+  name: string | null;
+  invited_by: string;
+  invited_at: string;
+  accepted_by: string | null;
+  revoked_at: string | null;
+  email_sent_at: string | null;
+  email_id: string | null;
+  email_error: string | null;
 }
 
 export interface SessionRow {
   id: string;
-  user: string;
+  person: string;
   created_at: string;
   expires_at: string;
 }
 
 export interface McpTokenRow {
   id: number;
-  user: string;
+  person: string;
   token_hash: string;
   created_at: string;
   last_used_at: string | null;
@@ -186,12 +220,6 @@ export interface MilestoneProgressRow {
   total: number;
   source: "event" | "recompute";
   computed_at: string;
-}
-
-// Identity map (0012): GitHub login → Canopy person. Admin-maintained.
-export interface PersonRow {
-  login: string;
-  person: string;
 }
 
 // Identity triage task (0016): one pending row per unknown GitHub login seen on

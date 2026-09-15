@@ -3,6 +3,8 @@ export interface Env {
   ASSETS: Fetcher;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  GOOGLE_CLIENT_ID?: string;     // Google OAuth client (second session-class provider); absent → /auth/google/login 503s
+  GOOGLE_CLIENT_SECRET?: string; // Google OAuth client secret
   COOKIE_SECRET: string;
   GITHUB_WEBHOOK_SECRET?: string; // HMAC key for the /webhook/github third auth class; absent → the surface 401s
   GITHUB_REPO?: string;   // "owner/repo" for live roadmap progress; absent → milestones without progress

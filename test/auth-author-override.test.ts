@@ -13,7 +13,7 @@ describe("author override", () => {
       doc_proposals: [{ slug: "architecture", section: "reference", title: "Architecture", body: "x", change_summary: "c", confidence: "high" }],
     });
 
-    await consume(env.DB, payload, { login: "real-user" });
+    await consume(env.DB, payload, { handle: "real-user" });
 
     const feed = await all<FeedRow>(env.DB, `SELECT * FROM feed`);
     expect(feed.length).toBe(1);

@@ -23,7 +23,7 @@ describe("reconciler — replay safety", () => {
   it("an identical re-POST (same session.id) stages NOTHING new — all-unchanged", async () => {
     const payload = fullPayload("S-replay");
 
-    const firstRun = await consume(env.DB, payload, { login: AUTHOR });
+    const firstRun = await consume(env.DB, payload, { handle: AUTHOR });
     expect(firstRun.feed.written).toBe(1);
     expect(firstRun.docs.staged).toBe(1);
     expect(firstRun.adrs.staged).toBe(1);
@@ -36,7 +36,7 @@ describe("reconciler — replay safety", () => {
     const before = await counts();
 
     // Re-run the SAME payload: the ledger drops every item.
-    const secondRun = await consume(env.DB, payload, { login: AUTHOR });
+    const secondRun = await consume(env.DB, payload, { handle: AUTHOR });
     expect(secondRun.feed).toEqual({ written: 0, unchanged: 1, triaged: 0 });
     expect(secondRun.docs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
     expect(secondRun.adrs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
@@ -48,11 +48,11 @@ describe("reconciler — replay safety", () => {
     const a = IngestPayload.parse({ session: meta("S-a"), feed_entries: [{ summary: "dup", body: "b", tags: ["infra"], artifacts: { prs: [], commits: [], issues: [] } }] });
     const b = IngestPayload.parse({ session: meta("S-b"), feed_entries: [{ summary: "dup", body: "b", tags: ["infra"], artifacts: { prs: [], commits: [], issues: [] } }] });
 
-    await consume(env.DB, a, { login: AUTHOR });
-    await consume(env.DB, b, { login: AUTHOR });
+    await consume(env.DB, a, { handle: AUTHOR });
+    await consume(env.DB, b, { handle: AUTHOR });
     expect((await all<FeedRow>(env.DB, `SELECT * FROM feed`)).length).toBe(2); // distinct repeats allowed
 
-    await consume(env.DB, a, { login: AUTHOR }); // replay of A drops
+    await consume(env.DB, a, { handle: AUTHOR }); // replay of A drops
     expect((await all<FeedRow>(env.DB, `SELECT * FROM feed`)).length).toBe(2);
   });
 });
@@ -60,11 +60,11 @@ describe("reconciler — replay safety", () => {
 describe("reconciler — doc dedupe + change_kind", () => {
   it("drops an unchanged body (same body, new session) and stages no new version", async () => {
     const p1 = IngestPayload.parse({ session: meta("D-1"), doc_proposals: [{ slug: "d", section: "reference", body: "same body", change_summary: "s", confidence: "high" }] });
-    const r1 = await consume(env.DB, p1, { login: AUTHOR });
+    const r1 = await consume(env.DB, p1, { handle: AUTHOR });
     expect(r1.docs.staged).toBe(1);
 
     const p2 = IngestPayload.parse({ session: meta("D-2"), doc_proposals: [{ slug: "d", section: "reference", body: "same body", change_summary: "s", confidence: "high" }] });
-    const r2 = await consume(env.DB, p2, { login: AUTHOR });
+    const r2 = await consume(env.DB, p2, { handle: AUTHOR });
     expect(r2.docs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
     expect((await all<DocVersionRow>(env.DB, `SELECT * FROM doc_versions WHERE slug = 'd'`)).length).toBe(1);
   });
@@ -133,9 +133,9 @@ describe("reconciler — ADR + milestone dedupe", () => {
     const b = IngestPayload.parse({ session: meta("A-2"), adr_drafts: [{ title: "T", context: "c", decision: "d", rationale: "r", confidence: "high" }] });
     const c = IngestPayload.parse({ session: meta("A-3"), adr_drafts: [{ title: "T", context: "c", decision: "d2", rationale: "r", confidence: "high" }] });
 
-    expect((await consume(env.DB, a, { login: AUTHOR })).adrs.staged).toBe(1);
-    expect((await consume(env.DB, b, { login: AUTHOR })).adrs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
-    expect((await consume(env.DB, c, { login: AUTHOR })).adrs.staged).toBe(1);
+    expect((await consume(env.DB, a, { handle: AUTHOR })).adrs.staged).toBe(1);
+    expect((await consume(env.DB, b, { handle: AUTHOR })).adrs).toEqual({ staged: 0, unchanged: 1, triaged: 0 });
+    expect((await consume(env.DB, c, { handle: AUTHOR })).adrs.staged).toBe(1);
     expect((await all<AdrRow>(env.DB, `SELECT * FROM adrs`)).length).toBe(2);
   });
 

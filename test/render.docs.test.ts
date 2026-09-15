@@ -35,7 +35,7 @@ function docsState(docs: DocRow[]): ReturnType<typeof initialState> {
     ...s,
     view: "app",
     screen: "docs",
-    me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn", admin: false },
+    me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss", identities: [], org: "SaplingLearn", admin: false },
     docsList: { status: "ok", data: docs },
   };
 }

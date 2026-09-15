@@ -4,8 +4,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { Cadence, RunCadence, type PrefsKindView, type PrefsView, type PolicyKindView } from "@shared/notifications";
-import type { NotificationOutboxRow, NotificationPolicyRow, NotificationSettingsRow, UserRow } from "@shared/rows";
+import type { NotificationOutboxRow, NotificationPolicyRow, NotificationSettingsRow, PersonRow } from "@shared/rows";
 import { type AppEnv, isAdmin } from "../auth/principal";
+import { findPersonByEmail } from "../auth/persons";
 import { type DB, all, first, run, nowIso } from "../db";
 import { REGISTRY, getKind } from "./registry";
 import { loadPolicies, loadPrefs, resolveWith } from "./resolve";
@@ -22,7 +23,7 @@ export const notificationsApp = new Hono<AppEnv>();
 
 
 export async function prefsView(db: DB, login: string): Promise<PrefsView> {
-  const user = await first<UserRow>(db, `SELECT * FROM users WHERE github_login = ?`, login);
+  const person = await first<PersonRow>(db, `SELECT * FROM persons WHERE handle = ?`, login);
   const policies = await loadPolicies(db);
   const prefs = await loadPrefs(db, login);
   const kinds: PrefsKindView[] = [];
@@ -40,7 +41,7 @@ export async function prefsView(db: DB, login: string): Promise<PrefsView> {
       inherited: pref === undefined,
     });
   }
-  return { email: user?.email ?? null, unsubscribed: (user?.email_unsubscribed ?? 0) === 1, kinds };
+  return { email: person?.email ?? null, unsubscribed: (person?.email_unsubscribed ?? 0) === 1, kinds };
 }
 
 const Email = z.string().trim().max(254).refine((s) => s === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s), "invalid email");
@@ -51,10 +52,10 @@ const PrefsWrite = z.object({
   prefs: z.record(z.string(), Cadence.nullable()).optional(), // null = reset (delete the row)
 });
 
-notificationsApp.get("/prefs", async (c) => c.json(await prefsView(c.env.DB, c.get("principal").login)));
+notificationsApp.get("/prefs", async (c) => c.json(await prefsView(c.env.DB, c.get("principal").handle)));
 
 notificationsApp.put("/prefs", async (c) => {
-  const login = c.get("principal").login; // the ONLY row a user can touch
+  const login = c.get("principal").handle; // the ONLY row a user can touch
   const parsed = PrefsWrite.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   const body = parsed.data;
@@ -70,9 +71,20 @@ notificationsApp.put("/prefs", async (c) => {
     writes.push({ kind: kindId, cadence });
   }
 
+  // persons.email is an auth matcher (the sign-in fork's branch 2 links on it) but has
+  // no DB-level UNIQUE constraint — guard it here instead: a non-empty address already
+  // on someone ELSE's row is refused (409) before anything is written. Re-saving your
+  // own address is fine (case-insensitive compare against the caller's own handle).
+  if (body.email) {
+    const existing = await findPersonByEmail(c.env.DB, body.email);
+    if (existing && existing.handle.toLowerCase() !== login.toLowerCase()) {
+      return c.json({ error: "email_in_use" }, 409);
+    }
+  }
+
   const now = nowIso();
-  if (body.email !== undefined) await run(c.env.DB, `UPDATE users SET email = ? WHERE github_login = ?`, body.email === "" ? null : body.email, login);
-  if (body.unsubscribed !== undefined) await run(c.env.DB, `UPDATE users SET email_unsubscribed = ? WHERE github_login = ?`, body.unsubscribed ? 1 : 0, login);
+  if (body.email !== undefined) await run(c.env.DB, `UPDATE persons SET email = ? WHERE handle = ?`, body.email === "" ? null : body.email, login);
+  if (body.unsubscribed !== undefined) await run(c.env.DB, `UPDATE persons SET email_unsubscribed = ? WHERE handle = ?`, body.unsubscribed ? 1 : 0, login);
   for (const w of writes) {
     if (w.cadence === null) await run(c.env.DB, `DELETE FROM notification_prefs WHERE user_id = ? AND kind = ?`, login, w.kind);
     else await run(c.env.DB, `INSERT INTO notification_prefs (user_id, kind, cadence, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, kind) DO UPDATE SET cadence = excluded.cadence, updated_at = excluded.updated_at`, login, w.kind, w.cadence, now);
@@ -82,12 +94,12 @@ notificationsApp.put("/prefs", async (c) => {
 
 // ── admin: policy / settings / outbox / teammate address ─────────────────────
 
-const adminOnly = notificationsApp.use("/policy", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/settings", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/outbox", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/users/*", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/preview", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
-adminOnly.use("/test-send", async (c, next) => (isAdmin(c.env, c.get("principal").login) ? next() : c.json({ error: "admin only" }, 403)));
+const adminOnly = notificationsApp.use("/policy", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/settings", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/outbox", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/persons/*", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/preview", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
+adminOnly.use("/test-send", async (c, next) => (isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403)));
 
 
 async function policyView(db: DB): Promise<{ kinds: PolicyKindView[] }> {
@@ -128,7 +140,7 @@ notificationsApp.put("/policy", async (c) => {
     default_cadence ?? existing?.default_cadence ?? kind.defaultCadence,
     enabled === undefined ? (existing?.enabled ?? 1) : enabled ? 1 : 0,
     nowIso(),
-    c.get("principal").login
+    c.get("principal").handle
   );
   return c.json(await policyView(c.env.DB));
 });
@@ -171,14 +183,23 @@ notificationsApp.get("/outbox", async (c) => {
   return c.json({ rows });
 });
 
-const UserEmailWrite = z.object({ email: Email });
+const PersonEmailWrite = z.object({ email: Email });
 
-notificationsApp.put("/users/:login", async (c) => {
-  const parsed = UserEmailWrite.safeParse(await c.req.json().catch(() => null));
+notificationsApp.put("/persons/:handle", async (c) => {
+  const parsed = PersonEmailWrite.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
-  const res = await run(c.env.DB, `UPDATE users SET email = ? WHERE github_login = ?`, parsed.data.email === "" ? null : parsed.data.email, c.req.param("login"));
-  if ((res.meta.changes ?? 0) === 0) return c.json({ error: "no such user" }, 404);
-  return c.json({ ok: true, login: c.req.param("login"), email: parsed.data.email || null });
+  const handle = c.req.param("handle");
+  // Same email-matcher guard as self-service PUT /prefs: a different handle already
+  // holding this address is refused, never silently reassigned.
+  if (parsed.data.email) {
+    const existing = await findPersonByEmail(c.env.DB, parsed.data.email);
+    if (existing && existing.handle.toLowerCase() !== handle.toLowerCase()) {
+      return c.json({ error: "email_in_use" }, 409);
+    }
+  }
+  const res = await run(c.env.DB, `UPDATE persons SET email = ? WHERE handle = ?`, parsed.data.email === "" ? null : parsed.data.email, handle);
+  if ((res.meta.changes ?? 0) === 0) return c.json({ error: "no such person" }, 404);
+  return c.json({ ok: true, handle, email: parsed.data.email || null });
 });
 
 // ── admin: preview + test send ───────────────────────────────────────────────
@@ -194,7 +215,7 @@ async function enabledKinds(db: DB) {
 notificationsApp.get("/preview", async (c) => {
   const cadence = RunCadence.safeParse(c.req.query("cadence") ?? "daily");
   if (!cadence.success) return c.json({ error: "cadence must be daily or weekly" }, 400);
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   const settings = await loadSettings(c.env.DB);
   const window = computeWindow(cadence.data, new Date(), settings.timezone);
   const kinds = await enabledKinds(c.env.DB);
@@ -222,9 +243,9 @@ const TestSend = z.object({ cadence: RunCadence, sample: z.boolean().optional() 
 notificationsApp.post("/test-send", async (c) => {
   const parsed = TestSend.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
-  const login = c.get("principal").login;
-  const user = await first<UserRow>(c.env.DB, `SELECT * FROM users WHERE github_login = ?`, login);
-  if (!user?.email) return c.json({ error: "no email on file for you — set one in Settings first" }, 400);
+  const login = c.get("principal").handle;
+  const person = await first<PersonRow>(c.env.DB, `SELECT * FROM persons WHERE handle = ?`, login);
+  if (!person?.email) return c.json({ error: "no email on file for you — set one in Settings first" }, 400);
 
   const settings = await loadSettings(c.env.DB);
   const window = computeWindow(parsed.data.cadence, new Date(), settings.timezone);
@@ -250,10 +271,10 @@ notificationsApp.post("/test-send", async (c) => {
   );
   const status = await deliverRow(
     c.env.DB,
-    { key, login, email: user.email, kinds, window, timeZone: settings.timezone },
+    { key, login, email: person.email, kinds, window, timeZone: settings.timezone },
     { delivery, origin, unsubscribeUrl: (l) => unsubscribeUrl(origin, l, c.env.COOKIE_SECRET) },
     preset
   );
   const row = await first<{ resend_id: string | null; error: string | null }>(c.env.DB, `SELECT resend_id, error FROM notification_outbox WHERE idempotency_key = ?`, key);
-  return c.json({ ok: status === "sent", status, key, mode: delivery.mode, to: user.email, resend_id: row?.resend_id ?? null, error: row?.error ?? null });
+  return c.json({ ok: status === "sent", status, key, mode: delivery.mode, to: person.email, resend_id: row?.resend_id ?? null, error: row?.error ?? null });
 });

@@ -11,11 +11,12 @@ import { hmacSeal } from "../src/auth/crypto";
 import { all, first, run } from "../src/db";
 import { seedNotificationPolicy } from "../src/notifications/policy";
 import { unsubscribeToken } from "../src/notifications/unsubscribe";
-import type { NotificationPolicyRow, NotificationPrefRow, NotificationSettingsRow, UserRow } from "@shared/rows";
+import { seedPerson } from "./helpers/persons";
+import type { NotificationPolicyRow, NotificationPrefRow, NotificationSettingsRow, PersonRow } from "@shared/rows";
 import type { Env } from "../src/env";
 
 async function cookieFor(login: string, email: string | null = "me@example.com"): Promise<string> {
-  await run(env.DB, `INSERT OR IGNORE INTO users (github_login, name, created_at, email) VALUES (?, ?, '2026-01-01T00:00:00Z', ?)`, login, login, email);
+  await seedPerson(login, { email });
   const { id } = await createSession(env.DB, login);
   return `session=${await hmacSeal(id, "test-cookie-secret")}`;
 }
@@ -74,7 +75,7 @@ describe("GET/PUT /api/notifications/prefs", () => {
     await run(env.DB, `INSERT INTO notification_prefs (user_id, kind, cadence, updated_at) VALUES ('u1', 'my_work', 'weekly', 'x')`);
     let res = await app.request("/api/notifications/prefs", json("PUT", { email: "new@example.com", unsubscribed: true }, cookie), env);
     expect(res.status).toBe(200);
-    let u = (await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`))!;
+    let u = (await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!;
     expect(u.email).toBe("new@example.com");
     expect(u.email_unsubscribed).toBe(1);
     expect(await all(env.DB, `SELECT * FROM notification_prefs WHERE user_id = 'u1'`)).toHaveLength(1);
@@ -84,7 +85,7 @@ describe("GET/PUT /api/notifications/prefs", () => {
 
     res = await app.request("/api/notifications/prefs", json("PUT", { email: "", unsubscribed: false }, cookie), env);
     expect(res.status).toBe(200);
-    u = (await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`))!;
+    u = (await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!;
     expect(u.email).toBeNull();
     expect(u.email_unsubscribed).toBe(0);
   });
@@ -93,7 +94,23 @@ describe("GET/PUT /api/notifications/prefs", () => {
     const cookie = await cookieFor("u1");
     await cookieFor("u2", "other@example.com");
     await app.request("/api/notifications/prefs", json("PUT", { email: "x@example.com", user_id: "u2" }, cookie), env);
-    expect((await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u2'`))!.email).toBe("other@example.com");
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u2'`))!.email).toBe("other@example.com");
+  });
+
+  it("PUT refuses an address already on another person's row (409, nothing written), but allows re-saving your own", async () => {
+    const cookie1 = await cookieFor("u1", "taken@example.com");
+    const cookie2 = await cookieFor("u2", "u2@example.com");
+    let res = await app.request("/api/notifications/prefs", json("PUT", { email: "taken@example.com" }, cookie2), env);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "email_in_use" });
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u2'`))!.email).toBe("u2@example.com");
+    // Case-insensitive match too.
+    res = await app.request("/api/notifications/prefs", json("PUT", { email: "TAKEN@example.com" }, cookie2), env);
+    expect(res.status).toBe(409);
+    // The owner can re-save their own address.
+    res = await app.request("/api/notifications/prefs", json("PUT", { email: "taken@example.com" }, cookie1), env);
+    expect(res.status).toBe(200);
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!.email).toBe("taken@example.com");
   });
 });
 
@@ -106,7 +123,7 @@ describe("admin routes: policy, settings, outbox, user email", () => {
       ["/api/notifications/settings", { headers: { cookie } }],
       ["/api/notifications/settings", json("PUT", { send_hour: 9 }, cookie)],
       ["/api/notifications/outbox", { headers: { cookie } }],
-      ["/api/notifications/users/u1", json("PUT", { email: "a@b.co" }, cookie)],
+      ["/api/notifications/persons/u1", json("PUT", { email: "a@b.co" }, cookie)],
     ] as const) {
       expect((await app.request(path, init, env)).status, `${init.method ?? "GET"} ${path}`).toBe(403);
     }
@@ -155,13 +172,23 @@ describe("admin routes: policy, settings, outbox, user email", () => {
     expect(v.rows.map((r) => r.user_id)).toEqual(["c", "b"]);
   });
 
-  it("PUT users/:login sets a teammate's address (admin edit in Maintenance)", async () => {
+  it("PUT persons/:handle sets a teammate's address (admin edit in Maintenance)", async () => {
     const cookie = await cookieFor("admin-user");
     await cookieFor("u1", null);
-    const res = await app.request("/api/notifications/users/u1", json("PUT", { email: "fixed@example.com" }, cookie), env);
+    const res = await app.request("/api/notifications/persons/u1", json("PUT", { email: "fixed@example.com" }, cookie), env);
     expect(res.status).toBe(200);
-    expect((await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`))!.email).toBe("fixed@example.com");
-    expect((await app.request("/api/notifications/users/ghost", json("PUT", { email: "x@example.com" }, cookie), env)).status).toBe(404);
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!.email).toBe("fixed@example.com");
+    expect((await app.request("/api/notifications/persons/ghost", json("PUT", { email: "x@example.com" }, cookie), env)).status).toBe(404);
+  });
+
+  it("PUT persons/:handle refuses an address already on a different person's row (409, nothing written)", async () => {
+    const cookie = await cookieFor("admin-user");
+    await cookieFor("u1", "taken3@example.com");
+    await cookieFor("u2", null);
+    const res = await app.request("/api/notifications/persons/u2", json("PUT", { email: "taken3@example.com" }, cookie), env);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "email_in_use" });
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u2'`))!.email).toBeNull();
   });
 });
 
@@ -170,31 +197,31 @@ describe("signed one-click unsubscribe (/u/:token) — no cookie", () => {
   const wenv = env as unknown as Env;
 
   it("POST with a valid token sets email_unsubscribed = 1 and nothing else", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('u1', 'U', 'x', 'me@example.com')`);
+    await seedPerson("u1", { name: "U", email: "me@example.com" });
     await run(env.DB, `INSERT INTO notification_prefs (user_id, kind, cadence, updated_at) VALUES ('u1', 'my_work', 'weekly', 'x')`);
     const token = await unsubscribeToken("u1", "test-cookie-secret");
     const res = await worker.fetch(new Request(`https://canopy.example/u/${token}`, { method: "POST", body: "List-Unsubscribe=One-Click", headers: { "content-type": "application/x-www-form-urlencoded" } }), wenv, ctx);
     expect(res.status).toBe(200);
-    const u = (await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`))!;
+    const u = (await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!;
     expect(u.email_unsubscribed).toBe(1);
     expect(u.email).toBe("me@example.com");
     expect(await all(env.DB, `SELECT * FROM notification_prefs WHERE user_id = 'u1'`)).toHaveLength(1);
   });
 
   it("POST with a tampered or foreign token changes nothing and 401s", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('u1', 'U', 'x', 'me@example.com')`);
+    await seedPerson("u1", { name: "U", email: "me@example.com" });
     const token = await unsubscribeToken("u1", "wrong-secret");
     const res = await worker.fetch(new Request(`https://canopy.example/u/${token}`, { method: "POST" }), wenv, ctx);
     expect(res.status).toBe(401);
-    expect((await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`))!.email_unsubscribed).toBe(0);
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!.email_unsubscribed).toBe(0);
   });
 
   it("GET redirects to the in-app (cookie-gated) unsubscribe screen without flipping anything", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('u1', 'U', 'x', 'me@example.com')`);
+    await seedPerson("u1", { name: "U", email: "me@example.com" });
     const token = await unsubscribeToken("u1", "test-cookie-secret");
     const res = await worker.fetch(new Request(`https://canopy.example/u/${token}`), wenv, ctx);
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("https://canopy.example/#unsubscribe");
-    expect((await first<UserRow>(env.DB, `SELECT * FROM users WHERE github_login = 'u1'`))!.email_unsubscribed).toBe(0);
+    expect((await first<PersonRow>(env.DB, `SELECT * FROM persons WHERE handle = 'u1'`))!.email_unsubscribed).toBe(0);
   });
 });
