@@ -155,6 +155,7 @@ export function submitOnboard(b: { handle: string; name: string | null; color: P
 // ── profile + identities ──────────────────────────────────────────────────────
 export function updateMe(b: { name?: string | null; color?: PersonColor }): Promise<{ ok: true; name: string | null; color: PersonColor }> { return putJson("/auth/me", b); }
 export function unlinkIdentity(provider: "github" | "google"): Promise<{ ok: true }> { return postJson(`/auth/identities/${provider}/unlink`); }
+export function renameHandle(handle: string): Promise<{ ok: true; handle: string }> { return postJson("/auth/me/handle", { handle }); }
 
 // ── persons directory ─────────────────────────────────────────────────────────
 export interface PersonSummary { handle: string; name: string | null; color: PersonColor; avatar_url: string | null }

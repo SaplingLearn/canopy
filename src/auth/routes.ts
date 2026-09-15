@@ -9,7 +9,7 @@ import { buildAuthorizeUrl, exchangeCode, getUser, getPrimaryEmail, isActiveOrgM
 import { buildGoogleAuthorizeUrl, exchangeGoogleCode, verifyGoogleIdToken } from "./google";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
 import { mintToken } from "./tokens";
-import { getPerson, listIdentities, findIdentity, handleAvailable, createPerson, HandleTakenError, linkIdentity, unlinkIdentity, updateProfile } from "./persons";
+import { getPerson, listIdentities, findIdentity, handleAvailable, createPerson, HandleTakenError, linkIdentity, unlinkIdentity, updateProfile, renamePerson } from "./persons";
 import { run } from "../db";
 import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, ONBOARD_TTL_S, type ProviderProfile, type ForkResult } from "./onboard";
 import { findLiveInvite, acceptInvite } from "./invites";
@@ -133,7 +133,10 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     return c.json({ provider: p.provider, label: p.label, email: p.email, name: p.name, avatar_url: p.avatar_url, suggested_handle: p.suggested_handle });
   });
   authApp.get("/handle-check", async (c) => {
-    if (!(await onboardPayload(c))) return c.json({ error: "unauthorized" }, 401);
+    // Onboarding (no session yet) OR a signed-in person checking a rename target — either
+    // capability is enough. sessionGate lets this path through as public, so both branches
+    // are checked here.
+    if (!(await onboardPayload(c)) && !(await resolveSessionPrincipal(c))) return c.json({ error: "unauthorized" }, 401);
     return c.json(await handleAvailable(c.env.DB, (c.req.query("handle") ?? "").trim()));
   });
   const OnboardWrite = z.object({ handle: z.string().trim(), name: z.string().trim().max(120).nullable().optional(), color: z.enum(PERSON_COLORS) });
@@ -190,6 +193,21 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     const row = await updateProfile(c.env.DB, c.get("principal").handle, parsed.data);
     if (!row) return c.json({ error: "not found" }, 404);
     return c.json({ ok: true, name: row.name, color: row.color });
+  });
+  const HandleWrite = z.object({ handle: z.string().trim() });
+  authApp.post("/me/handle", async (c) => {
+    const parsed = HandleWrite.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid payload" }, 400);
+    const oldHandle = c.get("principal").handle;
+    const newHandle = parsed.data.handle;
+    if (isAdmin(c.env, oldHandle) && !isAdmin(c.env, newHandle)) return c.json({ error: "admin_handle_not_allowlisted" }, 403);
+    const r = await renamePerson(c.env.DB, oldHandle, newHandle);
+    if (!r.ok) {
+      if (r.reason === "taken") return c.json({ error: "handle_taken" }, 409);
+      if (r.reason === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: `handle_${r.reason}` }, 400);
+    }
+    return c.json({ ok: true, handle: newHandle });
   });
   authApp.post("/identities/:provider/unlink", async (c) => {
     const provider = c.req.param("provider");

@@ -18,7 +18,7 @@ any new MCP tool.
 |---|---|
 | Who gets in via Google | Admin invite list. Only an invited, verified address may create a person. |
 | Identity model | `persons` is primary. GitHub logins and Google subjects are rows in `identities`. `users` and `people` are dropped. |
-| Handle | Chosen by the person at first sign-in, prefilled with the GitHub login when there is one. Immutable afterwards. |
+| Handle | Chosen at first sign-in, prefilled with the GitHub login. Renameable from Settings; a rename rewrites every stored handle atomically (`HANDLE_COLUMNS`). |
 | Color | One of ten named palette tokens, stored by name. Editable in Settings. |
 | Auth classes | Still three (session cookie, bearer, webhook). Google is a second provider inside the session-cookie class. |
 | Onboarding state | A sealed cookie, same pattern as the PKCE transaction cookie. No pending rows in D1. |
@@ -37,7 +37,7 @@ One migration, `migrations/0023_persons.sql`. D1 cannot rename an FK'd column, s
 
 | column | notes |
 |---|---|
-| `handle` TEXT PK | Chosen once. New handles match `^[a-z][a-z0-9-]{1,23}$`; migrated GitHub logins keep their casing. Unique `COLLATE NOCASE`. |
+| `handle` TEXT PK | Chosen at first sign-in; renameable from Settings (`renamePerson` rewrites every stored handle atomically). New handles match `^[a-z][a-z0-9-]{1,23}$`; migrated GitHub logins keep their casing. Unique `COLLATE NOCASE`. |
 | `name` TEXT | Display name. From the provider at first sign-in; editable. |
 | `color` TEXT NOT NULL | One of `moss fern sky slate plum rose rust ochre clay stone`. CHECK constraint. |
 | `avatar_url` TEXT | From the provider; refreshed at each sign-in. |

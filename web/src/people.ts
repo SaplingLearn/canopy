@@ -66,7 +66,7 @@ export function onboardView(o: OnboardState): string {
     <div style="margin-bottom:26px">
       <div style="font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40);margin-bottom:10px">Welcome to Canopy · one step</div>
       <h1 style="font-size:22px;font-weight:600;letter-spacing:-0.02em;margin:0 0 6px">Choose how you'll appear.</h1>
-      <p style="font-size:14px;color:var(--fg-70);margin:0;line-height:1.55">Your handle is how work gets attributed to you, in the feed, in decisions, in My Work. It can't be changed later. Your color can.</p>
+      <p style="font-size:14px;color:var(--fg-70);margin:0;line-height:1.55">Your handle is how work gets attributed to you, in the feed, in decisions, in My Work. You can change it later in Settings. Your color can too.</p>
     </div>
     <div style="display:grid;gap:22px">
       ${field("Handle", `<div style="${row}"><span style="font-family:var(--mono);font-size:14px;color:var(--fg-40);padding-left:12px">@</span><input data-act="onbHandle" data-field="onbHandle" value="${attr(o.handle)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="${input};padding-left:4px;font-family:var(--mono)" /><span style="font-family:var(--mono);font-size:11px;padding:0 12px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span></div>`,

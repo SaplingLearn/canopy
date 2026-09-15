@@ -84,6 +84,10 @@ export interface AppState {
   displayName: string;
   revealedToken: string | null;
   tokenCopied: boolean;
+  // Settings › Profile: the handle rename editor.
+  handleEdit: boolean;
+  handleDraft: string;
+  handleCheck: "idle" | "checking" | "available" | "invalid" | "reserved" | "taken" | "same";
   // Email notifications (Settings) — the user's resolved prefs + the address edit form.
   notifPrefs: Loadable<PrefsView | null>;
   emailEditing: boolean;
@@ -149,6 +153,9 @@ export function initialState(): AppState {
     displayName: "",
     revealedToken: null,
     tokenCopied: false,
+    handleEdit: false,
+    handleDraft: "",
+    handleCheck: "idle",
     notifPrefs: { status: "idle", data: null },
     emailEditing: false,
     emailDraft: "",
@@ -1105,12 +1112,41 @@ function guideView(s: AppState): string {
 // ── settings ─────────────────────────────────────────────────────────────────
 const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
 
+/** Handle-check status wording, shared with onboarding's STATUS map (people.ts) —
+ *  "same" (draft equals the current handle) and "idle" both render blank. */
+function handleStatusText(check: AppState["handleCheck"]): { text: string; color: string } {
+  switch (check) {
+    case "checking": return { text: "checking…", color: "var(--fg-40)" };
+    case "available": return { text: "available", color: "var(--green)" };
+    case "invalid": return { text: "invalid", color: "var(--red)" };
+    case "reserved": return { text: "reserved", color: "var(--red)" };
+    case "taken": return { text: "taken", color: "var(--red)" };
+    default: return { text: "", color: "var(--fg-40)" }; // idle, same
+  }
+}
+
 /** Settings › Profile: display name, color, and per-provider sign-in (link/unlink).
  *  Pure over AppState — exported for the pure render test. */
 export function profileSection(s: AppState): string {
   const me = s.me;
   const handle = me?.handle ?? "";
   const last = (me?.identities.length ?? 0) <= 1;
+  const handleRow = s.handleEdit ? (() => {
+    const st = handleStatusText(s.handleCheck);
+    const canSave = s.handleCheck === "available" && s.handleDraft.trim().toLowerCase() !== handle.toLowerCase();
+    return `<div style="margin-top:8px">
+      <div style="display:flex;align-items:center;border:1px solid var(--border-strong);border-radius:9px;background:var(--bg);overflow:hidden;max-width:280px">
+        <span style="font-family:var(--mono);font-size:13px;color:var(--fg-40);padding-left:10px">@</span>
+        <input data-act="handleDraft" data-field="handleDraft" value="${attr(s.handleDraft)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font-size:13px;padding:9px 4px;font-family:var(--mono)" />
+        <span style="font-family:var(--mono);font-size:11px;padding:0 10px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px;line-height:1.5">Every entry you've written is re-attributed to the new handle. Links to the old one stop working.</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button data-act="handleSave" class="cnpy-accentbtn" ${canSave ? "" : "disabled "}style="padding:0 14px;height:32px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;${canSave ? "" : "opacity:.45;cursor:default"}">Save</button>
+        <button data-act="handleCancel" class="cnpy-ghostbtn" style="padding:0 14px;height:32px;border-radius:8px;border:1px solid var(--border);font-size:12.5px;color:var(--fg-55)">Cancel</button>
+      </div>
+    </div>`;
+  })() : `<div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle <span style="font-family:var(--mono);color:var(--fg-55)">@${esc(handle)}</span> <button data-act="handleEdit" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-55);text-decoration:underline;text-underline-offset:2px;margin-left:6px">Change</button></div>`;
   const provRow = (p: "github" | "google", label: string) => {
     const id = me?.identities.find((i) => i.provider === p);
     const btn = id
@@ -1129,7 +1165,7 @@ export function profileSection(s: AppState): string {
             <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
             <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
           </div>
-          <div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle <span style="font-family:var(--mono);color:var(--fg-55)">@${esc(handle)}</span> · can't be changed</div>
+          ${handleRow}
         </div>
       </div>
       <div style="margin-bottom:22px"><label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Your color</label>${swatches("setMyColor", me?.color ?? "stone", true)}</div>

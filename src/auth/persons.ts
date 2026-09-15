@@ -91,3 +91,39 @@ export async function updateProfile(db: DB, handle: string, patch: { name?: stri
 export function listPersons(db: DB): Promise<Pick<PersonRow, "handle" | "name" | "color" | "avatar_url">[]> {
   return all(db, `SELECT handle, name, color, avatar_url FROM persons ORDER BY handle COLLATE NOCASE ASC`);
 }
+
+/** Every (table, column) that stores a person handle. A rename rewrites all of them. */
+export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: string]> = [
+  ["identities", "person"], ["identities", "linked_by"],
+  ["sessions", "person"], ["mcp_tokens", "person"],
+  ["feed", "author"],
+  ["docs", "updated_by"], ["doc_versions", "created_by"],
+  ["adrs", "created_by"],
+  ["milestones", "created_by"], ["milestone_proposals", "created_by"],
+  ["needs_triage", "resolved_by"], ["identity_tasks", "resolved_by"],
+  ["events", "recorded_by"],
+  ["plan", "updated_by"], ["plan_versions", "created_by"],
+  ["notification_policy", "updated_by"], ["notification_prefs", "user_id"], ["notification_outbox", "user_id"],
+  ["invites", "invited_by"], ["invites", "accepted_by"],
+];
+
+export type RenameResult = { ok: true } | { ok: false; reason: HandleProblem | "same" | "not_found" };
+
+/**
+ * Rename `from` → `to` everywhere, in ONE D1 batch (atomic). FK checks are deferred for the
+ * batch because identities/sessions/mcp_tokens reference persons(handle) with no ON UPDATE CASCADE.
+ * Validation: unknown `from` → "not_found"; `to` equal to `from` (case-insensitively) → "same";
+ * otherwise `to` must pass handleAvailable (regex, reserved, case-insensitive uniqueness).
+ */
+export async function renamePerson(db: DB, from: string, to: string): Promise<RenameResult> {
+  if (!(await getPerson(db, from))) return { ok: false, reason: "not_found" };
+  if (from.toLowerCase() === to.toLowerCase()) return { ok: false, reason: "same" };
+  const avail = await handleAvailable(db, to);
+  if (!avail.available) return { ok: false, reason: avail.reason! };
+  await db.batch([
+    db.prepare("PRAGMA defer_foreign_keys = true"),
+    db.prepare("UPDATE persons SET handle = ? WHERE handle = ? COLLATE NOCASE").bind(to, from),
+    ...HANDLE_COLUMNS.map(([t, c]) => db.prepare(`UPDATE ${t} SET ${c} = ? WHERE ${c} = ? COLLATE NOCASE`).bind(to, from)),
+  ]);
+  return { ok: true };
+}

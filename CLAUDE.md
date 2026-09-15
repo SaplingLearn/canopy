@@ -169,14 +169,17 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
 
 ## Identity — persons, not logins
 
-`persons` (handle PK, chosen once, immutable; name, color, email) is the root. `identities(provider,
-subject) → person` holds the GitHub login and Google `sub`. Event subjects (`events.subject_login`)
-resolve to a person through the github identity row at read time (`resolvePersonForLogin`); an unmapped
-login raises an `identity_tasks` row and Maintenance › Identity links it to an existing handle. Mapping a
-login there calls the same `linkIdentity` as sign-in linking, so it also grants that GitHub account
-sign-in as the mapped person, not just attribution — there is no undo route yet; fix a wrong mapping by
-deleting the `identities` row with `wrangler d1 execute`. `ADMIN_LOGINS` holds handles. Every
-`recorded_by` / `created_by` / `user_id` is a handle. Migrated GitHub users kept their login as handle.
+`persons` (handle PK; name, color, email) is the root — the handle is chosen at first sign-in, prefilled
+with the GitHub login, and renameable from Settings (`renamePerson` rewrites every stored handle
+atomically via `HANDLE_COLUMNS`, in one D1 batch with FK checks deferred for the transaction).
+`identities(provider, subject) → person` holds the GitHub login and Google `sub`. Event subjects
+(`events.subject_login`) resolve to a person through the github identity row at read time
+(`resolvePersonForLogin`); an unmapped login raises an `identity_tasks` row and Maintenance › Identity
+links it to an existing handle. Mapping a login there calls the same `linkIdentity` as sign-in linking, so
+it also grants that GitHub account sign-in as the mapped person, not just attribution — there is no undo
+route yet; fix a wrong mapping by deleting the `identities` row with `wrangler d1 execute`. `ADMIN_LOGINS`
+holds handles — list the new handle there before an admin renames (`POST /auth/me/handle` 403s otherwise).
+Every `recorded_by` / `created_by` / `user_id` is a handle. Migrated GitHub users kept their login as handle.
 
 ## Roadmap & My Work — authored plan + stored projections, no live GitHub at render
 

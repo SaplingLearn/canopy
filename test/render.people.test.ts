@@ -48,6 +48,23 @@ describe("profileSection", () => {
     expect(both).not.toMatch(/data-act="unlinkProvider" data-arg="github"[^>]*disabled/);
     expect(both).toContain('data-act="unlinkProvider" data-arg="google"');
   });
+
+  it("handle editor: shows the draft input + warning with an enabled Save when available, disabled when taken", () => {
+    const s = initialState();
+    s.me = { handle: "AndresL230", name: "Andres", avatar_url: null, color: "moss", identities: [{ provider: "github", label: "AndresL230", linked_at: "t" }], org: "SaplingLearn", admin: false };
+    s.handleEdit = true;
+    s.handleDraft = "andres";
+    s.handleCheck = "available";
+    const available = profileSection(s);
+    expect(available).toContain('data-act="handleDraft"');
+    expect(available).toContain('value="andres"');
+    expect(available).toContain("Every entry you've written is re-attributed to the new handle. Links to the old one stop working.");
+    expect(available).not.toMatch(/data-act="handleSave"[^>]*disabled/);
+
+    s.handleCheck = "taken";
+    const taken = profileSection(s);
+    expect(taken).toMatch(/data-act="handleSave"[^>]*disabled/);
+  });
 });
 
 describe("peopleFromPersons", () => {

@@ -20,8 +20,10 @@ database_id = "80386dc4-deef-461d-932a-0670d22ddf83"
 # GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are secrets, not vars — set them via
 # `wrangler secret put GOOGLE_CLIENT_ID` / `wrangler secret put GOOGLE_CLIENT_SECRET`.
 GITHUB_REPO = "SaplingLearn/sapling"
-# Comma-separated GitHub logins allowed to run admin actions (e.g. the server-side backfill).
-ADMIN_LOGINS = "AndresL230"
+# Comma-separated handles allowed to run admin actions (e.g. the server-side backfill).
+# Both listed through the handle rename (self-service rename requires the new handle to
+# already be allowlisted before an admin renames) — drop "AndresL230" once "andres" sticks.
+ADMIN_LOGINS = "AndresL230,andres"
 # Absolute origin used for links inside email (deep links + the unsubscribe URL).
 PUBLIC_ORIGIN = "https://canopy.saplinglearn.com"
 # Email delivery gate: "local" (default when absent — bodies go to the dev-only

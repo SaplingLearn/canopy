@@ -14,7 +14,7 @@ import {
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
-  listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity,
+  listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { decodeReviewId } from "./triage-map";
@@ -654,6 +654,23 @@ function scheduleHandleCheck(): void {
   }, 250);
 }
 
+// ── Settings › Profile: debounced, sequence-guarded rename-target check ──────
+// Mirrors scheduleHandleCheck above (same debounce + sequence-guard shape),
+// targeting the rename draft instead of the onboarding handle.
+let renameCheckTimer: number | null = null;
+let renameCheckSeq = 0;
+function scheduleRenameCheck(): void {
+  if (renameCheckTimer !== null) clearTimeout(renameCheckTimer);
+  const seq = ++renameCheckSeq;
+  const h = state.handleDraft;
+  if (!h) return;
+  renameCheckTimer = window.setTimeout(() => {
+    checkHandle(h)
+      .then((r) => { if (seq !== renameCheckSeq) return; state.handleCheck = r.available ? "available" : (r.reason ?? "invalid"); rerender(); })
+      .catch(() => { if (seq !== renameCheckSeq) return; state.handleCheck = "idle"; rerender(); });
+  }, 250);
+}
+
 // ── action dispatch ──────────────────────────────────────────────────────────
 function dispatch(act: string, arg: string | null, value: string | null): void {
   switch (act) {
@@ -1059,6 +1076,46 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       if (arg !== "github" && arg !== "google") return;
       unlinkIdentity(arg).then(() => { flash(`${arg === "google" ? "Google" : "GitHub"} unlinked`); refreshMe(); })
         .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash(e instanceof ApiError && e.message === "last_identity" ? "You need at least one sign-in method" : "Couldn't unlink"); });
+      return;
+    }
+
+    // ── Settings › Profile: self-service handle rename ───────────────────────
+    case "handleEdit":
+      state.handleEdit = true;
+      state.handleDraft = state.me?.handle ?? "";
+      state.handleCheck = "idle";
+      break;
+    case "handleCancel":
+      state.handleEdit = false;
+      state.handleDraft = "";
+      state.handleCheck = "idle";
+      break;
+    case "handleDraft": {
+      const draft = (value ?? "").trim();
+      state.handleDraft = draft;
+      const current = state.me?.handle ?? "";
+      if (draft.toLowerCase() === current.toLowerCase()) { state.handleCheck = "same"; }
+      else { state.handleCheck = draft ? "checking" : "idle"; scheduleRenameCheck(); }
+      break;
+    }
+    case "handleSave": {
+      if (state.handleCheck !== "available") return;
+      const draft = state.handleDraft;
+      renameHandle(draft)
+        .then((r) => {
+          if (state.me) state.me.handle = r.handle;
+          state.handleEdit = false;
+          state.handleDraft = "";
+          state.handleCheck = "idle";
+          flash(`Handle changed to @${r.handle}`);
+          loadPersons();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { unauth(e); return; }
+          if (e instanceof ApiError && e.message === "handle_taken") { state.handleCheck = "taken"; rerender(); return; }
+          if (e instanceof ApiError && e.message === "admin_handle_not_allowlisted") { flash("Add the new handle to ADMIN_LOGINS first"); return; }
+          flash("Couldn't change handle");
+        });
       return;
     }
 
