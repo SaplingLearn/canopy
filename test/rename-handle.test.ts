@@ -7,7 +7,7 @@ import { seedPerson, cookieFor } from "./helpers/persons";
 import { createSession } from "../src/auth/session";
 import { mintToken } from "../src/auth/tokens";
 import { createInvite, acceptInvite } from "../src/auth/invites";
-import { ingestEvent } from "../src/consumer";
+import { ingestEvent, ingestFeedEntry } from "../src/consumer";
 import { write_plan } from "../src/tools/plan";
 import {
   append_feed, propose_doc_update, stage_adr,
@@ -40,6 +40,14 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
   await promote_milestone_proposal(env.DB, pid, handle); // milestone_proposals.created_by + milestones.created_by
   const tid = await route_triage(env.DB, { raw: "x", reason: "y" });
   await resolve_triage(env.DB, tid, handle); // needs_triage.resolved_by
+  // needs_triage.source_author: route an out-of-vocab feed entry through the REAL
+  // gate (src/consumer.ts ingestFeedEntry), not a direct insert — this is the
+  // actual writer of that column on every triage-routing path.
+  await ingestFeedEntry(
+    env.DB,
+    { summary: "bad", body: "b", tags: ["not-a-real-tag"], artifacts: { prs: [], commits: [], issues: [] } },
+    handle
+  ); // needs_triage.source_author
   await ensure_identity_task(env.DB, "unmapped-login-1");
   await map_identity(env.DB, "unmapped-login-1", handle, handle); // identities.linked_by + identity_tasks.resolved_by
   await ingestEvent(
@@ -144,6 +152,13 @@ describe("POST /auth/me/handle — admin guard", () => {
     expect(await res.json()).toEqual({ error: "admin_handle_not_allowlisted" });
     expect(await getPerson(env.DB, "admin-user")).not.toBeNull();
     expect(await getPerson(env.DB, "someone")).toBeNull();
+  });
+
+  it("the case-insensitive 'same' check runs before the admin guard: an admin re-submitting their own handle gets 400, not 403", async () => {
+    const cookie = await cookieFor("admin-user");
+    const res = await post("/auth/me/handle", cookie, { handle: "admin-user" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "handle_same" });
   });
 });
 

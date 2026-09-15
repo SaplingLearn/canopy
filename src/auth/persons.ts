@@ -100,7 +100,7 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   ["docs", "updated_by"], ["doc_versions", "created_by"],
   ["adrs", "created_by"],
   ["milestones", "created_by"], ["milestone_proposals", "created_by"],
-  ["needs_triage", "resolved_by"], ["identity_tasks", "resolved_by"],
+  ["needs_triage", "source_author"], ["needs_triage", "resolved_by"], ["identity_tasks", "resolved_by"],
   ["events", "recorded_by"],
   ["plan", "updated_by"], ["plan_versions", "created_by"],
   ["notification_policy", "updated_by"], ["notification_prefs", "user_id"], ["notification_outbox", "user_id"],

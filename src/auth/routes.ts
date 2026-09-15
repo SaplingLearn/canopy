@@ -200,10 +200,15 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     if (!parsed.success) return c.json({ error: "invalid payload" }, 400);
     const oldHandle = c.get("principal").handle;
     const newHandle = parsed.data.handle;
+    // Case-insensitive "same" first: a no-op rename (including an admin re-submitting
+    // their own handle in a different case) is never an admin-allowlist question.
+    if (oldHandle.toLowerCase() === newHandle.toLowerCase()) return c.json({ error: "handle_same" }, 400);
     if (isAdmin(c.env, oldHandle) && !isAdmin(c.env, newHandle)) return c.json({ error: "admin_handle_not_allowlisted" }, 403);
     const r = await renamePerson(c.env.DB, oldHandle, newHandle);
     if (!r.ok) {
       if (r.reason === "taken") return c.json({ error: "handle_taken" }, 409);
+      // Defensive only — oldHandle always comes from a live session, so the person
+      // is guaranteed to exist; this branch is unreachable from this route in practice.
       if (r.reason === "not_found") return c.json({ error: "not found" }, 404);
       return c.json({ error: `handle_${r.reason}` }, 400);
     }
