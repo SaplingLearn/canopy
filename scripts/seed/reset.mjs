@@ -3,6 +3,15 @@
 // re-seeds the people identity map. When a migration adds a data table, add
 // its DELETE here.
 export const RESET_STATEMENTS = [
+  // Tickets (0024) first: the ticket_* children reference tickets, and tickets
+  // references persons(handle) (and, from 0025, sprints(id)) — so the whole tree
+  // clears before anything it points at. tickets_fts needs no DELETE: the
+  // tickets_fts_ad trigger cascades the `DELETE FROM tickets` into the index.
+  "DELETE FROM ticket_events",
+  "DELETE FROM ticket_comments",
+  "DELETE FROM ticket_links",
+  "DELETE FROM ticket_assignees",
+  "DELETE FROM tickets",
   "DELETE FROM processed_items",
   "DELETE FROM pr_summaries",
   "DELETE FROM issue_summaries",

@@ -56,6 +56,18 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     handle
   ); // events.recorded_by
   await write_plan(env.DB, { narrative: "n", milestones: [] }, handle); // plan.updated_by + plan_versions.created_by
+  // Tickets (0024): tickets.requester + ticket_assignees.login + ticket_links.created_by
+  // + ticket_comments.author + ticket_events.actor. Direct inserts for now — the
+  // ticket writers (src/tools/tickets.ts) land in Phase 2; swap these for them then.
+  const ticket = await run(env.DB,
+    `INSERT INTO tickets (title, body, category, priority, status, requester, created_at, updated_at) VALUES ('Rename test ticket', 'b', 'other', 'normal', 'submitted', ?, ?, ?)`,
+    handle, nowIso(), nowIso());
+  const ticketId = ticket.meta.last_row_id;
+  await run(env.DB, `INSERT INTO ticket_assignees (ticket_id, login) VALUES (?, ?)`, ticketId, handle);
+  await run(env.DB, `INSERT INTO ticket_links (ticket_id, url, kind, label, meta, created_by, created_at) VALUES (?, 'https://github.com/SaplingLearn/sapling/issues/1', 'github', 'sapling #1', 'GITHUB · ISSUE', ?, ?)`,
+    ticketId, handle, nowIso());
+  await run(env.DB, `INSERT INTO ticket_comments (ticket_id, author, body, created_at) VALUES (?, ?, 'looking into it', ?)`, ticketId, handle, nowIso());
+  await run(env.DB, `INSERT INTO ticket_events (ticket_id, actor, from_status, to_status, created_at) VALUES (?, ?, NULL, 'submitted', ?)`, ticketId, handle, nowIso());
   await run(env.DB, `INSERT INTO notification_policy (kind, default_cadence, enabled, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)`,
     "rename_test_kind", "off", 1, nowIso(), handle); // notification_policy.updated_by
   await run(env.DB, `INSERT INTO notification_prefs (user_id, kind, cadence, updated_at) VALUES (?, ?, ?, ?)`,
@@ -85,6 +97,36 @@ describe("renamePerson", () => {
 
     const fkViolations = await all(env.DB, `PRAGMA foreign_key_check`);
     expect(fkViolations).toEqual([]);
+  });
+
+  it("rewrites the ticket handle columns (0024)", async () => {
+    // Listed literally, NOT read out of HANDLE_COLUMNS: the test above iterates
+    // that constant, so dropping an entry from it would silently stop being
+    // checked there. Four of these five are soft TEXT handles with no FK to
+    // catch them either — this is what makes them revert-sensitive.
+    const TICKET_HANDLE_COLUMNS = [
+      ["tickets", "requester"],
+      ["ticket_assignees", "login"],
+      ["ticket_links", "created_by"],
+      ["ticket_comments", "author"],
+      ["ticket_events", "actor"],
+    ] as const;
+
+    await seedEveryHandleColumn("old-me");
+    for (const [table, column] of TICKET_HANDLE_COLUMNS) {
+      const seeded = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`, "old-me");
+      expect(seeded[0].n, `${table}.${column} was never seeded`).toBe(1);
+      expect(HANDLE_COLUMNS.some(([t, c]) => t === table && c === column), `${table}.${column} missing from HANDLE_COLUMNS`).toBe(true);
+    }
+
+    expect(await renamePerson(env.DB, "old-me", "new-me")).toEqual({ ok: true });
+
+    for (const [table, column] of TICKET_HANDLE_COLUMNS) {
+      const old = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`, "old-me");
+      const now = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`, "new-me");
+      expect(old[0].n, `${table}.${column} still points at old-me`).toBe(0);
+      expect(now[0].n, `${table}.${column} was not rewritten to new-me`).toBe(1);
+    }
   });
 
   it("is case-insensitive: a same-value-different-case target is rejected as 'same', a genuinely different value renames", async () => {

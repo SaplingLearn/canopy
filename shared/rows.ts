@@ -1,4 +1,13 @@
 // One type per D1 table — the exact row shape returned by db helpers.
+
+// Tickets (0024) are defined ONCE, as Zod schemas in shared/tickets.ts (the
+// contract the SPA and the Worker share), and re-exported here so `@shared/rows`
+// stays the single index of D1 row shapes. Type-only: no runtime import.
+export type {
+  TicketRow, TicketAssigneeRow, TicketLinkRow, TicketCommentRow, TicketEventRow,
+  TicketCategory, TicketPriority, TicketStatus, TicketLinkKind,
+} from "./tickets";
+
 export interface SectionRow { name: string; description: string | null; }
 export interface TagRow { tag: string; description: string | null; }
 

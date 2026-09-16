@@ -102,6 +102,10 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   ["milestones", "created_by"], ["milestone_proposals", "created_by"],
   ["needs_triage", "source_author"], ["needs_triage", "resolved_by"], ["identity_tasks", "resolved_by"],
   ["events", "recorded_by"],
+  // Tickets (0024). `ticket_assignees.login` keeps the brief's column name but
+  // stores a person HANDLE, like every other column in this block.
+  ["tickets", "requester"], ["ticket_assignees", "login"], ["ticket_links", "created_by"],
+  ["ticket_comments", "author"], ["ticket_events", "actor"],
   ["plan", "updated_by"], ["plan_versions", "created_by"],
   ["notification_policy", "updated_by"], ["notification_prefs", "user_id"], ["notification_outbox", "user_id"],
   ["invites", "invited_by"], ["invites", "accepted_by"],
