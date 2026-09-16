@@ -157,7 +157,7 @@ export function sprintCard(sp: SprintView, persons: PersonSummary[], opts: Sprin
     <div style="display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)">
       ${avatarStack(sp.members, persons)}
       <span style="flex:1"></span>
-      <button data-act="openSprint" data-arg="${sp.id}" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--accent);white-space:nowrap">Open sprint<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+      <button data-act="openSprint" data-arg="${sp.id}" class="cnpy-link" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--accent);white-space:nowrap">Open sprint<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
     </div>
     ${readyRow}
   </div>`;
@@ -184,6 +184,11 @@ const segStyle = (on: boolean) =>
   `padding:4px 13px;border-radius:7px;font-size:12px;font-weight:500;color:${on ? "var(--fg);background:var(--hover)" : "var(--fg-55);background:transparent"}`;
 const chipStyle = (on: boolean) =>
   `padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}`;
+/** The hover layer's hooks (canopy.css), exactly as the ticket form uses them:
+ *  the picked chip/segment is painted inline and carries `is-on`, so the hover
+ *  rule only firms up the ones that are NOT the current choice. */
+const segClass = (on: boolean) => `cnpy-segbtn${on ? " is-on" : ""}`;
+const chipClass = (on: boolean) => `cnpy-pickchip${on ? " is-on" : ""}`;
 
 /**
  * The New sprint panel. Closed → renders NOTHING (the toggle lives in the
@@ -198,13 +203,13 @@ export function newSprintPanel(s: NewSprintState, persons: PersonSummary[]): str
   const canCreate = s.name.trim().length > 0;
 
   const urgSegs = SPRINT_URGENCIES.map((u) =>
-    `<button data-act="nsUrg" data-arg="${u}" style="${segStyle(s.urgency === u)}">${u.charAt(0).toUpperCase() + u.slice(1)}</button>`).join("");
+    `<button data-act="nsUrg" data-arg="${u}" class="${segClass(s.urgency === u)}" style="${segStyle(s.urgency === u)}">${u.charAt(0).toUpperCase() + u.slice(1)}</button>`).join("");
 
   const leadChips = persons.map((p) =>
-    `<button data-act="nsLead" data-arg="${attr(p.handle)}" style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${s.lead === p.handle ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}">${personChip(p, 20, p.handle)}${esc(p.name || p.handle)}</button>`).join("");
+    `<button data-act="nsLead" data-arg="${attr(p.handle)}" class="${chipClass(s.lead === p.handle)}" style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${s.lead === p.handle ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}">${personChip(p, 20, p.handle)}${esc(p.name || p.handle)}</button>`).join("");
 
   const domChips = SPRINT_DOMAINS.map((d) =>
-    `<button data-act="nsDom" data-arg="${d}" style="${chipStyle(s.domain === d)};font-family:var(--mono)">${d}</button>`).join("");
+    `<button data-act="nsDom" data-arg="${d}" class="${chipClass(s.domain === d)}" style="${chipStyle(s.domain === d)};font-family:var(--mono)">${d}</button>`).join("");
 
   const createStyle = canCreate
     ? "background:var(--accent);color:var(--accent-fg);border:1px solid transparent"

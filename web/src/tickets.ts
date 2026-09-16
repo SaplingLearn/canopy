@@ -22,7 +22,7 @@ import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "./api";
 import { esc, attr, relTime, primaryBtn } from "./ui";
 import { personChip } from "./people";
-import { mentionCandidates } from "./mentions";
+import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 
 // ── shared atoms ─────────────────────────────────────────────────────────────
 
@@ -124,6 +124,15 @@ const segBtnStyle = (on: boolean) =>
   `padding:4px 14px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;color:${on ? "var(--fg);background:var(--hover)" : "var(--fg-55);background:transparent"}`;
 const chipStyle = (on: boolean) =>
   `padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}`;
+/** The hover layer's hooks for the two pick idioms (canopy.css). The state above
+ *  is painted inline, so `is-on` is what tells the hover rule which chips and
+ *  segments to leave alone — an unpicked one firms its border / brightens its
+ *  label, the current pick keeps its accent. */
+const segClass = (on: boolean) => `cnpy-segbtn${on ? " is-on" : ""}`;
+const chipClass = (on: boolean) => `cnpy-pickchip${on ? " is-on" : ""}`;
+/** Every dropdown/picker row shares ONE hover class (`.cnpy-menurow`), and the
+ *  keyboard-active row reuses the same fill through `.is-active`. */
+const MENU_ROW_CLASS = "cnpy-menurow";
 
 const MONO_EYEBROW =
   "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
@@ -157,7 +166,7 @@ const ASSIGNEE_OPTIONS: [TicketAssigneeFilter, string][] = [
 function filterRow(p: QueueProps): string {
   const segs: [TicketSeg, string][] = [["open", "Open"], ["closed", "Closed"], ["all", "All"]];
   const segment = `<div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${segs.map(([k, label]) =>
-    `<button data-act="queueSeg" data-arg="${k}" style="${segBtnStyle(p.seg === k)}">${label}</button>`).join("")}</div>`;
+    `<button data-act="queueSeg" data-arg="${k}" class="${segClass(p.seg === k)}" style="${segBtnStyle(p.seg === k)}">${label}</button>`).join("")}</div>`;
 
   const assigneeSelect = `<select data-act="queueAssignee" class="cnpy-select">${ASSIGNEE_OPTIONS.map(([k, label]) =>
     `<option value="${k}"${p.assignee === k ? " selected" : ""}>${label}</option>`).join("")}</select>`;
@@ -237,7 +246,7 @@ export function queueGroups(tickets: TicketListItem[], sprints: SprintView[]): Q
 
 function groupHeader(g: QueueGroup): string {
   const openLink = g.key !== null
-    ? `<button data-act="openSprint" data-arg="${g.key}" title="Open sprint screen" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;color:var(--fg-55);white-space:nowrap;flex:none;padding:2px 4px">Open sprint →</button>`
+    ? `<button data-act="openSprint" data-arg="${g.key}" title="Open sprint screen" class="cnpy-grouplink" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;color:var(--fg-55);white-space:nowrap;flex:none;padding:2px 6px">Open sprint →</button>`
     : "";
   const meta = `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40);white-space:nowrap">${esc(g.dates)}${g.active ? `<span style="color:var(--accent)"> · ACTIVE</span>` : ""}</span>`;
   return `<div style="display:flex;align-items:center;gap:9px;padding:18px 10px 8px">
@@ -326,20 +335,20 @@ const TEXT_INPUT =
   "width:100%;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none";
 
 function personChipButton(act: string, arg: string, label: string, on: boolean, avatar: string): string {
-  return `<button data-act="${attr(act)}" data-arg="${attr(arg)}" style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${on ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}">${avatar}${esc(label)}</button>`;
+  return `<button data-act="${attr(act)}" data-arg="${attr(arg)}" class="${chipClass(on)}" style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${on ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}">${avatar}${esc(label)}</button>`;
 }
 
 export function newTicketView(p: NewTicketProps): string {
   const canSubmit = p.title.trim().length > 0;
 
   const catChips = TICKET_CATEGORIES.map((c) =>
-    `<button data-act="ntCategory" data-arg="${c}" style="${chipStyle(p.category === c)};font-family:var(--mono)">${c}</button>`).join("");
+    `<button data-act="ntCategory" data-arg="${c}" class="${chipClass(p.category === c)}" style="${chipStyle(p.category === c)};font-family:var(--mono)">${c}</button>`).join("");
 
   const prioSegs = TICKET_PRIORITIES.map((v) =>
-    `<button data-act="ntPriority" data-arg="${v}" style="${segBtnStyle(p.priority === v)}">${v.charAt(0).toUpperCase() + v.slice(1)}</button>`).join("");
+    `<button data-act="ntPriority" data-arg="${v}" class="${segClass(p.priority === v)}" style="${segBtnStyle(p.priority === v)}">${v.charAt(0).toUpperCase() + v.slice(1)}</button>`).join("");
 
-  const sprintChips = [`<button data-act="ntSprint" data-arg="" style="${chipStyle(p.sprintId === null)}">Backlog</button>`]
-    .concat(p.sprints.map((sp) => `<button data-act="ntSprint" data-arg="${sp.id}" style="${chipStyle(p.sprintId === sp.id)}">${esc(sp.label)}</button>`))
+  const sprintChips = [`<button data-act="ntSprint" data-arg="" class="${chipClass(p.sprintId === null)}" style="${chipStyle(p.sprintId === null)}">Backlog</button>`]
+    .concat(p.sprints.map((sp) => `<button data-act="ntSprint" data-arg="${sp.id}" class="${chipClass(p.sprintId === sp.id)}" style="${chipStyle(p.sprintId === sp.id)}">${esc(sp.label)}</button>`))
     .join("");
 
   const dashedAvatar = `<span style="width:20px;height:20px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;font-size:8px;font-weight:600;flex:none;color:var(--fg-40)">–</span>`;
@@ -397,9 +406,12 @@ export interface TicketDetailProps {
   /**
    * The open @mention token in the comment box (main.ts computes it from the
    * textarea's value + caret). null = the picker is closed. Candidates are
-   * derived here, so "no candidates" also renders nothing.
+   * derived here, so "no candidates" also renders nothing. `line` is the caret's
+   * 0-based line — the picker hangs under THAT line, not under the whole box.
    */
-  mention: { query: string; start: number; index: number } | null;
+  mention: { query: string; start: number; index: number; line: number } | null;
+  /** The comment box's dragged height (the bottom-left grip), null = resting. */
+  commentHeight: number | null;
 }
 
 /**
@@ -514,31 +526,49 @@ function linkedWorkBlock(p: TicketDetailProps): string {
 }
 
 /**
- * The @mention autocomplete list, hung under the comment textarea. Beyond the
- * locked design (which has no picker), so it borrows the design's own popover
- * skin: bordered card on `--bg`, soft shadow, `--hover` on the active row.
+ * The @mention autocomplete list, hung under the LINE being typed inside the
+ * comment textarea (`mentionPickerTop`) rather than under the whole box, which
+ * left it floating far below the caret on a multi-line draft. Beyond the locked
+ * design (which has no picker), so it borrows the design's own popover skin:
+ * bordered card on `--bg`, soft shadow, `--hover` on the active row — and that
+ * fill now comes from `.cnpy-menurow.is-active`, the same declaration :hover
+ * uses, so the keyboard-active row and the hovered row look identical.
  *
  * Renders "" when the picker is closed OR when nothing matches — the caller
  * never has to check twice. Rows dispatch `mentionPick` with the handle.
  */
-function mentionPicker(p: TicketDetailProps): string {
+function mentionPicker(p: TicketDetailProps, boxHeight: number): string {
   if (!p.mention) return "";
   const cands = mentionCandidates(p.persons, p.mention.query);
   if (!cands.length) return "";
   // main.ts wraps the index as it moves, but a stale index (the query narrowed
   // the list between keystrokes) must never paint an out-of-range row.
   const active = ((p.mention.index % cands.length) + cands.length) % cands.length;
+  const top = mentionPickerTop(p.mention.line, { height: boxHeight });
   const rows = cands.map((c, i) =>
-    `<button data-act="mentionPick" data-arg="${attr(c.handle)}" role="option" aria-selected="${i === active}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:6px 9px;border-radius:7px;background:${i === active ? "var(--hover)" : "transparent"}">
+    `<button data-act="mentionPick" data-arg="${attr(c.handle)}" role="option" aria-selected="${i === active}" class="${MENU_ROW_CLASS}${i === active ? " is-active" : ""}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:6px 9px;border-radius:7px">
       ${personChip(c, 20, c.handle)}
       <span style="font-size:13px;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name || c.handle)}</span>
       <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);margin-left:auto;flex:none">@${esc(c.handle)}</span>
     </button>`).join("");
-  return `<div role="listbox" aria-label="Mention someone" style="position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:5px">
+  return `<div role="listbox" aria-label="Mention someone" style="position:absolute;top:${top}px;left:0;right:0;min-width:220px;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:5px">
     ${rows}
     <div style="font-family:var(--mono);font-size:10.5px;color:var(--fg-40);padding:5px 9px 3px;border-top:1px solid var(--border);margin-top:4px">↑↓ to move · Enter to mention · Esc to close</div>
   </div>`;
 }
+
+/**
+ * The comment box's resize grip, bottom-LEFT (the corner the native resizer used
+ * to sit in is now the Comment button's).
+ *
+ * The textarea sets `resize:none` and this drives the height instead, for a
+ * reason beyond the corner swap: a natively-resized height is written INLINE on
+ * the element, and the next keystroke's `rerender()` swaps the whole mount's
+ * innerHTML — so the native handle's effect was thrown away on the very next
+ * character. main.ts drags this one into `state.commentHeight`, which survives.
+ */
+const COMMENT_GRIP =
+  `<button data-act="commentGrip" title="Drag to resize" aria-label="Resize the comment box" class="cnpy-grip" style="position:absolute;left:10px;bottom:10px;width:12px;height:12px;display:grid;place-items:center;color:var(--fg-40);cursor:ns-resize;touch-action:none"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1 1 11 11"></path><path d="M1 6 6 11"></path></svg></button>`;
 
 interface ThreadRow { ts: number; html: string }
 
@@ -576,6 +606,11 @@ function threadBlock(p: TicketDetailProps): string {
   rows.sort((a, b) => a.ts - b.ts);
 
   const canPost = p.commentDraft.trim().length > 0;
+  // The box's two corners: the grip bottom-LEFT, Comment bottom-RIGHT, with the
+  // textarea filling everything between. `padBottom` is what keeps the last line
+  // of text from running under the button.
+  const boxHeight = Math.max(p.commentHeight ?? COMMENT_BOX.height, COMMENT_BOX.minHeight);
+  const textarea = `<textarea data-act="ticketComment" data-field="ticketComment" placeholder="Write a comment — @mention to loop someone in…" style="display:block;width:100%;height:${boxHeight}px;min-height:${COMMENT_BOX.minHeight}px;padding:${COMMENT_BOX.padTop}px 0 ${COMMENT_BOX.padBottom}px;border:none;outline:none;background:transparent;color:var(--fg);font-size:${COMMENT_BOX.fontSize}px;line-height:${COMMENT_BOX.lineRatio};resize:none">${esc(p.commentDraft)}</textarea>`;
   return `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:30px;padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
       <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">THREAD</div>
       <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${t.comments.length} ${t.comments.length === 1 ? "comment" : "comments"}</div>
@@ -583,10 +618,11 @@ function threadBlock(p: TicketDetailProps): string {
     ${rows.map((r) => r.html).join("")}
     <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px">
       <div style="position:relative">
-        <textarea data-act="ticketComment" data-field="ticketComment" placeholder="Write a comment — @mention to loop someone in…" style="width:100%;min-height:60px;border:none;outline:none;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;resize:vertical">${esc(p.commentDraft)}</textarea>
-        ${mentionPicker(p)}
+        ${textarea}
+        ${mentionPicker(p, boxHeight)}
       </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:8px">${primaryBtn("Comment", canPost, "ticketCommentPost", "")}</div>
+      ${COMMENT_GRIP}
+      ${primaryBtn("Comment", canPost, "ticketCommentPost", "", "position:absolute;right:8px;bottom:8px")}
     </div>`;
 }
 
@@ -594,17 +630,17 @@ function assigneeRail(p: TicketDetailProps): string {
   const assigned = p.ticket.assignees;
   const addable = p.persons.filter((pp) => !assigned.includes(pp.handle));
   const addBtn = addable.length
-    ? `<button data-act="ticketAsgMenu" title="Add assignee" style="${ICON_BTN}">${PLUS_SVG}</button>`
+    ? `<button data-act="ticketAsgMenu" title="Add assignee" class="cnpy-iconbtn" style="${ICON_BTN}">${PLUS_SVG}</button>`
     : "";
   const menu = p.asgMenu && addable.length
     ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:200px">${addable.map((pp) =>
-        `<button data-act="ticketAsgAdd" data-arg="${attr(pp.handle)}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-70)">${personChip(pp, 20, pp.handle)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pp.name || pp.handle)}</span></button>`).join("")}</div>`
+        `<button data-act="ticketAsgAdd" data-arg="${attr(pp.handle)}" class="${MENU_ROW_CLASS}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-70)">${personChip(pp, 20, pp.handle)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pp.name || pp.handle)}</span></button>`).join("")}</div>`
     : "";
   const list = assigned.length
     ? assigned.map((h) => `<div style="display:flex;align-items:center;gap:10px;height:34px">
         ${personChip(person(p.persons, h), 24, h)}
         <span style="flex:1;min-width:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nameOf(p.persons, h))}</span>
-        <button data-act="ticketAsgRemove" data-arg="${attr(h)}" title="Remove" style="flex:none;${ICON_BTN};opacity:.45"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
+        <button data-act="ticketAsgRemove" data-arg="${attr(h)}" title="Remove" class="cnpy-iconbtn" style="flex:none;${ICON_BTN};opacity:.45"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
       </div>`).join("")
     : `<div style="display:flex;align-items:center;gap:10px;height:34px">
         <div style="width:24px;height:24px;border-radius:50%;border:1px dashed var(--border-strong);flex:none"></div>
@@ -628,7 +664,7 @@ function sprintRail(p: TicketDetailProps): string {
   const menu = p.sprMenu
     ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:230px">${options.map((o) => {
         const on = (cur?.id ?? null) === o.id;
-        return `<button data-act="ticketSprintSet" data-arg="${o.id ?? ""}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-70)"}"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(o.label)}</span>${checkMark(on)}</button>`;
+        return `<button data-act="ticketSprintSet" data-arg="${o.id ?? ""}" class="${MENU_ROW_CLASS}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-70)"}"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(o.label)}</span>${checkMark(on)}</button>`;
       }).join("")}</div>`
     : "";
   const openAttr = cur ? ` data-act="openSprint" data-arg="${cur.id}"` : "";
@@ -636,7 +672,7 @@ function sprintRail(p: TicketDetailProps): string {
     <div style="${RAIL_SECTION_HEAD}">
       <div style="${MONO_EYEBROW}">Sprint</div>
       <div style="position:relative;display:flex;align-items:center">
-        <button data-act="ticketSprintMenu" title="Change sprint" style="${ICON_BTN}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z"></path></svg></button>${menu}
+        <button data-act="ticketSprintMenu" title="Change sprint" class="cnpy-iconbtn" style="${ICON_BTN}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z"></path></svg></button>${menu}
       </div>
     </div>
     <button${openAttr} style="${RAIL_ROW};${cur ? "cursor:pointer" : "cursor:default"}">
@@ -657,12 +693,12 @@ function relationsRail(p: TicketDetailProps): string {
   // hidden there rather than offered and 409'd.
   const candidates = t.parent_id === null ? relCandidates(p.allTickets, t) : [];
   const addBtn = candidates.length
-    ? `<button data-act="ticketRelMenu" title="Add sub-ticket" style="${ICON_BTN}">${PLUS_SVG}</button>`
+    ? `<button data-act="ticketRelMenu" title="Add sub-ticket" class="cnpy-iconbtn" style="${ICON_BTN}">${PLUS_SVG}</button>`
     : "";
   const menu = p.relMenu && candidates.length
     ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:270px">
         <div style="font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.05em;color:var(--fg-40);padding:6px 10px 4px">LINK A TICKET AS A SUB-TICKET</div>
-        ${candidates.map((c) => `<button data-act="ticketRelAdd" data-arg="${c.id}" style="display:block;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title)}</button>`).join("")}
+        ${candidates.map((c) => `<button data-act="ticketRelAdd" data-arg="${c.id}" class="${MENU_ROW_CLASS}" style="display:block;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title)}</button>`).join("")}
       </div>`
     : "";
   const parentRow = t.parent

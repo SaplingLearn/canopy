@@ -29,7 +29,7 @@ import {
 } from "@shared/tickets-core";
 import { decodeReviewId } from "./triage-map";
 import { initialOnboard } from "./people";
-import { mentionTokenAt, mentionCandidates, applyMention } from "./mentions";
+import { mentionTokenAt, mentionCandidates, applyMention, caretLine, COMMENT_BOX } from "./mentions";
 import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
 
@@ -920,7 +920,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (!Number.isInteger(id)) return;
       state.screen = "ticketdetail";
       state.ticketId = id;
-      state.commentDraft = ""; state.mention = null; state.linkDraft = "";
+      state.commentDraft = ""; state.mention = null; state.commentHeight = null; state.linkDraft = "";
       state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
       loadSprintsIfNeeded();
       loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
@@ -1158,9 +1158,14 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       // rerenders: Post arms on non-empty, and the @mention picker opens/closes
       // purely as a function of where the caret now sits in the new text.
       state.commentDraft = value ?? "";
-      const tok = mentionTokenAt(state.commentDraft, caret ?? state.commentDraft.length);
+      const at = caret ?? state.commentDraft.length;
+      const tok = mentionTokenAt(state.commentDraft, at);
       // Every keystroke re-aims at the top row: the list just changed under it.
-      state.mention = tok ? { query: tok.query, start: tok.start, index: 0 } : null;
+      // `line` is the caret's line — the picker hangs under THAT line, so it
+      // follows the writer down a multi-line draft.
+      state.mention = tok
+        ? { query: tok.query, start: tok.start, index: 0, line: caretLine(state.commentDraft, at) }
+        : null;
       break;
     }
     // Committing a candidate — from a click on a row or Enter/Tab on the
@@ -1188,7 +1193,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (id === null || !body) return;
       const seq = claimTicketDetail();
       addTicketComment(id, body)
-        .then((t) => { state.commentDraft = ""; state.mention = null; applyTicketWrite(t, "Comment posted", seq); })
+        .then((t) => { state.commentDraft = ""; state.mention = null; state.commentHeight = null; applyTicketWrite(t, "Comment posted", seq); })
         .catch(ticketErr);
       return;
     }
@@ -1663,6 +1668,39 @@ mount.addEventListener("focusout", (e) => {
     state.mention = null;
     rerender();
   }, 0);
+});
+
+// ── comment box: the bottom-left resize grip ─────────────────────────────────
+//
+// The textarea sets `resize:none` — the native handle writes its height INLINE
+// on the element, and the very next keystroke's rerender() swaps the whole
+// mount's innerHTML, so a native resize survived exactly one character. This
+// drag puts the height in `state.commentHeight` instead, where it outlives the
+// swap, and moves the affordance to the corner the Comment button vacated.
+// (`commentGrip` has no dispatch case on purpose: the click it also fires falls
+// through to `default: return`, a no-op.)
+mount.addEventListener("pointerdown", (e) => {
+  if (!(e.target as Element | null)?.closest?.('[data-act="commentGrip"]')) return;
+  const box = mount.querySelector<HTMLTextAreaElement>('[data-field="ticketComment"]');
+  if (!box) return;
+  e.preventDefault();                       // no text selection while dragging
+  const startY = e.clientY;
+  const startHeight = box.getBoundingClientRect().height;
+  const move = (ev: PointerEvent) => {
+    const h = Math.max(COMMENT_BOX.minHeight, Math.round(startHeight + (ev.clientY - startY)));
+    state.commentHeight = h;
+    // Paint it straight onto the live element: a rerender per pointermove would
+    // rebuild the screen (and steal the caret) dozens of times a second.
+    box.style.height = `${h}px`;
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
 });
 
 // Arrow/Enter/Tab/Escape belong to the picker ONLY while it is open — with it

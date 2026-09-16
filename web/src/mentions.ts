@@ -1,7 +1,9 @@
-// @mention autocomplete — the three pure helpers behind the ticket comment
-// box's picker. No DOM, no state, no fetching: main.ts owns the textarea and
-// the caret, tickets.ts owns the markup, and everything decidable from
-// (text, caret, persons) is decided here so it can be unit-tested.
+// @mention autocomplete — the pure core behind the ticket comment box's picker:
+// the token under the caret, the candidate list, the insertion, and where the
+// picker hangs (the caret's line, against the box's own geometry). No DOM, no
+// state, no fetching: main.ts owns the textarea and the caret, tickets.ts owns
+// the markup, and everything decidable from (text, caret, persons) is decided
+// here so it can be unit-tested.
 //
 // Comments are stored as RAW text; `mentionize()` in tickets.ts paints the
 // `@handle` / `@Firstname` forms at render time. The picker only ever helps a
@@ -59,6 +61,75 @@ export function mentionCandidates(persons: PersonSummary[], query: string, limit
     return (a.name ?? a.handle).localeCompare(b.name ?? b.handle);
   });
   return hit.slice(0, limit);
+}
+
+/**
+ * The 0-based index of the line the caret sits on: HARD newlines only.
+ *
+ * Soft wrap is invisible in a textarea's value, so a long wrapped line still
+ * counts once — the picker can then sit a line too high on a wrapped line,
+ * which is the cheap, dependency-free trade (measuring real wrap needs a mirror
+ * element and a layout read on every keystroke).
+ */
+export function caretLine(text: string, caret: number): number {
+  const upto = text.slice(0, Math.max(0, Math.min(caret, text.length)));
+  let lines = 0;
+  for (let i = 0; i < upto.length; i++) if (upto[i] === "\n") lines++;
+  return lines;
+}
+
+/**
+ * The comment box's geometry, in px (`lineRatio` is the unitless CSS ratio).
+ *
+ * It lives HERE, next to the picker that is positioned against it, and
+ * tickets.ts builds the textarea's own style from the same numbers — so the
+ * type metrics the picker does arithmetic on can never drift from the ones the
+ * browser actually lays the text out with.
+ */
+export const COMMENT_BOX = {
+  fontSize: 13.5,
+  lineRatio: 1.6,
+  padTop: 2,
+  /** Bottom clearance for the Comment button parked in the box's corner. */
+  padBottom: 36,
+  /** The floor the resize grip may drag the box down to. */
+  minHeight: 60,
+  /** The resting height — the grip grows/shrinks it from there. */
+  height: 96,
+  /** Breathing room between the caret's line (or the box's bottom) and the picker. */
+  gap: 4,
+} as const;
+
+/** One rendered line box: 13.5px × 1.6 = 21.6px. */
+export const COMMENT_LINE_HEIGHT = COMMENT_BOX.fontSize * COMMENT_BOX.lineRatio;
+
+export interface MentionPickerMetrics {
+  padTop?: number;
+  lineHeight?: number;
+  gap?: number;
+  /** The textarea's rendered height — the grip can have changed it. */
+  height?: number;
+}
+
+/**
+ * Where the picker hangs, in px from the top of the comment textarea: directly
+ * under the line being typed (`top = padTop + (line + 1) × lineHeight + gap`),
+ * so it reads as an extension of the caret rather than of the whole box.
+ *
+ * Capped at the box's own bottom + `gap`: once the line being typed has
+ * scrolled past the visible area the arithmetic would point below the box, so
+ * the picker falls back to the old whole-box anchor instead.
+ */
+export function mentionPickerTop(line: number, opts: MentionPickerMetrics = {}): number {
+  const padTop = opts.padTop ?? COMMENT_BOX.padTop;
+  const lineHeight = opts.lineHeight ?? COMMENT_LINE_HEIGHT;
+  const gap = opts.gap ?? COMMENT_BOX.gap;
+  const height = opts.height ?? COMMENT_BOX.height;
+  // A negative / fractional / non-finite line is the first line, never a
+  // negative offset that would hang the picker above the box.
+  const at = Number.isFinite(line) && line > 0 ? Math.floor(line) : 0;
+  const top = Math.min(padTop + (at + 1) * lineHeight + gap, height + gap);
+  return Math.round(top * 10) / 10;
 }
 
 /**

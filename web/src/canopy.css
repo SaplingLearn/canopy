@@ -125,6 +125,36 @@ input, select { font-family: inherit; }
 .cnpy-signout:hover { border-color:var(--red); color:var(--red); }
 .cnpy-mutelink:hover { color:var(--fg-70); }
 
+/* ── ticket & sprint surfaces: menu rows, pick chips, segments, grip ─────────
+   Inline styles cannot express `:hover`, so every dropdown row / chip we added
+   for the ticket screens gets its hover HERE. `--hover` and `--border-strong`
+   are defined by dark, light AND midnight, so one rule covers all three themes.
+
+   These surfaces paint their selected state INLINE (the app's template-string
+   idiom), so a plain class rule loses the cascade to the element's own style
+   attribute: wherever a hover has to repaint a property the inline style
+   already sets, the rule says !important. That is what makes this layer
+   expressible at all — the dc-runtime applied `style-hover` inline, and plain
+   CSS has to outrank it. */
+.cnpy-menurow { transition:background .12s ease; }
+.cnpy-menurow:hover { background:var(--hover); }
+/* The keyboard-active picker row is painted by the SAME declaration as hover, so
+   ↑↓ and the mouse land on an identical-looking row. */
+.cnpy-menurow.is-active { background:var(--hover); }
+/* Single-choice chips (category / sprint / assignee / lead / domain). The picked
+   chip keeps its accent border — only the unpicked ones firm up on hover. */
+.cnpy-pickchip { transition:border-color .12s ease, color .12s ease; }
+.cnpy-pickchip:not(.is-on):hover { border-color:var(--border-strong) !important; color:var(--fg-70) !important; }
+/* Segmented controls (queue segment / priority / urgency): the ON segment owns
+   the `--hover` fill, so an unpicked segment brightens its label instead. */
+.cnpy-segbtn:not(.is-on):hover { color:var(--fg) !important; }
+/* The queue group header's "Open sprint →". */
+.cnpy-grouplink { transition:color .12s ease, background .12s ease; border-radius:6px; }
+.cnpy-grouplink:hover { color:var(--fg) !important; background:var(--hover); }
+/* The comment box's own resize grip (bottom-left). */
+.cnpy-grip { transition:color .12s ease; }
+.cnpy-grip:hover { color:var(--fg-70) !important; }
+
 /* ── rendered markdown (docs reader) ───────────────────────────────────────── */
 /* A typeset technical document: comfortable measure, mono structural spine.
    Every color derives from the theme vars so it holds in dark / light / midnight. */

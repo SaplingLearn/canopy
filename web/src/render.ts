@@ -136,10 +136,15 @@ export interface AppState {
   commentDraft: string;
   /**
    * The open @mention picker over the comment box: the token being typed
-   * (`start` is the index of its `@` in `commentDraft`) plus the active row.
+   * (`start` is the index of its `@` in `commentDraft`), the active row, and
+   * the caret's 0-based line, which is what the picker hangs under.
    * null = closed. Reset whenever the detail changes or a comment posts.
    */
-  mention: { query: string; start: number; index: number } | null;
+  mention: { query: string; start: number; index: number; line: number } | null;
+  /** The comment box's height after a grip drag (null = the resting height).
+   *  It lives in state because `rerender()` replaces the textarea element on
+   *  every keystroke, which would throw a DOM-only height away. */
+  commentHeight: number | null;
   linkDraft: string;
   lkOpen: boolean;
   asgMenu: boolean;
@@ -235,7 +240,7 @@ export function initialState(): AppState {
     ticketBadge: 0,
     qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
-    commentDraft: "", mention: null, linkDraft: "",
+    commentDraft: "", mention: null, commentHeight: null, linkDraft: "",
     lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false,
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
@@ -1668,6 +1673,7 @@ function ticketDetailScreen(s: AppState): string {
     persons: s.persons.data,
     commentDraft: s.commentDraft,
     mention: s.mention,
+    commentHeight: s.commentHeight,
     linkDraft: s.linkDraft,
     linkOpen: s.lkOpen,
     asgMenu: s.asgMenu,

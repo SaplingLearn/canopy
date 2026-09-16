@@ -321,10 +321,23 @@ describe("newSprintPanel", () => {
     expect(openTag('data-act="nsDom" data-arg="infra"')).not.toContain("var(--accent-soft)");
   });
 
+  it("hangs the hover layer's chip/segment classes on the panel's picks", () => {
+    // Inline styles can't express `:hover`; the class is what canopy.css hooks,
+    // and `is-on` is what keeps the hover off the chip that is already picked.
+    const html = newSprintPanel({ ...NS, open: true, urgency: "high", lead: "sanaok", domain: "tickets" }, PERSONS);
+    expect(html).toContain('data-act="nsUrg" data-arg="high" class="cnpy-segbtn is-on"');
+    expect(html).toContain('data-act="nsUrg" data-arg="low" class="cnpy-segbtn"');
+    expect(html).toContain('data-act="nsLead" data-arg="sanaok" class="cnpy-pickchip is-on"');
+    expect(html).toContain('data-act="nsLead" data-arg="jose-a" class="cnpy-pickchip"');
+    expect(html).toContain('data-act="nsDom" data-arg="tickets" class="cnpy-pickchip is-on"');
+    expect(html).toContain('data-act="nsDom" data-arg="infra" class="cnpy-pickchip"');
+  });
+
   it("marks the urgency segment that is selected", () => {
     const html = newSprintPanel({ ...NS, open: true, urgency: "high" }, PERSONS);
-    const high = html.slice(html.indexOf('data-act="nsUrg" data-arg="high"'), html.indexOf('data-act="nsUrg" data-arg="high"') + 160);
-    const low = html.slice(html.indexOf('data-act="nsUrg" data-arg="low"'), html.indexOf('data-act="nsUrg" data-arg="low"') + 160);
+    // The window has to clear the opening tag, class attribute and all.
+    const high = html.slice(html.indexOf('data-act="nsUrg" data-arg="high"'), html.indexOf('data-act="nsUrg" data-arg="high"') + 220);
+    const low = html.slice(html.indexOf('data-act="nsUrg" data-arg="low"'), html.indexOf('data-act="nsUrg" data-arg="low"') + 220);
     expect(high).toContain("background:var(--hover)");
     expect(low).not.toContain("background:var(--hover)");
   });

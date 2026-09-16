@@ -96,7 +96,7 @@ function formProps(o: Partial<NewTicketProps> = {}): NewTicketProps {
 function detailProps(t: TicketDetail, o: Partial<TicketDetailProps> = {}): TicketDetailProps {
   return {
     ticket: t, allTickets: [], sprints: [], persons: PERSONS,
-    commentDraft: "", mention: null, linkDraft: "", linkOpen: false,
+    commentDraft: "", mention: null, commentHeight: null, linkDraft: "", linkOpen: false,
     asgMenu: false, sprMenu: false, relMenu: false,
     ...o,
   };
@@ -729,8 +729,8 @@ describe("ticketDetailView — the thread", () => {
 
 describe("ticketDetailView — the @mention picker", () => {
   const d = detail({ id: 1, title: "T" });
-  const open = (query: string, index = 0, start = 0) =>
-    ticketDetailView(detailProps(d, { commentDraft: `@${query}`, mention: { query, start, index } }));
+  const open = (query: string, index = 0, start = 0, line = 0) =>
+    ticketDetailView(detailProps(d, { commentDraft: `@${query}`, mention: { query, start, index, line } }));
 
   it("is hidden when nothing is being mentioned", () => {
     const html = ticketDetailView(detailProps(d, { commentDraft: "hello", mention: null }));
@@ -746,9 +746,31 @@ describe("ticketDetailView — the @mention picker", () => {
     // Each row carries the name and the @handle, and the picker is anchored.
     expect(html).toContain("Sana Okafor");
     expect(html).toContain("@sanaok</span>");
-    expect(html).toContain("position:absolute;top:calc(100% + 6px)");
+    // Anchored to the caret's line (line 0 → padTop 2 + 21.6 + gap 4), NOT to
+    // the bottom of the whole textarea.
+    expect(html).toContain("position:absolute;top:27.6px");
+    expect(html).not.toContain("top:calc(100% + 6px)");
     // It sits INSIDE the comment box, right after the textarea.
     expect(html).toMatch(/<\/textarea>\s*<div role="listbox"/);
+  });
+
+  it("follows the caret DOWN the box: one line-height per line", () => {
+    // 13.5px × 1.6 = 21.6px per line, off a 2px top padding, 4px of gap.
+    expect(open("sa", 0, 0, 0)).toContain("top:27.6px");
+    expect(open("sa", 0, 0, 1)).toContain("top:49.2px");
+    expect(open("sa", 0, 0, 2)).toContain("top:70.8px");
+    expect(open("sa", 0, 0, 3)).toContain("top:92.4px");
+  });
+
+  it("falls back to the bottom anchor once the line is past the box", () => {
+    // The 96px resting box + 4px gap — never below the textarea's own bottom.
+    expect(open("sa", 0, 0, 9)).toContain("top:100px");
+    // A box the grip has grown pushes that cap down with it.
+    const tall = ticketDetailView(detailProps(d, {
+      commentDraft: "@sa", mention: { query: "sa", start: 0, index: 0, line: 9 }, commentHeight: 300,
+    }));
+    expect(tall).toContain("top:222px");
+    expect(tall).toContain("height:300px");
   });
 
   it("lists every person on an empty query (the @ was just typed)", () => {
@@ -768,28 +790,117 @@ describe("ticketDetailView — the @mention picker", () => {
     expect(html).not.toContain('role="listbox"');
   });
 
-  it("paints only the active row, and moves it with the index", () => {
+  it("marks only the active row, and moves it with the index", () => {
     const first = open("", 0);
     const second = open("", 1);
-    const hits = (h: string) => h.split("background:var(--hover)").length - 1;
+    // The fill is the shared hover class (`.cnpy-menurow.is-active`), never an
+    // inline background — that is what makes hover and keyboard-active identical.
+    const hits = (h: string) => h.split('class="cnpy-menurow is-active"').length - 1;
+    expect(first).not.toContain("background:var(--hover)");
     expect(hits(first)).toBe(1);
     expect(hits(second)).toBe(1);
     // index 0 → jose-a (names ascending); index 1 → meilin.
-    expect(first).toContain('data-arg="jose-a" role="option" aria-selected="true"');
-    expect(first).toContain('data-arg="meilin" role="option" aria-selected="false"');
-    expect(second).toContain('data-arg="meilin" role="option" aria-selected="true"');
-    expect(second).toContain('data-arg="jose-a" role="option" aria-selected="false"');
+    expect(first).toContain('data-arg="jose-a" role="option" aria-selected="true" class="cnpy-menurow is-active"');
+    expect(first).toContain('data-arg="meilin" role="option" aria-selected="false" class="cnpy-menurow"');
+    expect(second).toContain('data-arg="meilin" role="option" aria-selected="true" class="cnpy-menurow is-active"');
+    expect(second).toContain('data-arg="jose-a" role="option" aria-selected="false" class="cnpy-menurow"');
   });
 
-  it("wraps a stale index rather than painting no row at all", () => {
+  it("wraps a stale index rather than marking no row at all", () => {
     // The query narrowed to one candidate while the index was still on row 2.
     const html = open("sana", 2);
-    expect(html.split("background:var(--hover)").length - 1).toBe(1);
+    expect(html.split('class="cnpy-menurow is-active"').length - 1).toBe(1);
     expect(html).toContain('data-arg="sanaok" role="option" aria-selected="true"');
   });
 
   it("carries the keyboard hint", () => {
     expect(open("sa")).toContain("↑↓ to move · Enter to mention · Esc to close");
+  });
+});
+
+// ── the hover layer (canopy.css) ─────────────────────────────────────────────
+// Inline styles cannot express `:hover`, so every row/chip/segment we added has
+// to carry the shared class that CAN. These assert the hook is on the markup;
+// the rules themselves live in web/src/canopy.css.
+
+describe("hover classes — menu rows, pick chips, segments", () => {
+  const s12 = sprint({ id: 12, label: "Sprint 12" });
+
+  it("hangs .cnpy-menurow on every ticket-detail popover row", () => {
+    const asg = ticketDetailView(detailProps(detail({ id: 1, title: "T" }), { asgMenu: true }));
+    expect(asg).toContain('data-act="ticketAsgAdd" data-arg="meilin" class="cnpy-menurow"');
+
+    const spr = ticketDetailView(detailProps(detail({ id: 1, title: "T" }), { sprints: [s12], sprMenu: true }));
+    expect(spr).toContain('data-act="ticketSprintSet" data-arg="" class="cnpy-menurow"');
+    expect(spr).toContain('data-act="ticketSprintSet" data-arg="12" class="cnpy-menurow"');
+
+    const rel = ticketDetailView(detailProps(detail({ id: 1, title: "T" }), {
+      allTickets: [ticket({ id: 9, title: "Candidate" })], relMenu: true,
+    }));
+    expect(rel).toContain('data-act="ticketRelAdd" data-arg="9" class="cnpy-menurow"');
+  });
+
+  it("gives the ticket-detail icon buttons .cnpy-iconbtn", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", assignees: ["meilin"] }), {
+      sprints: [s12], allTickets: [ticket({ id: 9, title: "Candidate" })],
+    }));
+    for (const act of ["ticketAsgMenu", "ticketSprintMenu", "ticketRelMenu"]) {
+      expect(html).toContain(`data-act="${act}"`);
+    }
+    expect(html).toContain('data-act="ticketAsgRemove" data-arg="meilin" title="Remove" class="cnpy-iconbtn"');
+    expect(html.match(/class="cnpy-iconbtn"/g)?.length).toBe(4);   // 3 menu openers + the remove
+  });
+
+  it("marks the queue's segment buttons and its Open sprint link", () => {
+    const html = queueView(queueProps({
+      tickets: [ticket({ id: 1, title: "Row", sprint_id: 12 })], sprints: [s12], seg: "open",
+    }));
+    expect(html).toContain('data-act="queueSeg" data-arg="open" class="cnpy-segbtn is-on"');
+    expect(html).toContain('data-act="queueSeg" data-arg="closed" class="cnpy-segbtn"');
+    expect(html).toContain('data-act="openSprint" data-arg="12" title="Open sprint screen" class="cnpy-grouplink"');
+  });
+
+  it("marks the new-ticket chips, with is-on only on the current pick", () => {
+    const html = newTicketView(formProps({ category: "bug", sprintId: 12, assignees: ["meilin"], sprints: [s12] }));
+    expect(html).toContain('data-act="ntCategory" data-arg="bug" class="cnpy-pickchip is-on"');
+    expect(html).toContain('data-act="ntCategory" data-arg="access" class="cnpy-pickchip"');
+    expect(html).toContain('data-act="ntPriority" data-arg="normal" class="cnpy-segbtn is-on"');
+    expect(html).toContain('data-act="ntPriority" data-arg="high" class="cnpy-segbtn"');
+    expect(html).toContain('data-act="ntSprint" data-arg="12" class="cnpy-pickchip is-on"');
+    expect(html).toContain('data-act="ntSprint" data-arg="" class="cnpy-pickchip"');
+    expect(html).toContain('data-act="ntAssignee" data-arg="meilin" class="cnpy-pickchip is-on"');
+    expect(html).toContain('data-act="ntAssignee" data-arg="" class="cnpy-pickchip"');
+  });
+});
+
+describe("ticketDetailView — the comment box's two corners", () => {
+  const html = ticketDetailView(detailProps(detail({ id: 1, title: "T" })));
+
+  it("parks Comment in the bottom-right, inside the box", () => {
+    expect(html).toContain('data-act="ticketCommentPost"');
+    const btn = html.slice(html.indexOf('data-act="ticketCommentPost"'));
+    expect(btn.slice(0, btn.indexOf(">"))).toContain("position:absolute;right:8px;bottom:8px");
+    // The old right-aligned footer row under the textarea is gone.
+    expect(html).not.toContain("display:flex;justify-content:flex-end;margin-top:8px");
+  });
+
+  it("puts our own resize grip in the bottom-left and drops the native one", () => {
+    expect(html).toContain('data-act="commentGrip"');
+    const grip = html.slice(html.indexOf('data-act="commentGrip"'));
+    expect(grip.slice(0, grip.indexOf(">"))).toContain("position:absolute;left:10px;bottom:10px");
+    expect(html).toContain("resize:none");
+    expect(html).not.toContain("resize:vertical");
+  });
+
+  it("keeps the text clear of the button, and honours a dragged height", () => {
+    // 36px of bottom padding = the button's own footprint plus air.
+    expect(html).toContain("padding:2px 0 36px");
+    expect(html).toContain("height:96px;min-height:60px");       // the resting height
+    const dragged = ticketDetailView(detailProps(detail({ id: 1, title: "T" }), { commentHeight: 220 }));
+    expect(dragged).toContain("height:220px;min-height:60px");
+    // Never below the floor, whatever state says.
+    const tiny = ticketDetailView(detailProps(detail({ id: 1, title: "T" }), { commentHeight: 10 }));
+    expect(tiny).toContain("height:60px;min-height:60px");
   });
 });
 

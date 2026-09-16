@@ -3,10 +3,14 @@
  *
  * Same idiom as test/hash.test.ts: no DOM, no D1, no `state` — main.ts owns the
  * textarea and the caret, and everything decidable from (text, caret, persons)
- * is decided by these three functions, so the RULES are unit-tested here.
+ * — including where the picker hangs — is decided by these pure functions, so
+ * the RULES are unit-tested here.
  */
 import { describe, it, expect } from "vitest";
-import { mentionTokenAt, mentionCandidates, applyMention } from "../web/src/mentions";
+import {
+  mentionTokenAt, mentionCandidates, applyMention,
+  caretLine, mentionPickerTop, COMMENT_BOX, COMMENT_LINE_HEIGHT,
+} from "../web/src/mentions";
 import type { PersonSummary } from "../web/src/api";
 
 // Every fixture name is capitalized the same way on purpose: the ordering
@@ -170,5 +174,72 @@ describe("applyMention", () => {
   it("round-trips: the result's caret is no longer inside a mention token", () => {
     const out = applyMention("hey @sa", 4, 7, "sanaok");
     expect(mentionTokenAt(out.text, out.caret)).toBeNull();
+  });
+});
+
+describe("caretLine", () => {
+  it("is line 0 before the first newline", () => {
+    expect(caretLine("hey @sa", 7)).toBe(0);
+    expect(caretLine("", 0)).toBe(0);
+  });
+
+  it("counts the hard newlines BEFORE the caret, not the whole text", () => {
+    const text = "one\ntwo\nthree\nfour";
+    expect(caretLine(text, 0)).toBe(0);
+    expect(caretLine(text, 3)).toBe(0);      // end of "one", before its \n
+    expect(caretLine(text, 4)).toBe(1);      // just after that \n
+    expect(caretLine(text, text.indexOf("three"))).toBe(2);
+    expect(caretLine(text, text.length)).toBe(3);
+  });
+
+  it("ignores soft wrap — a long unbroken line is still one line", () => {
+    expect(caretLine("x".repeat(400), 400)).toBe(0);
+  });
+
+  it("clamps a caret outside the text instead of throwing", () => {
+    expect(caretLine("a\nb", -5)).toBe(0);
+    expect(caretLine("a\nb", 999)).toBe(1);
+  });
+});
+
+describe("mentionPickerTop", () => {
+  // The geometry the comment textarea is built from: 13.5px × 1.6 = 21.6px a
+  // line, off a 2px top padding, with 4px of gap under the line being typed.
+  it("hangs one line-height under the caret's line", () => {
+    expect(COMMENT_LINE_HEIGHT).toBeCloseTo(21.6, 5);
+    expect(mentionPickerTop(0)).toBe(27.6);
+    expect(mentionPickerTop(1)).toBe(49.2);
+    expect(mentionPickerTop(2)).toBe(70.8);
+    expect(mentionPickerTop(3)).toBe(92.4);
+  });
+
+  it("steps by exactly one line height", () => {
+    for (const line of [0, 1, 2]) {
+      expect(mentionPickerTop(line + 1) - mentionPickerTop(line)).toBeCloseTo(COMMENT_LINE_HEIGHT, 5);
+    }
+  });
+
+  it("never hangs below the box's bottom + the gap", () => {
+    const cap = COMMENT_BOX.height + COMMENT_BOX.gap;
+    expect(mentionPickerTop(4)).toBe(cap);
+    expect(mentionPickerTop(40)).toBe(cap);
+    expect(mentionPickerTop(4000)).toBe(cap);
+  });
+
+  it("takes the cap from the box's ACTUAL height (the grip can have grown it)", () => {
+    expect(mentionPickerTop(9, { height: 300 })).toBe(222);        // still under the line
+    expect(mentionPickerTop(40, { height: 300 })).toBe(304);       // capped at 300 + gap
+    expect(mentionPickerTop(2, { height: 60 })).toBe(64);          // a shrunk box caps sooner
+  });
+
+  it("treats a negative / fractional / non-finite line as the first line", () => {
+    expect(mentionPickerTop(-3)).toBe(mentionPickerTop(0));
+    expect(mentionPickerTop(1.7)).toBe(mentionPickerTop(1));
+    expect(mentionPickerTop(Number.NaN)).toBe(mentionPickerTop(0));
+  });
+
+  it("honours overridden metrics (the style and the maths read the same numbers)", () => {
+    expect(mentionPickerTop(0, { padTop: 0, lineHeight: 20, gap: 0, height: 500 })).toBe(20);
+    expect(mentionPickerTop(2, { padTop: 10, lineHeight: 10, gap: 2, height: 500 })).toBe(42);
   });
 });
