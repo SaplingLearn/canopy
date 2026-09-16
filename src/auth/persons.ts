@@ -99,7 +99,7 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   ["feed", "author"],
   ["docs", "updated_by"], ["doc_versions", "created_by"],
   ["adrs", "created_by"],
-  // Sprints (0025 — the renamed milestones table; `lead` is new there).
+  // Sprints (0025 renamed the table in place; `lead` is new there).
   ["sprints", "created_by"], ["sprints", "lead"],
   ["needs_triage", "source_author"], ["needs_triage", "resolved_by"], ["identity_tasks", "resolved_by"],
   ["events", "recorded_by"],

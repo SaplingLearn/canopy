@@ -8,7 +8,7 @@ import { applyEventProgress } from "./tools/progress";
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
 // HMAC-SHA256 signature over the raw body against GITHUB_WEBHOOK_SECRET. Once the
-// HMAC verifies, the delivery's own claims (subject_login, milestone counts) are
+// HMAC verifies, the delivery's own claims (subject_login, issue-group counts) are
 // trusted and captured verbatim through ingestEvent. The writer principal is the
 // fixed string "github-webhook" — the webhook owner, not any OAuth identity.
 
@@ -53,7 +53,8 @@ export async function verifyGithubSignature(
 interface GhUser {
   login: string;
 }
-interface GhMilestone {
+/** GitHub's issue GROUP object (its own `milestone` payload key). */
+interface GhGroup {
   number: number;
   title?: string | null;
   due_on?: string | null;
@@ -72,7 +73,7 @@ interface GhPullRequest {
   merged_at: string | null;
   closed_at: string | null;
   user: GhUser;
-  milestone?: GhMilestone | null;
+  milestone?: GhGroup | null; // GitHub's own key — not Canopy vocabulary
   base?: { ref: string } | null;
 }
 interface GhIssue {
@@ -85,7 +86,7 @@ interface GhIssue {
   user: GhUser;
   assignees?: GhUser[];
   labels?: (string | GhLabel)[];
-  milestone?: GhMilestone | null;
+  milestone?: GhGroup | null; // GitHub's own key — not Canopy vocabulary
   pull_request?: unknown; // present only when the "issue" is really a PR
 }
 interface PrPayload {
@@ -105,6 +106,7 @@ const ISSUE_ACTIONS = [
   "unassigned",
   "closed",
   "reopened",
+  // GitHub's own action names — not Canopy vocabulary.
   "milestoned",
   "demilestoned",
 ];
@@ -134,6 +136,7 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
         merged_at: pr.merged_at,
         closed_at: pr.closed_at,
         user: { login: pr.user.login },
+        // GitHub's own key — not Canopy vocabulary (the raw snapshot mirrors it).
         milestone: pr.milestone ? { number: pr.milestone.number } : null,
         base: pr.base ? { ref: pr.base.ref } : null,
       },
@@ -191,6 +194,7 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
         labels: (issue.labels ?? [])
           .map((l) => (typeof l === "string" ? l : l.name))
           .filter(Boolean),
+        // GitHub's own key — not Canopy vocabulary (the raw snapshot mirrors it).
         milestone: issue.milestone
           ? {
               number: issue.milestone.number,
@@ -220,21 +224,21 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
 }
 
 // ---------------------------------------------------------------------------
-// PURE: the absolute progress this issue event implies for its GITHUB milestone
-// (GitHub's own word, kept deliberately: `milestoneNumber` is the number on the
-// issue's GitHub milestone, which a sprint's `github_ref` may point at), or
-// null when the issue carries no milestone. total = open + closed (GitHub's own
-// counts), so ordering of deliveries is irrelevant — later writes just overwrite.
+// PURE: the absolute progress this issue event implies for its GitHub issue
+// GROUP — `groupNumber` is the number on the group the issue belongs to, which a
+// sprint's `github_ref` may point at — or null when the issue is in no group.
+// total = open + closed (GitHub's own counts), so ordering of deliveries is
+// irrelevant — later writes just overwrite.
 // ---------------------------------------------------------------------------
 export function progressFromIssueEvent(
   payload: unknown
-): { milestoneNumber: number; closed: number; total: number } | null {
+): { groupNumber: number; closed: number; total: number } | null {
   if (payload === null || typeof payload !== "object") return null;
   const issue = (payload as IssuePayload).issue;
-  const m = issue?.milestone;
+  const m = issue?.milestone; // GitHub's own key — not Canopy vocabulary
   if (!m || m.open_issues == null || m.closed_issues == null) return null;
   return {
-    milestoneNumber: m.number,
+    groupNumber: m.number,
     closed: m.closed_issues,
     total: m.open_issues + m.closed_issues,
   };

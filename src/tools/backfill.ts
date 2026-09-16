@@ -59,7 +59,8 @@ export interface BackfillResult {
 interface GhUserLite {
   login: string;
 }
-interface GhMilestoneLite {
+/** GitHub's issue GROUP object (its own `milestone` payload key). */
+interface GhGroupLite {
   number: number;
   title?: string | null;
   due_on?: string | null;
@@ -75,7 +76,7 @@ interface GhPrListItem {
   closed_at: string | null;
   updated_at: string;
   user: GhUserLite;
-  milestone?: GhMilestoneLite | null;
+  milestone?: GhGroupLite | null; // GitHub's own key — not Canopy vocabulary
   base?: { ref: string } | null;
 }
 interface GhIssueListItem {
@@ -89,7 +90,7 @@ interface GhIssueListItem {
   assignees?: GhUserLite[];
   assignee?: GhUserLite | null;
   labels?: (string | { name: string })[];
-  milestone?: GhMilestoneLite | null;
+  milestone?: GhGroupLite | null; // GitHub's own key — not Canopy vocabulary
   pull_request?: unknown; // present only when the "issue" is really a PR
 }
 
@@ -117,6 +118,7 @@ function prClosedDelivery(pr: GhPrListItem) {
       closed_at: pr.closed_at,
       user: { login: pr.user.login },
       base: pr.base ? { ref: pr.base.ref } : null,
+      // GitHub's own key — not Canopy vocabulary (the raw snapshot mirrors it).
       milestone: pr.milestone
         ? { number: pr.milestone.number, open_issues: pr.milestone.open_issues, closed_issues: pr.milestone.closed_issues }
         : null,
@@ -140,6 +142,7 @@ function issueDelivery(issue: GhIssueListItem) {
       user: { login: issue.user.login },
       assignees: (issue.assignees ?? []).map((a) => ({ login: a.login })),
       labels: issue.labels ?? [],
+      // GitHub's own key — not Canopy vocabulary (the raw snapshot mirrors it).
       milestone: issue.milestone
         ? {
             number: issue.milestone.number,

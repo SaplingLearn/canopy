@@ -42,7 +42,7 @@ async function seedSprint(githubRef: string | null, title = "M"): Promise<number
   return res.meta.last_row_id as number;
 }
 
-// A stub `fetch` returning canned GitHub issue/milestone JSON, keyed by URL,
+// A stub `fetch` returning canned GitHub issue / issue-group JSON, keyed by URL,
 // mirroring test/roadmap.test.ts:96-103.
 function stubFetch(map: Record<string, unknown>): typeof fetch {
   return (async (url: string | URL | Request) => {
@@ -65,7 +65,7 @@ function issuePayload(number: number, state: "open" | "closed", action: string) 
       user: { login: "AndresL230" },
       assignees: [],
       labels: [],
-      milestone: null,
+      milestone: null, // GitHub's own key — not Canopy vocabulary
     },
   };
 }
@@ -86,9 +86,9 @@ describe("upsertProgress + getProgress", () => {
   });
 });
 
-describe("applyEventProgress — GitHub-milestone-number ref", () => {
-  it("issue-closed fixture (GitHub milestone #3) upserts the matching sprint's cache row", async () => {
-    // Verified fixture values (test/fixtures/gh-issue-closed.json): milestone
+describe("applyEventProgress — group-number ref", () => {
+  it("issue-closed fixture (GitHub issue group #3) upserts the matching sprint's cache row", async () => {
+    // Verified fixture values (test/fixtures/gh-issue-closed.json): the group is
     // { number: 3, open_issues: 1, closed_issues: 5 } → closed:5, total:6.
     const id = await seedSprint("3");
     await applyEventProgress(env.DB, issueClosed);
@@ -127,7 +127,7 @@ describe("recomputeAllProgress", () => {
 
     const fetchImpl = ((url: string | URL | Request) => {
       const u = String(url);
-      if (u.endsWith("/milestones/5")) {
+      if (u.endsWith("/milestones/5")) { // GitHub's own REST path — not Canopy vocabulary
         return Promise.resolve(
           new Response(JSON.stringify({ open_issues: 2, closed_issues: 8 }), { status: 200, headers: { "content-type": "application/json" } })
         );

@@ -7,8 +7,7 @@ const USER_AGENT = "canopy";
 
 /**
  * Live progress for a sprint's `github_ref`, computed from GitHub. `ref` is JSON:
- * a number (a GITHUB MILESTONE number — GitHub's own vocabulary, unrelated to
- * Canopy's retired milestone table) or an array of issue numbers.
+ * a number (the number of an issue GROUP on GitHub) or an array of issue numbers.
  * Never throws — returns null on parse failure, a non-OK response (expired/revoked
  * token, missing resource), or any error, so the recompute degrades gracefully.
  * `fetchImpl` is injectable for tests (the pool has no exported fetch mock).
@@ -48,8 +47,7 @@ export async function fetchGithubRefProgress(opts: {
       return { closed, total };
     }
     if (typeof parsed === "number") {
-      // GitHub's REST path for ITS milestones — the number in github_ref is a
-      // GitHub milestone number, so this URL keeps GitHub's word on purpose.
+      // GitHub's own REST path — not Canopy vocabulary.
       const res = await doFetch(`https://api.github.com/repos/${opts.repo}/milestones/${parsed}`, { headers });
       if (!res.ok) return null;
       const data = (await res.json()) as { open_issues?: number; closed_issues?: number };
@@ -113,8 +111,8 @@ function latestIssueSnapshotSql(count: number): string {
  * The webhook-side write: derive this issue event's implication for every
  * sprint it can affect, and upsert an absolute progress row for each.
  *
- * (a) GitHub-milestone-number ref: progressFromIssueEvent(payload) reads the
- *     issue's own GitHub milestone counts (open + closed = total) —
+ * (a) Group-number ref: progressFromIssueEvent(payload) reads the counts of the
+ *     GitHub issue group this issue belongs to (open + closed = total) —
  *     authoritative, no query needed.
  * (b) Array ref: for every sprint whose github_ref is a JSON array containing
  *     this event's issue number, recount from the LATEST captured snapshot of
@@ -129,7 +127,7 @@ export async function applyEventProgress(db: DB, payload: unknown): Promise<void
     const matches = await all<SprintRow>(
       db,
       `SELECT * FROM sprints WHERE github_ref = ?`,
-      JSON.stringify(derived.milestoneNumber)   // GitHub's milestone number
+      JSON.stringify(derived.groupNumber)   // the GitHub issue-group number
     );
     for (const sp of matches) {
       await upsertProgress(db, sp.id, derived.closed, derived.total, "event");

@@ -19,7 +19,7 @@ const ticket = (o: Partial<TicketCreate> & { title: string }): TicketCreate => (
   body: "", category: "other", priority: "normal", assignees: [], ...o,
 });
 
-/** Insert a sprint straight into D1 (the shape a pre-0025 milestone row had). */
+/** Insert a sprint straight into D1 (the shape a pre-0025 row had). */
 async function seedSprint(title: string, status: SprintRow["status"], targetDate = "2026-09-01"): Promise<number> {
   const now = nowIso();
   const res = await run(
@@ -34,8 +34,8 @@ async function seedSprint(title: string, status: SprintRow["status"], targetDate
   return res.meta.last_row_id as number;
 }
 
-// A stub `fetch` returning canned GitHub issue/milestone JSON, keyed by URL.
-// (GitHub's REST vocabulary — a bare github_ref IS a GitHub milestone number.)
+// A stub `fetch` returning canned GitHub issue / issue-group JSON, keyed by URL.
+// (A bare github_ref IS the number of an issue GROUP on GitHub.)
 function stubFetch(map: Record<string, unknown>): typeof fetch {
   return (async (url: string | URL | Request) => {
     const u = String(url);
@@ -52,7 +52,8 @@ describe("fetchGithubRefProgress", () => {
     expect(p).toEqual({ closed: 1, total: 2 });
   });
 
-  it("reads counts directly from a GitHub milestone object", async () => {
+  it("reads counts directly from a GitHub issue-group object", async () => {
+    // `/milestones/` is GitHub's own REST path — not Canopy vocabulary.
     const fetchImpl = stubFetch({ "/milestones/5": { open_issues: 3, closed_issues: 7, state: "open" } });
     const p = await fetchGithubRefProgress({ token: "t", repo: "o/r", ref: "5", fetchImpl });
     expect(p).toEqual({ closed: 7, total: 10 });
@@ -151,7 +152,7 @@ describe("roadmap HTTP routes (session-gated)", () => {
   it("GET /roadmap renders a LEGACY-shaped row (title/target_date/status, never touched by the plan write) with its active flag, TICKETS-ONLY progress and separate issues", async () => {
     const cookie = await cookieFor("andres");
     await seedPerson("beatrix");
-    // The pre-0025 milestone shape: no summary/dates/urgency/lead/domain, no
+    // The pre-0025 row shape: no summary/dates/urgency/lead/domain, no
     // plan_versions entry — exactly what a migrated row looks like.
     const id = await seedSprint("Legacy row", "in_progress", "2026-09-01");
     await upsertProgress(env.DB, id, 2, 3, "event");          // the GitHub half (cache)

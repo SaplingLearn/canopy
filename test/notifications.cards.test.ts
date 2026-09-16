@@ -74,6 +74,7 @@ describe("My Work items (ledger layout)", () => {
   });
 
   it("renders an assigned issue as a card: Summary / Sprint · due / Next step rows, priority chip and label chips", async () => {
+    // `milestone` is GitHub's own key — not Canopy vocabulary (a payload literal).
     await ingestEvent(env.DB, issueEvent(20, "[P1] Fix the gate", { labels: ["bug", "gate", "urgent", "fourth"], milestone: { title: "Launch", due_on: "2026-09-20" } }), "github-webhook");
     await storeIssueSummary(env.DB, issueStub({ title: "Fix the gate", summary: "The gate drops items", next_step: "Add the missing branch" }), { issue_number: 20, title: "[P1] Fix the gate", body: "b" });
     const s = (await kind().render(env.DB, LOGIN, WINDOW))!;

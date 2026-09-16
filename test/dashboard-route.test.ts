@@ -31,7 +31,7 @@ function mergedPrEvent(number: number, login: string, occurredAt: string): Captu
         merged_at: occurredAt,
         closed_at: occurredAt,
         user: { login },
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
@@ -56,7 +56,7 @@ function openIssueEvent(number: number, login: string, updatedAt: string): Captu
         user: { login },
         assignees: [{ login }],
         labels: ["bug"],
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",

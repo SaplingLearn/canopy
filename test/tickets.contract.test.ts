@@ -125,6 +125,7 @@ describe("parseTicketLink", () => {
   });
 
   it("shape 3 — any other github.com URL keeps kind github with the path as label (40 chars)", () => {
+    // A GitHub url, verbatim — not Canopy vocabulary.
     expect(parseTicketLink("https://github.com/SaplingLearn/canopy/milestone/4")).toEqual({
       url: "https://github.com/SaplingLearn/canopy/milestone/4",
       kind: "github",

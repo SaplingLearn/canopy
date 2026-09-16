@@ -84,8 +84,10 @@ const spTicket = (o: Partial<SprintTicketRow> & { id: number; title: string; dep
 });
 
 const resource = (o: Partial<SprintResourceView> = {}): SprintResourceView => ({
+  // The url is GitHub's own — not Canopy vocabulary. `meta` is what the SHARED
+  // parseTicketLink actually produces for a github.com url of this shape.
   url: "https://github.com/SaplingLearn/canopy/milestone/4",
-  kind: "github", label: "notifications-ga", meta: "GITHUB · MILESTONE", ...o,
+  kind: "github", label: "notifications-ga", meta: "GITHUB", ...o,
 });
 
 const NS: NewSprintState = {
@@ -424,10 +426,12 @@ describe("sprintScreen", () => {
       persons: PERSONS, resourceDraft: "https://example.com/x",
     });
     expect(html).toContain("notifications-ga");
-    expect(html).toContain("GITHUB · MILESTONE");
+    expect(html).toContain("GITHUB");
+    expect(html).not.toContain("MILESTONE");
     expect(html).toContain("Tickets — queue");
     expect(html).toContain("#1abcfe");                 // the Figma glyph
     expect(html).toContain("notion.so");
+    // The href is GitHub's own url, verbatim — not Canopy vocabulary.
     expect(html).toContain('href="https://github.com/SaplingLearn/canopy/milestone/4"');
     expect(html).toContain('data-act="sprintResourceAdd"');
     expect(html).toContain('value="https://example.com/x"');

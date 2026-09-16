@@ -327,17 +327,18 @@ function feedArtifacts(json: string | null): { kind: string; label: string; href
   for (const i of a.issues ?? []) out.push({ kind: "issue", label: `#${i}`, href: `${REPO_URL}/issues/${i}` });
   return out;
 }
-/** A linked GitHub chip (issue / PR / commit / GitHub milestone). */
+/** A linked GitHub chip (issue / PR / commit / issue group). */
 function ghChip(c: { kind: string; label: string; href: string }): string {
   return `<a href="${c.href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(c.kind)}</span><span style="font-family:var(--mono);font-weight:500">${esc(c.label)}</span></a>`;
 }
-/** GitHub links for a sprint's github_ref. The bare number IS a GitHub milestone
- *  number (GitHub's own vocabulary), hence the chip kind and URL below. */
+/** GitHub links for a sprint's github_ref. The bare number IS the number of an
+ *  issue GROUP on GitHub, hence the "group" chip kind and the URL below. */
 function sprintRefChips(github_ref: string | null): { kind: string; label: string; href: string }[] {
   if (!github_ref) return [];
   try {
     const p = JSON.parse(github_ref);
-    if (typeof p === "number") return [{ kind: "milestone", label: `#${p}`, href: `${REPO_URL}/milestone/${p}` }];
+    // The path segment is GitHub's own — not Canopy vocabulary.
+    if (typeof p === "number") return [{ kind: "group", label: `#${p}`, href: `${REPO_URL}/milestone/${p}` }];
     if (Array.isArray(p)) return p.map((n) => ({ kind: "issue", label: `#${n}`, href: `${REPO_URL}/issues/${n}` }));
   } catch { /* malformed ref → no chips */ }
   return [];

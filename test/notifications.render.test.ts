@@ -46,6 +46,7 @@ function issueEvent(number: number, login: string, state: "open" | "closed", upd
     event_type: "issue",
     ref_number: number,
     subject_login: login,
+    // `milestone` below is GitHub's own key — not Canopy vocabulary.
     raw: JSON.stringify({
       action: state === "open" ? "assigned" : "closed",
       issue: { number, title, html_url: `https://github.com/o/r/issues/${number}`, state, updated_at: updatedAt, user: { login }, assignees: [{ login }], labels: [], milestone: null },

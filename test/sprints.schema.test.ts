@@ -1,9 +1,10 @@
 /**
  * 0025_sprints.sql — the schema half of phase 1b.
  *
- * Sprints ARE the old milestones rows, renamed in place. These tests drive the
- * REAL migrated schema (the harness applies every migration in migrations/), so
- * they prove the rename semantics this build leans on rather than restating them:
+ * The `sprints` table IS the pre-0025 table, renamed in place — same rows, same
+ * ids. These tests drive the REAL migrated schema (the harness applies every
+ * migration in migrations/), so they prove the rename semantics this build leans
+ * on rather than restating them:
  *  • a legacy-shaped row (title / target_date / status) reads back through
  *    get_plan as a sprint, with `active` derived from status;
  *  • the progress cache followed the table (name, key column, and the FK that
@@ -37,7 +38,7 @@ async function seedLegacyRow(title: string, status: string, targetDate = "2026-0
   return res.meta.last_row_id as number;
 }
 
-describe("0025: milestones → sprints, in place", () => {
+describe("0025: the table was RENAMED in place, never re-created", () => {
   it("a legacy-shaped row reads back as a sprint, with active derived from status", async () => {
     const runningId = await seedLegacyRow("Running", "in_progress", "2026-08-01");
     const laterId = await seedLegacyRow("Later", "upcoming", "2026-08-02");
@@ -76,6 +77,7 @@ describe("0025: milestones → sprints, in place", () => {
   it("idx_sprints_target_date is the renamed index (the old name is gone)", async () => {
     const names = (await all<{ name: string }>(env.DB, `SELECT name FROM sqlite_master WHERE type = 'index'`)).map((r) => r.name);
     expect(names).toContain("idx_sprints_target_date");
+    // RETIRED NAME, asserted absent — the literal is the point of the assertion.
     expect(names).not.toContain("idx_milestones_target_date");
   });
 
@@ -117,10 +119,11 @@ describe("0025: the progress cache followed the table", () => {
 });
 
 describe("0025: roadmap_fts is re-keyed to sprint:<id>", () => {
-  it("inserting a sprint writes a 'sprint:' ref and never a 'milestone:' one", async () => {
+  it("inserting a sprint writes a 'sprint:' ref and never the retired one", async () => {
     const id = await seedLegacyRow("Quokka Sprint", "upcoming");
     const refs = (await all<{ ref: string }>(env.DB, `SELECT ref FROM roadmap_fts`)).map((r) => r.ref);
     expect(refs).toContain(`sprint:${id}`);
+    // RETIRED NAME, asserted absent — the literal is the point of the assertion.
     expect(refs.some((r) => r.startsWith("milestone:"))).toBe(false);
   });
 
@@ -142,7 +145,8 @@ describe("0025: roadmap_fts is re-keyed to sprint:<id>", () => {
 });
 
 describe("0025: the proposal queue is gone from the database", () => {
-  it("milestone_proposals is absent from sqlite_master", async () => {
+  it("the retired proposals table is absent from sqlite_master", async () => {
+    // RETIRED NAME, asserted absent — the literal is the point of the assertion.
     const rows = await all<{ name: string }>(
       env.DB,
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'milestone_proposals'`
@@ -152,6 +156,7 @@ describe("0025: the proposal queue is gone from the database", () => {
 
   it("its HTTP surface is gone too — the proposal + old complete routes 404", async () => {
     const cookie = await cookieFor("andres");
+    // RETIRED PATHS, asserted 404 — the literals are the point of the assertion.
     const gone: [string, string][] = [
       ["GET", "/milestone-proposals"],
       ["POST", "/milestone-proposals/1/promote"],

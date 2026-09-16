@@ -56,6 +56,7 @@ function issueEvent(over: {
   // GitHub's own key — not Canopy vocabulary (this is a GitHub payload literal).
   milestone?: { title?: string | null; due_on?: string | null; number?: number } | null;
 }): CapturedEvent {
+  // `milestone` is GitHub's own key — not Canopy vocabulary (a payload literal).
   const { number, login, action, state, updatedAt, title = `Issue ${number}`, labels = [], assigneeLogin = login, milestone = null } = over;
   const raw = JSON.stringify({
     action,
@@ -68,7 +69,7 @@ function issueEvent(over: {
       user: { login },
       assignees: [{ login: assigneeLogin }],
       labels,
-      milestone: milestone ?? null,
+      milestone: milestone ?? null, // GitHub's own key — not Canopy vocabulary
     },
   });
   return {

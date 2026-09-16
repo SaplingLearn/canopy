@@ -8,7 +8,7 @@ export type {
   TicketCategory, TicketPriority, TicketStatus, TicketLinkKind,
 } from "./tickets";
 
-// Sprints (the milestones table, renamed by 0025) are defined ONCE, as Zod
+// Sprints (the table 0025_sprints.sql renamed in place) are defined ONCE, as Zod
 // schemas in shared/sprints.ts, and re-exported here for the same reason.
 export type {
   SprintRow, SprintResourceRow,
@@ -202,9 +202,10 @@ export interface IssueSummaryRow {
   next_step: string | null;  // only when the issue states/implies one (0018)
 }
 
-// Absolute per-sprint progress cache (0012 as milestone_progress; renamed with
-// its key column in 0025). Event-derived GitHub issue counts only — the ticket
-// side of a sprint's progress is counted at read time, never cached here.
+// Absolute per-sprint progress cache (added in 0012; the table and its key
+// column were renamed in 0025). Event-derived GitHub issue counts ONLY — they
+// are `SprintView.issues`, never `SprintView.progress`, which is the sprint's
+// tickets counted at read time.
 export interface SprintProgressRow {
   sprint_id: number;
   closed: number;

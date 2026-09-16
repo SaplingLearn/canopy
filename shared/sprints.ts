@@ -2,8 +2,8 @@
 // on sprint shapes. Zod only: no DOM, no node built-ins, so it imports cleanly
 // into both builds (web imports it type-only, so zod never enters the bundle).
 //
-// A sprint IS the old milestone row, renamed by 0025_sprints.sql — same table,
-// same ids, new label plus `dates` / `summary` / `urgency` / `lead` / `domain`.
+// A sprint IS the row 0025_sprints.sql renamed in place — same table, same ids,
+// new label plus `dates` / `summary` / `urgency` / `lead` / `domain`.
 //
 // TWO VOCABULARIES, ONE SEAM. The DB keeps its column names; the DTO speaks the
 // product's words:
@@ -16,8 +16,8 @@
 //
 // Authority: sprints are human authored writes in the promote class — the admin
 // plan write (`update_plan` → `write_plan`) and the cookie sprint routes. Nothing
-// here is staged, nothing is agent-proposed (the milestone_proposals queue was
-// dropped in 0025), and `status:'done'` is set by a person, never inferred.
+// here is staged, nothing is agent-proposed (the old proposals queue was dropped
+// in 0025), and `status:'done'` is set by a person, never inferred.
 // `lead` holds a person HANDLE (0023 identity root), never a GitHub login.
 
 import { z } from "zod";
@@ -54,7 +54,7 @@ export const SprintRow = z.object({
   description: z.string().nullable(),       // markdown (rendered through renderMarkdown)
   target_date: z.string(),                  // the DTO's `due`; NOT NULL, '' when unscheduled
   status: SprintStatus,
-  github_ref: z.string().nullable(),        // JSON: number (a GitHub milestone) | number[] (issues)
+  github_ref: z.string().nullable(),        // JSON: number (a GitHub issue-group number) | number[] (issues)
   created_at: z.string(),
   created_by: z.string(),                   // person handle
   updated_at: z.string().nullable(),

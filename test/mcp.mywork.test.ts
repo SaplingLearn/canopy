@@ -26,7 +26,7 @@ function prEvent(number: number, login: string): CapturedEvent {
         merged_at: NOW,
         closed_at: NOW,
         user: { login },
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
@@ -51,7 +51,7 @@ function issueEvent(number: number, login: string): CapturedEvent {
         user: { login },
         assignees: [{ login }],
         labels: [],
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
