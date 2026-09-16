@@ -632,6 +632,45 @@ describe("POST /tickets/:id/comment", () => {
   });
 });
 
+// ── tickets are NOT feed items ───────────────────────────────────────────────
+
+describe("tickets never write to the feed", () => {
+  it("create + transition + comment (and the rest of the writes) leave `feed` empty", async () => {
+    const cookie = await cookieFor("andres");
+    await seedPerson("meilin");
+    const sprintId = await seedSprint("Ticket queue");
+
+    expect((await all(env.DB, `SELECT id FROM feed`)).length, "feed starts empty").toBe(0);
+
+    // Every ticket write surface, in one pass.
+    const t = await createTicket(cookie, { title: "Gradebook export is empty", body: "It downloads 0 rows." });
+    expect((await post(`/tickets/${t.id}/status`, cookie, { to: "in_progress" })).status).toBe(200);
+    expect((await post(`/tickets/${t.id}/comment`, cookie, { body: "Reproduced." })).status).toBe(200);
+    expect((await post(`/tickets/${t.id}/assignees`, cookie, { login: "meilin", on: true })).status).toBe(200);
+    expect((await post(`/tickets/${t.id}/sprint`, cookie, { sprint_id: sprintId })).status).toBe(200);
+    expect((await post(`/tickets/${t.id}/links`, cookie, { raw: "https://github.com/SaplingLearn/sapling/issues/7" })).status).toBe(200);
+    const child = await createTicket(cookie, { title: "Sub" });
+    expect((await post(`/tickets/${t.id}/parent`, cookie, { child_id: child.id })).status).toBe(200);
+    expect((await post(`/tickets/${t.id}/status`, cookie, { to: "done" })).status).toBe(200);
+
+    // The ticket rows are all there…
+    expect((await all(env.DB, `SELECT id FROM tickets`)).length).toBe(2);
+    expect((await all(env.DB, `SELECT id FROM ticket_comments`)).length).toBe(1);
+    expect((await all(env.DB, `SELECT id FROM ticket_events`)).length).toBeGreaterThan(1);
+    // …and not one of them produced a feed entry. Tickets are their own surface.
+    expect((await all(env.DB, `SELECT id FROM feed`)).length, "no ticket action writes to `feed`").toBe(0);
+  });
+
+  it("creating a sprint and flipping it active writes no feed row either", async () => {
+    const cookie = await cookieFor("andres");
+    const res = await post("/sprints", cookie, { label: "Sprint 12", dates: "SEP 8 – 19" });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const id = (await json<{ sprint: { id: number } }>(res)).sprint.id;
+    expect((await post(`/sprints/${id}/active`, cookie, { active: true })).status).toBe(200);
+    expect((await all(env.DB, `SELECT id FROM feed`)).length).toBe(0);
+  });
+});
+
 // ── the gate: every ticket route is session-cookie only ──────────────────────
 
 describe("tickets: 401 without a session cookie", () => {
