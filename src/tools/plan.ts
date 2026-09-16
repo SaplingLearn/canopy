@@ -1,7 +1,7 @@
 import type { SprintRow, PlanRow } from "@shared/rows";
-import { toSprintView, type SprintView } from "@shared/sprints";
+import type { SprintView } from "@shared/sprints";
 import { type DB, first, all, run, nowIso } from "../db";
-import { getProgress } from "./progress";
+import { list_sprints } from "./sprints";
 
 /**
  * One sprint as the ADMIN plan write receives it. This is the DTO vocabulary
@@ -133,28 +133,24 @@ export async function write_plan(
 
 /**
  * Read the admin plan: narrative + version metadata, plus every sprint
- * (target_date ASC, id ASC — same order as the roadmap) as a SprintView merged
- * with the progress cache. NO GitHub, NO token — read-only against D1. Returns a
- * default empty view if the plan singleton row is missing.
+ * (target_date ASC, id ASC, unscheduled last — the roadmap's order) as a
+ * SprintView. NO GitHub, NO token — read-only against D1. Returns a default
+ * empty view if the plan singleton row is missing.
  *
- * Progress here is the `sprint_progress` cache ONLY (event-derived GitHub issue
- * counts); a sprint with no cache row reads 0/0. Phase 3 adds the ticket counts
- * on top, through `list_sprints`.
+ * The sprint half is `list_sprints` (tools/sprints.ts), so `progress` is
+ * TICKET-INCLUSIVE — the tickets in the sprint plus the cached, event-derived
+ * GitHub issue counts — and `members` is the sprint's real distinct assignees.
+ * One read model, shared by GET /roadmap, MCP get_roadmap and GET /sprints.
  */
 export async function get_plan(db: DB): Promise<PlanView> {
   const plan = await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`);
-  const sprints = await all<SprintRow>(db, `SELECT * FROM sprints ORDER BY target_date ASC, id ASC`);
-  const progress = await getProgress(db);
+  const sprints = await list_sprints(db);
 
   return {
     narrative: plan?.narrative ?? "",
     version: plan?.current_version ?? 0,
     updated_at: plan?.updated_at ?? null,
     updated_by: plan?.updated_by ?? null,
-    // members is [] until Phase 3 joins the sprint's tickets in.
-    sprints: sprints.map((sp) => {
-      const p = progress.get(sp.id);
-      return toSprintView(sp, { closed: p?.closed ?? 0, total: p?.total ?? 0 }, []);
-    }),
+    sprints,
   };
 }

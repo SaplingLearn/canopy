@@ -52,7 +52,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `src/` — the Worker. `index.ts` (fetch entry: `/mcp` by bearer, `/webhook/github` by HMAC, everything
   else to the Hono app; plus the `scheduled()` progress backstop), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
-  `plan.ts`, `tickets.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
+  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
   Email notifications section), `db.ts` (D1 helpers), `auth/` (`persons.ts` — the identity root;
   `google.ts` — second provider; `onboard.ts` — the sign-in fork + onboarding cookie; `invites.ts`),
   `env.ts`.
@@ -150,11 +150,15 @@ Agents only ever stage; humans confirm via **authenticated HTTP routes that are 
   Reject (soft): `POST /adr/:id/reject` flips a draft to `status='rejected'`; the row remains.
 - Sprints: **nothing about a sprint is ever staged.** 0025 dropped `milestone_proposals` and with it
   the whole agent-proposed-roadmap surface — the gate fn, the contract schema, the promote/reject
-  routes, and the `"milestone"` triage-assign kind. A sprint is created and edited only by the admin
-  plan write (`update_plan` → `write_plan`, a direct promote-class write); `POST /sprints/:id/complete`
-  flips status to `done`. `'done'` is NEVER set by the worker and NEVER inferred from issue closure or
-  from every ticket in the sprint being resolved — a sprint is completed by an admin, here or in the
-  plan write. The triage-assign kinds are now exactly `doc` / `adr` / `feed`.
+  routes, and the `"milestone"` triage-assign kind. A sprint is created and edited by the admin plan
+  write (`update_plan` → `write_plan`) or by the session-cookie routes in `src/tools/sprints.ts` —
+  `POST /sprints` (created `upcoming`, `phase` `'Unscheduled'`, no `due` → `target_date` `''` which the
+  DTO shows as `due: null`), `POST /sprints/:id/active` (`true` → `in_progress`, `false` → `upcoming`;
+  on a `done` sprint `false` is a NO-OP and `true` re-opens it), `POST /sprints/:id/resources`, and
+  `POST /sprints/:id/complete` which flips status to `done`. All direct promote-class writes, NEVER MCP
+  tools. `'done'` is NEVER set by the worker and NEVER inferred from issue closure or from every ticket
+  in the sprint being resolved — a sprint is completed by an admin, here or in the plan write. The
+  triage-assign kinds are now exactly `doc` / `adr` / `feed`.
 - Triage write-back: `POST /needs-triage/:id/discard` (soft dismiss) and `POST /needs-triage/:id/assign`
   (re-runs the item's `raw` through the SAME gate for the target type, then records `resolution='assigned'`
   with `assigned_ref`). All triage exits are soft — nothing is hard-deleted; `resolved=1` + audit columns
@@ -216,12 +220,15 @@ DTO vocabulary; only `src/tools/` speaks columns. `GET /roadmap` and MCP `get_ro
 narrative + `sprints: SprintView[]` in target-date order, each with `progress: {closed, total, pct}`.
 No live GitHub, no per-user token.
 
-**Progress** is a stored cache (`sprint_progress`, keyed `sprint_id`), written as ABSOLUTE
-`closed`/`total` (so delivery order is irrelevant — the last write wins) by two direct writers: the
-webhook (event-derived, on issue events) and the `scheduled()` cron backstop (`recomputeAllProgress`,
-`GITHUB_SERVICE_TOKEN`, off the render path). `github_ref` is bare (a GITHUB milestone number — GitHub's
-own vocabulary, kept deliberately — OR a JSON array of issue numbers) resolved against `GITHUB_REPO` —
-only by those two writers, never at render. A sprint with no cache row reads `0/0`.
+**Progress is TICKET-INCLUSIVE**, computed at read time by the ONE function `sprintProgress` in
+`src/tools/sprints.ts`: `total` = the tickets in the sprint + `sprint_progress.total`, `closed` = the
+tickets a person set `done`/`declined` + `sprint_progress.closed`, `pct` rounded; a sprint with neither
+reads `0/0`. The ticket half is a live D1 count; the GitHub half is a stored cache (`sprint_progress`,
+keyed `sprint_id`), written as ABSOLUTE `closed`/`total` (so delivery order is irrelevant — the last
+write wins) by two direct writers: the webhook (event-derived, on issue events) and the `scheduled()`
+cron backstop (`recomputeAllProgress`, `GITHUB_SERVICE_TOKEN`, off the render path). `github_ref` is bare
+(a GITHUB milestone number — GitHub's own vocabulary, kept deliberately — OR a JSON array of issue
+numbers) resolved against `GITHUB_REPO` — only by those two writers, never at render.
 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events: two separate lists — `previousActivity` (summarized merged/closed PRs where the person is the

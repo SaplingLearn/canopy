@@ -314,6 +314,14 @@ export async function ticket_badge(db: DB): Promise<number> {
   return row?.n ?? 0;
 }
 
+// ── Sprints (the Roadmap's containers) ────────────────────────────────────────
+//
+// DEFINED in ./sprints.ts, next to the sprint writers and the one progress rule
+// (`sprintProgress`) they share — splitting the read half off would have put the
+// ticket-inclusive math in two files. Re-exported here so every read surface,
+// including MCP, can reach the whole read model from one module.
+export { list_sprints, get_sprint } from "./sprints";
+
 // ── query(): ranked, assembled FTS5 retrieval (Phase 1 read-side brain) ───────
 //
 // One engine. Per requested type, bm25-ranked FTS5 (title/summary weighted above

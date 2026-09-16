@@ -46,15 +46,23 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
 
 ## Reading
 
-- **`query`** — the rich, ranked, full-text read. Whole authoritative bodies for the top hits plus
-  ranked pointers to the rest, every result authority-flagged. **See `references/querying.md` for the
-  full parameter set and patterns** (filter by type/section/space, browse, fan out via pointers,
-  `include_staged`). This is the tool `load-context` wraps; call it directly for ad-hoc exploration.
+- **`query`** — the rich, ranked, full-text read over five types (`doc` / `decision` / `feed` /
+  `sprint` / `ticket`). Whole authoritative bodies for the top hits plus ranked pointers to the rest,
+  every result authority-flagged. **See `references/querying.md` for the full parameter set and
+  patterns** (filter by type/section/space, browse, fan out via pointers, `include_staged`). This is
+  the tool `load-context` wraps; call it directly for ad-hoc exploration.
 - **`get_doc <slug>`** — one doc with all its versions (exact fetch).
 - **`get_feed`** — the activity feed (author / tags / since / limit filters).
 - **`get_roadmap`** — the roadmap plan: an admin-authored narrative + **sprints** (each with `label`,
   `summary`, `phase`, `dates`, `due`, `status`/`active`, `urgency`, `lead`, `domain`) merged with their
-  progress (`closed/total/pct`); no live GitHub at read time.
+  progress (`closed/total/pct` — the sprint's tickets PLUS its cached GitHub issue counts) and
+  `members` (the handles assigned to those tickets); no live GitHub at read time.
+- **`list_tickets` / `get_ticket`** — the org-wide ticket queue, read-only: `list_tickets` takes
+  `seg` (`open` / `closed` / `all`), `assignee` (`anyone` / `me` / `unassigned`) and `category`;
+  `get_ticket <id>` is the whole ticket (assignees, links, comments, history, parent + sub-tickets).
+- **`list_sprints` / `get_sprint`** — the sprint containers, read-only: `list_sprints` is every
+  sprint in roadmap order with its progress and members; `get_sprint <id>` adds the sprint's tickets
+  (roots then their sub-tickets) and its merged resource links.
 - **`get_my_work`** — your captured-event My Work projection: previous-activity (summarized merged/closed
   PRs from the last 14 days) + to-do (open assigned issues); built from captured GitHub events, no live
   GitHub.
@@ -69,6 +77,12 @@ assign / discard) is done by a human in the web Triage desk over session-cookie 
 tools. The roadmap plan itself is **admin-authored**, not staged by agents: the `update-plan` skill
 wraps the `update_plan` MCP tool (direct, non-destructively versioned, promote-class) — agents cannot
 propose a sprint at all (the roadmap-proposal queue was retired), and sprint `done` is admin-set.
+
+**Tickets and sprints are read-only over MCP.** There is no `create_ticket`, no `transition_ticket`,
+no `create_sprint` — every ticket and sprint write is a human authored write over a session-cookie
+route in the web app. An agent can see what has been asked for and what is in a sprint; it cannot
+file, assign, resolve or re-home any of it. Ticket `done` / `declined` and sprint `done` are set by a
+person, never inferred from a PR merging or an issue closing.
 
 ## Connect an agent over MCP
 

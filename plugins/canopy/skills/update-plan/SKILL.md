@@ -25,7 +25,8 @@ skill does so itself, in step 1) so you never write blind.
   sprint, or mark one done.
 - **Not** for moving tickets in or out of a sprint. Which tickets belong to a sprint is set from the
   Tickets UI (`POST /tickets/:id/sprint`), never from the plan write. This skill owns the sprint's own
-  fields only.
+  fields only — and since a sprint's progress bar counts its tickets, re-homing a ticket is how that
+  bar moves, not an `update_plan` call.
 - **Never auto-fire.** Reading the plan, discussing it, or noticing drift is not license to write it —
   that's `read-plan`'s job. Only an explicit ask reaches this skill.
 - Never infer `status: 'done'` from issue/PR activity — `done` is only ever admin-said-so, here or via
@@ -83,6 +84,12 @@ The sprint vocabulary (the DTO's words, not the column names):
 | `github_ref` | a GitHub milestone number, or an array of issue numbers |
 
 - `id` present → update that sprint; `id` absent → create one.
+- **You never write progress.** A sprint's `closed/total/pct` is computed at read time as
+  **the tickets in the sprint plus the GitHub issues behind `github_ref`** — `total` = tickets +
+  cached issues, `closed` = tickets a person marked `done`/`declined` + cached closed issues. A
+  sprint with neither reads `0/0`. Editing `github_ref` changes the issue half (the webhook and the
+  cron backstop keep its cache current); the ticket half moves only when someone files, resolves or
+  re-homes a ticket in the Tickets UI.
 - Sprints you don't list are left exactly as they are — you don't need to round-trip every
   sprint, only the ones changing.
 - `status: 'done'` is legal here (this is the one agent-reachable path allowed to set it) — only set

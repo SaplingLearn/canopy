@@ -4,7 +4,8 @@ import { buildSeedStatements } from "../scripts/seed/build.mjs";
 import { getMyWork } from "../src/tools/mywork";
 import { get_plan } from "../src/tools/plan";
 import { query, get_feed, list_proposals, list_needs_triage, list_adrs, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "../src/tools/reads";
-import { all } from "../src/db";
+import { get_sprint } from "../src/tools/sprints";
+import { all, first } from "../src/db";
 import docs from "../fixtures/dev/docs.json";
 import feed from "../fixtures/dev/feed.json";
 import adrs from "../fixtures/dev/adrs.json";
@@ -57,6 +58,35 @@ describe("dev seed lights up every surface", () => {
     const resources = await all<{ sprint_id: number; kind: string }>(env.DB, `SELECT * FROM sprint_resources`);
     expect(new Set(resources.map((r) => r.sprint_id)).size).toBe(2);
     expect(new Set(resources.map((r) => r.kind))).toEqual(new Set(["github", "figma", "plain"]));
+
+    // Progress is TICKET-INCLUSIVE: sprint 3 caches 2/3 GitHub issues and holds
+    // four seeded tickets (one of them done), so the roadmap bar reads 3/7 — the
+    // cache alone would read 2/3. The seed proves the join, not just the math.
+    const cache = await first<{ closed: number; total: number }>(env.DB, `SELECT closed, total FROM sprint_progress WHERE sprint_id = 3`);
+    const three = plan.sprints.find((sp) => sp.id === 3)!;
+    expect(cache).toEqual({ closed: 2, total: 3 });
+    expect(three.progress).toEqual({ closed: 3, total: 7, pct: 43 });
+    expect(three.progress.total).toBeGreaterThan(cache!.total);
+    expect(three.members.length).toBeGreaterThan(0);
+  });
+
+  it("Roadmap: a sprint's resources merge its own links with its tickets', deduped by url", async () => {
+    const detail = (await get_sprint(env.DB, 3))!;
+    const urls = detail.resources.map((r) => r.url);
+    const shared = "https://github.com/SaplingLearn/sapling/issues/214";
+
+    // The fixture deliberately attaches the SAME issue to sprint 3 and to ticket 3.
+    expect(await all(env.DB, `SELECT * FROM sprint_resources WHERE sprint_id = 3 AND url = ?`, shared)).toHaveLength(1);
+    expect(await all(env.DB, `SELECT * FROM ticket_links WHERE url = ?`, shared)).toHaveLength(1);
+    // …and it appears exactly once on the sprint screen, as the SPRINT's copy (first).
+    expect(urls.filter((u) => u === shared)).toHaveLength(1);
+    expect(urls[0]).toBe("https://github.com/SaplingLearn/sapling/issues/160"); // sprint resources lead
+    expect(urls.indexOf(shared)).toBeLessThan(urls.indexOf("https://www.figma.com/design/planner-duration"));
+    expect(new Set(urls).size).toBe(urls.length);
+    // Roots then children: ticket 2 is the sub-ticket of ticket 3, but it lives in
+    // sprint 4 — so nothing in sprint 3 renders at depth 1.
+    expect(detail.tickets.every((t) => t.depth === 0)).toBe(true);
+    expect(detail.tickets.map((t) => t.id).sort()).toEqual([1, 3, 4, 7]);
   });
 
   it("People: the four engineers plus the two non-engineer requesters", async () => {

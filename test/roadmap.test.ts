@@ -5,12 +5,19 @@ import type { SprintRow } from "@shared/rows";
 import { fetchGithubRefProgress, upsertProgress } from "../src/tools/progress";
 import { get_plan, write_plan } from "../src/tools/plan";
 import { complete_sprint } from "../src/tools/writes";
+import { create_ticket, transition_ticket } from "../src/tools/tickets";
+import type { TicketCreate } from "@shared/tickets";
 import { app } from "../src/routes";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildCanopyMcpServer } from "../src/mcp";
 import type { Env } from "../src/env";
-import { cookieFor } from "./helpers/persons";
+import { cookieFor, seedPerson } from "./helpers/persons";
+
+/** A TicketCreate with the schema's defaults filled in (these tests bypass the route's parse). */
+const ticket = (o: Partial<TicketCreate> & { title: string }): TicketCreate => ({
+  body: "", category: "other", priority: "normal", assignees: [], ...o,
+});
 
 /** Insert a sprint straight into D1 (the shape a pre-0025 milestone row had). */
 async function seedSprint(title: string, status: SprintRow["status"], targetDate = "2026-09-01"): Promise<number> {
@@ -123,6 +130,33 @@ describe("roadmap HTTP routes (session-gated)", () => {
     expect((await res.json() as { error: string }).error).toContain("no such sprint");
   });
 
+  it("GET /roadmap renders a LEGACY-shaped row (title/target_date/status, never touched by the plan write) with its active flag and TICKET-INCLUSIVE progress", async () => {
+    const cookie = await cookieFor("andres");
+    await seedPerson("beatrix");
+    // The pre-0025 milestone shape: no summary/dates/urgency/lead/domain, no
+    // plan_versions entry — exactly what a migrated row looks like.
+    const id = await seedSprint("Legacy row", "in_progress", "2026-09-01");
+    await upsertProgress(env.DB, id, 2, 3, "event");          // the GitHub half (cache)
+    const a = await create_ticket(env.DB, ticket({ title: "shipped", sprint_id: id, assignees: ["beatrix"] }), "andres");
+    await create_ticket(env.DB, ticket({ title: "still open", sprint_id: id }), "andres");
+    await transition_ticket(env.DB, a, "in_progress", "andres");
+    await transition_ticket(env.DB, a, "done", "andres");
+
+    const res = await app.request("/roadmap", { headers: { cookie } }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Awaited<ReturnType<typeof get_plan>>;
+    const sp = body.sprints.find((s) => s.id === id)!;
+    expect(sp.label).toBe("Legacy row");        // title → label
+    expect(sp.due).toBe("2026-09-01");          // target_date → due
+    expect(sp.active).toBe(true);               // status in_progress → active
+    // 1 done ticket + 2 closed issues / 2 tickets + 3 issues — the cache alone
+    // would read 2/3 (pct 67), which is what this assertion pins against.
+    expect(sp.progress).toEqual({ closed: 3, total: 5, pct: 60 });
+    expect(sp.members).toEqual(["beatrix"]);
+    // The 0025 columns are simply null on a legacy row — nothing throws.
+    expect(sp.summary).toBeNull();
+    expect(sp.urgency).toBe("normal");
+  });
 });
 
 describe("registered MCP get_roadmap tool", () => {
@@ -151,6 +185,39 @@ describe("registered MCP get_roadmap tool", () => {
       expect(body.sprints[0].label).toBe("GA");
       expect(body.sprints[0].active).toBe(true);
       expect(body.sprints[0].progress).toEqual({ closed: 4, total: 6, pct: 67 });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("counts the sprint's TICKETS into progress and lists its members, on a legacy-shaped row", async () => {
+    await seedPerson("andres");
+    await seedPerson("beatrix");
+    const id = await seedSprint("Legacy row", "in_progress", "2026-09-01");
+    await upsertProgress(env.DB, id, 2, 3, "event");
+    const a = await create_ticket(env.DB, ticket({ title: "shipped", sprint_id: id, assignees: ["beatrix"] }), "andres");
+    await create_ticket(env.DB, ticket({ title: "still open", sprint_id: id }), "andres");
+    await transition_ticket(env.DB, a, "in_progress", "andres");
+    await transition_ticket(env.DB, a, "done", "andres");
+
+    const server = buildCanopyMcpServer(env as unknown as Env, { handle: "andres" });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const res = (await client.callTool({ name: "get_roadmap", arguments: {} })) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+      expect(res.isError).toBeFalsy();
+      const body = JSON.parse(res.content[0].text) as Awaited<ReturnType<typeof get_plan>>;
+      const sp = body.sprints.find((s) => s.id === id)!;
+      expect(sp.active).toBe(true);
+      // The cache alone reads 2/3; the tickets push it to 3/5.
+      expect(sp.progress).toEqual({ closed: 3, total: 5, pct: 60 });
+      expect(sp.members).toEqual(["beatrix"]);
     } finally {
       await client.close();
       await server.close();

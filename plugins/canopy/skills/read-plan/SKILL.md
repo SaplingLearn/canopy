@@ -32,11 +32,14 @@ its own `get_roadmap` call) before writing.
 
 1. **`mcp__canopy__get_roadmap`** — read the plan: `{narrative, version, updated_at, updated_by,
    sprints:[{id, label, summary, description, phase, dates, due, status, active, urgency, lead,
-   domain, github_ref, progress, members}]}`. A sprint's `progress` (`{closed, total, pct}`) counts the
-   tickets in the sprint plus the cached, event-derived GitHub issue counts behind `github_ref` — it is
-   **never** a live GitHub read. A sprint with neither reads `0/0`; say so rather than calling it stalled.
+   domain, github_ref, progress, members}]}`. A sprint's `progress` (`{closed, total, pct}`) is
+   **ticket-inclusive**: `total` = the tickets in the sprint + the cached, event-derived GitHub issue
+   counts behind `github_ref`; `closed` = the tickets a person marked `done`/`declined` + the cached
+   closed issues. It is **never** a live GitHub read. A sprint with neither reads `0/0`; say so rather
+   than calling it stalled. `members` is the distinct set of person handles assigned to that sprint's
+   tickets (empty when the sprint holds no assigned tickets — not a staffing claim).
    `active` is derived (`status === 'in_progress'`), and `label`/`due` are the DTO's words for the
-   stored `title`/`target_date`.
+   stored `title`/`target_date` (an unscheduled sprint has `due: null` and sorts last).
 2. **`mcp__canopy__get_events`** — pull recent captured activity (e.g. `limit: 30`) so you can compare
    the plan against what has actually happened: merged/closed PRs and issues that plausibly belong to a
    sprint but aren't reflected in its `status` or `progress` yet. Filter by `type` or `subject` when
@@ -52,6 +55,9 @@ its own `get_roadmap` call) before writing.
 ## Hard rules
 
 - **Read-only.** Never call `update_plan` or any write tool from this skill.
-- **Progress is cached, not live.** Always note it came from `computed_at`, not a fresh GitHub read.
+- **The GitHub half of progress is cached, not live.** Say it came from the stored event-derived
+  cache, not a fresh GitHub read. (The ticket half is a live D1 count, so it is current.)
+- **Progress moving is not the same as a sprint being done.** Tickets closing and issues closing both
+  raise the bar; only an admin sets `status: 'done'`.
 - Present drift as an observation for the admin to act on (via `update-plan`), never as an
   already-made decision.

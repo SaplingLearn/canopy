@@ -84,6 +84,13 @@
           "kind": "figma",
           "label": "Canopy token settings",
           "meta": "FIGMA · DESIGN"
+        },
+        {
+          "_comment": "Deliberately the SAME url ticket 3 links to — the sprint screen dedupes by url, sprint copy first.",
+          "url": "https://github.com/SaplingLearn/sapling/issues/214",
+          "kind": "github",
+          "label": "sapling #214",
+          "meta": "GITHUB · ISSUE"
         }
       ]
     },

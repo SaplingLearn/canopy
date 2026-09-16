@@ -1,4 +1,4 @@
-import type { DocRow, DocVersionRow, AdrRow, SprintRow, NeedsTriageRow, IdentityTaskRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow, NeedsTriageRow, IdentityTaskRow } from "@shared/rows";
 import { DocProposal, AdrDraft, FeedEntry } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB, first, run, nowIso } from "../db";
@@ -263,15 +263,11 @@ export async function ratify_adr(db: DB, id: number): Promise<{ id: number; stat
  * done. `done` is NEVER set by the worker and NEVER inferred from issue closure or
  * from every ticket being resolved — a sprint is completed by an admin, here or in
  * the plan write. Direct authored write (promote class), not the ingestion gate.
+ *
+ * DEFINED in ./sprints.ts — every sprint writer has one home there. This
+ * re-export keeps the older `from "./tools/writes"` import path working.
  */
-export async function complete_sprint(db: DB, id: number): Promise<SprintRow> {
-  const sp = await first<SprintRow>(db, `SELECT * FROM sprints WHERE id = ?`, id);
-  if (!sp) throw new Error(`no such sprint: ${id}`);
-  if (sp.status === "done") throw new Error(`sprint already done: ${id}`);
-  const updated_at = nowIso();
-  await run(db, `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
-  return { ...sp, status: "done", updated_at };
-}
+export { complete_sprint } from "./sprints";
 
 // ── Phase 3 — triage write-back (soft only; nothing here hard-deletes) ─────────
 

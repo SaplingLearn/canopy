@@ -18,7 +18,12 @@ import {
   TicketCreate, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
   TicketSprintSet, TicketParentSet, TicketCommentAdd, TicketSeg, TicketAssigneeFilter, TicketCategory,
 } from "@shared/tickets";
-import { promote_doc, ratify_adr, complete_sprint, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
+import { promote_doc, ratify_adr, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
+import {
+  create_sprint, set_sprint_active, complete_sprint, add_sprint_resource, list_sprints, get_sprint,
+  SprintError, SPRINT_ERROR_STATUS,
+} from "./tools/sprints";
+import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
@@ -450,6 +455,75 @@ app.post("/tickets/:id/comment", async (c) => {
     return ticketDetailResponse(c, id);
   } catch (e) {
     return ticketFail(c, e);
+  }
+});
+
+// ── Sprints (session-cookie only, NEVER MCP): the Roadmap's containers. Direct
+// authored writes in the promote class — no consume(), no gate, no staging. A
+// sprint's TICKETS are set from the Tickets UI (POST /tickets/:id/sprint); its
+// own fields come from here or from the admin plan write. ─────────────────────
+
+/** Map a SprintError onto its status (404 unknown / 409 rule / 400 payload). */
+const sprintFail = (c: Context<AppEnv>, e: unknown): Response => {
+  if (e instanceof SprintError) return c.json({ error: e.message }, SPRINT_ERROR_STATUS[e.code]);
+  throw e; // not ours — a real 500
+};
+
+/** The id path param, or null when it is not an integer. */
+const sprintId = (c: Context<AppEnv>): number | null => {
+  const id = Number(c.req.param("id"));
+  return Number.isInteger(id) ? id : null;
+};
+
+// Created from the Roadmap's New sprint panel: always inactive ('upcoming') and,
+// without a `due`, unscheduled. The creator is the authenticated principal.
+app.post("/sprints", async (c) => {
+  const parsed = SprintCreate.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  const sprint = await create_sprint(c.env.DB, parsed.data, c.get("principal").handle);
+  return c.json({ ok: true, sprint });
+});
+
+// The roadmap's sprint list: each with ticket-inclusive progress and members.
+// Registered before /sprints/:id (Hono matches in registration order).
+app.get("/sprints", async (c) => c.json({ sprints: await list_sprints(c.env.DB) }));
+
+app.get("/sprints/:id", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const sprint = await get_sprint(c.env.DB, id);
+  if (!sprint) return c.json({ error: "not found" }, 404);
+  return c.json(sprint);
+});
+
+// The In Progress ↔ Upcoming toggle. `active` is derived from status, so this
+// writes status; clearing active on a DONE sprint is a no-op (see set_sprint_active).
+app.post("/sprints/:id/active", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = SprintActiveSet.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    const sprint = await set_sprint_active(c.env.DB, id, parsed.data.active);
+    return c.json({ ok: true, sprint });
+  } catch (e) {
+    return sprintFail(c, e);
+  }
+});
+
+// A resource on the sprint itself, parsed by the SHARED link parser (`#214`
+// resolves the same way it does on a ticket). Answers with the full detail so
+// one round-trip repaints the Resources list.
+app.post("/sprints/:id/resources", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = SprintResourceAdd.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    const sprint = await add_sprint_resource(c.env.DB, id, parsed.data.raw);
+    return c.json({ ok: true, sprint });
+  } catch (e) {
+    return sprintFail(c, e);
   }
 });
 

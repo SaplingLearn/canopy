@@ -178,10 +178,12 @@ describe("get_plan", () => {
     expect((cached.progress as unknown as Record<string, unknown>).source).toBeUndefined();
     expect((cached.progress as unknown as Record<string, unknown>).computed_at).toBeUndefined();
 
-    // A sprint with no cache row (and, in this phase, no tickets) reads 0/0.
+    // A sprint with no cache row AND no tickets reads 0/0 (the ticket-inclusive
+    // rule's "neither" case — see test/sprints.routes.test.ts for the other three).
     const uncached = view.sprints.find((m) => m.label === "Uncached")!;
     expect(uncached.progress).toEqual({ closed: 0, total: 0, pct: 0 });
-    // Phase 1b has no ticket join yet, so members is always empty.
+    // No tickets in the sprint → no members. (A sprint's members ARE its tickets'
+    // assignees; the plan write never sets them.)
     expect(uncached.members).toEqual([]);
   });
 
