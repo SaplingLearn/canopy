@@ -192,28 +192,37 @@ function dateRange(window: Window, timeZone: string): string {
  * The Canopy banner, shared by every email: the app's three-bar mark (22/15/9
  * wide, stacked and centred, top bar accent, bottom bar at half strength) built
  * from plain blocks because Gmail strips SVG, the wordmark beside it, and an
- * optional subline underneath. Colours come from the token map so the dark swap
- * flips them.
+ * optional subline underneath — all reversed out of a full-bleed accent band,
+ * rounded into the top of the card. The band colour is tokenised so the dark
+ * swap flips it; the ink on top of it is not (see BAND).
  */
+/**
+ * On-band ink. Deliberately literal, never THEME tokens: `darkCss()` rewrites
+ * any inline colour matching a token, which would flip these to dark ink and
+ * sink them into the olive in a dark client. The band itself IS tokenised, so
+ * it still swaps accent light -> dark.
+ */
+const BAND = { ink: "#ffffff", bar2: "#e6ebd6", bar3: "#cfd8b4", subline: "#eceedd", dot: "#cfd8b4" } as const;
+
 export function emailBanner(sublineHtml?: string): string {
   const bar = (n: number, w: number, inset: number, color: string, last = false) =>
     `<div data-bar="${n}" style="width:${w}px;height:4px;border-radius:2px;background-color:${color};margin:0 0 ${last ? 0 : 2.5}px ${inset}px;font-size:0;line-height:0;"></div>`;
   return (
-    `<tr><td style="padding:${SP.xl}px 28px ${SP.l}px 28px;border-bottom:1px solid ${C.border};text-align:center;">` +
+    `<tr><td style="padding:${SP.xl}px 28px ${SP.l}px 28px;background-color:${C.accent};border-radius:13px 13px 0 0;text-align:center;">` +
     `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>` +
     `<td data-mark="canopy" width="24" style="vertical-align:middle;padding-right:11px;">` +
-    bar(1, 22, 0, C.accent) + bar(2, 15, 3.5, C.fg) + bar(3, 9, 6.5, C.fg55, true) +
+    bar(1, 22, 0, BAND.ink) + bar(2, 15, 3.5, BAND.bar2) + bar(3, 9, 6.5, BAND.bar3, true) +
     `</td>` +
-    `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${C.fg};">Canopy</td>` +
+    `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${BAND.ink};">Canopy</td>` +
     `</tr></table>` +
-    (sublineHtml ? `<div style="${SANS}font-size:13px;line-height:20px;color:${C.fg55};padding-top:${SP.s}px;">${sublineHtml}</div>` : "") +
+    (sublineHtml ? `<div style="${SANS}font-size:13px;line-height:20px;color:${BAND.subline};padding-top:${SP.s}px;">${sublineHtml}</div>` : "") +
     `</td></tr>`
   );
 }
 
 function header(cadence: Window["cadence"], range: string): string {
   const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
-  return emailBanner(`${label} <span style="color:${C.fg40};">&middot;</span> ${escapeHtml(range)}`);
+  return emailBanner(`${label} <span style="color:${BAND.dot};">&middot;</span> ${escapeHtml(range)}`);
 }
 
 export function assembleMessage(opts: {

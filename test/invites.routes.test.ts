@@ -29,6 +29,18 @@ describe("renderInviteEmail", () => {
     expect(m.html).toMatch(/data-mark="canopy"[\s\S]*?Canopy<\/(span|strong|td)>/);
   });
 
+  it("opens with the editorial headline, above the greeting", () => {
+    const m = renderInviteEmail({ inviteeName: "Priya", inviterName: "Andres", email: "priya.n@gmail.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
+    expect(m.html).toContain("You're invited to the Sapling team's shared workspace.");
+    expect(m.html).toMatch(/font-size:26px/);
+    expect(m.html.indexOf("You're invited to")).toBeLessThan(m.html.indexOf("Hi Priya,"));
+  });
+
+  it("carries that headline into the plain-text part too", () => {
+    const m = renderInviteEmail({ inviteeName: "Priya", inviterName: "Andres", email: "priya.n@gmail.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
+    expect(m.text).toContain("You're invited to the Sapling team's shared workspace.");
+  });
+
   it("centres that banner the way the digest shell does", () => {
     const m = renderInviteEmail({ inviteeName: null, inviterName: "Andres", email: "priya.n@gmail.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
     expect(m.html).toMatch(/<td[^>]*text-align:center[^>]*>[\s\S]*?<table[^>]*align="center"[^>]*>[\s\S]*?data-mark="canopy"/);

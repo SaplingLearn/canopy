@@ -18,6 +18,8 @@ export function renderInviteEmail(o: { inviteeName: string | null; inviterName: 
   const subject = `${o.inviterName} invited you to Canopy`;
   const hi = o.inviteeName ? `Hi ${escapeHtml(o.inviteeName)},` : "Hi,";
   const p = `${EMAIL_FONT.sans}font-size:14px;line-height:20px;color:${C.fg70};padding:0 0 12px 0;`;
+  const headline = `${EMAIL_FONT.sans}font-size:26px;line-height:32px;font-weight:600;letter-spacing:-0.02em;color:${C.fg};padding:0 0 ${SP.m}px 0;`;
+  const lede = "You're invited to the Sapling team's shared workspace.";
   const button = `display:inline-block;${EMAIL_FONT.sans}font-size:14px;line-height:20px;font-weight:600;color:#ffffff;background-color:${C.accent};text-decoration:none;padding:10px 18px;border-radius:9px;`;
   const html =
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title><link href="${FONTS_HREF}" rel="stylesheet"></head>` +
@@ -25,16 +27,18 @@ export function renderInviteEmail(o: { inviteeName: string | null; inviterName: 
     `<table ${EMAIL_STYLE.table} style="background-color:${C.ground};"><tr><td align="center" style="padding:36px 16px;">` +
     `<table role="presentation" width="${EMAIL_WIDTH}" cellpadding="0" cellspacing="0" border="0" style="width:${EMAIL_WIDTH}px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
     emailBanner() +
-    `<tr><td style="padding:${SP.xl}px 28px 0 28px;"><div style="${p}color:${C.fg};">${hi}</div>` +
-    `<div style="${p}">${escapeHtml(o.inviterName)} invited you to Canopy, the Sapling team's shared workspace. Sign in with this Google address to pick your handle and get started.</div>` +
+    `<tr><td style="padding:${SP.xl}px 28px 0 28px;"><div style="${headline}">${lede}</div>` +
+    `<div style="${p}color:${C.fg};">${hi}</div>` +
+    `<div style="${p}">${escapeHtml(o.inviterName)} invited you. Sign in with this Google address to pick your handle and get started.</div>` +
     `<div style="padding:6px 0 20px 0;"><a href="${escapeHtml(o.signInUrl)}" style="${button}">Sign in with Google</a></div>` +
     `<div style="${EMAIL_FONT.sans}font-size:12.5px;line-height:20px;color:${C.fg55};padding-bottom:24px;">This invite is for <span style="${EMAIL_FONT.mono}">${escapeHtml(o.email)}</span>. If you weren't expecting it, you can ignore this email.</div></td></tr>` +
     `<tr><td style="padding:16px 28px;border-top:1px solid ${C.border};${EMAIL_FONT.sans}font-size:12px;line-height:20px;color:${C.fg40};">Sent by Canopy &middot; ${escapeHtml(o.host)}</td></tr>` +
     `</table></td></tr></table></body></html>`;
   const text = [
     subject, "=".repeat(subject.length), "",
+    lede, "",
     o.inviteeName ? `Hi ${o.inviteeName},` : "Hi,", "",
-    `${o.inviterName} invited you to Canopy, the Sapling team's shared workspace.`,
+    `${o.inviterName} invited you.`,
     "Sign in with this Google address to pick your handle and get started:", "",
     `  ${o.signInUrl}`, "",
     `This invite is for ${o.email}. If you weren't expecting it, you can ignore this email.`,
