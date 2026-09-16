@@ -67,7 +67,7 @@ describe("query() learns the roadmap (plan + sprints via FTS)", () => {
     expect(r.primary.some((p) => p.type === "sprint" && p.title === "Quokka Launch")).toBe(true);
   });
 
-  it("cached progress is appended as a final body line", async () => {
+  it("the cached GitHub counts are NOT in the body line — a cache-only sprint carries none", async () => {
     const { sprints } = await write_plan(
       env.DB,
       {
@@ -81,13 +81,15 @@ describe("query() learns the roadmap (plan + sprints via FTS)", () => {
 
     const r = await query(env.DB, { q: "aardvark", types: ["sprint"], include_staged: true });
     const hit = r.primary.find((p) => p.id === `sprint:${sid}`)!;
-    expect(hit.body).toContain("Progress: 2/5 closed");
+    // The sprint holds no tickets, so there is no progress to report at all —
+    // the 2/5 issue cache never becomes a claim about the sprint.
+    expect(hit.body).not.toContain("Progress:");
+    expect(hit.body).not.toContain("2/5");
   });
 
   // The assembled sprint body must speak the SAME progress rule the Roadmap and
-  // GET /sprints do (`sprintProgress`): tickets + cache. A cache-only line would
-  // tell an agent a sprint with finished tickets has no progress at all.
-  it("the progress line is TICKET-INCLUSIVE: one done ticket and NO cache reads 1/1", async () => {
+  // GET /sprints do (`sprintProgress`): the sprint's TICKETS only.
+  it("the progress line is TICKETS ONLY: one done ticket and NO cache reads 1/1", async () => {
     await seedPerson("tester");
     const { sprints } = await write_plan(
       env.DB,
@@ -107,7 +109,7 @@ describe("query() learns the roadmap (plan + sprints via FTS)", () => {
     expect(hit.body).toContain("Progress: 1/1 closed");
   });
 
-  it("the two halves ADD in the body line, and a sprint with neither carries no progress line", async () => {
+  it("the cache never adds to the body line, and a sprint with no tickets carries no progress line", async () => {
     await seedPerson("tester");
     const { sprints } = await write_plan(
       env.DB,
@@ -128,9 +130,12 @@ describe("query() learns the roadmap (plan + sprints via FTS)", () => {
     await transition_ticket(env.DB, done, "done", "tester");
 
     const r = await query(env.DB, { q: "numbat bilby", types: ["sprint"], include_staged: true });
-    // 1 done ticket + 1 closed issue / 2 tickets + 2 issues — the cache alone reads 1/2.
-    expect(r.primary.find((p) => p.id === `sprint:${numbat.id}`)!.body).toContain("Progress: 2/4 closed");
-    // No tickets, no cache → nothing to say; the line is omitted entirely.
+    // 1 of 2 TICKETS done. The 1/2 issue cache is not added in (the old combined
+    // line read 2/4), and it is not reported in the body at all.
+    const numbatBody = r.primary.find((p) => p.id === `sprint:${numbat.id}`)!.body;
+    expect(numbatBody).toContain("Progress: 1/2 closed");
+    expect(numbatBody).not.toContain("2/4");
+    // No tickets → nothing to say; the line is omitted entirely.
     expect(r.primary.find((p) => p.id === `sprint:${bilby.id}`)!.body).not.toContain("Progress:");
   });
 

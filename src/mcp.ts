@@ -117,7 +117,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "get_roadmap",
-    "Read the roadmap plan: admin narrative + sprints in target-date order with their progress (no live GitHub). Each sprint carries label, summary, phase, dates, due, status, active, urgency, lead and domain.",
+    "Read the roadmap plan: admin narrative + sprints in target-date order with their progress — `progress` is the sprint's TICKETS (done + declined over total), `issues` the cached GitHub issue counts behind it (no live GitHub). Each sprint carries label, summary, phase, dates, due, status, active, urgency, lead and domain.",
     {},
     async () => runTool(() => get_plan(env.DB))
   );
@@ -157,14 +157,14 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "list_sprints",
-    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its progress is ticket-inclusive (closed/total/pct = the sprint's tickets PLUS its cached GitHub issue counts; no live GitHub at read time). Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint WRITES are human-only in the web UI — there is no MCP write path (the admin plan write, update_plan, is the one exception and is admin-gated).",
+    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its `progress` is its TICKETS only (closed/total/pct, where closed = done + declined). The GitHub issues behind a sprint are a separate `issues` field, the cached closed/total from its github_ref (null when it has no cache row); no live GitHub at read time. Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint WRITES are human-only in the web UI — there is no MCP write path (the admin plan write, update_plan, is the one exception and is admin-gated).",
     {},
     async () => runTool(() => list_sprints(env.DB)),
   );
 
   server.tool(
     "get_sprint",
-    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the ticket-inclusive progress. Sprint WRITES are human-only in the web UI — there is no MCP write path; a sprint is completed by an admin, never inferred from tickets resolving.",
+    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the tickets-only `progress` and the separate cached `issues` counts. Sprint WRITES are human-only in the web UI — there is no MCP write path; a sprint is completed by an admin, never inferred from tickets resolving.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {

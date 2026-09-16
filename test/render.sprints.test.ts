@@ -68,6 +68,7 @@ function sprint(o: Partial<SprintView> & { id: number; label: string }): SprintV
     created_by: "jose-a",
     updated_at: null,
     progress: { closed: 2, total: 5, pct: 40 },
+    issues: null,
     members: [],
     ...o,
   };

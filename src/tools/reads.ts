@@ -1,8 +1,7 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, SprintProgressRow, PlanRow, EventRow, IdentityTaskRow, TicketRow, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, PlanRow, EventRow, IdentityTaskRow, TicketRow, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
 import type { TicketListItem, TicketDetail, TicketRef, TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
 import { type DB, first, all, ph, fanOut } from "../db";
-import { getProgress } from "./progress";
 // The sprint read model lives next to the sprint writers; `query()` borrows its
 // progress RULE so the assembled sprint body and the Roadmap can never disagree.
 import { sprintProgress, ticketCountsBySprint } from "./sprints";
@@ -400,15 +399,17 @@ function assembleAdrBody(a: AdrRow): string {
 // The hydrated sprint body: description + summary + phase + a progress line.
 //
 // The progress line obeys the ONE rule (`sprintProgress` in ./sprints.ts): the
-// sprint's TICKETS plus its cached, event-derived GitHub issue counts. Both
-// inputs are read once per query() call — the cache via getProgress, the ticket
-// counts via one grouped query over the hydrated sprint ids — and passed in, so
-// this stays a pure assembly step with no per-result round-trip. A sprint with
-// neither (total 0) carries no line at all: there is nothing to report, and a
-// bare "0/0" would read as a claim.
+// sprint's OWN TICKETS (done + declined over total) and nothing else. The ticket
+// counts are read once per query() call via one grouped query over the hydrated
+// sprint ids and passed in, so this stays a pure assembly step with no
+// per-result round-trip. A sprint with no tickets carries no line at all: there
+// is nothing to report, and a bare "0/0" would read as a claim.
+//
+// The cached GitHub issue counts are deliberately NOT in this body — they are a
+// separate field on the read DTOs (`SprintView.issues`), shown only in the
+// Roadmap's Narrative spotlight.
 function assembleSprintBody(
   sp: SprintRow,
-  cache: SprintProgressRow | undefined,
   tickets: { total: number; closed: number } | undefined
 ): string {
   const parts: string[] = [];
@@ -418,7 +419,6 @@ function assembleSprintBody(
   const progress = sprintProgress({
     ticketsTotal: tickets?.total ?? 0,
     ticketsClosed: tickets?.closed ?? 0,
-    cache: cache ? { closed: cache.closed, total: cache.total } : null,
   });
   if (progress.total > 0) parts.push(`Progress: ${progress.closed}/${progress.total} closed`);
   return parts.join("\n");
@@ -575,9 +575,9 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
   for (const sp of await fanOut<SprintRow>(db, sprintIds, (p) => `SELECT * FROM sprints WHERE id IN (${p})`)) {
     sprintMap.set(`sprint:${sp.id}`, sp);
   }
-  const progressMap = sprintIds.length ? await getProgress(db) : new Map<number, SprintProgressRow>();
-  // The ticket half of the progress line, for the hydrated sprints only — one
-  // grouped query, sharing `sprintProgress`'s definition of "closed".
+  // The progress line is TICKETS ONLY, for the hydrated sprints only — one
+  // grouped query, sharing `sprintProgress`'s definition of "closed". The
+  // `sprint_progress` cache is deliberately NOT read here.
   const sprintTicketCounts = await ticketCountsBySprint(db, sprintIds);
   const planRow = needPlan ? await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`) : null;
 
@@ -656,7 +656,7 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
       } else {
         const sp = sprintMap.get(c.key);
         if (!sp) continue;
-        const body = assembleSprintBody(sp, progressMap.get(sp.id), sprintTicketCounts.get(sp.id));
+        const body = assembleSprintBody(sp, sprintTicketCounts.get(sp.id));
         a = {
           type: "sprint", id: `sprint:${sp.id}`, title: sp.title, section: null, space: null,
           body, authority: "live", current_version: null, pending_version: null,

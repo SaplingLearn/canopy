@@ -104,7 +104,11 @@ describe("0025: the progress cache followed the table", () => {
     await upsertProgress(env.DB, id, 4, 5, "recompute");
     const rows = await all(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, id);
     expect(rows).toHaveLength(1);
-    expect(await get_plan(env.DB).then((v) => v.sprints.find((s) => s.id === id)!.progress)).toEqual({ closed: 4, total: 5, pct: 80 });
+    // The cache surfaces as `issues` on the read DTO; `progress` is the sprint's
+    // tickets, and this legacy row has none.
+    const view = await get_plan(env.DB).then((v) => v.sprints.find((s) => s.id === id)!);
+    expect(view.issues).toEqual({ closed: 4, total: 5 });
+    expect(view.progress).toEqual({ closed: 0, total: 0, pct: 0 });
   });
 
   it("a cache row cannot point at a sprint that does not exist (the FK bites)", async () => {

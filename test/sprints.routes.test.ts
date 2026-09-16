@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
 import { all, first, run } from "../src/db";
-import { sprintProgress } from "../src/tools/sprints";
+import { sprintProgress, sprintIssueCounts } from "../src/tools/sprints";
 import { upsertProgress } from "../src/tools/progress";
 import type { SprintDetail, SprintView } from "@shared/sprints";
 import type { TicketDetail } from "@shared/tickets";
@@ -54,43 +54,41 @@ const detailOf = async (cookie: string, id: number): Promise<SprintDetail> => {
 
 // ── the pure progress rule (§C.8) ────────────────────────────────────────────
 
-describe("sprintProgress (pure)", () => {
-  it("tickets only — the cache is absent", () => {
+describe("sprintProgress (pure) — TICKETS ONLY", () => {
+  it("is the ticket counts, verbatim", () => {
     expect(sprintProgress({ ticketsTotal: 4, ticketsClosed: 1 })).toEqual({ closed: 1, total: 4, pct: 25 });
-    expect(sprintProgress({ ticketsTotal: 4, ticketsClosed: 1, cache: null })).toEqual({ closed: 1, total: 4, pct: 25 });
   });
 
-  it("issues only — no tickets in the sprint, just the event-derived cache", () => {
-    expect(sprintProgress({ ticketsTotal: 0, ticketsClosed: 0, cache: { closed: 2, total: 3 } })).toEqual({
-      closed: 2, total: 3, pct: 67,
-    });
-  });
-
-  it("both — the two halves ADD; they are never max/override", () => {
-    expect(sprintProgress({ ticketsTotal: 4, ticketsClosed: 2, cache: { closed: 2, total: 3 } })).toEqual({
-      closed: 4, total: 7, pct: 57,
-    });
+  it("takes no cache input at all — the GitHub half is a separate field", () => {
+    // Typed out of existence: `cache` is no longer a key of SprintProgressInput,
+    // so even if a caller smuggled one in, it changes nothing.
+    const smuggled = { ticketsTotal: 4, ticketsClosed: 1, cache: { closed: 2, total: 3 } } as unknown as Parameters<typeof sprintProgress>[0];
+    expect(sprintProgress(smuggled)).toEqual({ closed: 1, total: 4, pct: 25 });
+    expect(sprintIssueCounts).toBeTypeOf("function");
   });
 
   it("neither — 0/0 with pct 0, never NaN", () => {
     expect(sprintProgress({ ticketsTotal: 0, ticketsClosed: 0 })).toEqual({ closed: 0, total: 0, pct: 0 });
-    expect(sprintProgress({ ticketsTotal: 0, ticketsClosed: 0, cache: { closed: 0, total: 0 } })).toEqual({
-      closed: 0, total: 0, pct: 0,
-    });
   });
 
-  it("pct is rounded, and a fully-closed sprint reads exactly 100", () => {
+  it("pct is rounded, and a sprint whose every ticket is resolved reads exactly 100", () => {
     expect(sprintProgress({ ticketsTotal: 3, ticketsClosed: 1 }).pct).toBe(33);
     expect(sprintProgress({ ticketsTotal: 3, ticketsClosed: 2 }).pct).toBe(67);
-    expect(sprintProgress({ ticketsTotal: 2, ticketsClosed: 2, cache: { closed: 5, total: 5 } })).toEqual({
-      closed: 7, total: 7, pct: 100,
-    });
+    expect(sprintProgress({ ticketsTotal: 2, ticketsClosed: 2 })).toEqual({ closed: 2, total: 2, pct: 100 });
+  });
+});
+
+describe("sprintIssueCounts (pure) — the GitHub half", () => {
+  it("passes the cache row's closed/total through, and is null without one", () => {
+    expect(sprintIssueCounts({ sprint_id: 1, closed: 2, total: 3, source: "event", computed_at: "2026-09-01T00:00:00Z" })).toEqual({ closed: 2, total: 3 });
+    expect(sprintIssueCounts(undefined)).toBeNull();
+    expect(sprintIssueCounts(null)).toBeNull();
   });
 });
 
 // ── progress through the live routes ─────────────────────────────────────────
 
-describe("GET /sprints — ticket-inclusive progress", () => {
+describe("GET /sprints — tickets-only progress, issues as their own field", () => {
   it("tickets only: closed counts done AND declined; open tickets never count", async () => {
     const cookie = await cookieFor("andres");
     const sp = await createSprint(cookie, { label: "Ticket queue" });
@@ -106,16 +104,18 @@ describe("GET /sprints — ticket-inclusive progress", () => {
     expect(sprints.find((s) => s.id === sp.id)!.progress).toEqual({ closed: 2, total: 4, pct: 50 });
   });
 
-  it("issues only: the event-derived sprint_progress cache with no tickets in the sprint", async () => {
+  it("issues only: the cache row NEVER enters the bar — progress 0/0, issues 2/3", async () => {
     const cookie = await cookieFor("andres");
     const sp = await createSprint(cookie, { label: "Token rotation" });
     await upsertProgress(env.DB, sp.id, 2, 3, "event");
 
     const { sprints } = await json<{ sprints: SprintView[] }>(await get("/sprints", cookie));
-    expect(sprints.find((s) => s.id === sp.id)!.progress).toEqual({ closed: 2, total: 3, pct: 67 });
+    const v = sprints.find((s) => s.id === sp.id)!;
+    expect(v.progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    expect(v.issues).toEqual({ closed: 2, total: 3 });
   });
 
-  it("both: tickets and issues ADD into one bar", async () => {
+  it("both: the two halves stay SEPARATE — they never add", async () => {
     const cookie = await cookieFor("andres");
     const sp = await createSprint(cookie, { label: "Both" });
     await upsertProgress(env.DB, sp.id, 2, 3, "event");
@@ -127,15 +127,32 @@ describe("GET /sprints — ticket-inclusive progress", () => {
     await moveTo(cookie, ids[1], "declined");
 
     const { sprints } = await json<{ sprints: SprintView[] }>(await get("/sprints", cookie));
-    // 2 closed tickets + 2 closed issues / 4 tickets + 3 issues
-    expect(sprints.find((s) => s.id === sp.id)!.progress).toEqual({ closed: 4, total: 7, pct: 57 });
+    const v = sprints.find((s) => s.id === sp.id)!;
+    // 2 of 4 TICKETS resolved — the 2/3 issues are reported beside them, not inside.
+    expect(v.progress).toEqual({ closed: 2, total: 4, pct: 50 });
+    expect(v.issues).toEqual({ closed: 2, total: 3 });
   });
 
-  it("neither: a sprint with no tickets and no cache row reads 0/0, never null", async () => {
+  it("neither: a sprint with no tickets and no cache row reads 0/0 with issues null", async () => {
     const cookie = await cookieFor("andres");
     const sp = await createSprint(cookie, { label: "Empty" });
     const { sprints } = await json<{ sprints: SprintView[] }>(await get("/sprints", cookie));
-    expect(sprints.find((s) => s.id === sp.id)!.progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    const v = sprints.find((s) => s.id === sp.id)!;
+    expect(v.progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    expect(v.issues).toBeNull();
+  });
+
+  it("GET /sprints/:id carries the same split", async () => {
+    const cookie = await cookieFor("andres");
+    const sp = await createSprint(cookie, { label: "Detail split" });
+    await upsertProgress(env.DB, sp.id, 1, 5, "event");
+    const t = await createTicket(cookie, { title: "one", sprint_id: sp.id });
+    await moveTo(cookie, t.id, "in_progress");
+    await moveTo(cookie, t.id, "done");
+
+    const d = await detailOf(cookie, sp.id);
+    expect(d.progress).toEqual({ closed: 1, total: 1, pct: 100 });
+    expect(d.issues).toEqual({ closed: 1, total: 5 });
   });
 
   it("a ticket moved OUT of the sprint stops counting toward it", async () => {
@@ -249,7 +266,7 @@ describe("GET /sprints/:id", () => {
     expect(await all(env.DB, `SELECT * FROM ticket_links WHERE ticket_id = ?`, t.id)).toHaveLength(2);
   });
 
-  it("carries the same ticket-inclusive progress and members as the list", async () => {
+  it("carries the same tickets-only progress, separate issues, and members as the list", async () => {
     const cookie = await cookieFor("andres");
     await cookieFor("beatrix");
     const sp = await createSprint(cookie, { label: "Detail" });
@@ -258,9 +275,17 @@ describe("GET /sprints/:id", () => {
     await moveTo(cookie, t.id, "declined");
 
     const detail = await detailOf(cookie, sp.id);
-    expect(detail.progress).toEqual({ closed: 2, total: 3, pct: 67 });
+    // ONE ticket, declined = resolved → 1/1. The 1/2 cached issues stay separate.
+    expect(detail.progress).toEqual({ closed: 1, total: 1, pct: 100 });
+    expect(detail.issues).toEqual({ closed: 1, total: 2 });
     expect(detail.members).toEqual(["beatrix"]);
     expect(detail.label).toBe("Detail");
+
+    // The list surface agrees, field for field.
+    const { sprints } = await json<{ sprints: SprintView[] }>(await get("/sprints", cookie));
+    const listed = sprints.find((x) => x.id === sp.id)!;
+    expect(listed.progress).toEqual(detail.progress);
+    expect(listed.issues).toEqual(detail.issues);
   });
 
   it("404s on an unknown sprint", async () => {

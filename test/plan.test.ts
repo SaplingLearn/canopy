@@ -229,7 +229,7 @@ describe("write_plan", () => {
 });
 
 describe("get_plan", () => {
-  it("merges the progress cache; an uncached sprint reads 0/0 (never null)", async () => {
+  it("surfaces the progress cache as `issues`, NOT as progress; an uncached sprint reads 0/0 with issues null", async () => {
     const r1 = await write_plan(
       env.DB,
       {
@@ -251,15 +251,19 @@ describe("get_plan", () => {
     expect(view.updated_at).not.toBeNull();
 
     const cached = view.sprints.find((m) => m.id === cachedId)!;
-    expect(cached.progress).toEqual({ closed: 3, total: 10, pct: 30 });
-    // The view shape drops `source` / `computed_at` (kept exactly to SprintView).
-    expect((cached.progress as unknown as Record<string, unknown>).source).toBeUndefined();
-    expect((cached.progress as unknown as Record<string, unknown>).computed_at).toBeUndefined();
+    // The plan write creates no tickets, so the BAR is 0/0 even though the cache
+    // says 3/10 — the cached GitHub counts land on `issues` and nowhere else.
+    expect(cached.progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    expect(cached.issues).toEqual({ closed: 3, total: 10 });
+    // The issues shape drops `source` / `computed_at` (kept exactly to the DTO).
+    expect((cached.issues as unknown as Record<string, unknown>).source).toBeUndefined();
+    expect((cached.issues as unknown as Record<string, unknown>).computed_at).toBeUndefined();
 
-    // A sprint with no cache row AND no tickets reads 0/0 (the ticket-inclusive
-    // rule's "neither" case — see test/sprints.routes.test.ts for the other three).
+    // A sprint with no cache row AND no tickets reads 0/0 with issues null (the
+    // "neither" case — see test/sprints.routes.test.ts for the other three).
     const uncached = view.sprints.find((m) => m.label === "Uncached")!;
     expect(uncached.progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    expect(uncached.issues).toBeNull();
     // No tickets in the sprint → no members. (A sprint's members ARE its tickets'
     // assignees; the plan write never sets them.)
     expect(uncached.members).toEqual([]);

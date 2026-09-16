@@ -103,7 +103,9 @@ describe("roadmap HTTP routes (session-gated)", () => {
     expect(body.sprints[0].label).toBe("GA");
     expect(body.sprints[0].due).toBe("2026-09-01");
     expect(body.sprints[0].active).toBe(false);
-    expect(body.sprints[0].progress).toEqual({ closed: 4, total: 6, pct: 67 });
+    // No tickets in the sprint → the bar is 0/0; the 4/6 cache lands on `issues`.
+    expect(body.sprints[0].progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    expect(body.sprints[0].issues).toEqual({ closed: 4, total: 6 });
   });
 
   it("GET /roadmap sorts by due date with an UNSCHEDULED sprint LAST, not first", async () => {
@@ -146,7 +148,7 @@ describe("roadmap HTTP routes (session-gated)", () => {
     expect((await res.json() as { error: string }).error).toContain("no such sprint");
   });
 
-  it("GET /roadmap renders a LEGACY-shaped row (title/target_date/status, never touched by the plan write) with its active flag and TICKET-INCLUSIVE progress", async () => {
+  it("GET /roadmap renders a LEGACY-shaped row (title/target_date/status, never touched by the plan write) with its active flag, TICKETS-ONLY progress and separate issues", async () => {
     const cookie = await cookieFor("andres");
     await seedPerson("beatrix");
     // The pre-0025 milestone shape: no summary/dates/urgency/lead/domain, no
@@ -165,9 +167,10 @@ describe("roadmap HTTP routes (session-gated)", () => {
     expect(sp.label).toBe("Legacy row");        // title → label
     expect(sp.due).toBe("2026-09-01");          // target_date → due
     expect(sp.active).toBe(true);               // status in_progress → active
-    // 1 done ticket + 2 closed issues / 2 tickets + 3 issues — the cache alone
-    // would read 2/3 (pct 67), which is what this assertion pins against.
-    expect(sp.progress).toEqual({ closed: 3, total: 5, pct: 60 });
+    // 1 of 2 TICKETS done. The 2/3 issue cache stays on its own field — the old
+    // combined number was 3/5, which this assertion now pins against.
+    expect(sp.progress).toEqual({ closed: 1, total: 2, pct: 50 });
+    expect(sp.issues).toEqual({ closed: 2, total: 3 });
     expect(sp.members).toEqual(["beatrix"]);
     // The 0025 columns are simply null on a legacy row — nothing throws.
     expect(sp.summary).toBeNull();
@@ -200,14 +203,15 @@ describe("registered MCP get_roadmap tool", () => {
       expect(body.sprints).toHaveLength(1);
       expect(body.sprints[0].label).toBe("GA");
       expect(body.sprints[0].active).toBe(true);
-      expect(body.sprints[0].progress).toEqual({ closed: 4, total: 6, pct: 67 });
+      expect(body.sprints[0].progress).toEqual({ closed: 0, total: 0, pct: 0 });
+      expect(body.sprints[0].issues).toEqual({ closed: 4, total: 6 });
     } finally {
       await client.close();
       await server.close();
     }
   });
 
-  it("counts the sprint's TICKETS into progress and lists its members, on a legacy-shaped row", async () => {
+  it("counts ONLY the sprint's TICKETS into progress, reports issues separately, and lists its members, on a legacy-shaped row", async () => {
     await seedPerson("andres");
     await seedPerson("beatrix");
     const id = await seedSprint("Legacy row", "in_progress", "2026-09-01");
@@ -231,8 +235,10 @@ describe("registered MCP get_roadmap tool", () => {
       const body = JSON.parse(res.content[0].text) as Awaited<ReturnType<typeof get_plan>>;
       const sp = body.sprints.find((s) => s.id === id)!;
       expect(sp.active).toBe(true);
-      // The cache alone reads 2/3; the tickets push it to 3/5.
-      expect(sp.progress).toEqual({ closed: 3, total: 5, pct: 60 });
+      // Tickets only: 1 of 2. The 2/3 cache is the `issues` field, not the bar
+      // (the old combined number was 3/5).
+      expect(sp.progress).toEqual({ closed: 1, total: 2, pct: 50 });
+      expect(sp.issues).toEqual({ closed: 2, total: 3 });
       expect(sp.members).toEqual(["beatrix"]);
     } finally {
       await client.close();

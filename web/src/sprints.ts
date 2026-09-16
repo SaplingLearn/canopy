@@ -9,9 +9,11 @@
 // main.ts. No fetching, no state, no inline data.
 //
 // A sprint is the container the Roadmap shows; its progress is `closed/total`
-// over the sprint's TICKETS plus the cached GitHub issue counts — computed
+// over the sprint's TICKETS ONLY (closed = done + declined) — computed
 // server-side (src/tools/sprints.ts `sprintProgress`) and read off
-// `SprintView.progress` here. Nothing is recomputed in the browser.
+// `SprintView.progress` here. Nothing is recomputed in the browser. The cached
+// GitHub issue counts (`SprintView.issues`) are NOT shown on these surfaces;
+// they appear only in the Roadmap's Narrative spotlight (web/src/render.ts).
 
 import type {
   SprintView, SprintDetail, SprintUrgency, SprintDomain, SprintResourceView, SprintTicketRow,

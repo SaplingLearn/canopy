@@ -305,7 +305,7 @@ describe("registered MCP get_ticket tool", () => {
 });
 
 describe("registered MCP list_sprints tool", () => {
-  it("carries TICKET-INCLUSIVE progress and the real member list", async () => {
+  it("carries TICKETS-ONLY progress, the cached issue counts as their own field, and the real member list", async () => {
     const q = await seedQueue();
     const sprints = body<SprintView[]>(await callTool("andres", "list_sprints", {}));
     expect(sprints).toHaveLength(2);
@@ -314,14 +314,17 @@ describe("registered MCP list_sprints tool", () => {
     expect(a.label).toBe("Queue cleanup"); // title → label
     expect(a.due).toBe("2026-08-01"); // target_date → due
     expect(a.active).toBe(true);
-    // 3 tickets (1 done) + the 1/2 issue cache — the cache ALONE would read 1/2.
-    expect(a.progress).toEqual({ closed: 2, total: 5, pct: 40 });
+    // 3 tickets, 1 of them done → 1/3. The 1/2 issue cache is reported BESIDE it,
+    // never folded in (the old combined number was 2/5).
+    expect(a.progress).toEqual({ closed: 1, total: 3, pct: 33 });
+    expect(a.issues).toEqual({ closed: 1, total: 2 });
     expect(a.members).toEqual(["andres", "beatrix"]);
 
     const b = sprints.find((s) => s.id === q.sprintB)!;
     expect(b.active).toBe(false);
-    // Tickets only, no cache at all.
+    // Tickets only, no cache at all → issues is null.
     expect(b.progress).toEqual({ closed: 0, total: 1, pct: 0 });
+    expect(b.issues).toBeNull();
     expect(b.members).toEqual(["beatrix"]);
   });
 });
@@ -332,7 +335,8 @@ describe("registered MCP get_sprint tool", () => {
     const sp = body<SprintDetail>(await callTool("andres", "get_sprint", { id: q.sprintA }));
 
     expect(sp.label).toBe("Queue cleanup");
-    expect(sp.progress).toEqual({ closed: 2, total: 5, pct: 40 });
+    expect(sp.progress).toEqual({ closed: 1, total: 3, pct: 33 });
+    expect(sp.issues).toEqual({ closed: 1, total: 2 });
     expect(sp.members).toEqual(["andres", "beatrix"]);
 
     // Only the sprint's own tickets, and the sub-ticket sits DIRECTLY under its root.

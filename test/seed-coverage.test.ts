@@ -59,14 +59,15 @@ describe("dev seed lights up every surface", () => {
     expect(new Set(resources.map((r) => r.sprint_id)).size).toBe(2);
     expect(new Set(resources.map((r) => r.kind))).toEqual(new Set(["github", "figma", "plain"]));
 
-    // Progress is TICKET-INCLUSIVE: sprint 3 caches 2/3 GitHub issues and holds
-    // four seeded tickets (one of them done), so the roadmap bar reads 3/7 — the
-    // cache alone would read 2/3. The seed proves the join, not just the math.
+    // Progress is TICKETS ONLY: sprint 3 holds four seeded tickets (one of them
+    // done), so the roadmap bar reads 1/4. Its 2/3 cached GitHub issues travel
+    // separately on `issues` and never enter the bar (the old combined number
+    // was 3/7). The seed proves the split, not just the math.
     const cache = await first<{ closed: number; total: number }>(env.DB, `SELECT closed, total FROM sprint_progress WHERE sprint_id = 3`);
     const three = plan.sprints.find((sp) => sp.id === 3)!;
     expect(cache).toEqual({ closed: 2, total: 3 });
-    expect(three.progress).toEqual({ closed: 3, total: 7, pct: 43 });
-    expect(three.progress.total).toBeGreaterThan(cache!.total);
+    expect(three.progress).toEqual({ closed: 1, total: 4, pct: 25 });
+    expect(three.issues).toEqual({ closed: 2, total: 3 });
     expect(three.members.length).toBeGreaterThan(0);
   });
 

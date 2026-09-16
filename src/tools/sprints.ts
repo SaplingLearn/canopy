@@ -14,12 +14,14 @@
 // `toSprintView` is the one translation). Column names never leave this file.
 //
 // THE PROGRESS RULE (one place, `sprintProgress` below): a sprint's progress is
-// its TICKETS plus its cached GitHub issue counts —
-//   total  = tickets in the sprint        + cache.total
-//   closed = tickets done OR declined     + cache.closed
-// A sprint with neither reads 0/0. Both halves are read-only D1: the ticket half
-// is live, the GitHub half is the cache the webhook / cron backstop wrote. There
-// is NO live GitHub call at render, here or anywhere on the read path.
+// its OWN TICKETS, and nothing else —
+//   total  = tickets in the sprint
+//   closed = tickets done OR declined
+// A sprint with no tickets reads 0/0. The GitHub issues behind a sprint are a
+// SEPARATE field (`SprintView.issues`), read from the `sprint_progress` cache
+// through `github_ref` and shown only in the Roadmap's Narrative spotlight; they
+// are never folded into `progress`. Both halves are read-only D1 — there is NO
+// live GitHub call at render, here or anywhere on the read path.
 
 import type { SprintRow, SprintProgressRow, TicketRow } from "@shared/rows";
 import {
@@ -28,6 +30,7 @@ import {
   type SprintView,
   type SprintDetail,
   type SprintProgress,
+  type SprintIssueCounts,
   type SprintTicketRow,
   type SprintResourceView,
 } from "@shared/sprints";
@@ -63,20 +66,25 @@ export interface SprintProgressInput {
   ticketsTotal: number;
   /** Of those, the ones a person resolved (`done` or `declined`). */
   ticketsClosed: number;
-  /** The event-derived `sprint_progress` row for this sprint, if any. */
-  cache?: { closed: number; total: number } | null;
 }
 
 /**
- * THE progress function (§C.8). Pure — no DB, no clock — so the two halves can
- * be asserted independently: tickets only, issues only, both, neither.
- * `pct` is rounded; 0/0 yields `pct: 0` rather than NaN.
+ * THE progress function (§C.8). TICKETS ONLY — the cached GitHub issue counts
+ * are NOT an input here; they travel separately as `SprintView.issues`. Pure:
+ * no DB, no clock. `pct` is rounded; 0/0 yields `pct: 0` rather than NaN.
  */
-export function sprintProgress({ ticketsTotal, ticketsClosed, cache }: SprintProgressInput): SprintProgress {
-  const total = ticketsTotal + (cache?.total ?? 0);
-  const closed = ticketsClosed + (cache?.closed ?? 0);
-  return { closed, total, pct: total > 0 ? Math.round((100 * closed) / total) : 0 };
+export function sprintProgress({ ticketsTotal, ticketsClosed }: SprintProgressInput): SprintProgress {
+  return {
+    closed: ticketsClosed,
+    total: ticketsTotal,
+    pct: ticketsTotal > 0 ? Math.round((100 * ticketsClosed) / ticketsTotal) : 0,
+  };
 }
+
+/** The GitHub half: the cache row for a sprint, or null when it has none.
+ *  A sprint with no `github_ref` never gets a cache row, so this is null for it. */
+export const sprintIssueCounts = (cache: SprintProgressRow | undefined | null): SprintIssueCounts | null =>
+  cache ? { closed: cache.closed, total: cache.total } : null;
 
 /**
  * Per-sprint ticket counts, in ONE grouped query (never per sprint). Pass `ids`
@@ -144,10 +152,10 @@ export async function sprintMembers(db: DB, sprintId: number): Promise<string[]>
 const SPRINT_ORDER = `ORDER BY CASE WHEN target_date IS NULL OR target_date = '' THEN 1 ELSE 0 END ASC, target_date ASC, id ASC`;
 
 /**
- * Every sprint, in roadmap order, each with its ticket-inclusive progress and
- * its real member list. FOUR queries total regardless of how many sprints
- * exist: the rows, the grouped ticket counts, the grouped assignees, the
- * progress cache. No N+1.
+ * Every sprint, in roadmap order, each with its TICKET progress, its cached
+ * GitHub issue counts and its real member list. FOUR queries total regardless of
+ * how many sprints exist: the rows, the grouped ticket counts, the grouped
+ * assignees, the progress cache. No N+1.
  */
 export async function list_sprints(db: DB): Promise<SprintView[]> {
   const rows = await all<SprintRow>(db, `SELECT * FROM sprints ${SPRINT_ORDER}`);
@@ -160,7 +168,8 @@ export async function list_sprints(db: DB): Promise<SprintView[]> {
   return rows.map((row) => viewOf(row, counts.get(row.id), cache.get(row.id), members.get(row.id) ?? []));
 }
 
-/** Assemble one SprintView from a row + its three computed inputs. */
+/** Assemble one SprintView from a row + its three computed inputs. The cache row
+ *  becomes `issues` — it is NEVER folded into `progress`. */
 function viewOf(
   row: SprintRow,
   counts: { total: number; closed: number } | undefined,
@@ -170,11 +179,10 @@ function viewOf(
   const progress = sprintProgress({
     ticketsTotal: counts?.total ?? 0,
     ticketsClosed: counts?.closed ?? 0,
-    cache: cache ? { closed: cache.closed, total: cache.total } : null,
   });
   // toSprintView re-derives pct from closed/total with the same formula, so the
   // two can never disagree; sprintProgress stays the one place the RULE lives.
-  return toSprintView(row, { closed: progress.closed, total: progress.total }, members);
+  return toSprintView(row, { closed: progress.closed, total: progress.total }, members, sprintIssueCounts(cache));
 }
 
 /** One sprint's row, or a 404-shaped throw. */

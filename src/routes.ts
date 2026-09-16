@@ -484,7 +484,8 @@ app.post("/sprints", async (c) => {
   return c.json({ ok: true, sprint });
 });
 
-// The roadmap's sprint list: each with ticket-inclusive progress and members.
+// The roadmap's sprint list: each with its tickets-only progress, the separate
+// cached GitHub issue counts, and members.
 // Registered before /sprints/:id (Hono matches in registration order).
 app.get("/sprints", async (c) => c.json({ sprints: await list_sprints(c.env.DB) }));
 

@@ -812,6 +812,9 @@ interface EnrichedSprint {
   closed: number | null; total: number | null; done: boolean; ready: boolean; overdue: boolean;
   pct: number; tgt: number; badge: { label: string; color: string; soft?: boolean };
   dateLabel: string; isNext: boolean;
+  /** The GitHub half, straight off `SprintView.issues` — the Narrative spotlight
+   *  is the ONLY place it renders, and null means the sprint has no cache row. */
+  issues: { closed: number; total: number } | null;
 }
 
 function roadmapEnriched(sprints: SprintView[], confirmedSprints: Record<string, boolean>): { list: EnrichedSprint[]; doneCount: number; overdueCount: number } {
@@ -826,9 +829,10 @@ function roadmapEnriched(sprints: SprintView[], confirmedSprints: Record<string,
   const enriched = sprints.map((sp) => {
     const confirmed = !!confirmedSprints[String(sp.id)];
     const done = sp.status === "done" || confirmed;
-    // SprintView.progress is always present and reads 0/0 when a sprint has
-    // nothing to count, so `total === 0` is exactly the old "no cache row" case:
-    // no bar, and never "ready to complete".
+    // SprintView.progress is TICKETS ONLY and always present, reading 0/0 when a
+    // sprint holds no tickets — so `total === 0` means no bar, and never "ready
+    // to complete". The GitHub issue counts never enter this: a sprint is ready
+    // when its own tickets are resolved.
     const counted = sp.progress.total > 0;
     const closed = counted ? sp.progress.closed : null;
     const total = counted ? sp.progress.total : null;
@@ -840,7 +844,7 @@ function roadmapEnriched(sprints: SprintView[], confirmedSprints: Record<string,
       id: sp.id, title: sp.label, about: sp.description ?? "", github_ref: sp.github_ref, phase: sp.phase,
       closed, total, done, ready, overdue, pct: counted ? sp.progress.pct : 0, tgt,
       badge: badgeFor(done ? "done" : sp.status), dateLabel: sp.due ? fmt(sp.due) : "No target date",
-      isNext: false,
+      isNext: false, issues: sp.issues,
     };
   });
 
@@ -959,6 +963,12 @@ function roadmapDigest(s: AppState): string {
         </div>`
       : "";
     const chips = sprintRefChips(focus.github_ref);
+    // The GitHub half of a sprint lives HERE and nowhere else: the cached issue
+    // counts, beside the chips that link the issues themselves. Nothing renders
+    // when the sprint has no cache row.
+    const issueCount = focus.issues
+      ? `<span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${focus.issues.closed}/${focus.issues.total} issues closed</span>`
+      : "";
     return `<div style="border:1px solid var(--accent);border-radius:14px;padding:20px;margin:22px 0;background:var(--accent-soft)">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:10px;min-width:0">
@@ -969,7 +979,7 @@ function roadmapDigest(s: AppState): string {
       </div>
       ${focus.about ? `<p style="font-size:13px;line-height:1.6;color:var(--fg-70);margin:10px 0 0">${linkifyRefs(focus.about)}</p>` : ""}
       ${bar}
-      ${chips.length ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:14px">${chips.map(ghChip).join("")}</div>` : ""}
+      ${chips.length || issueCount ? `<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:14px">${chips.map(ghChip).join("")}${issueCount}</div>` : ""}
     </div>`;
   })() : "";
 

@@ -80,14 +80,25 @@ export type SprintResourceRow = z.infer<typeof SprintResourceRow>;
 
 // ── DTOs (what the routes return) ────────────────────────────────────────────
 
-/** Computed progress. `total` counts the sprint's tickets plus the cached,
- *  event-derived GitHub issue counts; a sprint with neither reads 0/0.
- *  (Phase 1b builds it from the `sprint_progress` cache only — Phase 3 joins
- *  the ticket counts in.) */
+/** Computed progress — the sprint's OWN TICKETS, and nothing else.
+ *  `total` = tickets whose `sprint_id` is this sprint; `closed` = those a person
+ *  resolved (`done` or `declined`). A sprint with no tickets reads 0/0.
+ *  The GitHub issues behind a sprint are a SEPARATE field (`SprintView.issues`)
+ *  and are never folded in here. */
 export interface SprintProgress {
   closed: number;
   total: number;
   pct: number;
+}
+
+/** The cached, event-derived GitHub issue counts for a sprint, resolved from its
+ *  `github_ref` through the `sprint_progress` cache (written by the webhook and
+ *  the cron backstop — never at render, never live GitHub). `null` when the
+ *  sprint has no cache row. Shown ONLY in the Roadmap's Narrative spotlight,
+ *  beside the issue chips; it never touches `progress`. */
+export interface SprintIssueCounts {
+  closed: number;
+  total: number;
 }
 
 /** One sprint as every read surface exposes it: the row in the product's
@@ -109,7 +120,8 @@ export interface SprintView {
   created_at: string;
   created_by: string;
   updated_at: string | null;
-  progress: SprintProgress;
+  progress: SprintProgress;       // TICKETS only (done + declined over total)
+  issues: SprintIssueCounts | null; // the GitHub half, from the sprint_progress cache
   members: string[];              // distinct assignee handles over the sprint's tickets
 }
 
@@ -162,13 +174,15 @@ export type SprintResourceAdd = z.infer<typeof SprintResourceAdd>;
 export const sprintActive = (row: Pick<SprintRow, "status">): boolean => row.status === "in_progress";
 
 /** Turn a row + its computed parts into the DTO every read surface returns.
- *  `progress` is the already-computed counts (cache, and from Phase 3 the ticket
- *  counts); `members` the distinct assignee handles. `target_date` is NOT NULL in
- *  the schema, so an unscheduled sprint stores '' and surfaces as `due: null`. */
+ *  `progress` is the already-computed TICKET counts; `issues` the cached GitHub
+ *  issue counts (or null); `members` the distinct assignee handles. `target_date`
+ *  is NOT NULL in the schema, so an unscheduled sprint stores '' and surfaces as
+ *  `due: null`. */
 export function toSprintView(
   row: SprintRow,
   progress: { closed: number; total: number },
-  members: string[] = []
+  members: string[] = [],
+  issues: SprintIssueCounts | null = null
 ): SprintView {
   const { closed, total } = progress;
   return {
@@ -189,6 +203,7 @@ export function toSprintView(
     created_by: row.created_by,
     updated_at: row.updated_at,
     progress: { closed, total, pct: total > 0 ? Math.round((100 * closed) / total) : 0 },
+    issues,
     members,
   };
 }

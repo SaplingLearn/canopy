@@ -41,7 +41,8 @@ function sprint(o: Partial<SprintView> & { id: number; label: string }): SprintV
     summary: null, description: null, phase: "Phase 2", dates: "SEP 8 – 19", due: "2026-09-26",
     status: "upcoming", active: false, urgency: "normal", lead: null, domain: null,
     github_ref: null, created_at: ago(30 * D), created_by: "jose-a", updated_at: null,
-    progress: { closed: 0, total: 0, pct: 0 }, members: [],
+    progress: { closed: 0, total: 0, pct: 0 },
+    issues: null, members: [],
     ...o,
   };
 }

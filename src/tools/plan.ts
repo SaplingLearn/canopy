@@ -145,9 +145,10 @@ export async function write_plan(
  * SprintView. NO GitHub, NO token — read-only against D1. Returns a default
  * empty view if the plan singleton row is missing.
  *
- * The sprint half is `list_sprints` (tools/sprints.ts), so `progress` is
- * TICKET-INCLUSIVE — the tickets in the sprint plus the cached, event-derived
- * GitHub issue counts — and `members` is the sprint's real distinct assignees.
+ * The sprint half is `list_sprints` (tools/sprints.ts), so `progress` is the
+ * sprint's TICKETS ONLY (done + declined over total), `issues` is the cached,
+ * event-derived GitHub issue count behind it (or null), and `members` is the
+ * sprint's real distinct assignees.
  * One read model, shared by GET /roadmap, MCP get_roadmap and GET /sprints.
  */
 export async function get_plan(db: DB): Promise<PlanView> {

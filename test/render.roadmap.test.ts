@@ -56,6 +56,7 @@ function makeSprint(overrides: Partial<SprintView> = {}): SprintView {
     created_by: "admin",
     updated_at: null,
     progress: { closed: 4, total: 6, pct: 67 },
+    issues: null,
     members: [],
     ...overrides,
   };
@@ -136,6 +137,42 @@ describe("render() — Roadmap narrative tab", () => {
     expect(html.indexOf("mock-live-md")).toBeLessThan(html.indexOf(">NOW<"));
   });
 
+  it("the spotlight is the ONE place the cached GitHub issue counts appear — 'N/M issues closed' beside the chips", () => {
+    const withIssues = makeSprint({
+      id: 7, label: "Vectorize GA", status: "in_progress", github_ref: "[41,42,43]",
+      progress: { closed: 1, total: 4, pct: 25 }, issues: { closed: 2, total: 3 },
+    });
+    const html = render(stateWithPlan(makePlanView({ sprints: [withIssues] }), "narrative"));
+    expect(html).toContain("2/3 issues closed");
+    // …and it sits with the issue chips it explains.
+    expect(html).toContain("#41");
+    expect(html.indexOf("#41")).toBeLessThan(html.indexOf("2/3 issues closed"));
+    // The tickets-only bar is unaffected by the issue counts.
+    expect(html).toContain("1/4 closed");
+    expect(html).not.toContain("3/7");
+  });
+
+  it("the spotlight shows nothing when `issues` is null", () => {
+    const noIssues = makeSprint({
+      id: 8, label: "Vectorize GA", status: "in_progress",
+      progress: { closed: 1, total: 4, pct: 25 }, issues: null,
+    });
+    const html = render(stateWithPlan(makePlanView({ sprints: [noIssues] }), "narrative"));
+    expect(html).toContain(">NOW<");
+    expect(html).not.toContain("issues closed");
+  });
+
+  it("the Timeline tab never shows the issue counts — they are narrative-only", () => {
+    const withIssues = makeSprint({
+      id: 7, label: "Vectorize GA", status: "in_progress", github_ref: "[41,42,43]",
+      progress: { closed: 1, total: 4, pct: 25 }, issues: { closed: 2, total: 3 },
+    });
+    const html = render(stateWithPlan(makePlanView({ sprints: [withIssues] }), "timeline"));
+    expect(html).toContain("1/4 done");      // the tickets-only bar
+    expect(html).not.toContain("issues closed");
+    expect(html).not.toContain("2/3");
+  });
+
   it("empty narrative → the update-plan hint in the narrative tab", () => {
     const html = render(stateWithPlan(makePlanView({ narrative: "" }), "narrative"));
     expect(html).toContain("No plan narrative yet — write one with the update-plan skill");
@@ -153,7 +190,7 @@ describe("render() — Roadmap narrative tab", () => {
 // ── full render() — timeline tab ─────────────────────────────────────────────
 
 describe("render() — Roadmap timeline tab", () => {
-  it("shows cached progress as 4/6 done (no live GitHub)", () => {
+  it("shows the sprint's TICKET progress as 4/6 done (no live GitHub, no issue counts)", () => {
     const html = render(stateWithPlan(makePlanView(), "timeline"));
     expect(html).toContain("4/6 done");
   });
@@ -179,7 +216,7 @@ describe("render() — Roadmap timeline tab", () => {
     expect(html).toContain("&lt;img");
   });
 
-  it("keeps the Confirm-done button for a ready sprint (all issues closed, not done)", () => {
+  it("keeps the Confirm-done button for a ready sprint (all its TICKETS resolved, not done)", () => {
     const ready = makeSprint({ id: 9, label: "All wrapped", progress: { closed: 6, total: 6, pct: 100 } });
     const html = render(stateWithPlan(makePlanView({ sprints: [ready] }), "timeline"));
     expect(html).toContain('data-act="confirmSprint"');
@@ -187,9 +224,27 @@ describe("render() — Roadmap timeline tab", () => {
     expect(html).toContain("Confirm done");
   });
 
+  it("the ready rule is TICKETS only: open GitHub issues never block it, closed ones never grant it", () => {
+    // Every ticket resolved but the cached issues are still open → still ready.
+    const ready = makeSprint({
+      id: 10, label: "Tickets all done", progress: { closed: 6, total: 6, pct: 100 },
+      issues: { closed: 0, total: 9 },
+    });
+    expect(render(stateWithPlan(makePlanView({ sprints: [ready] }), "timeline"))).toContain('data-act="confirmSprint"');
+
+    // Every cached ISSUE closed but tickets still open → NOT ready.
+    const notReady = makeSprint({
+      id: 11, label: "Issues all done", progress: { closed: 1, total: 6, pct: 17 },
+      issues: { closed: 9, total: 9 },
+    });
+    const html = render(stateWithPlan(makePlanView({ sprints: [notReady] }), "timeline"));
+    expect(html).not.toContain('data-act="confirmSprint"');
+    expect(html).not.toContain("ready to complete");
+  });
+
   it("a sprint with nothing to count (0/0) shows no progress bar and is never 'ready to complete'", () => {
-    // SprintView.progress is always present; total 0 is the "no cache, no tickets"
-    // case, which must render exactly like the old progress:null milestone did.
+    // SprintView.progress is always present; total 0 is the "no tickets" case,
+    // which must render exactly like the old progress:null sprint did.
     const empty = makeSprint({ id: 4, label: "Nothing counted", progress: { closed: 0, total: 0, pct: 0 } });
     const html = render(stateWithPlan(makePlanView({ sprints: [empty] }), "timeline"));
     expect(html).toContain("Nothing counted");
