@@ -686,15 +686,24 @@ describe("ticketDetailView — the thread", () => {
     expect(typed).toContain(">hi</textarea>");
   });
 
-  it("escapes comment bodies and paints known @mentions", () => {
+  it("escapes comment bodies and paints known @mentions (handle AND first-name form)", () => {
     const html = ticketDetailView(detailProps(detail({
       id: 1, title: "T",
-      comments: [comment({ body: "<b>hi</b> @meilin and @nobody" })],
+      // @meilin = the handle form, @Sana = the first-name form, @nobody = not an
+      // org member, so it must survive as plain text (design's `mention()`).
+      comments: [comment({ body: "<b>hi</b> @meilin and @Sana and @nobody" })],
     })));
     expect(html).not.toContain("<b>hi</b>");
     expect(html).toContain("&lt;b&gt;hi&lt;/b&gt;");
-    expect(html).toContain(">@Meilin</span>");
+    // Both resolving forms become the accent chip carrying the person's FIRST name.
+    const chip = (first: string) =>
+      `<span style="color:var(--accent);font-weight:600;background:var(--accent-soft);border-radius:4px;padding:0 4px">@${first}</span>`;
+    expect(html).toContain(chip("Meilin"));   // @meilin → handle match
+    expect(html).toContain(chip("Sana"));     // @Sana   → first-name match
+    // A non-member stays plain: the literal text is there and it is NOT chipped.
     expect(html).toContain("@nobody");
+    expect(html).not.toContain(chip("nobody"));
+    expect(html).not.toContain(">@nobody</span>");
   });
 });
 
