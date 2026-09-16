@@ -20,6 +20,7 @@ import {
 import { decodeReviewId } from "./triage-map";
 import { initialOnboard } from "./people";
 import { PERSON_COLORS, type PersonColor } from "@shared/rows";
+import { captureScroll, restoreScroll } from "./scroll";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -43,7 +44,7 @@ if (window.matchMedia) {
   else mq.addListener(onChange);
 }
 
-// ── render with focus/caret preservation for the two live text inputs ────────
+// ── render with focus/caret + main-pane scroll preservation ──────────────────
 function rerender(): void {
   const active = document.activeElement as HTMLElement | null;
   const field = active?.getAttribute?.("data-field") ?? null;
@@ -53,7 +54,11 @@ function rerender(): void {
     selStart = active.selectionStart ?? 0;
     selEnd = active.selectionEnd ?? 0;
   }
+  // The swap below discards the main scroll pane; keep its position when the
+  // screen is unchanged so a button low on a long screen doesn't jump to the top.
+  const scroll = captureScroll(mount, state.screen);
   mount.innerHTML = render(state);
+  restoreScroll(mount, scroll, state.screen);
   if (field) {
     const el = mount.querySelector<HTMLInputElement>(`[data-field="${field}"]`);
     if (el) {
