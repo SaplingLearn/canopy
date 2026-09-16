@@ -1,5 +1,5 @@
-import type { DocRow, DocVersionRow, AdrRow, MilestoneRow, MilestoneProposalRow, NeedsTriageRow, IdentityTaskRow } from "@shared/rows";
-import { DocProposal, AdrDraft, MilestoneProposal, FeedEntry } from "@shared/contract";
+import type { DocRow, DocVersionRow, AdrRow, SprintRow, NeedsTriageRow, IdentityTaskRow } from "@shared/rows";
+import { DocProposal, AdrDraft, FeedEntry } from "@shared/contract";
 import { isSection, isTag } from "@shared/vocabulary";
 import { type DB, first, run, nowIso } from "../db";
 import { getPerson, findIdentity, linkIdentity } from "../auth/persons";
@@ -9,7 +9,7 @@ import { getPerson, findIdentity, linkIdentity } from "../auth/persons";
 // at call time, long after both modules finish initializing) — never at module
 // init. assign_triage MUST reuse the gate so an assigned item is vocab-checked
 // and reconciled exactly like any other write; it never hand-inserts.
-import { ingestDocProposal, ingestAdrDraft, ingestMilestoneProposal, ingestFeedEntry } from "../consumer";
+import { ingestDocProposal, ingestAdrDraft, ingestFeedEntry } from "../consumer";
 
 const humanizeSlug = (slug: string): string =>
   slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -249,31 +249,6 @@ export async function promote_doc(
   return { slug, version, status: "promoted" };
 }
 
-/** Stage an agent-proposed milestone create/update for human review (mirrors doc_versions). */
-export async function stage_milestone_proposal(
-  db: DB,
-  proposal: { title: string; target_date: string; status: string; github_ref?: number | number[]; change_summary: string; confidence: "high" | "low" },
-  author: string,
-  contentHash?: string | null
-): Promise<number> {
-  const github_ref = proposal.github_ref === undefined ? null : JSON.stringify(proposal.github_ref);
-  const res = await run(
-    db,
-    `INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, 'staged', ?, ?, ?)`,
-    proposal.title,
-    proposal.target_date,
-    proposal.status,
-    github_ref,
-    proposal.change_summary,
-    proposal.confidence,
-    nowIso(),
-    author,
-    contentHash ?? null
-  );
-  return res.meta.last_row_id as number;
-}
-
 /** Human confirmation: ratify an ADR draft. Rejects if missing or already ratified. */
 export async function ratify_adr(db: DB, id: number): Promise<{ id: number; status: "ratified" }> {
   const adr = await first<AdrRow>(db, `SELECT * FROM adrs WHERE id = ?`, id);
@@ -283,46 +258,19 @@ export async function ratify_adr(db: DB, id: number): Promise<{ id: number; stat
   return { id, status: "ratified" };
 }
 
-/** Human confirmation: turn a staged milestone proposal into a live roadmap milestone. */
-export async function promote_milestone_proposal(db: DB, id: number, author: string): Promise<MilestoneRow> {
-  const p = await first<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
-  if (!p) throw new Error(`no such milestone proposal: ${id}`);
-  if (p.staged_status === "promoted") throw new Error(`milestone proposal already promoted: ${id}`);
-
-  // Atomically claim the proposal: the conditional UPDATE is the gate, so two
-  // concurrent promotes cannot both pass and create duplicate live milestones.
-  const claim = await run(
-    db,
-    `UPDATE milestone_proposals SET staged_status = 'promoted' WHERE id = ? AND staged_status = 'staged'`,
-    id
-  );
-  if ((claim.meta.changes ?? 0) === 0) throw new Error(`milestone proposal already promoted: ${id}`);
-
-  const now = nowIso();
-  const res = await run(
-    db,
-    `INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at)
-     VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`,
-    p.title,
-    p.target_date,
-    p.status,        // the gate guarantees this is never 'done'
-    p.github_ref,
-    now,
-    author,
-    now
-  );
-  const milestoneId = res.meta.last_row_id as number;
-  return (await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, milestoneId))!;
-}
-
-/** Human confirmation: flip a live milestone to 'done'. Rejects if missing or already done. */
-export async function complete_milestone(db: DB, id: number): Promise<MilestoneRow> {
-  const m = await first<MilestoneRow>(db, `SELECT * FROM milestones WHERE id = ?`, id);
-  if (!m) throw new Error(`no such milestone: ${id}`);
-  if (m.status === "done") throw new Error(`milestone already done: ${id}`);
+/**
+ * Human confirmation: flip a live sprint to 'done'. Rejects if missing or already
+ * done. `done` is NEVER set by the worker and NEVER inferred from issue closure or
+ * from every ticket being resolved — a sprint is completed by an admin, here or in
+ * the plan write. Direct authored write (promote class), not the ingestion gate.
+ */
+export async function complete_sprint(db: DB, id: number): Promise<SprintRow> {
+  const sp = await first<SprintRow>(db, `SELECT * FROM sprints WHERE id = ?`, id);
+  if (!sp) throw new Error(`no such sprint: ${id}`);
+  if (sp.status === "done") throw new Error(`sprint already done: ${id}`);
   const updated_at = nowIso();
-  await run(db, `UPDATE milestones SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
-  return { ...m, status: "done", updated_at };
+  await run(db, `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
+  return { ...sp, status: "done", updated_at };
 }
 
 // ── Phase 3 — triage write-back (soft only; nothing here hard-deletes) ─────────
@@ -363,18 +311,6 @@ export async function reject_adr(db: DB, id: number): Promise<{ id: number; stat
   return { id, status: "rejected" };
 }
 
-/** Soft-reject a staged milestone proposal (mirrors reject_adr): flip staged_status to
- *  'rejected' so it leaves the queue (list_milestone_proposals filters to 'staged'); the
- *  row remains. Idempotent; a promoted proposal cannot be rejected. */
-export async function reject_milestone_proposal(db: DB, id: number): Promise<{ id: number; status: "rejected" }> {
-  const p = await first<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE id = ?`, id);
-  if (!p) throw new Error(`no such milestone proposal: ${id}`);
-  if (p.staged_status === "rejected") return { id, status: "rejected" }; // idempotent
-  if (p.staged_status !== "staged") throw new Error(`cannot reject milestone proposal ${id}: it is ${p.staged_status}`);
-  await run(db, `UPDATE milestone_proposals SET staged_status = 'rejected' WHERE id = ?`, id);
-  return { id, status: "rejected" };
-}
-
 /**
  * Resolve a triage item: set the audit columns + flip `resolved` so it leaves the
  * queue. Soft only — the row remains. Idempotent-safe: resolving an
@@ -405,7 +341,7 @@ export async function resolve_triage(
   return { id, resolution, assigned_ref };
 }
 
-export type AssignType = "doc" | "adr" | "milestone" | "feed";
+export type AssignType = "doc" | "adr" | "feed";
 export interface AssignTarget {
   type?: AssignType;
   section?: string;          // doc: the corrected section (the human's placement)
@@ -469,12 +405,6 @@ export async function assign_triage(
     const r = await ingestAdrDraft(db, draft, by, ledger);
     if (r.outcome === "triaged") throw new Error(`could not place decision: ${r.reason}`);
     assigned_ref = `adr:${r.id}`;
-  } else if (type === "milestone") {
-    if (raw.status === "done") throw new Error("completing a milestone is a separate action, not an assignment");
-    const proposal = MilestoneProposal.parse({ ...raw, confidence: "high" });
-    const r = await ingestMilestoneProposal(db, proposal, by, ledger);
-    if (r.outcome === "triaged") throw new Error(`could not place milestone: ${r.reason}`);
-    assigned_ref = `milestone:${r.id}`;
   } else {
     const entry = FeedEntry.parse({ ...raw, tags: target.tags ?? (raw.tags as string[] | undefined) ?? [] });
     const unknown = entry.tags.filter((t) => !isTag(t));

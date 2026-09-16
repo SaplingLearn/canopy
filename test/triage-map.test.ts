@@ -213,8 +213,10 @@ describe("identityFromTask", () => {
 });
 
 describe("ASSIGN_OPTIONS", () => {
-  it("offers the four gate kinds and only real assignable sections", () => {
-    expect(ASSIGN_OPTIONS.kinds.map((k) => k.key)).toEqual(["doc", "adr", "milestone", "feed"]);
+  it("offers the three gate kinds and only real assignable sections", () => {
+    // The roadmap kind went with the retired proposal queue: nothing agent-proposed
+    // can become a sprint any more — sprints are authored writes only.
+    expect(ASSIGN_OPTIONS.kinds.map((k) => k.key)).toEqual(["doc", "adr", "feed"]);
     expect(ASSIGN_OPTIONS.sections).toEqual(["reference", "context", "decisions"]); // never needs-triage
     expect(ASSIGN_OPTIONS.spaces).toEqual(["technical", "product"]);
     expect(ASSIGN_OPTIONS.tags).toContain("auth");

@@ -11,7 +11,6 @@ import { ingestEvent, ingestFeedEntry } from "../src/consumer";
 import { write_plan } from "../src/tools/plan";
 import {
   append_feed, propose_doc_update, stage_adr,
-  stage_milestone_proposal, promote_milestone_proposal,
   route_triage, resolve_triage,
   ensure_identity_task, map_identity,
 } from "../src/tools/writes";
@@ -32,12 +31,14 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     handle
   ); // docs.updated_by + doc_versions.created_by
   await stage_adr(env.DB, { title: "t", context: "c", decision: "d", rationale: "r", confidence: "high" }, handle); // adrs.created_by
-  const pid = await stage_milestone_proposal(
+  // sprints.created_by + sprints.lead — the admin plan write is the real writer
+  // of both (0025 added `lead`; the proposal path that used to create these rows
+  // is gone along with the whole proposal queue).
+  await write_plan(
     env.DB,
-    { title: "M", target_date: "2026-01-01", status: "upcoming", change_summary: "s", confidence: "high" },
+    { narrative: "n", sprints: [{ label: "Rename test sprint", due: "2026-01-01", status: "upcoming", lead: handle }] },
     handle
   );
-  await promote_milestone_proposal(env.DB, pid, handle); // milestone_proposals.created_by + milestones.created_by
   const tid = await route_triage(env.DB, { raw: "x", reason: "y" });
   await resolve_triage(env.DB, tid, handle); // needs_triage.resolved_by
   // needs_triage.source_author: route an out-of-vocab feed entry through the REAL
@@ -55,7 +56,7 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     { semantic_key: "gh:pr:777:merged", event_type: "pr_merged", ref_number: 777, subject_login: "someone-else", raw: "{}", provenance: "backfill" },
     handle
   ); // events.recorded_by
-  await write_plan(env.DB, { narrative: "n", milestones: [] }, handle); // plan.updated_by + plan_versions.created_by
+  await write_plan(env.DB, { narrative: "n", sprints: [] }, handle); // plan.updated_by + plan_versions.created_by
   // Tickets (0024): tickets.requester + ticket_assignees.login + ticket_links.created_by
   // + ticket_comments.author + ticket_events.actor. Direct inserts for now — the
   // ticket writers (src/tools/tickets.ts) land in Phase 2; swap these for them then.
@@ -97,6 +98,26 @@ describe("renamePerson", () => {
 
     const fkViolations = await all(env.DB, `PRAGMA foreign_key_check`);
     expect(fkViolations).toEqual([]);
+  });
+
+  it("rewrites the sprint handle columns (0025): created_by AND the new lead", async () => {
+    // Literal, not read out of HANDLE_COLUMNS — same reasoning as the ticket test
+    // below. `sprints.lead` is a soft TEXT handle: no FK would catch a miss.
+    await seedEveryHandleColumn("old-me");
+    for (const column of ["created_by", "lead"] as const) {
+      const seeded = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM sprints WHERE ${column} = ?`, "old-me");
+      expect(seeded[0].n, `sprints.${column} was never seeded`).toBe(1);
+      expect(HANDLE_COLUMNS.some(([t, c]) => t === "sprints" && c === column), `sprints.${column} missing from HANDLE_COLUMNS`).toBe(true);
+    }
+
+    expect(await renamePerson(env.DB, "old-me", "new-me")).toEqual({ ok: true });
+
+    for (const column of ["created_by", "lead"] as const) {
+      const old = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM sprints WHERE ${column} = ?`, "old-me");
+      const now = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM sprints WHERE ${column} = ?`, "new-me");
+      expect(old[0].n, `sprints.${column} still points at old-me`).toBe(0);
+      expect(now[0].n, `sprints.${column} was not rewritten to new-me`).toBe(1);
+    }
   });
 
   it("rewrites the ticket handle columns (0024)", async () => {

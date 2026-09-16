@@ -7,7 +7,7 @@ import "./canopy.css";
 import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
-  completeMilestone,
+  completeSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
@@ -435,7 +435,7 @@ function loadRoadmap(): void {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
       state.roadmap = {
         status: "error",
-        data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] },
+        data: { narrative: "", version: 0, updated_at: null, updated_by: null, sprints: [] },
         error: e instanceof Error ? e.message : String(e),
       };
       rerender();
@@ -859,13 +859,13 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // settings — display name echoes live; everything else is Phase 2
     case "setDisplayName": state.displayName = value ?? ""; break;
 
-    case "confirmMilestone": {
+    case "confirmSprint": {
       if (!arg) return;
-      completeMilestone(Number(arg))
-        .then(() => { flash("Milestone marked done"); loadRoadmap(); })
+      completeSprint(Number(arg))
+        .then(() => { flash("Sprint marked done"); loadRoadmap(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Could not complete milestone");
+          flash(e instanceof ApiError ? e.message : "Could not complete sprint");
         });
       return;
     }
@@ -889,7 +889,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       break;
     }
     case "maintAssignKind":
-      if (arg === "doc" || arg === "adr" || arg === "milestone" || arg === "feed") {
+      if (arg === "doc" || arg === "adr" || arg === "feed") {
         state.assignKind = arg;
         state.assignSection = null;
         state.assignSpace = null;

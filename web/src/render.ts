@@ -5,7 +5,7 @@
 
 import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
 import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
-import type { QueryResult, QueryPrimary, QueryPointer, Authority, MilestoneWithProgress, PlanView } from "./api";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, PlanView } from "./api";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
@@ -100,7 +100,7 @@ export interface AppState {
   fromDraft: string | null;
   /** The #unsubscribe screen: the flip in flight, its error, or a Settings preview (no flip). */
   unsub: { pending: boolean; error: string | null; preview: boolean };
-  confirmedMilestones: Record<string, boolean>;
+  confirmedSprints: Record<string, boolean>;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -138,7 +138,7 @@ export function initialState(): AppState {
     docOutlineOpen: {},
     pendingScrollId: null,
     roadmapTab: "timeline",
-    roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] } },
+    roadmap: { status: "idle", data: { narrative: "", version: 0, updated_at: null, updated_by: null, sprints: [] } },
     proposals: { status: "idle", data: [] },
     draftAdrs: { status: "idle", data: [] },
     needsTriage: { status: "idle", data: [] },
@@ -165,7 +165,7 @@ export function initialState(): AppState {
     outboxExpanded: null,
     fromDraft: null,
     unsub: { pending: false, error: null, preview: false },
-    confirmedMilestones: {},
+    confirmedSprints: {},
     toast: null,
     backfillSync: null,
   };
@@ -258,12 +258,13 @@ function feedArtifacts(json: string | null): { kind: string; label: string; href
   for (const i of a.issues ?? []) out.push({ kind: "issue", label: `#${i}`, href: `${REPO_URL}/issues/${i}` });
   return out;
 }
-/** A linked GitHub chip (issue / PR / commit / milestone). */
+/** A linked GitHub chip (issue / PR / commit / GitHub milestone). */
 function ghChip(c: { kind: string; label: string; href: string }): string {
   return `<a href="${c.href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(c.kind)}</span><span style="font-family:var(--mono);font-weight:500">${esc(c.label)}</span></a>`;
 }
-/** GitHub links for a milestone's github_ref (a milestone number, or an array of issue numbers). */
-function milestoneRefChips(github_ref: string | null): { kind: string; label: string; href: string }[] {
+/** GitHub links for a sprint's github_ref. The bare number IS a GitHub milestone
+ *  number (GitHub's own vocabulary), hence the chip kind and URL below. */
+function sprintRefChips(github_ref: string | null): { kind: string; label: string; href: string }[] {
   if (!github_ref) return [];
   try {
     const p = JSON.parse(github_ref);
@@ -479,7 +480,7 @@ function header(s: AppState): string {
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
   const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
-    ? roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones).overdueCount
+    ? roadmapEnriched(s.roadmap.data.sprints, s.confirmedSprints).overdueCount
     : 0;
   const roadmapControls = s.screen === "roadmap" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
       <button data-act="roadmapNarrative" style="${rmTabStyle("narrative")}">Narrative</button>
@@ -690,14 +691,14 @@ export function docReaderHtml(s: AppState): string {
 }
 
 // ── roadmap ──────────────────────────────────────────────────────────────────
-interface EnrichedMilestone {
+interface EnrichedSprint {
   id: number; title: string; about: string; github_ref: string | null; phase: string | null;
   closed: number | null; total: number | null; done: boolean; ready: boolean; overdue: boolean;
   pct: number; tgt: number; badge: { label: string; color: string; soft?: boolean };
   dateLabel: string; isNext: boolean;
 }
 
-function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestones: Record<string, boolean>): { list: EnrichedMilestone[]; doneCount: number; overdueCount: number } {
+function roadmapEnriched(sprints: SprintView[], confirmedSprints: Record<string, boolean>): { list: EnrichedSprint[]; doneCount: number; overdueCount: number } {
   const now = Date.now();
   const fmt = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const badgeFor = (st: string): { label: string; color: string; soft?: boolean } => {
@@ -706,20 +707,23 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
     return { label: "Upcoming", color: "var(--blue)" };
   };
 
-  const enriched = milestones.map((m) => {
-    const confirmed = !!confirmedMilestones[String(m.id)];
-    const done = m.status === "done" || confirmed;
-    const closed = m.progress ? m.progress.closed : null;
-    const total = m.progress ? m.progress.total : null;
-    const allClosed = total !== null && total > 0 && closed !== null && closed >= total;
-    const ready = !done && m.progress !== null && allClosed;
-    const tgt = new Date(m.target_date + "T12:00:00").getTime();
+  const enriched = sprints.map((sp) => {
+    const confirmed = !!confirmedSprints[String(sp.id)];
+    const done = sp.status === "done" || confirmed;
+    // SprintView.progress is always present and reads 0/0 when a sprint has
+    // nothing to count, so `total === 0` is exactly the old "no cache row" case:
+    // no bar, and never "ready to complete".
+    const counted = sp.progress.total > 0;
+    const closed = counted ? sp.progress.closed : null;
+    const total = counted ? sp.progress.total : null;
+    const ready = !done && counted && sp.progress.closed >= sp.progress.total;
+    // An unscheduled sprint (due: null) is never overdue and never "next up".
+    const tgt = sp.due ? new Date(sp.due + "T12:00:00").getTime() : Infinity;
     const overdue = !done && !ready && tgt < now;
-    const pct = total !== null && total > 0 && closed !== null ? Math.round((100 * closed) / total) : 0;
     return {
-      id: m.id, title: m.title, about: m.description ?? "", github_ref: m.github_ref, phase: m.phase,
-      closed, total, done, ready, overdue, pct, tgt,
-      badge: badgeFor(done ? "done" : m.status), dateLabel: fmt(m.target_date),
+      id: sp.id, title: sp.label, about: sp.description ?? "", github_ref: sp.github_ref, phase: sp.phase,
+      closed, total, done, ready, overdue, pct: counted ? sp.progress.pct : 0, tgt,
+      badge: badgeFor(done ? "done" : sp.status), dateLabel: sp.due ? fmt(sp.due) : "No target date",
       isNext: false,
     };
   });
@@ -739,7 +743,7 @@ function roadmapEnriched(milestones: MilestoneWithProgress[], confirmedMilestone
 }
 
 function roadmapNarrative(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones);
+  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data.sprints, s.confirmedSprints);
   const total = list.length;
 
   const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
@@ -749,7 +753,7 @@ function roadmapNarrative(s: AppState): string {
   const sectionHeading = (label: string, color: string): string =>
     `<div style="display:flex;align-items:center;gap:9px;margin:28px 0 12px"><span style="width:7px;height:7px;border-radius:50%;flex:none;background:${color}"></span><span style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:${color}">${label}</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
 
-  const milestoneRow = (m: (typeof list)[0]): string => {
+  const sprintRow = (m: (typeof list)[0]): string => {
     const dateNote = m.done
       ? `Completed by ${m.dateLabel}`
       : m.overdue
@@ -767,9 +771,9 @@ function roadmapNarrative(s: AppState): string {
       : "";
     const ready = m.ready ? `<div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--accent);flex:1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"></path></svg><span style="color:var(--fg-70)">All linked issues are closed — <strong style="color:var(--fg);font-weight:600">ready to complete</strong>.</span></div>
-        <button data-act="confirmMilestone" data-arg="${m.id}" class="cnpy-accentbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Confirm done</button>
+        <button data-act="confirmSprint" data-arg="${m.id}" class="cnpy-accentbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Confirm done</button>
       </div>` : "";
-    const refChips = milestoneRefChips(m.github_ref);
+    const refChips = sprintRefChips(m.github_ref);
     return `<div style="padding:14px 16px;border:1px solid var(--border);border-radius:11px;margin-bottom:8px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
         <div style="flex:1;min-width:0">
@@ -791,12 +795,12 @@ function roadmapNarrative(s: AppState): string {
   };
 
   const renderGroup = (items: (typeof list), heading: string, color: string): string =>
-    items.length === 0 ? "" : `${sectionHeading(heading, color)}${items.map(milestoneRow).join("")}`;
+    items.length === 0 ? "" : `${sectionHeading(heading, color)}${items.map(sprintRow).join("")}`;
 
   const intro = total === 0
-    ? notice("No milestones yet.")
+    ? notice("No sprints yet.")
     : `<p style="font-size:14px;line-height:1.7;color:var(--fg-70);margin:0 0 4px">
-        ${total} milestone${total !== 1 ? "s" : ""} track the coarse goals above issue-level work.
+        ${total} sprint${total !== 1 ? "s" : ""} track the coarse goals above issue-level work.
         ${doneCount > 0 ? `<strong style="color:var(--fg);font-weight:600">${doneCount} ${doneCount === 1 ? "is" : "are"} done.</strong>` : ""}
         ${overdueCount > 0 ? `<span style="color:var(--red)">${overdueCount} overdue.</span>` : ""}
         Progress reflects cached issue counts recorded from GitHub events.
@@ -811,12 +815,12 @@ function roadmapNarrative(s: AppState): string {
     ${renderGroup(inProgress, "In Progress", "var(--amber)")}
     ${renderGroup(upcoming, "Upcoming", "var(--blue)")}
     ${renderGroup(done, "Done", "var(--green)")}
-    ${total > 0 ? `<div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Milestones are coarse goals — the altitude above GitHub issues.</div>` : ""}
+    ${total > 0 ? `<div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Sprints are coarse goals — the altitude above GitHub issues.</div>` : ""}
   </div>`;
 }
 
 function roadmapView(s: AppState): string {
-  if (s.roadmap.status === "loading" && s.roadmap.data.milestones.length === 0) {
+  if (s.roadmap.status === "loading" && s.roadmap.data.sprints.length === 0) {
     return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">${notice("Loading roadmap&hellip;")}</div>`;
   }
   if (s.roadmap.status === "error") {
@@ -846,7 +850,7 @@ export function planNarrativeBlock(narrative: string, markdownFn: (body: string)
 }
 
 function roadmapDigest(s: AppState): string {
-  const { list } = roadmapEnriched(s.roadmap.data.milestones, s.confirmedMilestones);
+  const { list } = roadmapEnriched(s.roadmap.data.sprints, s.confirmedSprints);
   const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
   // What's "getting the attention" = something actively in progress first; only fall back
   // to the next upcoming goal when nothing is underway.
@@ -861,7 +865,7 @@ function roadmapDigest(s: AppState): string {
           <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${focus.closed}/${focus.total} closed</span>
         </div>`
       : "";
-    const chips = milestoneRefChips(focus.github_ref);
+    const chips = sprintRefChips(focus.github_ref);
     return `<div style="border:1px solid var(--accent);border-radius:14px;padding:20px;margin:22px 0;background:var(--accent-soft)">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:10px;min-width:0">
@@ -904,8 +908,10 @@ function roadmapDigest(s: AppState): string {
 }
 
 // ── search ───────────────────────────────────────────────────────────────────
-const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", milestone: "M5 3v18M5 4h11l-2 3 2 3H5" };
-const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", milestone: "Roadmap" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5" };
+// The "sprint" type covers the plan narrative + the sprints, so its badge keeps
+// reading "Roadmap" — the screen it navigates to.
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap" };
 
 // Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
 // the others are mapped for completeness. Reuses the status badge styling.
@@ -938,12 +944,12 @@ function highlight(text: string, sq: string): string {
 }
 
 // G3: decisions are NOT navigable (no detail route). doc → openDocFrom, feed → goFeed,
-// milestone → goRoadmap (the Roadmap screen — milestones have no standalone detail route
-// either, so this navigates to the screen that lists them, same idiom as goFeed).
+// sprint → goRoadmap (the Roadmap screen — sprints have no standalone detail route
+// yet, so this navigates to the screen that lists them, same idiom as goFeed).
 function searchOpenAttr(type: string, id: string): string | null {
   if (type === "decision") return null;
   if (type === "feed") return `data-act="goFeed"`;
-  if (type === "milestone") return `data-act="goRoadmap"`;
+  if (type === "sprint") return `data-act="goRoadmap"`;
   return `data-act="openDocFrom" data-arg="${attr(id)}"`;
 }
 
@@ -1044,8 +1050,8 @@ function guideView(s: AppState): string {
     ${gFig("mywork", `${gEm("My Work")}: your open issues with a summary, milestone, and next step, plus a Sync button to pull the latest activity.`)}
 
     <h3 style="${gH3}">Roadmap</h3>
-    <p style="${gP}">${gStrong("Roadmap")} is the admin-authored plan: a narrative of what's happening plus milestones in target-date order. Each milestone shows cached progress (closed/total issue counts recomputed from GitHub events, never fetched live at render), with overdue flags and links to the issues behind it. Toggle between the ${gStrong("Narrative")} digest and the ${gStrong("Timeline")} of milestones.</p>
-    ${gFig("roadmap", `${gEm("Roadmap")}: milestones in target-date order with cached progress bars, overdue flags, and the issues behind each one.`)}
+    <p style="${gP}">${gStrong("Roadmap")} is the admin-authored plan: a narrative of what's happening plus sprints in target-date order. Each sprint shows cached progress (closed/total issue counts recomputed from GitHub events, never fetched live at render), with overdue flags and links to the issues behind it. Toggle between the ${gStrong("Narrative")} digest and the ${gStrong("Timeline")} of sprints.</p>
+    ${gFig("roadmap", `${gEm("Roadmap")}: sprints in target-date order with cached progress bars, overdue flags, and the issues behind each one.`)}
 
     <h3 style="${gH3}">Feed</h3>
     <p style="${gP}">${gStrong("Feed")} is the running timeline of everything that's shipped, from people and their agents alike, newest first. Each entry links to its PR, commit, or issue, and you can filter by author, tag, or time window.</p>
@@ -1327,7 +1333,7 @@ function mwMdBody(body: string, markdownFn: (body: string) => string): string {
 function mwFooter(inner: string, gap: number): string {
   return `<div style="margin-top:auto;padding:12px 0 2px;border-top:1px solid var(--border);display:flex;align-items:center;gap:${gap}px">${inner}</div>`;
 }
-/** Human-short date for a milestone due date, e.g. "Jul 20" (the same short
+/** Human-short date for a GitHub milestone due date, e.g. "Jul 20" (the same short
  *  format relTime falls back to; date-only ISO pinned to noon to dodge TZ shift). */
 function mwDueDate(iso: string): string {
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso);

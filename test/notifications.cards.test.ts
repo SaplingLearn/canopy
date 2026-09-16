@@ -110,17 +110,17 @@ describe("Review queue rows", () => {
 
 describe("Roadmap plan chips", () => {
   it("labels are coloured chips: ADDED green, DONE olive, CHANGED blue", async () => {
-    const r = await write_plan(env.DB, { narrative: "n", milestones: [
-      { title: "Ship it", target_date: "2026-10-01", status: "in_progress" },
-      { title: "Old name", target_date: "2026-10-15", status: "upcoming" },
+    const r = await write_plan(env.DB, { narrative: "n", sprints: [
+      { label: "Ship it", due: "2026-10-01", status: "in_progress" },
+      { label: "Old name", due: "2026-10-15", status: "upcoming" },
     ] }, "admin");
     await run(env.DB, `UPDATE plan_versions SET created_at = ? WHERE version = (SELECT MAX(version) FROM plan_versions)`, BEFORE_WINDOW);
-    const ship = r.milestones.find((m) => m.title === "Ship it")!;
-    const old = r.milestones.find((m) => m.title === "Old name")!;
-    await write_plan(env.DB, { narrative: "n", milestones: [
-      { id: ship.id, title: "Ship it", target_date: "2026-10-01", status: "done" },
-      { id: old.id, title: "New name", target_date: "2026-10-15", status: "upcoming" },
-      { title: "Brand new", target_date: "2026-12-01", status: "upcoming" },
+    const ship = r.sprints.find((m) => m.title === "Ship it")!;
+    const old = r.sprints.find((m) => m.title === "Old name")!;
+    await write_plan(env.DB, { narrative: "n", sprints: [
+      { id: ship.id, label: "Ship it", due: "2026-10-01", status: "done" },
+      { id: old.id, label: "New name", due: "2026-10-15", status: "upcoming" },
+      { label: "Brand new", due: "2026-12-01", status: "upcoming" },
     ] }, "admin");
     await run(env.DB, `UPDATE plan_versions SET created_at = ? WHERE version = (SELECT MAX(version) FROM plan_versions)`, IN_WINDOW);
     const s = (await getKind("roadmap_plan")!.render(env.DB, LOGIN, WINDOW))!;

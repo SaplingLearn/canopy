@@ -232,13 +232,13 @@ describe("webhook → issue summarize wiring", () => {
   });
 
   it("still runs progressSeam for an assigned issue event (both seams fire, not either/or)", async () => {
-    // progressSeam only writes a milestone_progress row for a milestone that
+    // progressSeam only writes a sprint_progress row for a sprint that
     // already exists with a matching github_ref (see test/progress.test.ts's
-    // seedMilestone pattern) — seed one matching issueAssigned's milestone (3)
+    // seedSprint pattern) — seed one matching issueAssigned's milestone (3)
     // so the assertion below actually exercises applyEventProgress.
     await run(
       env.DB,
-      `INSERT INTO milestones (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
       "M",
       "2026-08-01",
       "in_progress",
@@ -248,7 +248,7 @@ describe("webhook → issue summarize wiring", () => {
     );
     const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "summary", next_step: null }) };
     await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
-    const progress = await all(env.DB, `SELECT * FROM milestone_progress`);
-    expect(progress.length).toBe(1); // issueAssigned carries a milestone — progressSeam still wrote it
+    const progress = await all(env.DB, `SELECT * FROM sprint_progress`);
+    expect(progress.length).toBe(1); // issueAssigned carries a GitHub milestone — progressSeam still wrote it
   });
 });

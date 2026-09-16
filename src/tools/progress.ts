@@ -1,4 +1,4 @@
-import type { MilestoneRow, MilestoneProgressRow } from "@shared/rows";
+import type { SprintRow, SprintProgressRow } from "@shared/rows";
 import { type DB, all, run, nowIso } from "../db";
 import { progressFromIssueEvent } from "../webhook";
 
@@ -6,13 +6,14 @@ const GH_API = "application/vnd.github+json";
 const USER_AGENT = "canopy";
 
 /**
- * Live progress for a milestone's github_ref, computed from GitHub at read time.
- * `ref` is JSON: a number (a GitHub milestone) or an array of issue numbers.
+ * Live progress for a sprint's `github_ref`, computed from GitHub. `ref` is JSON:
+ * a number (a GITHUB MILESTONE number — GitHub's own vocabulary, unrelated to
+ * Canopy's retired milestone table) or an array of issue numbers.
  * Never throws — returns null on parse failure, a non-OK response (expired/revoked
- * token, missing resource), or any error, so /roadmap degrades gracefully.
+ * token, missing resource), or any error, so the recompute degrades gracefully.
  * `fetchImpl` is injectable for tests (the pool has no exported fetch mock).
  */
-export async function fetchMilestoneProgress(opts: {
+export async function fetchGithubRefProgress(opts: {
   token: string;
   repo: string;
   ref: string;
@@ -35,7 +36,7 @@ export async function fetchMilestoneProgress(opts: {
       for (const n of parsed) {
         const res = await doFetch(`https://api.github.com/repos/${opts.repo}/issues/${n}`, { headers });
         if (!res.ok) {
-          // Token/auth-level failure → the whole milestone's progress is unknown.
+          // Token/auth-level failure → the whole sprint's progress is unknown.
           if (res.status === 401 || res.status === 403) return null;
           // A single missing/inaccessible issue (e.g. 404) → skip it; keep counting the rest.
           continue;
@@ -47,6 +48,8 @@ export async function fetchMilestoneProgress(opts: {
       return { closed, total };
     }
     if (typeof parsed === "number") {
+      // GitHub's REST path for ITS milestones — the number in github_ref is a
+      // GitHub milestone number, so this URL keeps GitHub's word on purpose.
       const res = await doFetch(`https://api.github.com/repos/${opts.repo}/milestones/${parsed}`, { headers });
       if (!res.ok) return null;
       const data = (await res.json()) as { open_issues?: number; closed_issues?: number };
@@ -60,27 +63,27 @@ export async function fetchMilestoneProgress(opts: {
 }
 
 /**
- * Absolute overwrite of one milestone's cached progress. `closed`/`total` are
+ * Absolute overwrite of one sprint's cached progress. `closed`/`total` are
  * always the FULL current counts (never deltas), so replays and out-of-order
  * writes are all safe — the last write simply wins.
  */
 export async function upsertProgress(
   db: DB,
-  milestoneId: number,
+  sprintId: number,
   closed: number,
   total: number,
   source: "event" | "recompute"
 ): Promise<void> {
   await run(
     db,
-    `INSERT INTO milestone_progress (milestone_id, closed, total, source, computed_at)
+    `INSERT INTO sprint_progress (sprint_id, closed, total, source, computed_at)
      VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(milestone_id) DO UPDATE SET
+     ON CONFLICT(sprint_id) DO UPDATE SET
        closed = excluded.closed,
        total = excluded.total,
        source = excluded.source,
        computed_at = excluded.computed_at`,
-    milestoneId,
+    sprintId,
     closed,
     total,
     source,
@@ -88,10 +91,10 @@ export async function upsertProgress(
   );
 }
 
-/** The full progress cache, keyed by milestone id. */
-export async function getProgress(db: DB): Promise<Map<number, MilestoneProgressRow>> {
-  const rows = await all<MilestoneProgressRow>(db, `SELECT * FROM milestone_progress`);
-  return new Map(rows.map((r) => [r.milestone_id, r]));
+/** The full progress cache, keyed by sprint id. */
+export async function getProgress(db: DB): Promise<Map<number, SprintProgressRow>> {
+  const rows = await all<SprintProgressRow>(db, `SELECT * FROM sprint_progress`);
+  return new Map(rows.map((r) => [r.sprint_id, r]));
 }
 
 // Latest-snapshot SQL: for a set of issue numbers, the most-recently-captured
@@ -108,11 +111,12 @@ function latestIssueSnapshotSql(count: number): string {
 
 /**
  * The webhook-side write: derive this issue event's implication for every
- * milestone it can affect, and upsert an absolute progress row for each.
+ * sprint it can affect, and upsert an absolute progress row for each.
  *
- * (a) Milestone-number ref: progressFromIssueEvent(payload) reads the issue's
- *     own milestone counts (open + closed = total) — authoritative, no query needed.
- * (b) Array ref: for every milestone whose github_ref is a JSON array containing
+ * (a) GitHub-milestone-number ref: progressFromIssueEvent(payload) reads the
+ *     issue's own GitHub milestone counts (open + closed = total) —
+ *     authoritative, no query needed.
+ * (b) Array ref: for every sprint whose github_ref is a JSON array containing
  *     this event's issue number, recount from the LATEST captured snapshot of
  *     each array member (total = array length; closed = how many of those
  *     latest snapshots have state:"closed").
@@ -122,13 +126,13 @@ function latestIssueSnapshotSql(count: number): string {
 export async function applyEventProgress(db: DB, payload: unknown): Promise<void> {
   const derived = progressFromIssueEvent(payload);
   if (derived) {
-    const matches = await all<MilestoneRow>(
+    const matches = await all<SprintRow>(
       db,
-      `SELECT * FROM milestones WHERE github_ref = ?`,
-      JSON.stringify(derived.milestoneNumber)
+      `SELECT * FROM sprints WHERE github_ref = ?`,
+      JSON.stringify(derived.milestoneNumber)   // GitHub's milestone number
     );
-    for (const m of matches) {
-      await upsertProgress(db, m.id, derived.closed, derived.total, "event");
+    for (const sp of matches) {
+      await upsertProgress(db, sp.id, derived.closed, derived.total, "event");
     }
   }
 
@@ -138,11 +142,11 @@ export async function applyEventProgress(db: DB, payload: unknown): Promise<void
       : undefined;
   if (typeof issueNumber !== "number") return;
 
-  const candidates = await all<MilestoneRow>(db, `SELECT * FROM milestones WHERE github_ref IS NOT NULL`);
-  for (const m of candidates) {
+  const candidates = await all<SprintRow>(db, `SELECT * FROM sprints WHERE github_ref IS NOT NULL`);
+  for (const sp of candidates) {
     let ref: unknown;
     try {
-      ref = JSON.parse(m.github_ref!);
+      ref = JSON.parse(sp.github_ref!);
     } catch {
       continue;
     }
@@ -158,31 +162,31 @@ export async function applyEventProgress(db: DB, payload: unknown): Promise<void
         // malformed snapshot — treat as not-closed rather than throw
       }
     }
-    await upsertProgress(db, m.id, closed, ref.length, "event");
+    await upsertProgress(db, sp.id, closed, ref.length, "event");
   }
 }
 
 /**
- * Scheduled backstop: recompute every milestone-with-a-github_ref's progress
- * live from GitHub and overwrite the cache with source:'recompute'. A milestone
- * whose fetch fails (expired token, GitHub outage, …) is left with its existing
- * cache row untouched — this never wipes progress, and never 500s.
+ * Scheduled backstop: recompute every sprint-with-a-github_ref's progress live
+ * from GitHub and overwrite the cache with source:'recompute'. A sprint whose
+ * fetch fails (expired token, GitHub outage, …) is left with its existing cache
+ * row untouched — this never wipes progress, and never 500s.
  */
 export async function recomputeAllProgress(
   db: DB,
   opts: { token: string; repo: string; fetchImpl?: typeof fetch }
 ): Promise<{ updated: number }> {
-  const milestones = await all<MilestoneRow>(db, `SELECT * FROM milestones WHERE github_ref IS NOT NULL`);
+  const sprints = await all<SprintRow>(db, `SELECT * FROM sprints WHERE github_ref IS NOT NULL`);
   let updated = 0;
-  for (const m of milestones) {
-    const progress = await fetchMilestoneProgress({
+  for (const sp of sprints) {
+    const progress = await fetchGithubRefProgress({
       token: opts.token,
       repo: opts.repo,
-      ref: m.github_ref!,
+      ref: sp.github_ref!,
       fetchImpl: opts.fetchImpl,
     });
     if (progress) {
-      await upsertProgress(db, m.id, progress.closed, progress.total, "recompute");
+      await upsertProgress(db, sp.id, progress.closed, progress.total, "recompute");
       updated++;
     }
   }

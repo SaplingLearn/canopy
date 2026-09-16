@@ -8,8 +8,8 @@ import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
 import { consume } from "./consumer";
 import { runBackfill } from "./tools/backfill";
-import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals, list_identity_tasks } from "./tools/reads";
-import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
+import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks } from "./tools/reads";
+import { promote_doc, ratify_adr, complete_sprint, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
@@ -72,8 +72,8 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "milestone" =>
-        t === "doc" || t === "decision" || t === "feed" || t === "milestone"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "sprint" =>
+        t === "doc" || t === "decision" || t === "feed" || t === "sprint"))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "technical" || spaceRaw === "product" ? spaceRaw : undefined;
@@ -94,8 +94,6 @@ app.get("/search", async (c) => {
 app.get("/needs-triage", async (c) => c.json({ items: await list_needs_triage(c.env.DB) }));
 
 app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.query("status")) }));
-
-app.get("/milestone-proposals", async (c) => c.json({ proposals: await list_milestone_proposals(c.env.DB) }));
 
 // ── Review group (session-cookie only, NEVER MCP): Proposals (staged doc
 // versions) + Decisions (ADR drafts) — GET /proposals, GET /adrs, and their
@@ -255,7 +253,7 @@ app.post("/invites/:email/resend", async (c) => {
   return c.json({ ok: true, email: result });
 });
 
-// Roadmap read (session-gated): admin narrative + milestones in target-date order,
+// Roadmap read (session-gated): admin narrative + sprints in target-date order,
 // merged with cached progress from the plan store. No live GitHub, no per-user token.
 app.get("/roadmap", async (c) => c.json(await get_plan(c.env.DB)));
 
@@ -274,31 +272,6 @@ app.get("/me/dashboard", async (c) => {
   }
 });
 
-// Human confirmation (session-gated): promote a staged milestone proposal into a live milestone.
-app.post("/milestone-proposals/:id/promote", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
-  try {
-    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").handle);
-    return c.json({ ok: true, milestone });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-  }
-});
-
-// Human write-back (session-gated): reject a staged milestone proposal. Soft flip to
-// 'rejected' so it leaves the milestones queue; the row remains. Idempotent.
-app.post("/milestone-proposals/:id/reject", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
-  try {
-    const res = await reject_milestone_proposal(c.env.DB, id);
-    return c.json({ ok: true, ...res });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-  }
-});
-
 // ADMIN action (session-gated + admin-gated): server-side GitHub backfill.
 // A computed/authored direct writer in the promote class — humans (admins)
 // trigger it — but every captured event still funnels through the ingestEvent
@@ -311,13 +284,14 @@ app.post("/admin/backfill", async (c) => {
   return c.json(res);
 });
 
-// Human confirmation (session-gated): flip a live milestone to 'done'.
-app.post("/milestones/:id/complete", async (c) => {
+// Human confirmation (session-gated): flip a live sprint to 'done'. Admin action
+// in the promote class — 'done' is never inferred from issues or tickets closing.
+app.post("/sprints/:id/complete", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
-    const milestone = await complete_milestone(c.env.DB, id);
-    return c.json({ ok: true, milestone });
+    const sprint = await complete_sprint(c.env.DB, id);
+    return c.json({ ok: true, sprint });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

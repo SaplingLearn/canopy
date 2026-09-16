@@ -21,7 +21,7 @@ async function ftsCounts() {
   const docs = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM docs_fts`);
   const feed = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM feed_fts`);
   const adrs = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM adrs_fts`);
-  // roadmap_fts (0013): milestones cascade via AFTER DELETE; the plan singleton is
+  // roadmap_fts (0013, re-keyed in 0025): sprints cascade via AFTER DELETE; the plan singleton is
   // reset by the harness's `UPDATE plan SET narrative=''`, whose trigger clears its row.
   const roadmap = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM roadmap_fts`);
   return { docs: docs[0].n, feed: feed[0].n, adrs: adrs[0].n, roadmap: roadmap[0].n };
@@ -38,7 +38,7 @@ describe("FTS5 migration 0008 — tables, triggers, harness isolation", () => {
     await run(env.DB, `INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by) VALUES ('iso-doc', 'reference', 'Iso Doc', 'searchable doc body', 1, ?, 'tester')`, now);
     await run(env.DB, `INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('tester', 'iso feed', 'searchable feed body', NULL, ?)`, now);
     await run(env.DB, `INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by) VALUES ('Iso ADR', 'ctx', 'dec', 'why', 'draft', 'high', ?, 'tester')`, now);
-    await run(env.DB, `INSERT INTO milestones (title, description, target_date, status, created_at, created_by) VALUES ('Iso Milestone', 'd', '2026-08-01', 'upcoming', ?, 'tester')`, now);
+    await run(env.DB, `INSERT INTO sprints (title, description, target_date, status, created_at, created_by) VALUES ('Iso Sprint', 'd', '2026-08-01', 'upcoming', ?, 'tester')`, now);
     await run(env.DB, `UPDATE plan SET narrative = 'iso narrative' WHERE id = 1`);
 
     expect(await ftsCounts()).toEqual({ docs: 1, feed: 1, adrs: 1, roadmap: 2 });
@@ -49,14 +49,14 @@ describe("FTS5 migration 0008 — tables, triggers, harness isolation", () => {
     await run(env.DB, `INSERT INTO docs (slug, section, title, body, current_version, updated_at, updated_by) VALUES ('iso-doc-2', 'reference', 'Iso Doc 2', 'body', 1, ?, 'tester')`, now);
     await run(env.DB, `INSERT INTO feed (author, summary, body, artifacts, created_at) VALUES ('tester', 'iso feed 2', 'body', NULL, ?)`, now);
     await run(env.DB, `INSERT INTO adrs (title, context, decision, rationale, status, confidence, created_at, created_by) VALUES ('Iso ADR 2', 'c', 'd', 'r', 'draft', 'high', ?, 'tester')`, now);
-    await run(env.DB, `INSERT INTO milestones (title, description, target_date, status, created_at, created_by) VALUES ('Iso Milestone 2', 'd', '2026-08-01', 'upcoming', ?, 'tester')`, now);
+    await run(env.DB, `INSERT INTO sprints (title, description, target_date, status, created_at, created_by) VALUES ('Iso Sprint 2', 'd', '2026-08-01', 'upcoming', ?, 'tester')`, now);
     await run(env.DB, `UPDATE plan SET narrative = 'iso narrative 2' WHERE id = 1`);
     expect(await ftsCounts()).toEqual({ docs: 1, feed: 1, adrs: 1, roadmap: 2 });
 
     // Run the EXACT statement test/apply-migrations.ts runs beforeEach.
     await env.DB.exec(HARNESS_TRUNCATION);
 
-    // roadmap_fts: the milestone DELETE cascades out; the plan UPDATE-to-'' clears its row.
+    // roadmap_fts: the sprint DELETE cascades out; the plan UPDATE-to-'' clears its row.
     expect(await ftsCounts()).toEqual({ docs: 0, feed: 0, adrs: 0, roadmap: 0 });
   });
 

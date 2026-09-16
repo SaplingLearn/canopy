@@ -46,7 +46,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
     {
       q: z.string().optional(),
-      types: z.array(z.enum(["doc", "decision", "feed", "milestone"])).optional(),
+      types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(),
       section: z.string().optional(),
       space: z.enum(["technical", "product"]).optional(),
       include_staged: z.boolean().optional(),
@@ -116,7 +116,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "get_roadmap",
-    "Read the roadmap plan: admin narrative + milestones in target-date order with cached progress (no live GitHub).",
+    "Read the roadmap plan: admin narrative + sprints in target-date order with their progress (no live GitHub). Each sprint carries label, summary, phase, dates, due, status, active, urgency, lead and domain.",
     {},
     async () => runTool(() => get_plan(env.DB))
   );
@@ -153,16 +153,21 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   if (isAdmin(env, principal.handle)) {
     server.tool(
       "update_plan",
-      "ADMIN plan write: replace the roadmap narrative and create/update milestones (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Milestones not listed are untouched. Use via the update-plan skill.",
+      "ADMIN plan write: replace the roadmap narrative and create/update sprints (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Sprints not listed are untouched. `label` is the sprint name and `due` its target date. Which tickets are IN a sprint is set from the Tickets UI, not here. Use via the update-plan skill.",
       {
         narrative: z.string(),
-        milestones: z.array(z.object({
+        sprints: z.array(z.object({
           id: z.number().int().optional(),
-          title: z.string(),
+          label: z.string(),
+          summary: z.string().nullable().optional(),
           description: z.string().nullable().optional(),
           phase: z.string().nullable().optional(),
-          target_date: z.string(),
+          dates: z.string().nullable().optional(),
+          due: z.string(),
           status: z.enum(["upcoming", "in_progress", "done"]),
+          urgency: z.enum(["low", "normal", "high"]).optional(),
+          lead: z.string().nullable().optional(),
+          domain: z.enum(["notifications", "tickets", "gate", "feed", "search", "infra"]).nullable().optional(),
           github_ref: z.union([z.number(), z.array(z.number())]).nullable().optional(),
         })).default([]),
       },

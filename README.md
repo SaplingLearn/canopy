@@ -31,8 +31,10 @@ Every agent write flows through the gate in `src/consumer.ts` — replay ledger
 out-of-vocab or low-confidence entries route to `needs_triage`. HTTP confirm routes
 (promote, ratify, reject, assign, discard) are session-cookie-only — never MCP tools.
 
-MCP write tools: `append_feed`, `propose_doc_update`, `propose_milestone`, `set_focus`, and
-`record_session` (the session-end batch writer — a whole `IngestPayload` through the same gate).
+MCP write tools: `append_feed`, `propose_doc_update`, and `record_session` (the session-end batch
+writer — a whole `IngestPayload` through the same gate), plus the admin-only `update_plan` (the
+roadmap plan write: direct and promote-class, NOT the gate). Sprint and ticket writes are cookie
+routes only — MCP never gets one.
 
 ## The living loop (the skills)
 

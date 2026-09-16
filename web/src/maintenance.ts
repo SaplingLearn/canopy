@@ -22,11 +22,11 @@ export interface UnplacedItem {
   reasonNote: string;
 }
 
-export type AssignKind = "doc" | "adr" | "milestone" | "feed";
+export type AssignKind = "doc" | "adr" | "feed";
 
-/** The assign flow's REAL vocabulary: the four gate types, and the targets each
+/** The assign flow's REAL vocabulary: the three gate types, and the targets each
  *  accepts (doc → section + optional space; feed → optional multi-select tags;
- *  adr/milestone → no target). Values come from @shared/vocabulary via the
+ *  adr → no target). Values come from @shared/vocabulary via the
  *  mapping layer — components never hardcode them. */
 export interface AssignOptions {
   kinds: { key: AssignKind; label: string }[];
@@ -101,7 +101,7 @@ export function assignPanel(itemId: string, assign: AssignOptions, kind: AssignK
     targetCol = `<div style="display:flex;flex-direction:column;gap:5px">${tagRows}</div>
       <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Tags are optional — pick any that apply.</div>`;
   } else {
-    targetCol = `<div style="font-size:12.5px;color:var(--fg-40);padding:7px 0">No target needed — this files as a new ${kind === "adr" ? "decision draft" : "milestone proposal"}.</div>`;
+    targetCol = `<div style="font-size:12.5px;color:var(--fg-40);padding:7px 0">No target needed — this files as a new decision draft.</div>`;
   }
   const canFile = kind !== null && (kind !== "doc" || section !== null);
   return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:14px">

@@ -12,7 +12,7 @@ Canopy is the team's working memory, and the skills under `.claude/skills/` are 
 stays living** (orient → work → record), not a side feature. The core loop is three skills:
 
 - **`canopy`** — the umbrella/overview skill: the whole loop, the authority model, and the read/write
-  tool map (the plan model; no `focus`, no `propose_milestone`). Its `references/querying.md` is the full
+  tool map (the plan model; no `focus`, no agent-proposed sprints). Its `references/querying.md` is the full
   `query` parameter reference (filtering, browse, pointers, `include_staged`). Start here.
 - **`load-context`** (auto-fires, read-only) — **orient before touching an existing area**: it calls
   `query` (assembled authoritative bodies + ranked pointers, each authority-flagged) so you build on what
@@ -27,7 +27,7 @@ Three more skills cover the roadmap/my-work surfaces:
 
 - **`read-plan`** (admin, read-only) — read the current plan and check it against captured reality.
 - **`update-plan`** (admin, explicit) — push a reshaped plan back through the direct, non-destructively
-  versioned plan-write path (`update_plan`), including setting a milestone `done`.
+  versioned plan-write path (`update_plan`), including setting a sprint `done`.
 - **`my-work`** (read-only) — pull your own My Work projection (`get_my_work`); also invoked by
   `load-context` at session start.
 
@@ -66,7 +66,12 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   notification_settings / notification_prefs / notification_outbox + `users.email`,
   `users.email_unsubscribed`], `0022_notification_bodies` [dev-only rendered-message store], then
   `0023_persons` [persons / identities / invites replace users + people; sessions + mcp_tokens repoint
-  to persons.handle; bodies table loses its outbox FK]).
+  to persons.handle; bodies table loses its outbox FK], then the tickets build: `0024_tickets`
+  [tickets / ticket_assignees / ticket_links / ticket_comments / ticket_events + `tickets_fts`],
+  `0025_sprints` [`milestones`→`sprints` in place (+ `dates`, `summary`, `urgency`, `lead`, `domain`),
+  `milestone_progress`→`sprint_progress` (`milestone_id`→`sprint_id`), `plan_versions.milestones_json`
+  →`sprints_json`, roadmap_fts re-keyed `milestone:<id>`→`sprint:<id>`, new `sprint_resources`, and
+  `DROP TABLE milestone_proposals` — the whole agent-proposed-roadmap surface goes with it]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
   `web/src/markdown.ts` renders PR summaries and the roadmap narrative as styled HTML;
@@ -79,7 +84,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 `consume()` is an **ingestion** gate, not a universal write gate: it polices agent-proposed content
 (vocab, confidence, content-hash dedupe, reconciliation). Every ingested entry funnels through the
 per-type **gate** functions in `src/consumer.ts` (`ingestFeedEntry` / `ingestDocProposal` /
-`ingestAdrDraft` / `ingestMilestoneProposal` / `ingestEvent`). The ingestion entry points are thin
+`ingestAdrDraft` / `ingestEvent`). The ingestion entry points are thin
 adapters over these: `/ingest` and the MCP `record_session` batch tool (both via `consume`), the
 per-entry MCP write tools (`append_feed`, `propose_doc_update`), and the `/webhook/github` branch
 (`ingestEvent`). The gate **reconciles**, not just routes:
@@ -87,14 +92,14 @@ per-entry MCP write tools (`append_feed`, `propose_doc_update`), and the `/webho
 - **Replay ledger** (`processed_items`, keyed by `session.id + item_index`): a re-POST of the same
   payload drops every item as `unchanged` — nothing is double-written. MCP tools use an ephemeral
   UUID session so each call is independently reconciled without ever hitting the ledger.
-- **Content-hash dedupe** (SHA-256 via Web Crypto): an identical body for an existing slug/ADR/milestone
+- **Content-hash dedupe** (SHA-256 via Web Crypto): an identical body for an existing slug/ADR
   is a no-op (`unchanged`) unless `force: true` is passed.
 - **Change-typing**: `change_kind` (`new` / `edit` / `rewrite`) is server-computed via a line LCS diff
   of the proposed body against the current promoted body; `base_version` records the version the writer
   read, surfacing stale-edit warnings. Both are stored on `doc_versions`.
 - **Low-confidence nuance**: low-conf on a NEW slug → triage; low-conf on an EXISTING slug → stage and
   flag (`low_confidence = 1`) for human scrutiny. Only low-conf new slugs go directly to triage.
-- Out-of-vocab tag/section or a milestone `status:'done'` → routed to `needs_triage` (nothing is guessed).
+- Out-of-vocab tag/section → routed to `needs_triage` (nothing is guessed).
 - **Events** carry no vocab/confidence — an event is external fact captured verbatim, deduped by a UNIQUE
   `semantic_key` (`gh:pr:42:merged`, `gh:issue:…`) written `INSERT OR IGNORE` (a redelivery/backfill
   overlap drops as `unchanged`). Its `subject_login` is a SECOND identity (who the event is about),
@@ -103,7 +108,7 @@ per-entry MCP write tools (`append_feed`, `propose_doc_update`), and the `/webho
   `session.author` is advisory and ignored. (This writer rule does NOT clobber an event's `subject_login`.)
 
 Authored and computed writes are **direct, in the `promote` class** — NOT the ingestion gate — exactly
-like `promote_doc` / `promote_milestone_proposal` / `complete_milestone` always have been: the plan write
+like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan write
 (`update_plan` → `write_plan`, versioned non-destructively) and the computed writes (the progress cache in
 `tools/progress.ts`, the PR summaries in `tools/summarize.ts`). When adding an **ingestion** path
 (agent-proposed content), add it to the gate — never a second ingestion surface; authored/computed writes
@@ -112,10 +117,11 @@ stay direct in the promote class.
 ## Read side — FTS5 query engine
 
 `src/tools/reads.ts` exposes a ranked FTS5 `query()` engine (bm25, title/summary weighted) that backs
-both MCP `query` and `GET /search`, over four types: `doc` / `decision` / `feed` / `milestone`. Each
+both MCP `query` and `GET /search`, over four types: `doc` / `decision` / `feed` / `sprint`. Each
 result is authority-flagged: `live` / `staged_pending` / `unpromoted` / `draft`. The doc/feed/ADR index
 lives in `migrations/0008_fts.sql` (recreated in `0011_fts_recreate.sql`); `0013_roadmap_fts.sql` adds a
-standalone `roadmap_fts` over the plan narrative + milestones so `query` surfaces the roadmap. `get_doc`
+standalone `roadmap_fts` over the plan narrative + sprints (refs `plan` / `sprint:<id>`, re-keyed by
+0025) so `query` surfaces the roadmap. `get_doc`
 is the exact-slug fetch (all versions + live body).
 
 - **MCP `query`** defaults `include_staged: true` — agents see staged/unpromoted context (authority-flagged).
@@ -131,11 +137,13 @@ Agents only ever stage; humans confirm via **authenticated HTTP routes that are 
   and body remain (non-destructive). Idempotent.
 - ADRs: `stage_adr` stages a `draft`; `POST /adr/:id/ratify` flips it to `ratified`.
   Reject (soft): `POST /adr/:id/reject` flips a draft to `status='rejected'`; the row remains.
-- Milestones: `milestone_proposals` rows are staged ONLY via triage-assign now (the `propose_milestone`
-  MCP tool was retired; the gate fn `ingestMilestoneProposal` remains for that path). `POST
-  /milestone-proposals/:id/promote` materializes a live `milestones` row; `POST /milestones/:id/complete`
-  flips status to `done`. `'done'` is NEVER set by the worker and NEVER inferred from issue closure — a
-  milestone is completed by an admin, in Triage-promote or in the plan write.
+- Sprints: **nothing about a sprint is ever staged.** 0025 dropped `milestone_proposals` and with it
+  the whole agent-proposed-roadmap surface — the gate fn, the contract schema, the promote/reject
+  routes, and the `"milestone"` triage-assign kind. A sprint is created and edited only by the admin
+  plan write (`update_plan` → `write_plan`, a direct promote-class write); `POST /sprints/:id/complete`
+  flips status to `done`. `'done'` is NEVER set by the worker and NEVER inferred from issue closure or
+  from every ticket in the sprint being resolved — a sprint is completed by an admin, here or in the
+  plan write. The triage-assign kinds are now exactly `doc` / `adr` / `feed`.
 - Triage write-back: `POST /needs-triage/:id/discard` (soft dismiss) and `POST /needs-triage/:id/assign`
   (re-runs the item's `raw` through the SAME gate for the target type, then records `resolution='assigned'`
   with `assigned_ref`). All triage exits are soft — nothing is hard-deleted; `resolved=1` + audit columns
@@ -183,18 +191,26 @@ Every `recorded_by` / `created_by` / `user_id` is a handle. Migrated GitHub user
 
 ## Roadmap & My Work — authored plan + stored projections, no live GitHub at render
 
-The roadmap is two layers. **The plan** (narrative + milestones + timeline) is admin-authored via the
+The roadmap is two layers. **The plan** (narrative + sprints + timeline) is admin-authored via the
 `update_plan` MCP tool (`update-plan` skill) → `write_plan`: a direct promote-class write, versioned
-non-destructively into `plan` (singleton narrative) + `plan_versions` snapshots, over the `milestones`
-table (which now carries `description` and `phase`). Milestone `done` is admin-set here, never
-event-inferred. `GET /roadmap` and MCP `get_roadmap` read `get_plan`: narrative + milestones in
-target-date order merged with the cached progress. No live GitHub, no per-user token.
+non-destructively into `plan` (singleton narrative) + `plan_versions` snapshots (`sprints_json`), over
+the `sprints` table. **Sprints ARE the old milestones, renamed in place by 0025** — same rows, same
+ids, plus `dates` / `summary` / `urgency` / `lead` / `domain` alongside the pre-existing `description`
+(now rendered as markdown) and `phase`. Sprint `done` is admin-set here, never event-inferred.
 
-**Progress** is a stored cache (`milestone_progress`), written as ABSOLUTE `closed`/`total` (so delivery
-order is irrelevant — the last write wins) by two direct writers: the webhook (event-derived, on issue
-events) and the `scheduled()` cron backstop (`recomputeAllProgress`, `GITHUB_SERVICE_TOKEN`, off the
-render path). `github_ref` is bare (a milestone number OR a JSON array of issue numbers) resolved against
-`GITHUB_REPO` — only by those two writers, never at render.
+**Two vocabularies, one seam** (`shared/sprints.ts`): the DB keeps its column names, the DTO speaks the
+product's words — `row.title` ↔ `view.label`, `row.target_date` ↔ `view.due`, and `active` is DERIVED
+(`status === 'in_progress'`), never stored. `update_plan`'s input and every sprint route body use the
+DTO vocabulary; only `src/tools/` speaks columns. `GET /roadmap` and MCP `get_roadmap` read `get_plan`:
+narrative + `sprints: SprintView[]` in target-date order, each with `progress: {closed, total, pct}`.
+No live GitHub, no per-user token.
+
+**Progress** is a stored cache (`sprint_progress`, keyed `sprint_id`), written as ABSOLUTE
+`closed`/`total` (so delivery order is irrelevant — the last write wins) by two direct writers: the
+webhook (event-derived, on issue events) and the `scheduled()` cron backstop (`recomputeAllProgress`,
+`GITHUB_SERVICE_TOKEN`, off the render path). `github_ref` is bare (a GITHUB milestone number — GitHub's
+own vocabulary, kept deliberately — OR a JSON array of issue numbers) resolved against `GITHUB_REPO` —
+only by those two writers, never at render. A sprint with no cache row reads `0/0`.
 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events: two separate lists — `previousActivity` (summarized merged/closed PRs where the person is the
@@ -262,8 +278,10 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 - `shared/vocabulary.ts` MUST match `migrations/0002_seed_vocab.sql` — it's the gate's source of truth.
 - D1 helpers live in `src/db.ts` (`first` / `all` / `run` / `nowIso`); writers in `src/tools/writes.ts`.
 - Tests use real Miniflare D1; `test/apply-migrations.ts` truncates data tables `beforeEach` via
-  `scripts/seed/reset.mjs` (add new tables — `events`, `pr_summaries`, `milestone_progress`, `persons`,
-  `identities`, `invites`, `plan`, `plan_versions`, `notification_*` — there).
+  `scripts/seed/reset.mjs` (add new tables — `events`, `pr_summaries`, `sprints`, `sprint_progress`,
+  `sprint_resources`, `tickets` + `ticket_*`, `persons`, `identities`, `invites`, `plan`,
+  `plan_versions`, `notification_*` — there). That file is also the canonical person seed: the four
+  engineers (github identities) plus two Google-only non-engineers, `meilin` / `sanaok`.
   GitHub I/O and the PR summarizer are dependency-injected (`fetchImpl?: typeof fetch`, `summarizer`)
   because the vitest pool exports no fetch/AI mock — stub at the `Response`/`Summarizer` level, never hit
   the network in tests.

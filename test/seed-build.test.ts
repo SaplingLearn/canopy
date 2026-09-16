@@ -22,11 +22,11 @@ describe("buildSeedStatements", () => {
     expect(insert!.includes("\n")).toBe(false);
   });
 
-  it("emits a milestone_progress insert only when progress is present", () => {
-    const withP = buildSeedStatements({ roadmap: { narrative: "n", version: 1, milestones: [{ id: 1, title: "m", target_date: "2026-01-01", status: "done", progress: { closed: 2, total: 2, computed_at: "t" } }] } });
-    const without = buildSeedStatements({ roadmap: { narrative: "n", version: 1, milestones: [{ id: 2, title: "m2", target_date: "2026-01-01", status: "upcoming" }] } });
-    expect(withP.some((s) => s.startsWith("INSERT INTO milestone_progress"))).toBe(true);
-    expect(without.some((s) => s.startsWith("INSERT INTO milestone_progress"))).toBe(false);
+  it("emits a sprint_progress insert only when progress is present", () => {
+    const withP = buildSeedStatements({ roadmap: { narrative: "n", version: 1, sprints: [{ id: 1, title: "m", target_date: "2026-01-01", status: "done", progress: { closed: 2, total: 2, computed_at: "t" } }] } });
+    const without = buildSeedStatements({ roadmap: { narrative: "n", version: 1, sprints: [{ id: 2, title: "m2", target_date: "2026-01-01", status: "upcoming" }] } });
+    expect(withP.some((s) => s.startsWith("INSERT INTO sprint_progress"))).toBe(true);
+    expect(without.some((s) => s.startsWith("INSERT INTO sprint_progress"))).toBe(false);
   });
 
   it("targetsRemote detects the --remote flag", () => {

@@ -1,4 +1,4 @@
-import type { MilestoneRow, PlanVersionRow } from "@shared/rows";
+import type { SprintRow, PlanVersionRow } from "@shared/rows";
 import type { NotificationKind, Section, Window } from "@shared/notifications";
 import { type DB, first } from "../../db";
 import { escapeHtml, isoOf } from "../html";
@@ -7,14 +7,16 @@ import { EMAIL_STYLE as S, EMAIL_CARD as K, EMAIL_SPACE as SP, type ChipTone } f
 const DEEP_LINK = "/#roadmap";
 const PLAN_TONE: Record<PlanDiffLine["label"], ChipTone> = { added: "green", changed: "blue", reordered: "muted", done: "accent" };
 
-// Plan-layer diff between two milestone snapshots. Progress (milestone_progress)
-// is not in a snapshot, so a progress-only change can never surface here.
+// Plan-layer diff between two sprint snapshots. Progress (sprint_progress) is not
+// in a snapshot, so a progress-only change can never surface here. The snapshots
+// are SprintRow[] — DB column names (title / target_date), not the DTO's
+// label / due.
 export interface PlanDiffLine {
   label: "added" | "changed" | "reordered" | "done";
   text: string;
 }
 
-export function diffMilestones(before: MilestoneRow[], after: MilestoneRow[]): PlanDiffLine[] {
+export function diffSprints(before: SprintRow[], after: SprintRow[]): PlanDiffLine[] {
   const lines: PlanDiffLine[] = [];
   const prev = new Map(before.map((m) => [m.id, m]));
 
@@ -29,7 +31,7 @@ export function diffMilestones(before: MilestoneRow[], after: MilestoneRow[]): P
     if (old.status !== "done" && m.status === "done") lines.push({ label: "done", text: `${m.title} — confirmed complete` });
   }
 
-  // Reorder: the relative order of milestones present in BOTH snapshots changed
+  // Reorder: the relative order of sprints present in BOTH snapshots changed
   // (snapshots are target_date ASC, id ASC, so a date move shows up here).
   const common = new Set(after.filter((m) => prev.has(m.id)).map((m) => m.id));
   const beforeOrder = before.filter((m) => common.has(m.id)).map((m) => m.id);
@@ -45,7 +47,7 @@ export function diffMilestones(before: MilestoneRow[], after: MilestoneRow[]): P
 /**
  * roadmap_plan — diff the latest plan version whose created_at falls in the
  * window against the last version BEFORE the window. No version in the window,
- * or no milestone-level change between the two, renders null.
+ * or no sprint-level change between the two, renders null.
  */
 async function render(db: DB, _login: string, window: Window): Promise<Section | null> {
   const start = isoOf(window.start);
@@ -65,9 +67,9 @@ async function render(db: DB, _login: string, window: Window): Promise<Section |
     start
   );
 
-  const before = baseline ? (JSON.parse(baseline.milestones_json) as MilestoneRow[]) : [];
-  const after = JSON.parse(latest.milestones_json) as MilestoneRow[];
-  const lines = diffMilestones(before, after);
+  const before = baseline ? (JSON.parse(baseline.sprints_json) as SprintRow[]) : [];
+  const after = JSON.parse(latest.sprints_json) as SprintRow[];
+  const lines = diffSprints(before, after);
   if (lines.length === 0) return null;
 
   const html =
@@ -83,7 +85,7 @@ async function render(db: DB, _login: string, window: Window): Promise<Section |
 export const roadmapPlanKind: NotificationKind<DB> = {
   id: "roadmap_plan",
   label: "Roadmap plan changes",
-  description: "Milestones added, changed, reordered, or confirmed done.",
+  description: "Sprints added, changed, reordered, or confirmed done.",
   defaultCadence: "weekly",
   allowedCadences: ["daily", "weekly", "off"],
   render,

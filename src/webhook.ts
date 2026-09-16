@@ -220,7 +220,9 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
 }
 
 // ---------------------------------------------------------------------------
-// PURE: the absolute progress this issue event implies for its milestone, or
+// PURE: the absolute progress this issue event implies for its GITHUB milestone
+// (GitHub's own word, kept deliberately: `milestoneNumber` is the number on the
+// issue's GitHub milestone, which a sprint's `github_ref` may point at), or
 // null when the issue carries no milestone. total = open + closed (GitHub's own
 // counts), so ordering of deliveries is irrelevant — later writes just overwrite.
 // ---------------------------------------------------------------------------
@@ -275,7 +277,7 @@ async function summarizeIssueSeam(db: DB, summarizer: Summarizer<IssueSummary> |
 }
 
 // Task 5: apply this newly-captured issue event's implication(s) to the
-// milestone_progress cache (absolute overwrite — see applyEventProgress).
+// sprint_progress cache (absolute overwrite — see applyEventProgress).
 async function progressSeam(db: DB, payload: unknown): Promise<void> {
   await applyEventProgress(db, payload);
 }

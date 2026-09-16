@@ -4,6 +4,7 @@ import { buildSeedStatements } from "../scripts/seed/build.mjs";
 import { getMyWork } from "../src/tools/mywork";
 import { get_plan } from "../src/tools/plan";
 import { query, get_feed, list_proposals, list_needs_triage, list_adrs, list_identity_tasks } from "../src/tools/reads";
+import { all } from "../src/db";
 import docs from "../fixtures/dev/docs.json";
 import feed from "../fixtures/dev/feed.json";
 import adrs from "../fixtures/dev/adrs.json";
@@ -38,13 +39,35 @@ describe("dev seed lights up every surface", () => {
     expect(mw.todo.some((t) => t.milestone !== null && t.milestone.title.length > 0)).toBe(true);
   });
 
-  it("Roadmap: narrative + milestones carrying progress", async () => {
+  it("Roadmap: narrative + sprints carrying progress, the 0025 fields, and resources", async () => {
     const plan = await get_plan(env.DB);
     expect(plan.narrative.length).toBeGreaterThan(0);
-    expect(plan.milestones.length).toBe(7);
-    expect(plan.milestones.some((m) => m.progress && m.progress.total > 0)).toBe(true);
-    // Milestones span multiple roadmap phases.
-    expect(new Set(plan.milestones.map((m) => m.phase)).size).toBeGreaterThan(1);
+    expect(plan.sprints.length).toBe(7);
+    expect(plan.sprints.some((sp) => sp.progress.total > 0)).toBe(true);
+    // Sprints span multiple roadmap phases…
+    expect(new Set(plan.sprints.map((sp) => sp.phase)).size).toBeGreaterThan(1);
+    // …and the seed exercises every 0025 field, so the Roadmap card has something
+    // to render for each of them.
+    expect(plan.sprints.every((sp) => sp.summary !== null && sp.dates !== null)).toBe(true);
+    expect(new Set(plan.sprints.map((sp) => sp.urgency))).toEqual(new Set(["low", "normal", "high"]));
+    expect(plan.sprints.every((sp) => sp.lead !== null && sp.domain !== null)).toBe(true);
+    expect(plan.sprints.some((sp) => sp.active)).toBe(true);
+
+    const resources = await all<{ sprint_id: number; kind: string }>(env.DB, `SELECT * FROM sprint_resources`);
+    expect(new Set(resources.map((r) => r.sprint_id)).size).toBe(2);
+    expect(new Set(resources.map((r) => r.kind))).toEqual(new Set(["github", "figma", "plain"]));
+  });
+
+  it("People: the four engineers plus the two non-engineer requesters", async () => {
+    const persons = await all<{ handle: string }>(env.DB, `SELECT handle FROM persons ORDER BY handle`);
+    expect(persons.map((p) => p.handle)).toEqual(
+      ["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "lpcooper-arch", "meilin", "sanaok"].sort()
+    );
+    // meilin / sanaok are Google-only: no github identity, so they can never
+    // collide with an event subject_login.
+    const ids = await all<{ provider: string; person: string }>(env.DB, `SELECT provider, person FROM identities`);
+    expect(ids.filter((i) => i.person === "meilin").map((i) => i.provider)).toEqual(["google"]);
+    expect(ids.filter((i) => i.person === "sanaok").map((i) => i.provider)).toEqual(["google"]);
   });
 
   it("Search: ranked hits for a known term", async () => {
@@ -57,6 +80,8 @@ describe("dev seed lights up every surface", () => {
     expect((await get_feed(env.DB, { tags: ["auth"] })).length).toBeGreaterThan(0);
   });
 
+  // Four queues, and four is now the total: the roadmap-proposal queue was
+  // dropped along with its table in 0025, so these are all of them.
   it("Triage: all four queues populated", async () => {
     expect((await list_proposals(env.DB)).length).toBeGreaterThan(0);
     expect((await list_needs_triage(env.DB)).length).toBeGreaterThan(0);

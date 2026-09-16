@@ -16,11 +16,14 @@ export const RESET_STATEMENTS = [
   "DELETE FROM pr_summaries",
   "DELETE FROM issue_summaries",
   "DELETE FROM events",
-  "DELETE FROM milestone_progress",
+  "DELETE FROM sprint_progress",
   "DELETE FROM plan_versions",
   "UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL",
-  "DELETE FROM milestone_proposals",
-  "DELETE FROM milestones",
+  // sprint_resources references sprints(id), so it clears first (as do the
+  // tickets above, whose soft sprint_id points here). milestone_proposals is
+  // gone — 0025 dropped the table with the whole proposal surface.
+  "DELETE FROM sprint_resources",
+  "DELETE FROM sprints",
   "DELETE FROM doc_versions",
   "DELETE FROM docs",
   "DELETE FROM feed",
@@ -38,7 +41,12 @@ export const RESET_STATEMENTS = [
   "DELETE FROM identities",
   "DELETE FROM invites",
   "DELETE FROM persons",
-  // The dev/test person seed (was the `people` map): four persons, each with their github identity.
+  // The dev/test person seed (was the `people` map): the four engineers, each with their github identity…
   "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('AndresL230', 'Andres', 'moss', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('Jose-Gael-Cruz-Lopez', 'Jose', 'sky', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('lpcooper-arch', 'Luke', 'fern', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('Darkest-Teddy', 'Jack', 'plum', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
   "INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('github', 'AndresL230', 'AndresL230', 'AndresL230', '2026-01-01T00:00:00Z', 'seed'), ('github', 'Jose-Gael-Cruz-Lopez', 'Jose-Gael-Cruz-Lopez', 'Jose-Gael-Cruz-Lopez', '2026-01-01T00:00:00Z', 'seed'), ('github', 'lpcooper-arch', 'lpcooper-arch', 'lpcooper-arch', '2026-01-01T00:00:00Z', 'seed'), ('github', 'Darkest-Teddy', 'Darkest-Teddy', 'Darkest-Teddy', '2026-01-01T00:00:00Z', 'seed')",
+  // …plus two NON-ENGINEER staff (the tickets build): Google-only, so they have
+  // no github identity and can never collide with an event's subject_login. They
+  // are the queue's requesters — the people filing tickets who don't ship code.
+  "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('meilin', 'Meilin Zhao', 'rose', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('sanaok', 'Sana Okafor', 'ochre', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+  "INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('google', 'google-sub-meilin', 'meilin@saplinglearn.org', 'meilin', '2026-01-01T00:00:00Z', 'seed'), ('google', 'google-sub-sanaok', 'sanaok@saplinglearn.org', 'sanaok', '2026-01-01T00:00:00Z', 'seed')",
 ];

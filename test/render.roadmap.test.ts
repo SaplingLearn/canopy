@@ -6,7 +6,7 @@
  *    markdown fn (the injected-markdownFn pattern); empty → dashed-card hint.
  *  • render() over a roadmap-populated AppState — narrative tab shows the narrative,
  *    timeline tab shows cached progress ("4/6 closed"), phase mono suffix, and the
- *    Confirm-done button; search results of type "milestone" navigate via goRoadmap.
+ *    Confirm-done button; search results of type "sprint" navigate via goRoadmap.
  *
  * All tests are pure (no D1 / Miniflare bindings) and assertions are HTML-string based.
  * The module-level renderMarkdown (marked + DOMPurify) cannot run in this workerd test
@@ -26,7 +26,7 @@ vi.mock("../web/src/markdown", () => ({
 }));
 
 import { planNarrativeBlock, render, initialState } from "../web/src/render";
-import type { PlanView, MilestoneWithProgress, FeedRow } from "../web/src/api";
+import type { PlanView, SprintView, FeedRow } from "../web/src/api";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,19 +37,26 @@ const mockMd = (body: string) => `<div class="mock-md">${body}</div>`;
 const escMockMd = (body: string) =>
   `<div class="mock-md">${body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
 
-function makeMilestone(overrides: Partial<MilestoneWithProgress> = {}): MilestoneWithProgress {
+function makeSprint(overrides: Partial<SprintView> = {}): SprintView {
   return {
     id: 1,
-    title: "Vectorize GA",
+    label: "Vectorize GA",
+    summary: null,
     description: "Ship semantic search to everyone.",
-    target_date: "2026-09-01",
+    phase: null,
+    dates: null,
+    due: "2026-09-01",
     status: "in_progress",
+    active: true,
+    urgency: "normal",
+    lead: null,
+    domain: null,
     github_ref: null,
     created_at: "2026-07-01T00:00:00Z",
     created_by: "admin",
     updated_at: null,
-    phase: null,
-    progress: { closed: 4, total: 6, computed_at: "2026-07-02T00:00:00Z" },
+    progress: { closed: 4, total: 6, pct: 67 },
+    members: [],
     ...overrides,
   };
 }
@@ -60,7 +67,7 @@ function makePlanView(overrides: Partial<PlanView> = {}): PlanView {
     version: 3,
     updated_at: "2026-07-02T00:00:00Z",
     updated_by: "admin",
-    milestones: [makeMilestone()],
+    sprints: [makeSprint()],
     ...overrides,
   };
 }
@@ -120,9 +127,9 @@ describe("render() — Roadmap narrative tab", () => {
     expect(html).toContain("The plan **narrative** prose.");
   });
 
-  it("keeps the milestone spotlight and Recent happenings sections below the narrative", () => {
+  it("keeps the sprint spotlight and Recent happenings sections below the narrative", () => {
     const html = render(stateWithPlan(makePlanView(), "narrative"));
-    expect(html).toContain(">NOW<"); // spotlight badge for the in-progress milestone
+    expect(html).toContain(">NOW<"); // spotlight badge for the in-progress sprint
     expect(html).toContain("Vectorize GA");
     expect(html).toContain("Recent happenings");
     // Narrative block precedes the spotlight
@@ -152,7 +159,7 @@ describe("render() — Roadmap timeline tab", () => {
   });
 
   it("shows the phase as a small mono suffix before the date label, · separated", () => {
-    const plan = makePlanView({ milestones: [makeMilestone({ phase: "Phase 2 — reads" })] });
+    const plan = makePlanView({ sprints: [makeSprint({ phase: "Phase 2 — reads" })] });
     const html = render(stateWithPlan(plan, "timeline"));
     expect(html).toContain("Phase 2 — reads · ");
     // Date label is kept alongside the phase (target 2026-09-01 → "Sep 1, 2026")
@@ -166,18 +173,37 @@ describe("render() — Roadmap timeline tab", () => {
   });
 
   it("XSS: a malicious phase is escaped", () => {
-    const plan = makePlanView({ milestones: [makeMilestone({ phase: '<img src=x onerror=alert(1)>' })] });
+    const plan = makePlanView({ sprints: [makeSprint({ phase: '<img src=x onerror=alert(1)>' })] });
     const html = render(stateWithPlan(plan, "timeline"));
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img");
   });
 
-  it("keeps the Confirm-done button for a ready milestone (all issues closed, not done)", () => {
-    const ready = makeMilestone({ id: 9, title: "All wrapped", progress: { closed: 6, total: 6, computed_at: "2026-07-02T00:00:00Z" } });
-    const html = render(stateWithPlan(makePlanView({ milestones: [ready] }), "timeline"));
-    expect(html).toContain('data-act="confirmMilestone"');
+  it("keeps the Confirm-done button for a ready sprint (all issues closed, not done)", () => {
+    const ready = makeSprint({ id: 9, label: "All wrapped", progress: { closed: 6, total: 6, pct: 100 } });
+    const html = render(stateWithPlan(makePlanView({ sprints: [ready] }), "timeline"));
+    expect(html).toContain('data-act="confirmSprint"');
     expect(html).toContain('data-arg="9"');
     expect(html).toContain("Confirm done");
+  });
+
+  it("a sprint with nothing to count (0/0) shows no progress bar and is never 'ready to complete'", () => {
+    // SprintView.progress is always present; total 0 is the "no cache, no tickets"
+    // case, which must render exactly like the old progress:null milestone did.
+    const empty = makeSprint({ id: 4, label: "Nothing counted", progress: { closed: 0, total: 0, pct: 0 } });
+    const html = render(stateWithPlan(makePlanView({ sprints: [empty] }), "timeline"));
+    expect(html).toContain("Nothing counted");
+    expect(html).not.toContain("0/0 closed");
+    expect(html).not.toContain("ready to complete");
+    expect(html).not.toContain('data-act="confirmSprint"');
+  });
+
+  it("an unscheduled sprint (due: null) reads 'No target date' and is never overdue", () => {
+    const unscheduled = makeSprint({ id: 5, label: "Unscheduled", due: null, status: "upcoming", progress: { closed: 0, total: 0, pct: 0 } });
+    const html = render(stateWithPlan(makePlanView({ sprints: [unscheduled] }), "timeline"));
+    expect(html).toContain("No target date");
+    expect(html).not.toContain(">OVERDUE<");
+    expect(html).not.toContain("Invalid Date");
   });
 });
 
@@ -241,10 +267,10 @@ describe("render() — Recent happenings GitHub chips", () => {
   });
 });
 
-// ── search results — milestone type navigates to the Roadmap screen ──────────
+// ── search results — sprint type navigates to the Roadmap screen ────────────
 
-describe("search results — milestone hits navigate via goRoadmap", () => {
-  it("a milestone-typed primary result renders as a goRoadmap button", () => {
+describe("search results — sprint hits navigate via goRoadmap", () => {
+  it("a sprint-typed primary result renders as a goRoadmap button", () => {
     const s = initialState();
     const html = render({
       ...s,
@@ -255,7 +281,7 @@ describe("search results — milestone hits navigate via goRoadmap", () => {
         status: "ok",
         data: {
           primary: [{
-            type: "milestone", id: "1", title: "Vectorize GA",
+            type: "sprint", id: "sprint:1", title: "Vectorize GA",
             section: null, space: null, body: "Ship semantic search.",
             authority: "live", current_version: null, pending_version: null,
             staged_body: null, confidence: null,
@@ -269,7 +295,7 @@ describe("search results — milestone hits navigate via goRoadmap", () => {
     expect(html).toContain('data-act="goRoadmap"');
   });
 
-  it("a milestone-typed pointer result also gets the goRoadmap action", () => {
+  it("a sprint-typed pointer result also gets the goRoadmap action", () => {
     const s = initialState();
     const html = render({
       ...s,
@@ -280,7 +306,7 @@ describe("search results — milestone hits navigate via goRoadmap", () => {
         status: "ok",
         data: {
           primary: [],
-          pointers: [{ type: "milestone", id: "2", title: "Plan hit", snippet: "…", authority: "live", score: 1 }],
+          pointers: [{ type: "sprint", id: "sprint:2", title: "Plan hit", snippet: "…", authority: "live", score: 1 }],
           meta: { engine: "fts5", total: 1 },
         },
       },

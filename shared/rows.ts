@@ -8,6 +8,13 @@ export type {
   TicketCategory, TicketPriority, TicketStatus, TicketLinkKind,
 } from "./tickets";
 
+// Sprints (the milestones table, renamed by 0025) are defined ONCE, as Zod
+// schemas in shared/sprints.ts, and re-exported here for the same reason.
+export type {
+  SprintRow, SprintResourceRow,
+  SprintStatus, SprintUrgency, SprintDomain, SprintResourceKind,
+} from "./sprints";
+
 export interface SectionRow { name: string; description: string | null; }
 export interface TagRow { tag: string; description: string | null; }
 
@@ -142,39 +149,12 @@ export interface McpTokenRow {
   revoked: number;
 }
 
-export interface MilestoneRow {
-  id: number;
-  title: string;
-  description: string | null;
-  target_date: string;
-  status: "upcoming" | "in_progress" | "done";
-  github_ref: string | null;   // JSON: number (milestone) | number[] (issues)
-  created_at: string;
-  created_by: string;
-  updated_at: string | null;
-  phase: string | null;
-}
-
-export interface MilestoneProposalRow {
-  id: number;
-  title: string;
-  target_date: string;
-  status: string;
-  github_ref: string | null;
-  change_summary: string;
-  confidence: string;
-  staged_status: "staged" | "promoted" | "rejected";
-  created_at: string;
-  created_by: string;
-  content_hash: string | null;   // SHA-256 of the proposed milestone fields — dedupe key (0009)
-}
-
 // The replay ledger (0009). One row per (session_id, item_index) the worker has
 // seen; a re-POST of the same payload hits every row and drops as unchanged.
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "milestone" | "triage" | "event";
+  item_type: "feed" | "doc" | "adr" | "triage" | "event";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;
@@ -222,9 +202,11 @@ export interface IssueSummaryRow {
   next_step: string | null;  // only when the issue states/implies one (0018)
 }
 
-// Absolute per-milestone progress cache (0012).
-export interface MilestoneProgressRow {
-  milestone_id: number;
+// Absolute per-sprint progress cache (0012 as milestone_progress; renamed with
+// its key column in 0025). Event-derived GitHub issue counts only — the ticket
+// side of a sprint's progress is counted at read time, never cached here.
+export interface SprintProgressRow {
+  sprint_id: number;
   closed: number;
   total: number;
   source: "event" | "recompute";
@@ -255,7 +237,7 @@ export interface PlanRow {
 export interface PlanVersionRow {
   version: number;
   narrative: string;
-  milestones_json: string;
+  sprints_json: string;    // full sprints snapshot AFTER this write (SprintRow[])
   created_at: string;
   created_by: string;
 }

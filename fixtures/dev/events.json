@@ -15,20 +15,20 @@
     {
       "semantic_key": "gh:pr:153:merged", "event_type": "pr_merged", "ref_number": 153, "subject_login": "AndresL230",
       "provenance": "backfill", "occurred_at": "2026-06-29T11:00:00Z", "recorded_at": "2026-06-29T11:01:00Z",
-      "raw": { "pr": { "number": 153, "title": "Milestone progress bars on the Roadmap page", "body": "Each milestone renders a closed/total bar from the stored progress cache.", "html_url": "https://github.com/SaplingLearn/sapling/pull/153", "merged": true, "merged_at": "2026-06-29T11:00:00Z", "closed_at": "2026-06-29T11:00:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
-      "pr_summary": { "title": "Add milestone progress bars to the Roadmap", "what": "Rendered a closed/total progress bar per milestone from the stored progress cache.", "why": null, "impact": "The Roadmap now shows how far each milestone is along at a glance." }
+      "raw": { "pr": { "number": 153, "title": "Sprint progress bars on the Roadmap page", "body": "Each sprint renders a closed/total bar from the stored progress cache.", "html_url": "https://github.com/SaplingLearn/sapling/pull/153", "merged": true, "merged_at": "2026-06-29T11:00:00Z", "closed_at": "2026-06-29T11:00:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Add sprint progress bars to the Roadmap", "what": "Rendered a closed/total progress bar per sprint from the stored progress cache.", "why": null, "impact": "The Roadmap now shows how far each sprint is along at a glance." }
     },
     {
       "semantic_key": "gh:pr:149:merged", "event_type": "pr_merged", "ref_number": 149, "subject_login": "AndresL230",
       "provenance": "backfill", "occurred_at": "2026-06-27T09:15:00Z", "recorded_at": "2026-06-27T09:16:00Z",
-      "raw": { "pr": { "number": 149, "title": "Roadmap FTS so query() stops being roadmap-blind", "body": "Adds a standalone roadmap_fts over the plan narrative and milestones.", "html_url": "https://github.com/SaplingLearn/sapling/pull/149", "merged": true, "merged_at": "2026-06-27T09:15:00Z", "closed_at": "2026-06-27T09:15:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
-      "pr_summary": { "title": "Index the roadmap for search", "what": "Added a standalone roadmap_fts virtual table over the plan narrative and milestones and wired it into query().", "why": "Search returned docs, decisions, and feed but never surfaced roadmap items.", "impact": "Searching now finds milestones and the plan narrative alongside everything else." }
+      "raw": { "pr": { "number": 149, "title": "Roadmap FTS so query() stops being roadmap-blind", "body": "Adds a standalone roadmap_fts over the plan narrative and sprints.", "html_url": "https://github.com/SaplingLearn/sapling/pull/149", "merged": true, "merged_at": "2026-06-27T09:15:00Z", "closed_at": "2026-06-27T09:15:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Index the roadmap for search", "what": "Added a standalone roadmap_fts virtual table over the plan narrative and sprints and wired it into query().", "why": "Search returned docs, decisions, and feed but never surfaced roadmap items.", "impact": "Searching now finds sprints and the plan narrative alongside everything else." }
     },
     {
       "semantic_key": "gh:pr:146:merged", "event_type": "pr_merged", "ref_number": 146, "subject_login": "AndresL230",
       "provenance": "backfill", "occurred_at": "2026-06-26T18:45:00Z", "recorded_at": "2026-06-26T18:46:00Z",
-      "raw": { "pr": { "number": 146, "title": "Scheduled progress recompute backstop", "body": "A cron recomputes milestone progress off the render path in case a webhook delivery is missed.", "html_url": "https://github.com/SaplingLearn/sapling/pull/146", "merged": true, "merged_at": "2026-06-26T18:45:00Z", "closed_at": "2026-06-26T18:45:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
-      "pr_summary": { "title": "Add a scheduled progress recompute backstop", "what": "Added a cron that recomputes milestone progress off the render path using absolute closed/total counts.", "why": "A missed webhook delivery could leave milestone progress stale.", "impact": "Progress self-heals within the cron interval even if a webhook is dropped." }
+      "raw": { "pr": { "number": 146, "title": "Scheduled progress recompute backstop", "body": "A cron recomputes sprint progress off the render path in case a webhook delivery is missed.", "html_url": "https://github.com/SaplingLearn/sapling/pull/146", "merged": true, "merged_at": "2026-06-26T18:45:00Z", "closed_at": "2026-06-26T18:45:00Z", "user": { "login": "AndresL230" }, "base": { "ref": "main" }, "milestone": null } },
+      "pr_summary": { "title": "Add a scheduled progress recompute backstop", "what": "Added a cron that recomputes sprint progress off the render path using absolute closed/total counts.", "why": "A missed webhook delivery could leave sprint progress stale.", "impact": "Progress self-heals within the cron interval even if a webhook is dropped." }
     },
     {
       "semantic_key": "gh:pr:142:merged", "event_type": "pr_merged", "ref_number": 142, "subject_login": "AndresL230",
@@ -59,7 +59,7 @@
       "semantic_key": "gh:issue:184:assigned:AndresL230:2026-07-04T11:30:00Z", "event_type": "issue", "ref_number": 184, "subject_login": "AndresL230",
       "provenance": "backfill", "occurred_at": "2026-07-04T11:30:00Z", "recorded_at": "2026-07-04T11:31:00Z",
       "raw": { "action": "assigned", "issue": { "number": 184, "title": "[P1] read-plan: diff the plan against captured events", "body": "read-plan should check the authored roadmap against captured events and stored progress, flagging drift.", "html_url": "https://github.com/SaplingLearn/sapling/issues/184", "state": "open", "updated_at": "2026-07-04T11:30:00Z", "user": { "login": "Darkest-Teddy" }, "assignees": [{ "login": "AndresL230" }], "labels": ["data"], "milestone": { "title": "Roadmap reads itself against reality", "due_on": "2026-07-25T00:00:00Z" } } },
-      "issue_summary": { "title": "read-plan diffs the plan against reality", "summary": "Have the read-plan skill compare the authored roadmap to captured events and stored progress and report where they diverge.", "next_step": "Enumerate the milestone github_refs and compare their event-derived progress to the authored status." }
+      "issue_summary": { "title": "read-plan diffs the plan against reality", "summary": "Have the read-plan skill compare the authored roadmap to captured events and stored progress and report where they diverge.", "next_step": "Enumerate the sprint github_refs and compare their event-derived progress to the authored status." }
     },
     {
       "semantic_key": "gh:issue:186:assigned:AndresL230:2026-07-03T10:30:00Z", "event_type": "issue", "ref_number": 186, "subject_login": "AndresL230",

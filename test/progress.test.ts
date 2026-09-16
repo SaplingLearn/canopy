@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { run, all, first, nowIso } from "../src/db";
-import type { MilestoneRow, MilestoneProgressRow } from "@shared/rows";
+import type { SprintProgressRow } from "@shared/rows";
 import type { Env } from "../src/env";
 import { eventsFromDelivery, handleGithubWebhook } from "../src/webhook";
 import { ingestEvent } from "../src/consumer";
@@ -28,10 +28,10 @@ async function sign(secret: string, body: string): Promise<string> {
   return "sha256=" + [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function seedMilestone(githubRef: string | null, title = "M"): Promise<number> {
+async function seedSprint(githubRef: string | null, title = "M"): Promise<number> {
   const res = await run(
     env.DB,
-    `INSERT INTO milestones (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
     title,
     "2026-08-01",
     "in_progress",
@@ -72,40 +72,40 @@ function issuePayload(number: number, state: "open" | "closed", action: string) 
 
 describe("upsertProgress + getProgress", () => {
   it("inserts then overwrites absolutely — the row reads the latest write, source included", async () => {
-    const id = await seedMilestone(null);
+    const id = await seedSprint(null);
     await upsertProgress(env.DB, id, 3, 10, "event");
     let map = await getProgress(env.DB);
-    expect(map.get(id)).toMatchObject({ milestone_id: id, closed: 3, total: 10, source: "event" });
+    expect(map.get(id)).toMatchObject({ sprint_id: id, closed: 3, total: 10, source: "event" });
 
     await upsertProgress(env.DB, id, 5, 10, "recompute");
     map = await getProgress(env.DB);
-    expect(map.get(id)).toMatchObject({ milestone_id: id, closed: 5, total: 10, source: "recompute" });
+    expect(map.get(id)).toMatchObject({ sprint_id: id, closed: 5, total: 10, source: "recompute" });
 
-    const rows = await all<MilestoneProgressRow>(env.DB, `SELECT * FROM milestone_progress WHERE milestone_id = ?`, id);
+    const rows = await all<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, id);
     expect(rows).toHaveLength(1); // absolute overwrite, not a second row
   });
 });
 
-describe("applyEventProgress — milestone-number ref", () => {
-  it("issue-closed fixture (milestone #3) upserts the matching milestone's cache row", async () => {
+describe("applyEventProgress — GitHub-milestone-number ref", () => {
+  it("issue-closed fixture (GitHub milestone #3) upserts the matching sprint's cache row", async () => {
     // Verified fixture values (test/fixtures/gh-issue-closed.json): milestone
     // { number: 3, open_issues: 1, closed_issues: 5 } → closed:5, total:6.
-    const id = await seedMilestone("3");
+    const id = await seedSprint("3");
     await applyEventProgress(env.DB, issueClosed);
-    const row = await first<MilestoneProgressRow>(env.DB, `SELECT * FROM milestone_progress WHERE milestone_id = ?`, id);
+    const row = await first<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, id);
     expect(row).toMatchObject({ closed: 5, total: 6, source: "event" });
   });
 
-  it("no-ops when no milestone has a matching github_ref", async () => {
-    await seedMilestone("99");
+  it("no-ops when no sprint has a matching github_ref", async () => {
+    await seedSprint("99");
     await applyEventProgress(env.DB, issueClosed);
-    expect(await all(env.DB, `SELECT * FROM milestone_progress`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM sprint_progress`)).toHaveLength(0);
   });
 });
 
 describe("applyEventProgress — array ref", () => {
   it("recounts from the latest captured snapshot of each issue in the array", async () => {
-    const id = await seedMilestone("[7,8]");
+    const id = await seedSprint("[7,8]");
 
     const [event7] = eventsFromDelivery("issues", issuePayload(7, "closed", "closed"));
     const [event8] = eventsFromDelivery("issues", issuePayload(8, "open", "opened"));
@@ -114,15 +114,15 @@ describe("applyEventProgress — array ref", () => {
 
     await applyEventProgress(env.DB, issuePayload(7, "closed", "closed"));
 
-    const row = await first<MilestoneProgressRow>(env.DB, `SELECT * FROM milestone_progress WHERE milestone_id = ?`, id);
+    const row = await first<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, id);
     expect(row).toMatchObject({ closed: 1, total: 2, source: "event" });
   });
 });
 
 describe("recomputeAllProgress", () => {
-  it("writes source:'recompute' for every milestone with a github_ref; a failing fetch leaves the prior row untouched", async () => {
-    const idOk = await seedMilestone("5", "OK");
-    const idBad = await seedMilestone("[1]", "Bad");
+  it("writes source:'recompute' for every sprint with a github_ref; a failing fetch leaves the prior row untouched", async () => {
+    const idOk = await seedSprint("5", "OK");
+    const idBad = await seedSprint("[1]", "Bad");
     await upsertProgress(env.DB, idBad, 1, 4, "event"); // prior cache row that must survive a 401
 
     const fetchImpl = ((url: string | URL | Request) => {
@@ -138,27 +138,27 @@ describe("recomputeAllProgress", () => {
     const result = await recomputeAllProgress(env.DB, { token: "t", repo: "o/r", fetchImpl });
     expect(result.updated).toBe(1);
 
-    const rowOk = await first<MilestoneProgressRow>(env.DB, `SELECT * FROM milestone_progress WHERE milestone_id = ?`, idOk);
+    const rowOk = await first<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, idOk);
     expect(rowOk).toMatchObject({ closed: 8, total: 10, source: "recompute" });
 
-    // The 401'd milestone's prior cache row is untouched — never wiped.
-    const rowBad = await first<MilestoneProgressRow>(env.DB, `SELECT * FROM milestone_progress WHERE milestone_id = ?`, idBad);
+    // The 401'd sprint's prior cache row is untouched — never wiped.
+    const rowBad = await first<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, idBad);
     expect(rowBad).toMatchObject({ closed: 1, total: 4, source: "event" });
   });
 
-  it("never writes for milestones with no github_ref", async () => {
-    await seedMilestone(null);
+  it("never writes for sprints with no github_ref", async () => {
+    await seedSprint(null);
     const result = await recomputeAllProgress(env.DB, { token: "t", repo: "o/r", fetchImpl: stubFetch({}) });
     expect(result.updated).toBe(0);
-    expect(await all(env.DB, `SELECT * FROM milestone_progress`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM sprint_progress`)).toHaveLength(0);
   });
 });
 
 describe("webhook end-to-end — the progress seam", () => {
   const SECRET = "test-webhook-secret"; // matches vitest.config.ts binding
 
-  it("issue-closed fixture through handleGithubWebhook writes the milestone_progress cache row", async () => {
-    const id = await seedMilestone("3");
+  it("issue-closed fixture through handleGithubWebhook writes the sprint_progress cache row", async () => {
+    const id = await seedSprint("3");
     const body = JSON.stringify(issueClosed);
     const sig = await sign(SECRET, body);
     const res = await handleGithubWebhook(
@@ -172,7 +172,7 @@ describe("webhook end-to-end — the progress seam", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0 });
 
-    const row = await first<MilestoneProgressRow>(env.DB, `SELECT * FROM milestone_progress WHERE milestone_id = ?`, id);
+    const row = await first<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, id);
     expect(row).toMatchObject({ closed: 5, total: 6, source: "event" });
   });
 });
@@ -182,19 +182,19 @@ describe("default export scheduled() — the recompute backstop wiring", () => {
   const controller = {} as ScheduledController;
 
   it("no-ops without GITHUB_SERVICE_TOKEN or GITHUB_REPO (never throws)", async () => {
-    await seedMilestone("5"); // would be a recompute candidate if the guard didn't short-circuit
+    await seedSprint("5"); // would be a recompute candidate if the guard didn't short-circuit
     const noToken = { ...env, GITHUB_SERVICE_TOKEN: undefined, GITHUB_REPO: "o/r" } as unknown as Env;
     await worker.scheduled(controller, noToken, ctx);
-    expect(await all(env.DB, `SELECT * FROM milestone_progress`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM sprint_progress`)).toHaveLength(0);
 
     const noRepo = { ...env, GITHUB_SERVICE_TOKEN: "svc-token", GITHUB_REPO: undefined } as unknown as Env;
     await worker.scheduled(controller, noRepo, ctx);
-    expect(await all(env.DB, `SELECT * FROM milestone_progress`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM sprint_progress`)).toHaveLength(0);
   });
 
   it("with a token and repo set, delegates to recomputeAllProgress (no candidates → no network, no rows)", async () => {
     const withToken = { ...env, GITHUB_SERVICE_TOKEN: "svc-token", GITHUB_REPO: "o/r" } as unknown as Env;
-    await worker.scheduled(controller, withToken, ctx); // no github_ref milestones seeded → resolves without a real fetch
-    expect(await all(env.DB, `SELECT * FROM milestone_progress`)).toHaveLength(0);
+    await worker.scheduled(controller, withToken, ctx); // no github_ref sprints seeded → resolves without a real fetch
+    expect(await all(env.DB, `SELECT * FROM sprint_progress`)).toHaveLength(0);
   });
 });

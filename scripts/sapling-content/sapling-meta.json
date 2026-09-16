@@ -1,5 +1,5 @@
 {
-  "milestones": [
+  "sprints": [
     {
       "title": "P0 data-exposure fixes + doc pipeline refactor + semesters",
       "description": "Ship both P0 cross-user data-exposure bugs (#123/#124), refactor the document pipeline into discrete steps, and deliver semester-scoped grades and classes via the DB modular redesign.",

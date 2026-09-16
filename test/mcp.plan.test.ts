@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildCanopyMcpServer } from "../src/mcp";
 import { all, first } from "../src/db";
-import type { MilestoneRow, PlanRow } from "@shared/rows";
+import type { SprintRow, PlanRow } from "@shared/rows";
 
 // ADMIN_LOGINS binds "admin-user" in vitest.config.ts — this login clears isAdmin().
 const AUTHOR = "admin-user";
@@ -40,29 +40,43 @@ describe("registered MCP update_plan tool", () => {
   it("writes as the bearer principal — author stamped from the principal, never the payload", async () => {
     const res = await callTool(AUTHOR, "update_plan", {
       narrative: "shipped via MCP",
-      milestones: [{ title: "MCP Milestone", target_date: "2026-08-01", status: "upcoming" }],
+      sprints: [{ label: "MCP Sprint", summary: "via the tool", due: "2026-08-01", status: "upcoming", urgency: "high", domain: "tickets" }],
     });
     expect(res.isError).toBeFalsy();
     const body = JSON.parse(res.text);
     expect(body.version).toBe(1);
-    expect(body.milestones).toHaveLength(1);
+    expect(body.sprints).toHaveLength(1);
 
     const plan = await first<PlanRow>(env.DB, `SELECT * FROM plan WHERE id = 1`);
     expect(plan?.updated_by).toBe(AUTHOR);
     expect(plan?.narrative).toBe("shipped via MCP");
 
-    const milestones = await all<MilestoneRow>(env.DB, `SELECT * FROM milestones`);
-    expect(milestones).toHaveLength(1);
-    expect(milestones[0].created_by).toBe(AUTHOR);
-    expect(milestones[0].title).toBe("MCP Milestone");
+    const sprints = await all<SprintRow>(env.DB, `SELECT * FROM sprints`);
+    expect(sprints).toHaveLength(1);
+    expect(sprints[0].created_by).toBe(AUTHOR);
+    // The tool takes the DTO vocabulary; the row keeps the column names.
+    expect(sprints[0].title).toBe("MCP Sprint");
+    expect(sprints[0].target_date).toBe("2026-08-01");
+    expect(sprints[0].summary).toBe("via the tool");
+    expect(sprints[0].urgency).toBe("high");
+    expect(sprints[0].domain).toBe("tickets");
   });
 
-  it("milestones default to [] when omitted", async () => {
+  it("sprints default to [] when omitted", async () => {
     const res = await callTool(AUTHOR, "update_plan", { narrative: "narrative only" });
     expect(res.isError).toBeFalsy();
     const body = JSON.parse(res.text);
     expect(body.version).toBe(1);
-    expect(body.milestones).toEqual([]);
+    expect(body.sprints).toEqual([]);
+  });
+
+  it("rejects the pre-rename vocabulary: `title`/`target_date` on a sprint is a validation error", async () => {
+    const res = await callTool(AUTHOR, "update_plan", {
+      narrative: "n",
+      sprints: [{ title: "Old words", target_date: "2026-08-01", status: "upcoming" }],
+    });
+    expect(res.isError).toBeTruthy();
+    expect(await all<SprintRow>(env.DB, `SELECT * FROM sprints`)).toHaveLength(0);
   });
 });
 
