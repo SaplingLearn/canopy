@@ -6,8 +6,9 @@ import type { DB } from "../db";
 import { myWorkKind } from "./renderers/my-work";
 import { reviewQueueKind } from "./renderers/review-queue";
 import { roadmapPlanKind } from "./renderers/roadmap-plan";
+import { ticketQueueKind } from "./renderers/ticket-queue";
 
-export const REGISTRY: readonly NotificationKind<DB>[] = [myWorkKind, reviewQueueKind, roadmapPlanKind];
+export const REGISTRY: readonly NotificationKind<DB>[] = [myWorkKind, reviewQueueKind, roadmapPlanKind, ticketQueueKind];
 
 export function getKind(id: string): NotificationKind<DB> | undefined {
   return REGISTRY.find((k) => k.id === id);

@@ -46,7 +46,7 @@ describe("GET/PUT /api/notifications/prefs", () => {
     const v = (await res.json()) as PrefsView;
     expect(v.email).toBe("me@example.com");
     expect(v.unsubscribed).toBe(false);
-    expect(v.kinds.map((k) => k.id)).toEqual(["my_work", "roadmap_plan"]);
+    expect(v.kinds.map((k) => k.id)).toEqual(["my_work", "roadmap_plan", "ticketq"]);
     expect(v.kinds[0]).toMatchObject({ cadence: "weekly", orgDefault: "daily", inherited: false, allowedCadences: ["daily", "weekly", "off"] });
     expect(v.kinds[1]).toMatchObject({ cadence: "daily", orgDefault: "daily", inherited: true });
   });
@@ -134,7 +134,7 @@ describe("admin routes: policy, settings, outbox, user email", () => {
     let res = await app.request("/api/notifications/policy", { headers: { cookie } }, env);
     expect(res.status).toBe(200);
     const view = (await res.json()) as { kinds: { id: string; enabled: boolean; default_cadence: string; allowedCadences: string[]; updated_by: string }[] };
-    expect(view.kinds.map((k) => k.id)).toEqual(["my_work", "review_queue", "roadmap_plan"]);
+    expect(view.kinds.map((k) => k.id)).toEqual(["my_work", "review_queue", "roadmap_plan", "ticketq"]);
     expect(view.kinds[2]).toMatchObject({ enabled: true, default_cadence: "weekly" });
 
     res = await app.request("/api/notifications/policy", json("PUT", { kind: "roadmap_plan", enabled: false, default_cadence: "daily" }, cookie), env);

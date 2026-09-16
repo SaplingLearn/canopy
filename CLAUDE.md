@@ -263,7 +263,9 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 - **Registry in code, not D1** (`registry.ts` + `shared/notifications.ts`): one `NotificationKind` per digest
   section — `my_work` (event spine: merged PRs in the window + open assigned issues, summarized exactly as My
   Work does), `review_queue` (open Proposals + draft Decisions), `roadmap_plan` (diffs `plan_versions` in the
-  window against the last pre-window version; progress rows never surface). A renderer is a **pure read**
+  window against the last pre-window version; progress rows never surface), `ticketq` (the ticket queue, not
+  window-scoped: `submitted` tickets with no assignees org-wide + the recipient's own open assigned tickets via
+  `listAssignedTickets`, the same read My Work uses). A renderer is a **pure read**
   (`render(db, login, window)` → `Section | null`; null = nothing to say, dropped). Adding a kind = one entry +
   one renderer; `notification_policy` is seeded from the registry per isolate (`policy.ts`, INSERT OR IGNORE,
   never overwrites).

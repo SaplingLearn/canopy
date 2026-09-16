@@ -42,11 +42,18 @@ describe("shared notification schemas", () => {
 });
 
 describe("registry", () => {
-  it("has the three initial kinds with the spec's defaults and allowed cadences", () => {
-    expect(REGISTRY.map((k) => k.id)).toEqual(["my_work", "review_queue", "roadmap_plan"]);
+  it("has the four kinds with the spec's defaults and allowed cadences", () => {
+    expect(REGISTRY.map((k) => k.id)).toEqual(["my_work", "review_queue", "roadmap_plan", "ticketq"]);
     expect(getKind("my_work")).toMatchObject({ defaultCadence: "daily", allowedCadences: ["daily", "weekly", "off"] });
     expect(getKind("review_queue")).toMatchObject({ defaultCadence: "daily", allowedCadences: ["daily", "off"] });
     expect(getKind("roadmap_plan")).toMatchObject({ defaultCadence: "weekly", allowedCadences: ["daily", "weekly", "off"] });
+    // Phase 6 (the tickets build): the queue digest, org-wide + your own plate.
+    expect(getKind("ticketq")).toMatchObject({
+      label: "Ticket queue",
+      description: "New and unassigned tickets across the org.",
+      defaultCadence: "daily",
+      allowedCadences: ["daily", "weekly", "off"],
+    });
     expect(getKind("nope")).toBeUndefined();
   });
 
