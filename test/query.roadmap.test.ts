@@ -3,8 +3,11 @@ import { env } from "cloudflare:test";
 import { query } from "../src/tools/reads";
 import { write_plan } from "../src/tools/plan";
 import { upsertProgress } from "../src/tools/progress";
+import { create_ticket, transition_ticket } from "../src/tools/tickets";
+import { TicketCreate } from "@shared/tickets";
 import { all } from "../src/db";
 import { RESET_STATEMENTS } from "../scripts/seed/reset.mjs";
+import { seedPerson } from "./helpers/persons";
 
 const AUTHOR = "tester";
 
@@ -79,6 +82,56 @@ describe("query() learns the roadmap (plan + sprints via FTS)", () => {
     const r = await query(env.DB, { q: "aardvark", types: ["sprint"], include_staged: true });
     const hit = r.primary.find((p) => p.id === `sprint:${sid}`)!;
     expect(hit.body).toContain("Progress: 2/5 closed");
+  });
+
+  // The assembled sprint body must speak the SAME progress rule the Roadmap and
+  // GET /sprints do (`sprintProgress`): tickets + cache. A cache-only line would
+  // tell an agent a sprint with finished tickets has no progress at all.
+  it("the progress line is TICKET-INCLUSIVE: one done ticket and NO cache reads 1/1", async () => {
+    await seedPerson("tester");
+    const { sprints } = await write_plan(
+      env.DB,
+      { narrative: "n", sprints: [{ label: "Wombat Sprint", description: "wombat subsystem", due: "2026-10-05", status: "in_progress" }] },
+      AUTHOR
+    );
+    const sid = sprints[0].id;
+    const t = await create_ticket(env.DB, TicketCreate.parse({ title: "the wombat work", sprint_id: sid }), "tester");
+    await transition_ticket(env.DB, t, "in_progress", "tester");
+    await transition_ticket(env.DB, t, "done", "tester");
+
+    // No sprint_progress row exists for this sprint at all.
+    expect(await all(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, sid)).toHaveLength(0);
+
+    const r = await query(env.DB, { q: "wombat", types: ["sprint"], include_staged: true });
+    const hit = r.primary.find((p) => p.id === `sprint:${sid}`)!;
+    expect(hit.body).toContain("Progress: 1/1 closed");
+  });
+
+  it("the two halves ADD in the body line, and a sprint with neither carries no progress line", async () => {
+    await seedPerson("tester");
+    const { sprints } = await write_plan(
+      env.DB,
+      {
+        narrative: "n",
+        sprints: [
+          { label: "Numbat Sprint", description: "numbat subsystem", due: "2026-10-06", status: "in_progress" },
+          { label: "Bilby Sprint", description: "bilby subsystem", due: "2026-10-07", status: "upcoming" },
+        ],
+      },
+      AUTHOR
+    );
+    const [numbat, bilby] = sprints;
+    await upsertProgress(env.DB, numbat.id, 1, 2, "event"); // the GitHub half
+    const done = await create_ticket(env.DB, TicketCreate.parse({ title: "numbat one", sprint_id: numbat.id }), "tester");
+    await create_ticket(env.DB, TicketCreate.parse({ title: "numbat two", sprint_id: numbat.id }), "tester");
+    await transition_ticket(env.DB, done, "in_progress", "tester");
+    await transition_ticket(env.DB, done, "done", "tester");
+
+    const r = await query(env.DB, { q: "numbat bilby", types: ["sprint"], include_staged: true });
+    // 1 done ticket + 1 closed issue / 2 tickets + 2 issues — the cache alone reads 1/2.
+    expect(r.primary.find((p) => p.id === `sprint:${numbat.id}`)!.body).toContain("Progress: 2/4 closed");
+    // No tickets, no cache → nothing to say; the line is omitted entirely.
+    expect(r.primary.find((p) => p.id === `sprint:${bilby.id}`)!.body).not.toContain("Progress:");
   });
 
   it("section/space filter excludes sprint (docsOnly)", async () => {

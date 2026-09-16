@@ -3,6 +3,9 @@ import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority }
 import type { TicketListItem, TicketDetail, TicketRef, TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
 import { type DB, first, all } from "../db";
 import { getProgress } from "./progress";
+// The sprint read model lives next to the sprint writers; `query()` borrows its
+// progress RULE so the assembled sprint body and the Roadmap can never disagree.
+import { sprintProgress, ticketCountsBySprint } from "./sprints";
 
 export async function get_doc(
   db: DB,
@@ -389,14 +392,30 @@ function assembleAdrBody(a: AdrRow): string {
   return parts.join("\n\n");
 }
 
-// The hydrated sprint body: description + summary + phase + (when cached) a
-// progress line. The progress cache is read once per query() call and passed in.
-function assembleSprintBody(sp: SprintRow, progress: SprintProgressRow | undefined): string {
+// The hydrated sprint body: description + summary + phase + a progress line.
+//
+// The progress line obeys the ONE rule (`sprintProgress` in ./sprints.ts): the
+// sprint's TICKETS plus its cached, event-derived GitHub issue counts. Both
+// inputs are read once per query() call — the cache via getProgress, the ticket
+// counts via one grouped query over the hydrated sprint ids — and passed in, so
+// this stays a pure assembly step with no per-result round-trip. A sprint with
+// neither (total 0) carries no line at all: there is nothing to report, and a
+// bare "0/0" would read as a claim.
+function assembleSprintBody(
+  sp: SprintRow,
+  cache: SprintProgressRow | undefined,
+  tickets: { total: number; closed: number } | undefined
+): string {
   const parts: string[] = [];
   if (sp.description) parts.push(sp.description);
   if (sp.summary) parts.push(sp.summary);
   if (sp.phase) parts.push(sp.phase);
-  if (progress) parts.push(`Progress: ${progress.closed}/${progress.total} closed`);
+  const progress = sprintProgress({
+    ticketsTotal: tickets?.total ?? 0,
+    ticketsClosed: tickets?.closed ?? 0,
+    cache: cache ? { closed: cache.closed, total: cache.total } : null,
+  });
+  if (progress.total > 0) parts.push(`Progress: ${progress.closed}/${progress.total} closed`);
   return parts.join("\n");
 }
 
@@ -590,6 +609,9 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
   const progressMap = sprintIds.length ? await getProgress(db) : new Map<number, SprintProgressRow>();
+  // The ticket half of the progress line, for the hydrated sprints only — one
+  // grouped query, sharing `sprintProgress`'s definition of "closed".
+  const sprintTicketCounts = await ticketCountsBySprint(db, sprintIds);
   const planRow = needPlan ? await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`) : null;
 
   // Browse mode carries no per-row score, so order is by the merged recency from
@@ -679,7 +701,7 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
       } else {
         const sp = sprintMap.get(c.key);
         if (!sp) continue;
-        const body = assembleSprintBody(sp, progressMap.get(sp.id));
+        const body = assembleSprintBody(sp, progressMap.get(sp.id), sprintTicketCounts.get(sp.id));
         a = {
           type: "sprint", id: `sprint:${sp.id}`, title: sp.title, section: null, space: null,
           body, authority: "live", current_version: null, pending_version: null,

@@ -81,15 +81,26 @@ export function sprintProgress({ ticketsTotal, ticketsClosed, cache }: SprintPro
   return { closed, total, pct: total > 0 ? Math.round((100 * closed) / total) : 0 };
 }
 
-/** Per-sprint ticket counts, in ONE grouped query (never per sprint). */
-async function ticketCountsBySprint(db: DB): Promise<Map<number, { total: number; closed: number }>> {
+/**
+ * Per-sprint ticket counts, in ONE grouped query (never per sprint). Pass `ids`
+ * to scope it to a known set — that is how `query()` in reads.ts costs the
+ * ticket half of the progress line for just the sprints it hydrated, without
+ * re-declaring which statuses count as closed.
+ */
+export async function ticketCountsBySprint(
+  db: DB,
+  ids?: number[]
+): Promise<Map<number, { total: number; closed: number }>> {
+  if (ids && ids.length === 0) return new Map();
+  const scope = ids ? ` AND sprint_id IN (${ph(ids.length)})` : "";
   const rows = await all<{ sprint_id: number; total: number; closed: number }>(
     db,
     `SELECT sprint_id,
             COUNT(*) AS total,
             SUM(CASE WHEN status IN (${ph(CLOSED_TICKET_STATUSES.length)}) THEN 1 ELSE 0 END) AS closed
-       FROM tickets WHERE sprint_id IS NOT NULL GROUP BY sprint_id`,
-    ...CLOSED_TICKET_STATUSES
+       FROM tickets WHERE sprint_id IS NOT NULL${scope} GROUP BY sprint_id`,
+    ...CLOSED_TICKET_STATUSES,
+    ...(ids ?? [])
   );
   return new Map(rows.map((r) => [r.sprint_id, { total: r.total, closed: r.closed }]));
 }

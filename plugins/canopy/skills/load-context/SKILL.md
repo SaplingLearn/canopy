@@ -1,7 +1,7 @@
 ---
 name: load-context
 description: Orient against Canopy (the team's working memory) BEFORE working an existing area. Fire when you start work on a named/existing subsystem, pick up an issue that references an area, or when the person says things like "the X system", "how we do Y", "our approach to Z", "where is the … code/doc" — and ALWAYS before proposing a doc change. Do NOT fire on trivial one-off questions, on a brand-new area with no prior context, or just to chat. Read-only — this skill never writes.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work, mcp__canopy__list_tickets, mcp__canopy__get_sprint
 ---
 
 # Load Context ← Canopy
@@ -35,8 +35,8 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
 ## Procedure
 
 1. **Query focused.** Call `mcp__canopy__query` with a tight `q` (the subsystem / concept), narrowing
-   with `types` (`doc` / `decision` / `feed`) and `section` when you can. Keep it specific — a focused
-   query returns better-assembled bodies than a broad one.
+   with `types` (`doc` / `decision` / `feed` / `sprint` / `ticket`) and `section` when you can. Keep it
+   specific — a focused query returns better-assembled bodies than a broad one.
 2. **Read the `primary` bodies.** These are full authoritative bodies, not snippets. Skim `pointers`
    for anything worth opening; fetch the exact doc with `mcp__canopy__get_doc <slug>` when you need
    all versions.
@@ -52,6 +52,11 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
 5. **At session start, also call `mcp__canopy__get_my_work`** (no args) so orientation includes the
    person's own open work — recent shipped activity and their to-do — alongside the area context from
    steps 1–3. This is still read-only: report it, don't act on it unprompted.
+6. **When the area has an open queue or a live sprint,** add `mcp__canopy__list_tickets` (e.g.
+   `{ assignee: "me" }` for what's on the caller's plate, or `{ category: "bug" }` for what the org has
+   reported about the area) and `mcp__canopy__get_sprint <id>` (the sprint's tickets, resources and
+   ticket-inclusive progress — the id comes from a `sprint`-typed `query` hit or `get_roadmap`). Both
+   are read-only: **tickets and sprints have no MCP write path at all**, so this can only ever report.
 
 ## Hard rules
 

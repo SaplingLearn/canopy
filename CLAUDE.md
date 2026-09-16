@@ -133,7 +133,15 @@ standalone `roadmap_fts` over the plan narrative + sprints (refs `plan` / `sprin
 0025) so `query` surfaces the roadmap, and `0024_tickets.sql`'s `tickets_fts` backs the `ticket` type
 (ids `ticket:<id>`, always authority `live` — a ticket is an authored human write with no staged state).
 `get_doc` is the exact-slug fetch (all versions + live body); `list_tickets` / `get_ticket` /
-`ticket_badge` are the queue's read projections (no N+1 — grouped queries keyed by ticket id).
+`ticket_badge` are the queue's read projections (no N+1 — grouped queries keyed by ticket id). The
+assembled `sprint` body's `Progress: closed/total` line uses the SAME `sprintProgress` rule as the
+Roadmap (tickets + cache), never the cache alone.
+
+**MCP gets read tools only for tickets and sprints** — `src/mcp.ts` registers `list_tickets`
+(`seg` / `assignee` where `me` = the bearer principal / `category`), `get_ticket`, `list_sprints` and
+`get_sprint` for EVERY principal (not admin-gated). There is no `create_ticket` / `transition_ticket` /
+`create_sprint` / `set_sprint_active` MCP tool and never will be: every ticket and sprint write is a
+human authored write over a session-cookie route.
 
 - **MCP `query`** defaults `include_staged: true` — agents see staged/unpromoted context (authority-flagged).
 - **`GET /search`** (human UI) defaults `include_staged: false` — shows only settled (`live`) content.

@@ -4,7 +4,8 @@ import { z } from "zod";
 import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { isAdmin } from "./auth/principal";
-import { get_doc, list_docs, get_feed, query } from "./tools/reads";
+import { get_doc, list_docs, get_feed, query, list_tickets, get_ticket, list_sprints, get_sprint } from "./tools/reads";
+import { TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
 import { getMyWork, list_events } from "./tools/mywork";
 import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
@@ -119,6 +120,58 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "Read the roadmap plan: admin narrative + sprints in target-date order with their progress (no live GitHub). Each sprint carries label, summary, phase, dates, due, status, active, urgency, lead and domain.",
     {},
     async () => runTool(() => get_plan(env.DB))
+  );
+
+  // ── Tickets + sprints: READ ONLY, for every principal ──────────────────────
+  //
+  // These four are the whole ticket/sprint MCP surface. There is deliberately NO
+  // write counterpart: every ticket and sprint write is a human authored write
+  // over a session-cookie route in the web app (§A Invariants — "MCP gets read
+  // tools only"), so an agent can see what has been asked for and what is in a
+  // sprint but can never file, assign, resolve or re-home any of it. They are
+  // NOT admin-gated — every bearer principal gets all four.
+  server.tool(
+    "list_tickets",
+    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into — never GitHub issues (ADR-007); a ticket may LINK to GitHub or Figma work, it never is that work. Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Ticket WRITES are human-only in the web UI — there is no MCP write path, and done/declined are set by a person, never inferred.",
+    {
+      seg: TicketSeg.optional(),
+      assignee: TicketAssigneeFilter.optional(),
+      category: TicketCategory.optional(),
+    },
+    // `me` is bound to the authenticated bearer principal, never a client
+    // argument — the same rule the cookie route applies to its session.
+    async (args) => runTool(() => list_tickets(env.DB, { ...args, me: principal.handle })),
+  );
+
+  server.tool(
+    "get_ticket",
+    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, and its sprint. A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Ticket WRITES are human-only in the web UI — there is no MCP write path.",
+    { id: z.number() },
+    async ({ id }) =>
+      runTool(async () => {
+        const ticket = await get_ticket(env.DB, id);
+        if (!ticket) throw new Error(`no such ticket: ${id}`);
+        return ticket;
+      }),
+  );
+
+  server.tool(
+    "list_sprints",
+    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its progress is ticket-inclusive (closed/total/pct = the sprint's tickets PLUS its cached GitHub issue counts; no live GitHub at read time). Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint WRITES are human-only in the web UI — there is no MCP write path (the admin plan write, update_plan, is the one exception and is admin-gated).",
+    {},
+    async () => runTool(() => list_sprints(env.DB)),
+  );
+
+  server.tool(
+    "get_sprint",
+    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the ticket-inclusive progress. Sprint WRITES are human-only in the web UI — there is no MCP write path; a sprint is completed by an admin, never inferred from tickets resolving.",
+    { id: z.number() },
+    async ({ id }) =>
+      runTool(async () => {
+        const sprint = await get_sprint(env.DB, id);
+        if (!sprint) throw new Error(`no such sprint: ${id}`);
+        return sprint;
+      }),
   );
 
   server.tool(
