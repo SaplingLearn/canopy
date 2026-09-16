@@ -102,8 +102,13 @@ describe("scheduled() dispatch (local mode)", () => {
 });
 
 describe("retryFailed — failed rows only", () => {
+  // retryFailed only considers rows younger than RETRY_MAX_AGE_HOURS (48h), measured
+  // against wall-clock `now`. An absolute created_at silently ages out of that bound
+  // and every assertion here starts passing vacuously, so stamp it relative to now.
+  const recentIso = () => new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
   async function failedRow(key = "AndresL230:daily:2026-09-11"): Promise<void> {
-    await run(env.DB, `INSERT INTO notification_outbox (idempotency_key, user_id, cadence, window_id, kinds, status, error, created_at) VALUES (?, 'AndresL230', 'daily', '2026-09-11', '["review_queue"]', 'failed', 'send: smtp down', ?)`, key, FRI_8_ET.toISOString());
+    await run(env.DB, `INSERT INTO notification_outbox (idempotency_key, user_id, cadence, window_id, kinds, status, error, created_at) VALUES (?, 'AndresL230', 'daily', '2026-09-11', '["review_queue"]', 'failed', 'send: smtp down', ?)`, key, recentIso());
   }
 
   it("re-renders and sends a failed row, marking it sent", async () => {
