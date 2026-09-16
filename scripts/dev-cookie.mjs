@@ -2,7 +2,7 @@
 // exercised over `wrangler dev` without the real GitHub OAuth flow. Reproduces
 // src/auth/crypto.ts:hmacSeal exactly: value.base64url(HMAC-SHA256(value, COOKIE_SECRET)).
 //
-//   usage: node scripts/dev-cookie.mjs [sessionId]   (default: devsession, matching seed-dev.sql)
+//   usage: node scripts/dev-cookie.mjs [sessionId]   (default: devsession — run `npm run seed` first)
 //   prints: session=<id>.<sig>
 import { readFileSync } from "node:fs";
 

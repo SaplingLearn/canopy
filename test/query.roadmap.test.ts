@@ -4,13 +4,14 @@ import { query } from "../src/tools/reads";
 import { write_plan } from "../src/tools/plan";
 import { upsertProgress } from "../src/tools/progress";
 import { all } from "../src/db";
+import { RESET_STATEMENTS } from "../scripts/seed/reset.mjs";
 
 const AUTHOR = "tester";
 
-// The exact statement test/apply-migrations.ts runs beforeEach (roadmap-relevant:
-// it UPDATE-resets the plan singleton and DELETEs milestones).
-const HARNESS_TRUNCATION =
-  "DELETE FROM pr_summaries; DELETE FROM events; DELETE FROM milestone_progress; DELETE FROM plan_versions; UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL; DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs; DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage; DELETE FROM sessions; DELETE FROM mcp_tokens; DELETE FROM users;";
+// The EXACT statement test/apply-migrations.ts runs beforeEach (roadmap-relevant:
+// it UPDATE-resets the plan singleton and DELETEs milestones) — imported, not
+// hand-duplicated, so it can never drift from the real reset.
+const HARNESS_TRUNCATION = RESET_STATEMENTS.join("; ") + ";";
 
 async function roadmapFtsCount(): Promise<number> {
   const rows = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM roadmap_fts`);

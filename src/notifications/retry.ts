@@ -30,7 +30,7 @@ export async function retryFailed(db: DB, opts: DeliverOptions): Promise<RetryRe
   for (const row of rows) {
     // Eligibility is re-checked: an unsubscribe or a cleared address since the
     // original run is a hard gate here too.
-    const who = await first<Recipient>(db, `SELECT github_login, email, email_unsubscribed FROM users WHERE github_login = ?`, row.user_id);
+    const who = await first<Recipient>(db, `SELECT handle AS github_login, email, email_unsubscribed FROM persons WHERE handle = ?`, row.user_id);
     if (!who || !who.email || who.email_unsubscribed !== 0) continue;
     report.retried++;
     const window = computeWindow(row.cadence, new Date(row.created_at), settings.timezone);

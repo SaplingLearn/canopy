@@ -1,22 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
-import { createSession } from "../src/auth/session";
-import { hmacSeal } from "../src/auth/crypto";
 import { all, first } from "../src/db";
 import type { DocRow, DocVersionRow, FeedRow, MilestoneProposalRow } from "@shared/rows";
 import type { IngestResult } from "../src/consumer";
-
-// Identical helper to triage-writeback.test.ts and query.mcp-route.test.ts.
-async function authedCookie(login: string): Promise<string> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO users (github_login, name, created_at) VALUES (?, ?, ?)`
-  )
-    .bind(login, login, "2026-01-01T00:00:00Z")
-    .run();
-  const { id } = await createSession(env.DB, login);
-  return `session=${await hmacSeal(id, "test-cookie-secret")}`;
-}
+import { cookieFor as authedCookie } from "./helpers/persons";
 
 // A valid IngestPayload: one doc proposal + one feed entry, parametrized by
 // session.id so we can replay it and test the ledger-guard.

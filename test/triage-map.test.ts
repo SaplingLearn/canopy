@@ -5,9 +5,9 @@
 import { describe, it, expect } from "vitest";
 import {
   proposalReviewItem, adrReviewItem, reviewItemsFromReads, decodeReviewId, diffEntries,
-  unplacedFromRow, identityFromTask, peopleFromLogins, ASSIGN_OPTIONS,
+  unplacedFromRow, identityFromTask, peopleFromPersons, ASSIGN_OPTIONS,
 } from "../web/src/triage-map";
-import type { StagedProposal, AdrRow, IdentityTask } from "../web/src/api";
+import type { StagedProposal, AdrRow, IdentityTask, PersonSummary } from "../web/src/api";
 import type { NeedsTriageRow } from "@shared/rows";
 
 function makeProposal(overrides: Partial<StagedProposal> = {}): StagedProposal {
@@ -221,10 +221,9 @@ describe("ASSIGN_OPTIONS", () => {
   });
 });
 
-describe("peopleFromLogins", () => {
-  it("dedupes, drops empties, sorts, and derives initials", () => {
-    const people = peopleFromLogins(["maya-k", "jonas-w", "maya-k", ""]);
-    expect(people.map((p) => p.id)).toEqual(["jonas-w", "maya-k"]);
-    expect(people[1]).toEqual({ id: "maya-k", name: "maya-k", initials: "MA" });
+describe("peopleFromPersons", () => {
+  it("maps a directory row to a picker entry keyed by handle", () => {
+    const directory: PersonSummary[] = [{ handle: "maya-k", name: "Maya Kim", color: "sky", avatar_url: null }];
+    expect(peopleFromPersons(directory)).toEqual([{ id: "maya-k", name: "Maya Kim", initials: "MK", color: "sky", avatar_url: null }]);
   });
 });

@@ -13,6 +13,7 @@ import { computeWindow } from "../src/notifications/window";
 import { runDigest } from "../src/notifications/run";
 import { localDelivery } from "../src/notifications/delivery";
 import { REGISTRY } from "../src/notifications/registry";
+import { seedPerson } from "./helpers/persons";
 import type { NotificationKind } from "@shared/notifications";
 import type { NotificationOutboxRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
@@ -22,8 +23,14 @@ const TZ = "America/New_York";
 const FRI = new Date("2026-09-11T12:00:00.000Z"); // Friday 08:00 ET
 const MON = new Date("2026-09-14T12:00:00.000Z"); // Monday 08:00 ET
 
+// seedPerson is INSERT OR IGNORE — for the four persons the global reset
+// already seeds (e.g. AndresL230), it would leave email/unsubscribed
+// untouched. This helper always seeds AND forces email/unsubscribed to the
+// requested value, so eligibility (`email IS NOT NULL ... AND email_unsubscribed = 0`)
+// is exactly what each test asks for regardless of pre-seeding.
 async function user(login: string, email: string | null, unsubscribed = 0): Promise<void> {
-  await run(env.DB, `INSERT INTO users (github_login, name, created_at, email, email_unsubscribed) VALUES (?, ?, '2026-09-01T00:00:00Z', ?, ?)`, login, login, email, unsubscribed);
+  await seedPerson(login, { name: login, email, unsubscribed: unsubscribed as 0 | 1 });
+  await run(env.DB, `UPDATE persons SET email = ?, email_unsubscribed = ? WHERE handle = ?`, email, unsubscribed, login);
 }
 function openIssue(number: number, login: string): CapturedEvent {
   const updatedAt = "2026-09-10T15:00:00Z";
@@ -225,7 +232,7 @@ describe("runDigest (local mode)", () => {
 
 describe("assembled message follows the designed template", () => {
   it("carries a preheader, the section sublines, the footer unsubscribe link, and the text layout", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES ('AndresL230', 'a', 'x', 'andres@example.com')`);
+    await user("AndresL230", "andres@example.com");
     await ingestAdrDraft(env.DB, { title: "Pending decision", context: "c", decision: "d", rationale: "r", confidence: "high" }, "agent");
     await ingestEvent(env.DB, openIssue(1, "AndresL230"), "github-webhook");
     await runDigest(env.DB, "daily", FRI, {

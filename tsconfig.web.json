@@ -3,5 +3,5 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["web/src", "shared", "web/vite.config.ts", "test/render.review.test.ts", "test/render.mywork.test.ts", "test/render.roadmap.test.ts", "test/render.docs.test.ts", "test/triage-map.test.ts", "test/render.notifications.test.ts", "test/render.scroll.test.ts"]
+  "include": ["web/src", "shared", "web/vite.config.ts", "test/render.review.test.ts", "test/render.mywork.test.ts", "test/render.roadmap.test.ts", "test/render.docs.test.ts", "test/triage-map.test.ts", "test/render.notifications.test.ts", "test/render.onboard.test.ts", "test/render.people.test.ts", "test/render.feed.test.ts", "test/render.scroll.test.ts"]
 }

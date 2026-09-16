@@ -19,6 +19,9 @@ export function resendDelivery(opts: { apiKey: string; from: string; fetchImpl?:
   return {
     mode: "resend",
     async send(msg) {
+      const headers = msg.unsubscribeUrl
+        ? { "List-Unsubscribe": `<${mailto}>, <${msg.unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
+        : undefined;
       const res = await fetchImpl(RESEND_URL, {
         method: "POST",
         headers: { authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
@@ -28,10 +31,7 @@ export function resendDelivery(opts: { apiKey: string; from: string; fetchImpl?:
           subject: msg.subject,
           html: msg.html,
           text: msg.text,
-          headers: {
-            "List-Unsubscribe": `<${mailto}>, <${msg.unsubscribeUrl}>`,
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-          },
+          ...(headers ? { headers } : {}),
         }),
       });
       if (!res.ok) {

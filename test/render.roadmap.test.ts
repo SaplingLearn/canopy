@@ -72,7 +72,7 @@ function stateWithPlan(plan: PlanView, tab: "narrative" | "timeline"): ReturnTyp
     view: "app",
     screen: "roadmap",
     roadmapTab: tab,
-    me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn", admin: false },
+    me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss", identities: [], org: "SaplingLearn", admin: false },
     roadmap: { status: "ok", data: plan },
   };
 }
@@ -250,7 +250,7 @@ describe("search results — milestone hits navigate via goRoadmap", () => {
       ...s,
       view: "app",
       screen: "search",
-      me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn", admin: false },
+      me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss", identities: [], org: "SaplingLearn", admin: false },
       searchResults: {
         status: "ok",
         data: {
@@ -275,7 +275,7 @@ describe("search results — milestone hits navigate via goRoadmap", () => {
       ...s,
       view: "app",
       screen: "search",
-      me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn", admin: false },
+      me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss", identities: [], org: "SaplingLearn", admin: false },
       searchResults: {
         status: "ok",
         data: {

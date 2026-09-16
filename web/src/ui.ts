@@ -24,12 +24,6 @@ export function statusBadge(text: string, colorVar: string): string {
   return `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:${colorVar};border:1px solid color-mix(in srgb,${colorVar} 45%,transparent);background:color-mix(in srgb,${colorVar} 12%,transparent);border-radius:5px;padding:2px 6px;flex:none;white-space:nowrap">${esc(text)}</span>`;
 }
 
-/** Small circular initials avatar. */
-export function avatarCircle(initials: string, size = 20): string {
-  const font = size <= 20 ? 8.5 : 9.5;
-  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:var(--hover);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:${font}px;font-weight:600;flex:none">${esc(initials)}</div>`;
-}
-
 /** Selectable filter/view chip. `small` is the compact variant (diff view toggle). */
 export function selectChip(label: string, active: boolean, act: string, arg: string, small = false): string {
   const pad = small ? "4px 10px" : "5px 11px";

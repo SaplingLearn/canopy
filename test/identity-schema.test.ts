@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all, first, run } from "../src/db";
-import type { IdentityTaskRow, PersonRow } from "@shared/rows";
+import type { IdentityTaskRow, IdentityRow } from "@shared/rows";
 
 describe("identity_tasks schema (0016)", () => {
   it("stores one task per login with pending status and null audit columns", async () => {
@@ -29,20 +29,23 @@ describe("identity_tasks schema (0016)", () => {
     expect(rows[0].first_seen).toBe("2026-07-01T10:00:00Z"); // the first sighting wins
   });
 
-  // Sequential within this file: this test dirties people; the next asserts the
-  // harness reset restored the 0012 seed. Guards Task 3's runtime writes from
-  // leaking across tests.
-  it("dirties the people map (setup for the reseed assertion below)", async () => {
-    await run(env.DB, `INSERT INTO people (login, person) VALUES ('leaky-login', 'Leak')`);
-    expect((await all<PersonRow>(env.DB, `SELECT * FROM people`)).length).toBe(5);
+  // Sequential within this file: this test dirties identities; the next asserts
+  // the harness reset restored the dev/test seed. Guards Task 3's runtime writes
+  // from leaking across tests.
+  it("dirties the identities map (setup for the reseed assertion below)", async () => {
+    await run(
+      env.DB,
+      `INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('github', 'leaky-login', 'leaky-login', 'AndresL230', '2026-01-01T00:00:00Z', 'test')`
+    );
+    expect((await all<IdentityRow>(env.DB, `SELECT * FROM identities`)).length).toBe(5);
   });
 
-  it("beforeEach resets people back to exactly the 0012 seed", async () => {
-    const people = await all<PersonRow>(env.DB, `SELECT * FROM people ORDER BY login`);
-    expect(people.length).toBe(4);
-    expect(people.map((p) => p.login).sort()).toEqual(
+  it("beforeEach resets identities back to exactly the dev/test seed", async () => {
+    const identities = await all<IdentityRow>(env.DB, `SELECT * FROM identities ORDER BY subject`);
+    expect(identities.length).toBe(4);
+    expect(identities.map((i) => i.subject).sort()).toEqual(
       ["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "lpcooper-arch"].sort()
     );
-    expect(await first<PersonRow>(env.DB, `SELECT * FROM people WHERE login = 'leaky-login'`)).toBeNull();
+    expect(await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE subject = 'leaky-login'`)).toBeNull();
   });
 });

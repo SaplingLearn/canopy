@@ -123,7 +123,7 @@ export async function runDigest(db: DB, cadence: RunCadence, now: Date, opts: Ru
   // Eligibility is a hard gate above resolution: an address on file, not unsubscribed.
   const recipients = await all<Recipient>(
     db,
-    `SELECT github_login, email FROM users WHERE email IS NOT NULL AND email != '' AND email_unsubscribed = 0 ORDER BY github_login`
+    `SELECT handle AS github_login, email FROM persons WHERE email IS NOT NULL AND email != '' AND email_unsubscribed = 0 ORDER BY handle`
   );
 
   for (const who of recipients) {

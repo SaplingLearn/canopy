@@ -14,7 +14,7 @@ const AUTHOR = "agent";
 // so prs/commits were silently dropped at the real call site. This drives the
 // registered tool end-to-end through the gate (audit F3).
 async function callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError?: boolean }> {
-  const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { login: AUTHOR });
+  const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { handle: AUTHOR });
   const client = new Client({ name: "test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

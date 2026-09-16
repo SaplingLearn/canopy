@@ -3,11 +3,12 @@
 // reshape deferred during componentization — it lives HERE, in one place per
 // surface, never inside components. Pure functions, no fetching, no state.
 
-import type { StagedProposal, AdrRow, NeedsTriageRow, IdentityTask } from "./api";
+import type { StagedProposal, AdrRow, NeedsTriageRow, IdentityTask, PersonSummary } from "./api";
 import type { ReviewItem } from "./review";
 import type { AssignOptions, UnplacedItem, IdentityGroup, Person } from "./maintenance";
 import { collapsedLineDiff } from "./diff";
 import { initialsOf, relTime } from "./ui";
+import { initialsOfName } from "./people";
 import { SECTIONS, TAGS } from "@shared/vocabulary";
 
 // ── shared derivations ───────────────────────────────────────────────────────
@@ -170,11 +171,10 @@ export function identityFromTask(t: IdentityTask): IdentityGroup {
   };
 }
 
-/** The person picker's source: the logins the app already knows (feed authors +
- *  the signed-in user). The picked value — a GitHub login — is posted as the map
- *  route's free-string `person`. */
-export function peopleFromLogins(logins: string[]): Person[] {
-  return [...new Set(logins.filter((l) => l.trim() !== ""))]
-    .sort()
-    .map((l) => ({ id: l, name: l, initials: initialsOf(l) }));
+/** The person picker's source: the persons directory. The picked value is the handle.
+ *  Mapping is an identity link, not just an attribution label: it also lets that
+ *  GitHub account sign in as the picked person (personPicker's helper text below
+ *  the button says so). */
+export function peopleFromPersons(persons: PersonSummary[]): Person[] {
+  return persons.map((p) => ({ id: p.handle, name: p.name ?? p.handle, initials: initialsOfName(p.name, p.handle), color: p.color, avatar_url: p.avatar_url }));
 }

@@ -264,7 +264,7 @@ describe("render() — My Work screen", () => {
       ...s,
       view: "app",
       screen: "mywork",
-      me: { login: "alice", name: "Alice", avatar_url: null, org: "SaplingLearn", admin },
+      me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss", identities: [], org: "SaplingLearn", admin },
       mywork: { status: "ok", data },
     };
   }

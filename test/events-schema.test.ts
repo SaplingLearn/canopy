@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all, run, nowIso } from "../src/db";
-import type { EventRow, PersonRow } from "@shared/rows";
+import type { EventRow } from "@shared/rows";
 
 describe("0012 stores", () => {
   it("events.semantic_key is UNIQUE and INSERT OR IGNORE dedupes", async () => {
@@ -16,9 +16,12 @@ describe("0012 stores", () => {
     expect((await all<EventRow>(env.DB, `SELECT * FROM events`)).length).toBe(1);
   });
 
-  it("people is seeded from the old LOGIN_TO_PERSON object", async () => {
-    const people = await all<PersonRow>(env.DB, `SELECT * FROM people ORDER BY login`);
-    expect(people.map((p) => [p.login, p.person])).toEqual([
+  it("identities is seeded with the dev/test github logins mapped to their persons", async () => {
+    const identities = await all<{ subject: string; name: string | null }>(
+      env.DB,
+      `SELECT i.subject AS subject, p.name AS name FROM identities i JOIN persons p ON p.handle = i.person WHERE i.provider = 'github' ORDER BY i.subject`
+    );
+    expect(identities.map((i) => [i.subject, i.name])).toEqual([
       ["AndresL230", "Andres"],
       ["Darkest-Teddy", "Jack"],
       ["Jose-Gael-Cruz-Lopez", "Jose"],

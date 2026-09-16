@@ -13,6 +13,7 @@ import { DAILY_CRON, WEEKLY_CRON, dueCadence } from "../src/notifications/cron";
 import { retryFailed } from "../src/notifications/retry";
 import { localDelivery } from "../src/notifications/delivery";
 import { unsubscribeToken, verifyUnsubscribeToken, unsubscribeUrl } from "../src/notifications/unsubscribe";
+import { seedPerson } from "./helpers/persons";
 import type { NotificationOutboxRow, NotificationSettingsRow } from "@shared/rows";
 import type { Env } from "../src/env";
 
@@ -22,8 +23,11 @@ const SETTINGS: NotificationSettingsRow = { id: 1, send_hour: 8, timezone: "Amer
 
 const outbox = () => all<NotificationOutboxRow>(env.DB, `SELECT * FROM notification_outbox ORDER BY idempotency_key`);
 const bodies = () => all<{ idempotency_key: string; html: string; text: string }>(env.DB, `SELECT * FROM notification_outbox_bodies`);
-async function user(login: string, email: string): Promise<void> {
-  await run(env.DB, `INSERT INTO users (github_login, name, created_at, email) VALUES (?, ?, '2026-09-01T00:00:00Z', ?)`, login, login, email);
+// seedPerson is INSERT OR IGNORE — AndresL230 is pre-seeded (email NULL) by the
+// global reset, so force the email/unsubscribed values on every call.
+async function user(login: string, email: string, unsubscribed: 0 | 1 = 0): Promise<void> {
+  await seedPerson(login, { name: login, email, unsubscribed });
+  await run(env.DB, `UPDATE persons SET email = ?, email_unsubscribed = ? WHERE handle = ?`, email, unsubscribed, login);
 }
 async function pendingDecision(): Promise<void> {
   await ingestAdrDraft(env.DB, { title: "Pending decision", context: "c", decision: "d", rationale: "r", confidence: "high" }, "agent");
@@ -98,8 +102,13 @@ describe("scheduled() dispatch (local mode)", () => {
 });
 
 describe("retryFailed — failed rows only", () => {
+  // retryFailed only considers rows younger than RETRY_MAX_AGE_HOURS (48h), measured
+  // against wall-clock `now`. An absolute created_at silently ages out of that bound
+  // and every assertion here starts passing vacuously, so stamp it relative to now.
+  const recentIso = () => new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
   async function failedRow(key = "AndresL230:daily:2026-09-11"): Promise<void> {
-    await run(env.DB, `INSERT INTO notification_outbox (idempotency_key, user_id, cadence, window_id, kinds, status, error, created_at) VALUES (?, 'AndresL230', 'daily', '2026-09-11', '["review_queue"]', 'failed', 'send: smtp down', ?)`, key, FRI_8_ET.toISOString());
+    await run(env.DB, `INSERT INTO notification_outbox (idempotency_key, user_id, cadence, window_id, kinds, status, error, created_at) VALUES (?, 'AndresL230', 'daily', '2026-09-11', '["review_queue"]', 'failed', 'send: smtp down', ?)`, key, recentIso());
   }
 
   it("re-renders and sends a failed row, marking it sent", async () => {
@@ -143,7 +152,7 @@ describe("retryFailed — failed rows only", () => {
   });
 
   it("skips a failed row whose user has since unsubscribed or lost their address", async () => {
-    await run(env.DB, `INSERT INTO users (github_login, name, created_at, email, email_unsubscribed) VALUES ('AndresL230', 'a', 'x', 'a@example.com', 1)`);
+    await user("AndresL230", "a@example.com", 1);
     await pendingDecision();
     await failedRow();
     const r = await retryFailed(env.DB, { delivery: localDelivery(env.DB), origin: "" });

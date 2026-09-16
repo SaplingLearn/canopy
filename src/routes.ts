@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
+import { z } from "zod";
 import { IngestPayload } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
@@ -11,6 +13,11 @@ import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_p
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
+import { first } from "./db";
+import { createInvite, revokeInvite, listInvites } from "./auth/invites";
+import { listPersons } from "./auth/persons";
+import { sendInvite } from "./notifications/invite";
+import type { InviteRow } from "@shared/rows";
 
 export const app = new Hono<AppEnv>();
 
@@ -105,7 +112,7 @@ app.post("/doc/:slug/promote", async (c) => {
   const version = Number(body?.version);
   if (!Number.isInteger(version)) return c.json({ error: "version (integer) required" }, 400);
   try {
-    const res = await promote_doc(c.env.DB, c.req.param("slug"), version, c.get("principal").login);
+    const res = await promote_doc(c.env.DB, c.req.param("slug"), version, c.get("principal").handle);
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -157,7 +164,7 @@ app.post("/needs-triage/:id/discard", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
-    const res = await resolve_triage(c.env.DB, id, c.get("principal").login, "discarded");
+    const res = await resolve_triage(c.env.DB, id, c.get("principal").handle, "discarded");
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -174,7 +181,7 @@ app.post("/needs-triage/:id/assign", async (c) => {
     type?: AssignType; section?: string; space?: "technical" | "product"; tags?: string[];
   } | null;
   try {
-    const res = await assign_triage(c.env.DB, id, c.get("principal").login, {
+    const res = await assign_triage(c.env.DB, id, c.get("principal").handle, {
       type: body?.type,
       section: body?.section,
       space: body?.space,
@@ -193,8 +200,8 @@ app.post("/needs-triage/:id/assign", async (c) => {
 // pulled from `events` at read time — activity is never copied onto the task.
 app.get("/identity-tasks", async (c) => c.json({ tasks: await list_identity_tasks(c.env.DB) }));
 
-// Human placement (session-gated): map a login to a person. The `people`
-// table's ONLY runtime write (a direct authored write, not a gate re-run),
+// Human placement (session-gated): link a login to an EXISTING person (by
+// handle) as a github identity (a direct authored write, not a gate re-run),
 // then a soft resolve of the task. My Work picks the mapping up at read time,
 // so every already-captured event for this login surfaces with no backfill.
 app.post("/identity-tasks/:login/map", async (c) => {
@@ -202,11 +209,50 @@ app.post("/identity-tasks/:login/map", async (c) => {
   const person = typeof body?.person === "string" ? body.person.trim() : "";
   if (!person) return c.json({ error: "person (non-empty string) required" }, 400);
   try {
-    const res = await map_identity(c.env.DB, c.req.param("login"), person, c.get("principal").login);
+    const res = await map_identity(c.env.DB, c.req.param("login"), person, c.get("principal").handle);
     return c.json({ ok: true, ...res });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
+});
+
+// Person directory (session-gated): the avatar-chip source for every screen and the identity picker.
+app.get("/persons", async (c) => c.json({ persons: await listPersons(c.env.DB) }));
+
+// ── Maintenance › People: the invite list (admin, session-cookie only, NEVER MCP) ──
+const InviteWrite = z.object({ email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "invalid email"), name: z.string().trim().max(120).optional() });
+const adminGate = async (c: Context<AppEnv>, next: () => Promise<void>) =>
+  isAdmin(c.env, c.get("principal").handle) ? next() : c.json({ error: "admin only" }, 403);
+app.use("/invites", adminGate);
+app.use("/invites/*", adminGate);
+app.get("/invites", async (c) => c.json({ invites: await listInvites(c.env.DB) }));
+app.post("/invites", async (c) => {
+  const parsed = InviteWrite.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  let invite: InviteRow;
+  try {
+    invite = await createInvite(c.env.DB, { email: parsed.data.email, name: parsed.data.name ?? null, invitedBy: c.get("principal").handle });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "invite_exists" || msg === "already_a_person") return c.json({ error: msg }, 409);
+    throw e;
+  }
+  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+  const email = await sendInvite(c.env, c.env.DB, { email: invite.email, inviteeName: invite.name, inviterHandle: c.get("principal").handle, origin });
+  return c.json({ ok: true, invite: (await first<InviteRow>(c.env.DB, `SELECT * FROM invites WHERE email = ?`, invite.email))!, email });
+});
+app.post("/invites/:email/revoke", async (c) => {
+  const ok = await revokeInvite(c.env.DB, decodeURIComponent(c.req.param("email")));
+  return ok ? c.json({ ok: true }) : c.json({ error: "no such invite" }, 404);
+});
+app.post("/invites/:email/resend", async (c) => {
+  const email = decodeURIComponent(c.req.param("email")).toLowerCase();
+  const row = await first<InviteRow>(c.env.DB, `SELECT * FROM invites WHERE email = ?`, email);
+  if (!row) return c.json({ error: "no such invite" }, 404);
+  if (row.revoked_at || row.accepted_by) return c.json({ error: row.revoked_at ? "revoked" : "accepted" }, 409);
+  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+  const result = await sendInvite(c.env, c.env.DB, { email: row.email, inviteeName: row.name, inviterHandle: c.get("principal").handle, origin });
+  return c.json({ ok: true, email: result });
 });
 
 // Roadmap read (session-gated): admin narrative + milestones in target-date order,
@@ -217,7 +263,7 @@ app.get("/roadmap", async (c) => c.json(await get_plan(c.env.DB)));
 // previous activity (summarized merged/closed PRs) + open assigned issues,
 // projected entirely from captured GitHub events. Stored nowhere; never 500s.
 app.get("/me/dashboard", async (c) => {
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   try {
     const data: DashboardData = await getMyWork(c.env.DB, login);
     return c.json(data);
@@ -233,7 +279,7 @@ app.post("/milestone-proposals/:id/promote", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
-    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").login);
+    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").handle);
     return c.json({ ok: true, milestone });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
@@ -258,7 +304,7 @@ app.post("/milestone-proposals/:id/reject", async (c) => {
 // trigger it — but every captured event still funnels through the ingestEvent
 // gate fn. Non-admins get 403; a missing service token/repo → 503 with the error.
 app.post("/admin/backfill", async (c) => {
-  const login = c.get("principal").login;
+  const login = c.get("principal").handle;
   if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);

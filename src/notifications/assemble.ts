@@ -55,6 +55,7 @@ export const THEME = {
   amberSoft: soft("amber", 0.12), amberLine: soft("amber", 0.45),
 } as const;
 const C = Object.fromEntries(Object.entries(THEME).map(([k, v]) => [k, v.light])) as { [K in keyof typeof THEME]: string };
+export const EMAIL_COLORS = C;
 
 /**
  * Spacing scale: an 8pt grid with a 4pt sub-grid (every step a multiple of 4).
@@ -69,6 +70,7 @@ const SP = EMAIL_SPACE;
 const SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
 const MONO = "font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
 export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600&display=swap";
+export const EMAIL_FONT = { sans: SANS, mono: MONO } as const;
 
 /** Shared inline-style tokens for the section renderers (mirrors the app's text tiers). */
 export const EMAIL_STYLE = {
