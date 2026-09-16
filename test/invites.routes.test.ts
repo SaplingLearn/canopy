@@ -3,7 +3,7 @@ import { env } from "cloudflare:test";
 import { app } from "../src/routes";
 import { all, first } from "../src/db";
 import { cookieFor } from "./helpers/persons";
-import { renderInviteEmail } from "../src/notifications/invite";
+import { renderInviteEmail, inviteSignInUrl } from "../src/notifications/invite";
 import type { InviteRow } from "@shared/rows";
 
 const post = (path: string, cookie: string, body?: unknown) =>
@@ -34,6 +34,26 @@ describe("renderInviteEmail", () => {
     expect(m.html).toContain("You're invited to the Sapling team's shared workspace.");
     expect(m.html).toMatch(/font-size:26px/);
     expect(m.html.indexOf("You're invited to")).toBeLessThan(m.html.indexOf("Hi Priya,"));
+  });
+
+  it("centres the sign-in button in the card", () => {
+    const m = renderInviteEmail({ inviteeName: "Priya", inviterName: "Andres", email: "p@x.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
+    expect(m.html).toMatch(/<div style="[^"]*text-align:center[^"]*"><a href="https:\/\/canopy\.test\/x"/);
+  });
+
+  it("says what Canopy actually is — an invitee has no other way to know", () => {
+    const m = renderInviteEmail({ inviteeName: "Priya", inviterName: "Andres", email: "p@x.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
+    expect(m.html).toContain("shared memory");
+    expect(m.text).toContain("shared memory");
+  });
+
+  it("lands on Canopy's own sign-in screen, not Google's account chooser", () => {
+    expect(inviteSignInUrl("https://canopy.test")).toBe("https://canopy.test/");
+    const m = renderInviteEmail({ inviteeName: null, inviterName: "Andres", email: "p@x.com", signInUrl: inviteSignInUrl("https://canopy.test"), host: "canopy.test" });
+    expect(m.html).toContain('href="https://canopy.test/"');
+    expect(m.html).not.toContain("accounts.google.com");
+    expect(m.html).not.toContain("login_hint");
+    expect(m.text).toContain("https://canopy.test/");
   });
 
   it("carries that headline into the plain-text part too", () => {

@@ -10,8 +10,14 @@ import { loadSettings } from "./cron";
 import { getPerson } from "../auth/persons";
 import { recordInviteEmail } from "../auth/invites";
 
-export function inviteSignInUrl(origin: string, email: string): string {
-  return `${origin}/auth/google/login?login_hint=${encodeURIComponent(email)}`;
+/**
+ * The invite lands on Canopy's own sign-in screen, not Google's account chooser:
+ * the invitee sees what they are joining and presses "Continue with Google"
+ * themselves. The email still names the address the invite is for, since the
+ * app cannot prefill it from here.
+ */
+export function inviteSignInUrl(origin: string): string {
+  return `${origin}/`;
 }
 
 export function renderInviteEmail(o: { inviteeName: string | null; inviterName: string; email: string; signInUrl: string; host: string }): { subject: string; html: string; text: string } {
@@ -20,6 +26,7 @@ export function renderInviteEmail(o: { inviteeName: string | null; inviterName: 
   const p = `${EMAIL_FONT.sans}font-size:14px;line-height:20px;color:${C.fg70};padding:0 0 12px 0;`;
   const headline = `${EMAIL_FONT.sans}font-size:26px;line-height:32px;font-weight:600;letter-spacing:-0.02em;color:${C.fg};padding:0 0 ${SP.m}px 0;`;
   const lede = "You're invited to the Sapling team's shared workspace.";
+  const about = "Canopy is the team's shared memory: what everyone is working on, the docs and decisions behind it, and what ships next.";
   const button = `display:inline-block;${EMAIL_FONT.sans}font-size:14px;line-height:20px;font-weight:600;color:#ffffff;background-color:${C.accent};text-decoration:none;padding:10px 18px;border-radius:9px;`;
   const html =
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title><link href="${FONTS_HREF}" rel="stylesheet"></head>` +
@@ -30,7 +37,8 @@ export function renderInviteEmail(o: { inviteeName: string | null; inviterName: 
     `<tr><td style="padding:${SP.xl}px 28px 0 28px;"><div style="${headline}">${lede}</div>` +
     `<div style="${p}color:${C.fg};">${hi}</div>` +
     `<div style="${p}">${escapeHtml(o.inviterName)} invited you. Sign in with this Google address to pick your handle and get started.</div>` +
-    `<div style="padding:6px 0 20px 0;"><a href="${escapeHtml(o.signInUrl)}" style="${button}">Sign in with Google</a></div>` +
+    `<div style="${EMAIL_FONT.sans}font-size:13px;line-height:20px;color:${C.fg55};padding:0 0 ${SP.l}px 0;">${about}</div>` +
+    `<div style="text-align:center;padding:0 0 ${SP.l}px 0;"><a href="${escapeHtml(o.signInUrl)}" style="${button}">Sign in with Google</a></div>` +
     `<div style="${EMAIL_FONT.sans}font-size:12.5px;line-height:20px;color:${C.fg55};padding-bottom:24px;">This invite is for <span style="${EMAIL_FONT.mono}">${escapeHtml(o.email)}</span>. If you weren't expecting it, you can ignore this email.</div></td></tr>` +
     `<tr><td style="padding:16px 28px;border-top:1px solid ${C.border};${EMAIL_FONT.sans}font-size:12px;line-height:20px;color:${C.fg40};">Sent by Canopy &middot; ${escapeHtml(o.host)}</td></tr>` +
     `</table></td></tr></table></body></html>`;
@@ -38,7 +46,8 @@ export function renderInviteEmail(o: { inviteeName: string | null; inviterName: 
     subject, "=".repeat(subject.length), "",
     lede, "",
     o.inviteeName ? `Hi ${o.inviteeName},` : "Hi,", "",
-    `${o.inviterName} invited you.`,
+    `${o.inviterName} invited you.`, "",
+    about, "",
     "Sign in with this Google address to pick your handle and get started:", "",
     `  ${o.signInUrl}`, "",
     `This invite is for ${o.email}. If you weren't expecting it, you can ignore this email.`,
@@ -52,7 +61,7 @@ export async function sendInvite(env: Env, db: DB, o: { email: string; inviteeNa
   const settings = await loadSettings(db);
   const msg = renderInviteEmail({
     inviteeName: o.inviteeName, inviterName: inviter?.name ?? o.inviterHandle, email: o.email,
-    signInUrl: inviteSignInUrl(o.origin, o.email), host: o.origin.replace(/^https?:\/\//, "") || "canopy",
+    signInUrl: inviteSignInUrl(o.origin), host: o.origin.replace(/^https?:\/\//, "") || "canopy",
   });
   let result: { status: "sent" | "failed"; id: string | null; error: string | null };
   try {
