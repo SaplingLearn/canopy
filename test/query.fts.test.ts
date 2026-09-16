@@ -4,7 +4,7 @@ import { query } from "../src/tools/reads";
 import { propose_doc_update, promote_doc, append_feed, stage_adr, ratify_adr } from "../src/tools/writes";
 import { create_ticket } from "../src/tools/tickets";
 import { seedPerson } from "./helpers/persons";
-import { run, nowIso } from "../src/db";
+import { run, all, nowIso } from "../src/db";
 
 const AUTHOR = "tester";
 
@@ -138,10 +138,10 @@ describe("query() — FTS5 engine (triggers, ranking, bundle, authority, browse)
     expect(r.meta.engine).toBe("fts5");
   });
 
-  it("tickets: a title term ranks first among mixed types, stays visible to the human search, and vanishes on delete", async () => {
+  it("tickets are NOT in the search fan-out — a ticket title term returns no ticket, though tickets_fts holds the row", async () => {
     await seedPerson(AUTHOR);
-    // The same term in a ticket TITLE, a doc body and a feed body — title weight
-    // (bm25 …, 5.0, …) must put the ticket first.
+    // The same term in a ticket TITLE, a doc body and a feed body. The doc and the
+    // feed entry come back; the ticket does NOT — tickets have their own surface.
     const id = await create_ticket(
       env.DB,
       { title: "Gradebook tamarind export fails", body: "over 1,000 rows", category: "bug", priority: "high", assignees: [] },
@@ -151,26 +151,30 @@ describe("query() — FTS5 engine (triggers, ranking, bundle, authority, browse)
     await promote_doc(env.DB, "tamarind-doc", 1, AUTHOR);
     await append_feed(env.DB, { author: AUTHOR, summary: "unrelated entry", body: "tamarind again, in a feed body" });
 
-    const r = await query(env.DB, { q: "tamarind" });
-    expect(r.primary.map((p) => p.type)).toContain("ticket");
-    expect(r.primary[0].type).toBe("ticket");
-    expect(r.primary[0].id).toBe(`ticket:${id}`);
-    expect(r.primary[0].title).toBe("Gradebook tamarind export fails");
-    expect(r.primary[0].body).toBe("over 1,000 rows");
-    // A ticket is an authored human write: always live, so the HUMAN search
-    // (include_staged:false, which drops unpromoted/draft) still returns it.
-    expect(r.primary[0].authority).toBe("live");
-    const human = await query(env.DB, { q: "tamarind", include_staged: false });
-    expect(human.primary.find((p) => p.id === `ticket:${id}`)?.authority).toBe("live");
+    // The index IS populated — 0024's triggers still run; only the fan-out dropped it.
+    const indexed = await all<{ ticket_id: number }>(
+      env.DB, `SELECT ticket_id FROM tickets_fts WHERE tickets_fts MATCH 'tamarind'`
+    );
+    expect(indexed.map((r) => Number(r.ticket_id))).toContain(id);
 
-    // Deleting the base row cascades into tickets_fts (the AFTER DELETE trigger).
-    await run(env.DB, `DELETE FROM ticket_events WHERE ticket_id = ?`, id);
-    await run(env.DB, `DELETE FROM tickets WHERE id = ?`, id);
-    const after = await query(env.DB, { q: "tamarind" });
-    expect(after.primary.find((p) => p.type === "ticket")).toBeUndefined();
-    expect(after.pointers.find((p) => p.type === "ticket")).toBeUndefined();
-    // …the other two types are untouched.
-    expect(after.primary.map((p) => p.id)).toContain("tamarind-doc");
+    // Agent-side query (include_staged defaults true here): no ticket anywhere.
+    const r = await query(env.DB, { q: "tamarind" });
+    const ids = [...r.primary, ...r.pointers].map((p) => p.id);
+    expect(ids).not.toContain(`ticket:${id}`);
+    expect(ids.some((x) => x.startsWith("ticket:"))).toBe(false);
+    expect([...r.primary, ...r.pointers].some((p) => (p.type as string) === "ticket")).toBe(false);
+    expect(r.primary.map((p) => p.title)).not.toContain("Gradebook tamarind export fails");
+    // …and the other two types are unaffected.
+    expect(r.primary.map((p) => p.id)).toContain("tamarind-doc");
+    expect(r.primary.map((p) => p.type)).toContain("feed");
+
+    // The HUMAN search (include_staged:false) doesn't get one either.
+    const human = await query(env.DB, { q: "tamarind", include_staged: false });
+    expect([...human.primary, ...human.pointers].some((p) => p.id.startsWith("ticket:"))).toBe(false);
+
+    // An empty-q browse (the recency degrade path) has no ticket branch either.
+    const browse = await query(env.DB, { q: "" });
+    expect([...browse.primary, ...browse.pointers].some((p) => p.id.startsWith("ticket:"))).toBe(false);
   });
 
   it("section filter narrows to docs and excludes feed/decision", async () => {

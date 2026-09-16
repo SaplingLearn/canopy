@@ -47,7 +47,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
     {
       q: z.string().optional(),
-      types: z.array(z.enum(["doc", "decision", "feed", "sprint", "ticket"])).optional(),
+      types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(),
       section: z.string().optional(),
       space: z.enum(["technical", "product"]).optional(),
       include_staged: z.boolean().optional(),

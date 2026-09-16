@@ -62,7 +62,9 @@ export const CapturedEvent = z.object({
 // envelope does not change when that happens.
 export const QueryRequest = z.object({
   q: z.string().default(""),
-  types: z.array(z.enum(["doc", "decision", "feed", "sprint", "ticket"])).optional(), // default all
+  // NOTE: no "ticket" — tickets_fts exists but tickets are NOT in the /search
+  // fan-out; the Tickets screen is their surface.
+  types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(), // default all
   section: z.string().optional(),
   space: z.enum(["technical", "product"]).optional(),
   include_staged: z.boolean().optional(), // caller sets the default (MCP true, HTTP false)
@@ -73,7 +75,7 @@ export const QueryRequest = z.object({
 export const Authority = z.enum(["live", "staged_pending", "unpromoted", "draft"]);
 
 export const QueryPrimary = z.object({
-  type: z.enum(["doc", "decision", "feed", "sprint", "ticket"]),
+  type: z.enum(["doc", "decision", "feed", "sprint"]),
   id: z.string(),
   title: z.string(),
   section: z.string().nullable(),
@@ -90,7 +92,7 @@ export const QueryPrimary = z.object({
 });
 
 export const QueryPointer = z.object({
-  type: z.enum(["doc", "decision", "feed", "sprint", "ticket"]),
+  type: z.enum(["doc", "decision", "feed", "sprint"]),
   id: z.string(),
   title: z.string(),
   snippet: z.string(),

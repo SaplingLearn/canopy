@@ -6,7 +6,8 @@ import { buildCanopyMcpServer } from "../src/mcp";
 import { app } from "../src/routes";
 import { propose_doc_update, promote_doc } from "../src/tools/writes";
 import type { QueryResult } from "@shared/contract";
-import { cookieFor as authedCookie } from "./helpers/persons";
+import { cookieFor as authedCookie, seedPerson } from "./helpers/persons";
+import { create_ticket } from "../src/tools/tickets";
 
 const AUTHOR = "agent";
 
@@ -85,6 +86,42 @@ describe("registered MCP query tool + live GET /search route", () => {
     const docsOnly = await searchRoute("q=owl&types=doc");
     expect(docsOnly.primary.every((p) => p.type === "doc")).toBe(true);
     expect([...docsOnly.primary, ...docsOnly.pointers].some((p) => p.id === "owl-doc")).toBe(true);
+  });
+
+  it("tickets are not a query type: the MCP tool schema has no `ticket`, and /search never returns one", async () => {
+    await seedPerson(AUTHOR);
+    const id = await create_ticket(
+      env.DB,
+      { title: "Kestrel import crashes", body: "kestrel payloads over 1MB", category: "bug", priority: "high", assignees: [] },
+      AUTHOR
+    );
+
+    // The registered MCP tool's `types` enum lists exactly four types — no ticket.
+    const server = buildCanopyMcpServer(env as unknown as import("../src/env").Env, { handle: AUTHOR });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    await server.connect(st);
+    await client.connect(ct);
+    try {
+      const tools = await client.listTools();
+      const schema = JSON.stringify(tools.tools.find((t) => t.name === "query")?.inputSchema);
+      expect(schema).toContain("sprint");
+      expect(schema).not.toContain('"ticket"');
+    } finally {
+      await client.close();
+      await server.close();
+    }
+
+    // Neither surface returns it, whatever the caller asks for.
+    const mcp = await callQuery({ q: "kestrel" });
+    expect([...mcp.primary, ...mcp.pointers].some((p) => p.id === `ticket:${id}`)).toBe(false);
+
+    const human = await searchRoute("q=kestrel");
+    expect([...human.primary, ...human.pointers].some((p) => p.id.startsWith("ticket:"))).toBe(false);
+
+    // …and an explicit `types=ticket` csv is simply not a recognized type.
+    const asked = await searchRoute("q=kestrel&types=ticket");
+    expect([...asked.primary, ...asked.pointers].some((p) => p.id.startsWith("ticket:"))).toBe(false);
   });
 
   it("/search requires a session (401 without a cookie)", async () => {

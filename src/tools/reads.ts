@@ -339,7 +339,10 @@ export { list_sprints, get_sprint } from "./sprints";
 // RRF (Reciprocal Rank Fusion). The QueryResult envelope is the stable contract;
 // this normalize-bm25-then-global-sort is the FTS-only special case of that merge.
 
-type QueryType = "doc" | "decision" | "feed" | "sprint" | "ticket";
+// NOTE: `ticket` is deliberately NOT a query type. `tickets_fts` stays populated
+// (0024 keeps the table and its three triggers) but tickets are their own
+// surface — the Tickets screen — and never join the /search fan-out.
+type QueryType = "doc" | "decision" | "feed" | "sprint";
 
 // Internal assembled record: a superset carrying everything both a primary
 // (full body) and a pointer (snippet) need, so we hydrate once per candidate.
@@ -422,7 +425,7 @@ function assembleSprintBody(
 }
 
 export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
-  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "sprint", "ticket"];
+  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "sprint"];
   const limit = Math.trunc(Math.min(Math.max(req.limit ?? 6, 0), 50));
   const pointerLimit = Math.trunc(Math.min(Math.max(req.pointer_limit ?? 20, 0), 100));
   const includeStaged = req.include_staged ?? false;
@@ -536,27 +539,6 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
 
-  // Tickets: one FTS pass over tickets_fts (title weighted 5, like every other
-  // type). Tickets carry neither section nor space, so they drop out under docsOnly.
-  if (types.includes("ticket") && !docsOnly) {
-    if (match) {
-      const rows = await all<{ key: string; rank: number; snip: string }>(
-        db,
-        `SELECT ticket_id AS key, bm25(tickets_fts, 1.0, 5.0, 1.0) AS rank,
-                snippet(tickets_fts, -1, ${SNIPPET}) AS snip
-         FROM tickets_fts WHERE tickets_fts MATCH ? ORDER BY rank LIMIT ${fetchCap}`,
-        match
-      );
-      for (const r of rows) candidates.push({ type: "ticket", key: String(r.key), score: -r.rank, snippet: r.snip });
-    } else {
-      const rows = await all<{ key: number }>(
-        db,
-        `SELECT id AS key FROM tickets ORDER BY updated_at DESC, id DESC LIMIT ${fetchCap}`
-      );
-      for (const r of rows) candidates.push({ type: "ticket", key: String(r.key), score: 0, snippet: "" });
-    }
-  }
-
   // 2. Hydrate base rows in bulk (one round-trip per type per CHUNK — `fetchCap`
   //    reaches 150, so every key list here can outgrow D1's 100-param ceiling),
   //    then assemble.
@@ -582,10 +564,6 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
 
   const adrMap = new Map<string, AdrRow>();
   for (const a of await fanOut<AdrRow>(db, adrKeys, (p) => `SELECT * FROM adrs WHERE id IN (${p})`)) adrMap.set(String(a.id), a);
-
-  const ticketKeys = candidates.filter((c) => c.type === "ticket").map((c) => Number(c.key));
-  const ticketMap = new Map<string, TicketRow>();
-  for (const t of await fanOut<TicketRow>(db, ticketKeys, (p) => `SELECT * FROM tickets WHERE id IN (${p})`)) ticketMap.set(String(t.id), t);
 
   // Roadmap hydration: sprint ids (from 'sprint:<id>' refs) + the plan flag.
   const sprintIds = candidates
@@ -663,18 +641,6 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
         current_version: null, pending_version: null, staged_body: null, confidence: adr.confidence,
         updated_at: adr.created_at, updated_by: adr.created_by,
         score: c.score, snippet: c.snippet || browseSnippet(body),
-      };
-    } else if (c.type === "ticket") {
-      // A ticket is a human authored row — there is no staged or draft state for
-      // it to be in, so it is ALWAYS authority "live" (and therefore visible to
-      // the human Search, which drops everything not settled).
-      const t = ticketMap.get(c.key);
-      if (!t) continue;
-      a = {
-        type: "ticket", id: `ticket:${t.id}`, title: t.title, section: null, space: null,
-        body: t.body, authority: "live", current_version: null, pending_version: null,
-        staged_body: null, confidence: null, updated_at: t.updated_at, updated_by: t.requester,
-        score: c.score, snippet: c.snippet || browseSnippet(t.body),
       };
     } else {
       // sprint: either the plan singleton (ref 'plan') or a sprint row.
