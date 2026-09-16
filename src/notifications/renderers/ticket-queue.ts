@@ -87,7 +87,7 @@ async function render(db: DB, handle: string, window: Window): Promise<Section |
             rows: [K.row("Category", escapeHtml(t.category)), K.row("Requester", escapeHtml(t.requester_name))],
             footer:
               `${K.chip(t.priority.toUpperCase(), "muted")}` +
-              `<span style="padding-left:8px;">#${t.id} &middot; opened ${escapeHtml(age(t.created_at, window.end))} ago</span>`,
+              `<span style="padding-left:8px;">opened ${escapeHtml(age(t.created_at, window.end))} ago</span>`,
             first: i === 0,
           })
         )
@@ -95,7 +95,7 @@ async function render(db: DB, handle: string, window: Window): Promise<Section |
     );
     if (unassigned.length > TOP) html.push(`<div style="${S.muted}padding-top:${SP.s}px;">+${unassigned.length - TOP} more waiting in Tickets</div>`);
     for (const t of shown) {
-      text.push(`  ${pad("unassigned", 11)} ${pad(`#${t.id}`, 5)} ${t.title}`);
+      text.push(`  ${pad("unassigned", 11)} ${t.title}`);
       text.push(`  ${pad("", 17)} ${t.category} · ${t.priority} · filed by ${t.requester_name} · ${age(t.created_at, window.end)} old`);
     }
     if (unassigned.length > TOP) text.push(`  ${pad("", 17)} +${unassigned.length - TOP} more waiting in Tickets`);
@@ -113,14 +113,14 @@ async function render(db: DB, handle: string, window: Window): Promise<Section |
             rows: [K.row("Sprint", escapeHtml(t.sprint ? t.sprint.label : "Backlog"))],
             footer:
               `${K.chip(TICKET_STATUS_LABEL[t.status], STATUS_TONE[t.status])} ${K.chip(t.priority.toUpperCase(), "muted")}` +
-              `<span style="padding-left:8px;">#${t.id} &middot; updated ${escapeHtml(age(t.updatedAt, window.end))} ago</span>`,
+              `<span style="padding-left:8px;">updated ${escapeHtml(age(t.updatedAt, window.end))} ago</span>`,
             first: i === 0,
           })
         )
         .join("")
     );
     for (const t of mine) {
-      text.push(`  ${pad("assigned", 11)} ${pad(`#${t.id}`, 5)} ${t.title}`);
+      text.push(`  ${pad("assigned", 11)} ${t.title}`);
       text.push(`  ${pad("", 17)} ${TICKET_STATUS_LABEL[t.status]} · ${t.sprint ? t.sprint.label : "Backlog"}`);
     }
   }

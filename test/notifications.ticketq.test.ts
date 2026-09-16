@@ -113,8 +113,8 @@ describe("ticketq renderer", () => {
   });
 
   it("lists submitted tickets with no assignees, newest first — not an in_progress one, not an assigned one", async () => {
-    await file("Older unassigned ask", { at: "2026-09-08T12:00:00Z", category: "request", priority: "high" });
-    await file("Newest unassigned ask", { at: "2026-09-10T12:00:00Z", category: "access" });
+    const older = await file("Older unassigned ask", { at: "2026-09-08T12:00:00Z", category: "request", priority: "high" });
+    const newest = await file("Newest unassigned ask", { at: "2026-09-10T12:00:00Z", category: "access" });
     const started = await file("Unassigned but started", { at: "2026-09-09T12:00:00Z" });
     await transition_ticket(env.DB, started, "in_progress", LOGIN); // still nobody on it — only the status differs
     await file("Submitted but assigned", { assignees: [OTHER], at: "2026-09-09T12:00:00Z" });
@@ -144,6 +144,16 @@ describe("ticketq renderer", () => {
     expect(s.html).toContain("3d"); // 2026-09-08 → window end 2026-09-11
     expect(s.text).toContain("Older unassigned ask");
     expect(s.text).toContain("Meilin Zhao");
+
+    // NO numeric id, in either alternative: a ticket's id is an internal D1 key.
+    // (The HTML carries `#rrggbb` CSS colors, so this checks the ids themselves.)
+    for (const id of [older, newest]) {
+      expect(s.html).not.toContain(`#${id} `);
+      expect(s.html).not.toContain(`#${id}&`);
+      expect(s.text).not.toContain(`#${id}`);
+    }
+    expect(s.html).not.toContain("&middot; opened");   // the id used to lead this footer
+    expect(s.text).not.toMatch(/#\d/);                 // the text ledger has no CSS at all
   });
 
   it("lists at most 5 unassigned tickets and counts the rest as '+N more waiting in Tickets'", async () => {

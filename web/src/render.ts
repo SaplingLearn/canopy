@@ -1498,15 +1498,17 @@ export function todoCard(t: MyWorkTodo): string {
 
 /**
  * A ticket assigned to me, in the To-do card treatment (design call #9 / design
- * 611–637): title + a `#<id>` pill, then the labeled rows — Summary (the ticket
- * body as escaped prose; the row collapses when the body is empty), Requester,
- * Sprint ("Backlog" when it has none) — and a footer with the status pill, the
+ * 611–637): the title, then the labeled rows — Summary (the ticket body as
+ * escaped prose; the row collapses when the body is empty), Requester, Sprint
+ * ("Backlog" when it has none) — and a footer with the status pill, the
  * monochrome priority chip and "updated <relTime>".
  *
- * The `#<id>` pill NAVIGATES (data-act="openTicket") rather than linking out: a
+ * NO NUMERIC ID is shown: a ticket's id is an internal D1 key, not something
+ * people refer to a ticket by. The TITLE is the open control
+ * (data-act="openTicket") — it NAVIGATES rather than linking out, because a
  * ticket is a D1 row on this origin, never a GitHub issue (ADR-007), so there is
- * no external URL to point at — that is exactly what separates this block from
- * the To-do cards above it.
+ * no external URL to point at. That is exactly what separates this block from
+ * the To-do cards above it, which keep their GitHub issue number pill.
  */
 export function ticketCard(t: MyWorkTicket, personOf: (handle: string) => PersonSummary | null): string {
   const rows: string[] = [];
@@ -1519,8 +1521,7 @@ export function ticketCard(t: MyWorkTicket, personOf: (handle: string) => Person
   );
   return `<div class="cnpy-card" style="${MW_CARD}">
     <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px">
-      <span style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:var(--fg);flex:1;min-width:0">${esc(t.title)}</span>
-      <button data-act="openTicket" data-arg="${t.id}" class="cnpy-numpill" style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:3px 8px;display:flex;align-items:center;gap:5px;margin-top:2px;flex:none">#${t.id}${MW_ARROW_SVG}</button>
+      <button data-act="openTicket" data-arg="${t.id}" style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:var(--fg);flex:1;min-width:0;text-align:left;background:none;padding:0;display:flex;align-items:flex-start;gap:6px"><span style="min-width:0">${esc(t.title)}</span><span style="flex:none;color:var(--accent);margin-top:3px">${MW_ARROW_SVG}</span></button>
     </div>
     <div style="display:flex;flex-direction:column;flex:1">${rows.join("")}${footer}</div>
   </div>`;

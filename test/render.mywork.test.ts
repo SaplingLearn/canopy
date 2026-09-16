@@ -425,13 +425,17 @@ describe("render() — My Work screen", () => {
 // ── Phase 5b: the third block — tickets assigned to me ──────────────────────
 
 describe("ticketCard", () => {
-  it("renders the title, an in-app #id pill (never an external link), and the labeled rows", () => {
+  it("makes the TITLE the open control and shows NO numeric id anywhere", () => {
     const html = ticketCard(makeTicket(), personOf);
     expect(html).toContain("SSO login loops on Safari");
-    expect(html).toContain('data-act="openTicket" data-arg="12"');
-    expect(html).toContain(">#12");
+    // The title itself is the button (in-app navigation, never an external link).
+    expect(html).toMatch(/<button data-act="openTicket" data-arg="12"[^>]*>[\s\S]*SSO login loops on Safari/);
     expect(html).not.toContain("github.com");      // a ticket is a D1 row, not a GitHub issue
     expect(html).not.toContain('target="_blank"');
+    // No `#<id>` pill — a ticket's id is an internal key, never shown.
+    expect(html).not.toContain("#12");
+    expect(html).not.toContain("cnpy-numpill");
+    expect(html).not.toMatch(/>#\d/);
     expect(html).toContain("Summary");
     expect(html).toContain("It bounces me back to the sign-in page.");
     expect(html).toContain("Requester");
