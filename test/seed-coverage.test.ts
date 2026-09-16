@@ -131,7 +131,7 @@ describe("dev seed lights up every surface", () => {
     expect(detail.parent).toBeNull();
     expect(new Set(detail.links.map((l) => l.kind))).toEqual(new Set(["github", "figma"]));
     expect(detail.comments.length).toBeGreaterThan(0);
-    // The opening row is there, so the history reads "opened · SUBMITTED".
+    // The opening row is there, so the thread reads "opened this ticket".
     expect(detail.events[0].from_status).toBeNull();
     expect(detail.events[0].to_status).toBe("submitted");
 

@@ -524,9 +524,10 @@ function threadBlock(p: TicketDetailProps): string {
     });
   }
   for (const ev of t.events) {
-    // The opening row reads "opened · SUBMITTED" (§A); every later row is "from → to".
+    // The opening row reads "opened this ticket" (the design's `dThread.move`);
+    // every later row is "from → to".
     const move = ev.from_status === null
-      ? `opened · ${TICKET_STATUS_LABEL[ev.to_status].toUpperCase()}`
+      ? "opened this ticket"
       : `${TICKET_STATUS_LABEL[ev.from_status]} → ${TICKET_STATUS_LABEL[ev.to_status]}`;
     rows.push({
       ts: new Date(ev.created_at).getTime(),

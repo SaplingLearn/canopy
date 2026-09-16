@@ -10,7 +10,7 @@
  *  • newTicketView — the inert Submit button and the design's defaults
  *  • ticketDetailView — legal moves only (call #7), link field ↔ "Linked to
  *    engineering work" (call #8), the sub-ticket candidate filter, the merged
- *    thread with "opened · SUBMITTED", the sprint menu's tick, assignee controls
+ *    thread with "opened this ticket", the sprint menu's tick, assignee controls
  */
 import { describe, it, expect } from "vitest";
 import { render, initialState, type AppState } from "../web/src/render";
@@ -649,7 +649,7 @@ describe("relCandidates — the sub-ticket add menu's filter", () => {
 });
 
 describe("ticketDetailView — the thread", () => {
-  it("renders the opening event as 'opened · SUBMITTED' and later ones as from → to", () => {
+  it("renders the opening event as 'opened this ticket' and later ones as from → to", () => {
     const html = ticketDetailView(detailProps(detail({
       id: 1, title: "T", status: "in_progress",
       events: [
@@ -657,9 +657,10 @@ describe("ticketDetailView — the thread", () => {
         event({ id: 2, actor: "jose-a", from_status: "submitted", to_status: "in_progress", created_at: ago(1 * H) }),
       ],
     })));
-    expect(html).toContain("opened · SUBMITTED");
+    expect(html).toContain("opened this ticket");
+    expect(html).not.toContain("opened · SUBMITTED");
     expect(html).toContain("Submitted → In progress");
-    expect(html.indexOf("opened · SUBMITTED")).toBeLessThan(html.indexOf("Submitted → In progress"));
+    expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("Submitted → In progress"));
   });
 
   it("merges comments and history ascending by time", () => {
@@ -671,7 +672,7 @@ describe("ticketDetailView — the thread", () => {
         event({ id: 2, from_status: "submitted", to_status: "in_progress", created_at: ago(1 * H) }),
       ],
     })));
-    expect(html.indexOf("opened · SUBMITTED")).toBeLessThan(html.indexOf("SECOND"));
+    expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("SECOND"));
     expect(html.indexOf("SECOND")).toBeLessThan(html.indexOf("Submitted → In progress"));
     expect(html).toContain("1 comment<");
   });

@@ -74,7 +74,7 @@ function requireParsedLink(raw: string) {
  *
  * Writes, in one logical unit: the ticket row (status 'submitted'), its
  * assignees, the OPENING `ticket_events` row (from_status NULL → 'submitted',
- * which the detail screen renders as "opened · SUBMITTED"), and the parsed link
+ * which the detail screen renders as "opened this ticket"), and the parsed link
  * when one was given.
  */
 export async function create_ticket(db: DB, input: TicketCreate, requester: string): Promise<number> {

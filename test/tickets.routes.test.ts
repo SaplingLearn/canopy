@@ -69,7 +69,7 @@ describe("POST /tickets", () => {
     expect(t.parent).toBeNull();
     expect(t.sprint).toBeNull();
 
-    // The OPENING history row: from_status NULL → 'submitted' ("opened · SUBMITTED").
+    // The OPENING history row: from_status NULL → 'submitted' ("opened this ticket").
     expect(t.events.length).toBe(1);
     expect(t.events[0]).toMatchObject({ actor: "andres", from_status: null, to_status: "submitted" });
   });
