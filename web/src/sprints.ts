@@ -278,12 +278,14 @@ function resourceRow(lk: SprintResourceView): string {
   </a>`;
 }
 
-/** One ticket row. `depth: 1` = a child under its root: indented 34px with the ↳ chevron. */
+/** One ticket row. `depth: 1` = a child under its root: indented 34px with the ↳ chevron.
+ *  The assignee avatars sit between the title and the chips (design 514). */
 function sprintTicketRow(t: SprintTicketRow, persons: PersonSummary[]): string {
   const child = t.depth === 1;
   return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-trow" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);transition:background .12s ease;${child ? "padding-left:34px" : ""}">
     ${child ? `<span style="color:var(--fg-40);flex:none">↳</span>` : ""}
     <span style="flex:1;min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
+    ${avatarStack(t.assignees, persons, 18)}
     ${priorityChip(t.priority)}
     ${ticketPill(t.status)}
     <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);flex:none;width:34px;text-align:right">${esc(age(t.created_at))}</span>

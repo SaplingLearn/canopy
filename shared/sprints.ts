@@ -113,10 +113,11 @@ export interface SprintView {
   members: string[];              // distinct assignee handles over the sprint's tickets
 }
 
-/** A ticket as the sprint screen lists it: the row plus its nesting depth.
+/** A ticket as the sprint screen lists it: the row, its nesting depth, and its
+ *  assignee handles (the design's stacked avatars on a sprint's ticket rows).
  *  `depth: 1` = a child rendered under its root; a child whose parent is NOT in
  *  this sprint renders as a root (`depth: 0`). Populated in Phase 3. */
-export type SprintTicketRow = TicketRow & { depth: 0 | 1 };
+export type SprintTicketRow = TicketRow & { depth: 0 | 1; assignees: string[] };
 
 /** A link shown in a sprint's Resources list: `sprint_resources` unioned with the
  *  ticket links inside the sprint, deduped by url. Populated in Phase 3. */

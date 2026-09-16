@@ -662,10 +662,26 @@ function personName(handle: string): string {
 }
 const personFirstName = (handle: string): string => personName(handle).split(" ")[0];
 
-/** Every ticket write answers with the fresh detail: adopt it, toast, refresh the
- *  badge, and refetch the queue when it is already on screen / cached. */
-function applyTicketWrite(t: TicketDetail, msg: string): void {
-  state.ticketDetail = { status: "ok", data: t };
+/**
+ * Claim the ticket-detail slice for a write that is about to go out, and return
+ * the sequence number to hand back to `applyTicketWrite`.
+ *
+ * Assignment is a no-confirm immediate toggle (design call #7), so two clicks
+ * inside one round-trip window are expected: "Assign to X" then the X remove
+ * button. Both writes are correct server-side, but without a guard whichever
+ * RESPONSE lands last wins the screen — and the rail can end up showing X
+ * assigned over a database that says otherwise, until the user leaves and
+ * re-enters the ticket. Bumping the same counter `loadTicketDetail` uses means
+ * the newest write (or load) owns the slice and every earlier response is
+ * dropped.
+ */
+const claimTicketDetail = (): number => ++ticketDetailSeq;
+
+/** Every ticket write answers with the fresh detail: adopt it (unless a newer
+ *  write/load has since claimed the slice — see `claimTicketDetail`), toast,
+ *  refresh the badge, and refetch the queue when it is already on screen / cached. */
+function applyTicketWrite(t: TicketDetail, msg: string, seq: number): void {
+  if (seq === ticketDetailSeq) state.ticketDetail = { status: "ok", data: t };
   loadTicketBadge();
   if (state.tickets.status !== "idle") loadTickets();
   flash(msg);
@@ -1068,7 +1084,8 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const to = arg as TicketStatus;
       // "Back" is the only move whose button copy differs from the status label.
       const label = to === "submitted" ? "Back to submitted" : TICKET_STATUS_LABEL[to];
-      transitionTicket(id, to).then((t) => applyTicketWrite(t, `Status: ${label}`)).catch(ticketErr);
+      const seq = claimTicketDetail();
+      transitionTicket(id, to).then((t) => applyTicketWrite(t, `Status: ${label}`, seq)).catch(ticketErr);
       return;
     }
     case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; break;
@@ -1080,13 +1097,15 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const id = state.ticketId;
       if (id === null || !arg) return;
       state.asgMenu = false;
-      toggleTicketAssignee(id, arg, true).then((t) => applyTicketWrite(t, `Assigned to ${personName(arg)}`)).catch(ticketErr);
+      const seq = claimTicketDetail();
+      toggleTicketAssignee(id, arg, true).then((t) => applyTicketWrite(t, `Assigned to ${personName(arg)}`, seq)).catch(ticketErr);
       return;
     }
     case "ticketAsgRemove": {
       const id = state.ticketId;
       if (id === null || !arg) return;
-      toggleTicketAssignee(id, arg, false).then((t) => applyTicketWrite(t, `${personName(arg)} removed`)).catch(ticketErr);
+      const seq = claimTicketDetail();
+      toggleTicketAssignee(id, arg, false).then((t) => applyTicketWrite(t, `${personName(arg)} removed`, seq)).catch(ticketErr);
       return;
     }
     case "ticketSprintSet": {
@@ -1096,8 +1115,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const sprintId = arg ? Number(arg) : null;
       if ((state.ticketDetail.data?.sprint?.id ?? null) === sprintId) break;   // already there — just close the menu
       const label = sprintId === null ? null : state.sprints.data.find((sp) => sp.id === sprintId)?.label ?? "";
+      const seq = claimTicketDetail();
       setTicketSprint(id, sprintId)
-        .then((t) => applyTicketWrite(t, label === null ? "Moved to Backlog" : `Moved to ${label}`))
+        .then((t) => applyTicketWrite(t, label === null ? "Moved to Backlog" : `Moved to ${label}`, seq))
         .catch(ticketErr);
       return;
     }
@@ -1106,8 +1126,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const child = Number(arg);
       if (id === null || !Number.isInteger(child)) return;
       state.relMenu = false;
+      const seq = claimTicketDetail();
       setTicketParent(id, child)
-        .then((t) => applyTicketWrite(t, "Added as sub-ticket — this ticket is now its parent"))
+        .then((t) => applyTicketWrite(t, "Added as sub-ticket — this ticket is now its parent", seq))
         .catch(ticketErr);
       return;
     }
@@ -1117,13 +1138,14 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const id = state.ticketId;
       const raw = state.linkDraft.trim();
       if (id === null || !raw) return;
+      const seq = claimTicketDetail();
       addTicketLink(id, raw)
         .then((t) => {
           state.linkDraft = "";
           state.lkOpen = false;
           // The server parses the raw input, so the toast names the STORED label.
           const added = t.links[t.links.length - 1];
-          applyTicketWrite(t, added ? `Linked: ${added.label}` : "Linked");
+          applyTicketWrite(t, added ? `Linked: ${added.label}` : "Linked", seq);
         })
         .catch(ticketErr);
       return;
@@ -1133,8 +1155,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const id = state.ticketId;
       const body = state.commentDraft.trim();
       if (id === null || !body) return;
+      const seq = claimTicketDetail();
       addTicketComment(id, body)
-        .then((t) => { state.commentDraft = ""; applyTicketWrite(t, "Comment posted"); })
+        .then((t) => { state.commentDraft = ""; applyTicketWrite(t, "Comment posted", seq); })
         .catch(ticketErr);
       return;
     }

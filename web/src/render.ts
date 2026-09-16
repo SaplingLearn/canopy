@@ -1609,7 +1609,11 @@ function maintenanceScreen(s: AppState): string {
 function ticketsScreen(s: AppState): string {
   if (slicePending(s.tickets)) return notice("Loading the queue&hellip;");
   if (s.tickets.status === "error") return notice("Couldn't load the ticket queue.");
-  return queueView({
+  // The sprints slice is a SEPARATE fetch: when it fails the queue still renders
+  // (every ticket falls into BACKLOG — `queueGroups` never drops one), but say so
+  // rather than letting the grouping look like a filter bug.
+  const hint = s.sprints.status === "error" ? mwDegradedHint("Couldn't load sprints — grouping by sprint is unavailable.") : "";
+  return hint + queueView({
     tickets: s.tickets.data,
     sprints: s.sprints.data,
     persons: s.persons.data,

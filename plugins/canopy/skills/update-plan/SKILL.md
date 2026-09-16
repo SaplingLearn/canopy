@@ -84,6 +84,9 @@ The sprint vocabulary (the DTO's words, not the column names):
 | `github_ref` | a GitHub milestone number, or an array of issue numbers |
 
 - `id` present → update that sprint; `id` absent → create one.
+- On an update, a field you **omit** is left unchanged (`label`, `due` and `status` are required, so
+  they always overwrite); passing an explicit `null` is how you **clear** one. Sprint fields also come
+  from the Roadmap's New sprint panel, so never re-send a field blank just to fill the shape.
 - **You never write progress.** A sprint's `closed/total/pct` is computed at read time as
   **the tickets in the sprint plus the GitHub issues behind `github_ref`** — `total` = tickets +
   cached issues, `closed` = tickets a person marked `done`/`declined` + cached closed issues. A

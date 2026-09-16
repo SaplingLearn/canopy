@@ -665,3 +665,67 @@ describe("tickets: 401 without a session cookie", () => {
     expect((await all(env.DB, `SELECT * FROM ticket_assignees`)).length).toBe(0);
   });
 });
+
+// ── D1's 100-bound-parameter ceiling (the queue outgrows it) ──────────────────
+
+/** Seed `n` tickets in ONE D1 batch — 130 sequential inserts is too slow to be a test. */
+async function seedBulkTickets(n: number, sprintId: number | null = null): Promise<number[]> {
+  const now = "2026-05-01T00:00:00Z";
+  const sql = `INSERT INTO tickets (title, body, category, priority, status, requester, sprint_id, created_at, updated_at)
+               VALUES (?, '', 'other', 'normal', 'submitted', 'andres', ?, ?, ?)`;
+  await env.DB.batch(
+    Array.from({ length: n }, (_, i) => env.DB.prepare(sql).bind(`Bulk ticket ${i}`, sprintId, now, now))
+  );
+  return (await all<{ id: number }>(env.DB, `SELECT id FROM tickets ORDER BY id ASC`)).map((r) => r.id);
+}
+
+describe("GET /tickets past 100 rows", () => {
+  // list_tickets fans four grouped queries out over the matching ticket ids
+  // (assignees, link counts, sub counts, sprint labels). D1 caps a statement at
+  // 100 BOUND PARAMETERS, and the queue has no LIMIT and no pagination, so a
+  // single `IN (?, ?, …)` takes the whole surface down with
+  // `D1_ERROR: too many SQL variables` the moment the org files its 101st ticket.
+  it("returns all 130 rows, with the per-row aggregates right on a row past the first chunk", async () => {
+    const cookie = await cookieFor("andres");
+    await seedPerson("meilin");
+    const sprintId = await seedSprint("Ticket queue");
+    const ids = await seedBulkTickets(130);
+    expect(ids).toHaveLength(130);
+
+    // Every row shares one `updated_at`, so the sort (updated_at DESC, id DESC)
+    // puts the LOWEST id last: `marked` is row 130 of 130, deep past chunk one.
+    const marked = ids[0];
+    const child = ids[1];
+    expect((await post(`/tickets/${marked}/assignees`, cookie, { login: "meilin", on: true })).status).toBe(200);
+    expect((await post(`/tickets/${marked}/links`, cookie, { raw: "#214" })).status).toBe(200);
+    expect((await post(`/tickets/${marked}/parent`, cookie, { child_id: child })).status).toBe(200);
+    expect((await post(`/tickets/${marked}/sprint`, cookie, { sprint_id: sprintId })).status).toBe(200);
+    // Those writes bumped updated_at; put the two rows back at the BOTTOM of the
+    // queue so the assertions below are about the last chunk, not the first.
+    await run(env.DB, `UPDATE tickets SET updated_at = '2020-01-01T00:00:00Z' WHERE id IN (?, ?)`, marked, child);
+
+    const res = await get("/tickets?seg=all", cookie);
+    expect(res.status, await res.clone().text()).toBe(200);
+    const rows = (await json<{ tickets: TicketListItem[] }>(res)).tickets;
+    expect(rows).toHaveLength(130);
+
+    const last = rows[rows.length - 1];
+    expect(last.id).toBe(marked);                 // it really is past the first chunk
+    expect(last.assignees).toEqual(["meilin"]);
+    expect(last.link_count).toBe(1);
+    expect(last.sub_count).toBe(1);
+    expect(last.sprint_label).toBe("Ticket queue");
+    // …and a first-chunk row still reads as empty, so the merge didn't smear.
+    expect(rows[0].assignees).toEqual([]);
+    expect(rows[0].link_count).toBe(0);
+    expect(rows[0].sprint_label).toBeNull();
+  });
+
+  it("holds for a filtered segment too — `seg=open` hits the same fan-out", async () => {
+    const cookie = await cookieFor("andres");
+    await seedBulkTickets(130);
+    const res = await get("/tickets?seg=open", cookie);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect((await json<{ tickets: TicketListItem[] }>(res)).tickets).toHaveLength(130);
+  });
+});

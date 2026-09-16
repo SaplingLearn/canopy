@@ -22,6 +22,21 @@ const review = (kind: "proposal" | "decision", title: string, summary: string, m
   `<tr><td style="padding:${first ? 0 : SP.m - SP.xs}px 0 ${SP.m - SP.xs}px 0;${first ? "" : `border-top:1px solid ${THEME.border.light};`}">` +
   `<div>${K.chip(kind.toUpperCase(), kind === "proposal" ? "accent" : "blue")}${low ? ` ${K.chip("LOW CONFIDENCE", "amber")}` : ""}<span style="${S.body}font-weight:500;padding-left:8px;">${title}</span></div>` +
   `<div style="${S.muted}padding-top:${SP.xs}px;">${summary}</div><div style="${S.muted}font-size:12px;line-height:16px;padding-top:${SP.xs}px;">${meta}</div></td></tr>`;
+/** A ticketq card, mirroring renderers/ticket-queue.ts's two halves exactly. */
+const unassigned = (n: number, title: string, category: string, prio: string, requester: string, old: string, first = false) =>
+  K.item({
+    title, number: null, url: null,
+    rows: [K.row("Category", category), K.row("Requester", requester)],
+    footer: `${K.chip(prio, "muted")}<span style="padding-left:8px;">#${n} &middot; opened ${old} ago</span>`,
+    first,
+  });
+const assigned = (n: number, title: string, status: string, tone: "green" | "blue", prio: string, sprint: string, updated: string, first = false) =>
+  K.item({
+    title, number: null, url: null,
+    rows: [K.row("Sprint", sprint)],
+    footer: `${K.chip(status, tone)} ${K.chip(prio, "muted")}<span style="padding-left:8px;">#${n} &middot; updated ${updated} ago</span>`,
+    first,
+  });
 const plan = (label: "added" | "changed" | "reordered" | "done", t: string) =>
   `<tr><td width="96" style="vertical-align:top;padding:${SP.xs}px 8px ${SP.xs}px 0;">${K.chip(label.toUpperCase(), { added: "green", changed: "blue", reordered: "muted", done: "accent" }[label] as "green" | "blue" | "muted" | "accent")}</td><td style="${S.body}">${t}</td></tr>`;
 
@@ -67,6 +82,25 @@ export function sampleSections(): Section[] {
         plan("done", "Docs handbook + diagram rendering — confirmed complete") +
         `</table>`,
       text: "  added      Self-host & deploy guide — targeting Sep 20\n  changed    Semantic search ranking — target moved Jul 4 -> Jul 18\n  reordered  Multi-agent session attribution now ahead of Self-host & deploy guide\n  done       Docs handbook + diagram rendering — confirmed complete",
+    },
+    {
+      heading: "Ticket queue",
+      summary: "2 tickets unassigned · 1 assigned to you (sample data)",
+      linkLabel: "Tickets",
+      deepLink: "/#tickets",
+      html:
+        `<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">UNASSIGNED</div>` +
+        unassigned(214, "Gradebook export comes back empty", "bug", "HIGH", "Meilin Zhao", "3h", true) +
+        unassigned(211, "Access to the staging analytics dashboard", "access", "NORMAL", "Sana Okafor", "2d") +
+        `<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">ASSIGNED TO YOU</div>` +
+        assigned(207, "Roster import drops middle names", "In progress", "green", "NORMAL", "Ticket queue", "6h", true),
+      text:
+        "  unassigned  #214  Gradebook export comes back empty\n" +
+        "                    bug · high · filed by Meilin Zhao · 3h old\n" +
+        "  unassigned  #211  Access to the staging analytics dashboard\n" +
+        "                    access · normal · filed by Sana Okafor · 2d old\n" +
+        "  assigned    #207  Roster import drops middle names\n" +
+        "                    In progress · Ticket queue",
     },
   ];
 }

@@ -6,7 +6,7 @@ import { sprintProgress } from "../src/tools/sprints";
 import { upsertProgress } from "../src/tools/progress";
 import type { SprintDetail, SprintView } from "@shared/sprints";
 import type { TicketDetail } from "@shared/tickets";
-import { cookieFor } from "./helpers/persons";
+import { cookieFor, seedPerson } from "./helpers/persons";
 
 // ── harness (the Phase 2 route-test idiom: real routes, real cookies, real D1) ─
 
@@ -465,5 +465,48 @@ describe("sprint routes 401 without a session", () => {
     expect(await all(env.DB, `SELECT * FROM sprints`)).toHaveLength(1);
     expect(await all(env.DB, `SELECT * FROM sprint_resources`)).toHaveLength(0);
     expect((await first<{ status: string }>(env.DB, `SELECT status FROM sprints WHERE id = ?`, sp.id))!.status).toBe("upcoming");
+  });
+});
+
+// ── D1's 100-bound-parameter ceiling ─────────────────────────────────────────
+
+/** Seed `n` tickets into one sprint in ONE D1 batch (130 route calls is too slow). */
+async function seedBulkTickets(n: number, sprintId: number): Promise<number[]> {
+  const sql = `INSERT INTO tickets (title, body, category, priority, status, requester, sprint_id, created_at, updated_at)
+               VALUES (?, '', 'other', 'normal', 'submitted', 'andres', ?, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')`;
+  await env.DB.batch(Array.from({ length: n }, (_, i) => env.DB.prepare(sql).bind(`Bulk ticket ${i}`, sprintId)));
+  return (await all<{ id: number }>(env.DB, `SELECT id FROM tickets WHERE sprint_id = ? ORDER BY id ASC`, sprintId)).map((r) => r.id);
+}
+
+describe("GET /sprints/:id past 100 tickets", () => {
+  // get_sprint fans the ticket-links and assignee queries out over every ticket
+  // id in the sprint. D1 caps a statement at 100 BOUND PARAMETERS, so a single
+  // `ticket_id IN (?, ?, …)` throws `too many SQL variables` and takes the whole
+  // sprint screen down once a sprint holds its 101st ticket.
+  it("returns all 130 tickets, with the links and assignees of a ticket past the first chunk", async () => {
+    const cookie = await cookieFor("andres");
+    await seedPerson("meilin");
+    const sp = await createSprint(cookie, { label: "Big sprint" });
+    const ids = await seedBulkTickets(130, sp.id);
+    expect(ids).toHaveLength(130);
+
+    // One shared updated_at → the sort (updated_at DESC, id DESC) puts the LOWEST
+    // id last, so `marked` is ticket 130 of 130: deep past chunk one.
+    const marked = ids[0];
+    expect((await post(`/tickets/${marked}/links`, cookie, { raw: "https://example.com/rfc" })).status).toBe(200);
+    expect((await post(`/tickets/${marked}/assignees`, cookie, { login: "meilin", on: true })).status).toBe(200);
+    await pin(marked, "2020-01-01T00:00:00Z"); // those writes bumped updated_at — put it back at the bottom
+
+    const detail = await detailOf(cookie, sp.id);
+    expect(detail.tickets).toHaveLength(130);
+    expect(detail.progress).toEqual({ closed: 0, total: 130, pct: 0 });
+
+    const last = detail.tickets[detail.tickets.length - 1];
+    expect(last.id).toBe(marked);                       // it really is past the first chunk
+    expect(last.assignees).toEqual(["meilin"]);
+    expect(detail.resources.map((r) => r.url)).toEqual(["https://example.com/rfc"]);
+    expect(detail.members).toEqual(["meilin"]);
+    // …and a first-chunk ticket still reads as unassigned, so the merge didn't smear.
+    expect(detail.tickets[0].assignees).toEqual([]);
   });
 });

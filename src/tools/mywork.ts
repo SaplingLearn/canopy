@@ -150,6 +150,9 @@ interface AssignedTicketRow {
  * person's own assignments are not. `ticket_assignees.login` holds a person
  * HANDLE (§C.2), so this is keyed on the handle directly, NOT on a GitHub login:
  * a Google-only person (no `identities` row at all) still sees their tickets.
+ * The comparison is `COLLATE NOCASE`, matching `persons.handle`'s collation and
+ * `getPerson` — a caller spelling the handle in another case must not be told
+ * "nothing assigned to you" while holding half the queue.
  * Closed tickets (`done` / `declined`) never appear — My Work is what is open.
  */
 export async function listAssignedTickets(db: DB, handle: string, limit = TICKET_LIMIT): Promise<MyWorkTicket[]> {
@@ -158,7 +161,7 @@ export async function listAssignedTickets(db: DB, handle: string, limit = TICKET
     `SELECT t.id, t.title, t.body, t.category, t.priority, t.status, t.requester,
             t.sprint_id, s.title AS sprint_label, t.created_at, t.updated_at
        FROM tickets t
-       JOIN ticket_assignees a ON a.ticket_id = t.id AND a.login = ?
+       JOIN ticket_assignees a ON a.ticket_id = t.id AND a.login = ? COLLATE NOCASE
        LEFT JOIN sprints s ON s.id = t.sprint_id
       WHERE t.status IN ('submitted', 'in_progress')
       ORDER BY t.updated_at DESC, t.id DESC
@@ -198,7 +201,7 @@ export async function getMyWork(db: DB, handle: string): Promise<MyWork> {
     // Tickets are keyed on the person HANDLE, not on a GitHub login, so they are
     // read BEFORE the identity fork: a Google-only person (no github identity)
     // has no PRs and no assigned issues but can still own half the queue.
-    const tickets = await listAssignedTickets(db, handle);
+    const tickets = await listAssignedTickets(db, me.handle);
 
     const logins = (await listIdentities(db, handle)).filter((i) => i.provider === "github").map((i) => i.subject);
     if (logins.length === 0) return { person: me.name ?? me.handle, previousActivity: [], todo: [], tickets, degraded: false };

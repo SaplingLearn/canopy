@@ -378,6 +378,21 @@ describe("getMyWork — tickets assigned to me", () => {
     expect(work.tickets.map((t) => t.title)).toEqual(["T8", "T7", "T6", "T5", "T4", "T3"]);
   });
 
+  it("matches the assignee handle case-INSENSITIVELY, like persons.handle and getPerson", async () => {
+    // `persons.handle` is NOCASE and `getPerson` resolves "caseyq" → "CaseyQ". If
+    // the ticket join stayed case-sensitive the person would be told "No tickets
+    // assigned to you" while holding the whole queue — a silent wrong answer.
+    await seedPerson("CaseyQ", { name: "Casey Quinn" });
+    await create_ticket(env.DB, mk({ title: "Cased", assignees: ["CaseyQ"] }), "CaseyQ");
+
+    const canonical = await getMyWork(env.DB, "CaseyQ");
+    expect(canonical.tickets.map((t) => t.title)).toEqual(["Cased"]);
+
+    const lowered = await getMyWork(env.DB, "caseyq");
+    expect(lowered.person).toBe("Casey Quinn");
+    expect(lowered.tickets.map((t) => t.title)).toEqual(["Cased"]);
+  });
+
   it("a Google-only person (no github identity) still sees their tickets", async () => {
     await seedPerson("sanaok", { name: "Sana Okafor", github: false });
     await create_ticket(env.DB, mk({ title: "Access request", assignees: ["sanaok"] }), "sanaok");

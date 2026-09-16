@@ -32,7 +32,7 @@ import {
   type SprintResourceView,
 } from "@shared/sprints";
 import { parseTicketLink } from "@shared/tickets";
-import { type DB, first, all, run, nowIso } from "../db";
+import { type DB, first, all, run, nowIso, ph, fanOut } from "../db";
 import { getProgress } from "./progress";
 
 /**
@@ -55,9 +55,6 @@ export const SPRINT_ERROR_STATUS = { not_found: 404, conflict: 409, bad_request:
 
 /** Ticket statuses that count as "closed" for progress — a person resolved them, either way. */
 const CLOSED_TICKET_STATUSES = ["done", "declined"] as const;
-
-/** `IN (?, ?, …)` placeholders. */
-const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ");
 
 // ── progress + members (the two computed fields on every SprintView) ──────────
 
@@ -85,23 +82,23 @@ export function sprintProgress({ ticketsTotal, ticketsClosed, cache }: SprintPro
  * Per-sprint ticket counts, in ONE grouped query (never per sprint). Pass `ids`
  * to scope it to a known set — that is how `query()` in reads.ts costs the
  * ticket half of the progress line for just the sprints it hydrated, without
- * re-declaring which statuses count as closed.
+ * re-declaring which statuses count as closed. A scoped call chunks the id list
+ * (D1's 100-bound-parameter ceiling — see `fanOut` in src/db.ts).
  */
 export async function ticketCountsBySprint(
   db: DB,
   ids?: number[]
 ): Promise<Map<number, { total: number; closed: number }>> {
   if (ids && ids.length === 0) return new Map();
-  const scope = ids ? ` AND sprint_id IN (${ph(ids.length)})` : "";
-  const rows = await all<{ sprint_id: number; total: number; closed: number }>(
-    db,
+  const select = (scope: string) =>
     `SELECT sprint_id,
             COUNT(*) AS total,
             SUM(CASE WHEN status IN (${ph(CLOSED_TICKET_STATUSES.length)}) THEN 1 ELSE 0 END) AS closed
-       FROM tickets WHERE sprint_id IS NOT NULL${scope} GROUP BY sprint_id`,
-    ...CLOSED_TICKET_STATUSES,
-    ...(ids ?? [])
-  );
+       FROM tickets WHERE sprint_id IS NOT NULL${scope} GROUP BY sprint_id`;
+  type CountRow = { sprint_id: number; total: number; closed: number };
+  const rows = ids
+    ? await fanOut<CountRow>(db, ids, (p) => select(` AND sprint_id IN (${p})`), [...CLOSED_TICKET_STATUSES])
+    : await all<CountRow>(db, select(""), ...CLOSED_TICKET_STATUSES);
   return new Map(rows.map((r) => [r.sprint_id, { total: r.total, closed: r.closed }]));
 }
 
@@ -229,12 +226,27 @@ export async function get_sprint(db: DB, id: number): Promise<SprintDetail | nul
   );
   const present = new Set(inSprint.map((t) => t.id));
 
+  // Per-ticket assignees, in ONE grouped query per chunk (the design's stacked
+  // avatars on a sprint's ticket rows, line 514) — never a lookup per row.
+  const asgRows = await fanOut<{ ticket_id: number; login: string }>(
+    db,
+    inSprint.map((t) => t.id),
+    (p) => `SELECT ticket_id, login FROM ticket_assignees WHERE ticket_id IN (${p}) ORDER BY login ASC`
+  );
+  const asgByTicket = new Map<number, string[]>();
+  for (const a of asgRows) {
+    const list = asgByTicket.get(a.ticket_id) ?? [];
+    list.push(a.login);
+    asgByTicket.set(a.ticket_id, list);
+  }
+  const withAsg = (t: TicketRow, depth: 0 | 1): SprintTicketRow => ({ ...t, depth, assignees: asgByTicket.get(t.id) ?? [] });
+
   const ordered: SprintTicketRow[] = [];
   for (const t of inSprint) {
     if (t.parent_id !== null && present.has(t.parent_id)) continue; // emitted under its root below
-    ordered.push({ ...t, depth: 0 });
+    ordered.push(withAsg(t, 0));
     for (const child of inSprint) {
-      if (child.parent_id === t.id) ordered.push({ ...child, depth: 1 });
+      if (child.parent_id === t.id) ordered.push(withAsg(child, 1));
     }
   }
 
@@ -244,14 +256,13 @@ export async function get_sprint(db: DB, id: number): Promise<SprintDetail | nul
     id
   );
   const ticketIds = ordered.map((t) => t.id);
-  const linkRows = ticketIds.length
-    ? await all<SprintResourceView & { ticket_id: number }>(
-        db,
-        `SELECT ticket_id, url, kind, label, meta FROM ticket_links WHERE ticket_id IN (${ph(ticketIds.length)})
-          ORDER BY created_at ASC, id ASC`,
-        ...ticketIds
-      )
-    : [];
+  // Chunked: a sprint can hold more tickets than D1 allows bound params.
+  const linkRows = await fanOut<SprintResourceView & { ticket_id: number }>(
+    db,
+    ticketIds,
+    (p) => `SELECT ticket_id, url, kind, label, meta FROM ticket_links WHERE ticket_id IN (${p})
+             ORDER BY created_at ASC, id ASC`
+  );
   const linksByTicket = new Map<number, SprintResourceView[]>();
   for (const l of linkRows) {
     const list = linksByTicket.get(l.ticket_id) ?? [];

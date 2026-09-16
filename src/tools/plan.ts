@@ -64,25 +64,33 @@ export async function write_plan(
   for (const sp of input.sprints) {
     const github_ref = githubRefJson(sp.github_ref);
     if (sp.id !== undefined) {
-      const res = await run(
-        db,
-        `UPDATE sprints SET title = ?, description = ?, summary = ?, phase = ?, dates = ?, target_date = ?,
-                            status = ?, urgency = ?, lead = ?, domain = ?, github_ref = ?, updated_at = ?
-         WHERE id = ?`,
-        sp.label,
-        sp.description ?? null,
-        sp.summary ?? null,
-        sp.phase ?? null,
-        sp.dates ?? null,
-        sp.due,
-        sp.status,
-        sp.urgency ?? "normal",
-        sp.lead ?? null,
-        sp.domain ?? null,
-        github_ref,
-        now,
-        sp.id
-      );
+      // OMITTED means UNCHANGED. `label`, `due` and `status` are required on the
+      // input, so they always overwrite. Every OPTIONAL column is written ONLY
+      // when the caller actually supplied it: a plan write that names a sprint
+      // without repeating its panel-authored fields (`summary`, `dates`,
+      // `urgency`, `lead`, `domain`, `phase`, `description`, `github_ref`) leaves
+      // them exactly as they were — `POST /sprints` (the Roadmap's New sprint
+      // panel) writes those too, and the plan write must not clobber them.
+      // An EXPLICIT `null` still CLEARS the column: `undefined` (absent) and
+      // `null` (cleared) are distinct here, and that distinction is the contract.
+      const sets: string[] = [`title = ?`, `target_date = ?`, `status = ?`, `updated_at = ?`];
+      const binds: unknown[] = [sp.label, sp.due, sp.status, now];
+      const optional: [string, unknown][] = [
+        ["description", sp.description],
+        ["summary", sp.summary],
+        ["phase", sp.phase],
+        ["dates", sp.dates],
+        ["urgency", sp.urgency],
+        ["lead", sp.lead],
+        ["domain", sp.domain],
+        ["github_ref", sp.github_ref === undefined ? undefined : github_ref],
+      ];
+      for (const [col, value] of optional) {
+        if (value === undefined) continue;
+        sets.push(`${col} = ?`);
+        binds.push(value);
+      }
+      const res = await run(db, `UPDATE sprints SET ${sets.join(", ")} WHERE id = ?`, ...binds, sp.id);
       if ((res.meta.changes ?? 0) === 0) throw new Error(`no such sprint: ${sp.id}`);
     } else {
       await run(

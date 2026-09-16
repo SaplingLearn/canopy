@@ -210,6 +210,26 @@ describe("header — titles, breadcrumb, queue chrome", () => {
     expect(html).toContain("CSV export fails");
   });
 
+  it("says so when the sprints fetch failed, and still renders every ticket", () => {
+    // `GET /sprints` is a separate fetch from `GET /tickets`. When it fails the
+    // queue must still render (everything folds into BACKLOG) AND admit that the
+    // sprint grouping is missing, rather than looking like a filter swallowed rows.
+    const html = render(appState({
+      screen: "tickets",
+      tickets: { status: "ok", data: [ticket({ id: 1, title: "Orphaned row", sprint_id: 12, sprint_label: "Sprint 12" })] },
+      sprints: { status: "error", data: [], error: "boom" },
+    }));
+    expect(html).toContain("Couldn't load sprints");
+    expect(html).toContain("Orphaned row");
+    expect(html).toContain("BACKLOG");
+    // …and a healthy sprints slice says nothing.
+    const ok = render(appState({
+      screen: "tickets",
+      tickets: { status: "ok", data: [ticket({ id: 1, title: "Orphaned row" })] },
+    }));
+    expect(ok).not.toContain("Couldn't load sprints");
+  });
+
   it("has no back button and no crumb on the queue itself", () => {
     const html = render(appState({ screen: "tickets" }));
     expect(html).not.toContain('data-act="ticketsBack"');
@@ -279,6 +299,30 @@ describe("queueView — table grouping", () => {
   it("opens the detail from a row", () => {
     const html = queueView(queueProps({ tickets: rows, sprints: [s12] }));
     expect(html).toContain('data-act="openTicket" data-arg="1"');
+  });
+
+  // GET /sprints is a SEPARATE fetch from GET /tickets: it can fail, or simply
+  // land later. If a ticket whose sprint is missing fell out of every group it
+  // would vanish from the table while the footer kept counting it — silent, and
+  // it looks like a filter bug because Board view (grouped by status) is fine.
+  it("folds a ticket whose sprint is not loaded into BACKLOG rather than dropping it", () => {
+    const orphan = ticket({ id: 7, title: "Sprint went missing", sprint_id: 999, sprint_label: "Gone" });
+    const groups = queueGroups([...rows, orphan], []);
+    expect(groups.map((g) => g.label)).toEqual(["BACKLOG"]);
+    expect(groups[0].rows.map((t) => t.id)).toEqual([1, 2, 3, 7]);   // every row, nothing dropped
+
+    const html = queueView(queueProps({ tickets: [...rows, orphan], sprints: [] }));
+    expect(html).toContain("Sprint went missing");
+    expect(html).toContain("4 shown · 0 unassigned");                // the footer and the table agree
+  });
+
+  it("still folds an unknown sprint_id into BACKLOG when OTHER sprints did load", () => {
+    const orphan = ticket({ id: 7, title: "Stale sprint ref", sprint_id: 999 });
+    const groups = queueGroups([...rows, orphan], [s12, s13]);
+    expect(groups.map((g) => g.label)).toEqual([
+      "SPRINT 12 — NOTIFICATIONS GA", "SPRINT 13 — TICKETS", "BACKLOG",
+    ]);
+    expect(groups[2].rows.map((t) => t.id)).toEqual([3, 7]);
   });
 });
 

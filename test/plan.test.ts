@@ -83,6 +83,84 @@ describe("write_plan", () => {
     expect(r.sprints[0].urgency).toBe("normal");
   });
 
+  it("update-by-id leaves the panel-authored fields alone when the write omits them", async () => {
+    // `POST /sprints` (the Roadmap's New sprint panel) now authors summary / dates /
+    // urgency / lead / domain / phase / description too. A plan write that names a
+    // sprint by id without repeating them must not wipe them — and `diffSprints`
+    // does not look at those columns, so a wipe would be silent AND unreported.
+    const created = await write_plan(
+      env.DB,
+      {
+        narrative: "n",
+        sprints: [{
+          label: "Ticket queue", summary: "goal line", description: "desc", phase: "Phase 2",
+          dates: "Oct 1 – 10", due: "2026-10-01", status: "upcoming", urgency: "high",
+          lead: "AndresL230", domain: "tickets", github_ref: 42,
+        }],
+      },
+      AUTHOR
+    );
+    const id = created.sprints[0].id;
+
+    // The likely call shape from the update-plan skill: carry the id, change the
+    // few fields being discussed, say nothing about the rest.
+    const after = await write_plan(
+      env.DB,
+      { narrative: "n2", sprints: [{ id, label: "Ticket queue v2", due: "2026-10-15", status: "in_progress" }] },
+      AUTHOR
+    );
+    const row = after.sprints.find((x) => x.id === id)!;
+    expect(row.title).toBe("Ticket queue v2");      // required fields DO overwrite
+    expect(row.target_date).toBe("2026-10-15");
+    expect(row.status).toBe("in_progress");
+    expect(row.summary).toBe("goal line");          // …everything omitted is untouched
+    expect(row.description).toBe("desc");
+    expect(row.phase).toBe("Phase 2");
+    expect(row.dates).toBe("Oct 1 – 10");
+    expect(row.urgency).toBe("high");
+    expect(row.lead).toBe("AndresL230");
+    expect(row.domain).toBe("tickets");
+    expect(JSON.parse(row.github_ref!)).toBe(42);
+  });
+
+  it("an EXPLICIT null still clears a sprint field — omitted and null are different", async () => {
+    const created = await write_plan(
+      env.DB,
+      {
+        narrative: "n",
+        sprints: [{
+          label: "Ticket queue", summary: "goal line", description: "desc", phase: "Phase 2",
+          dates: "Oct 1 – 10", due: "2026-10-01", status: "upcoming", urgency: "high",
+          lead: "AndresL230", domain: "tickets", github_ref: 42,
+        }],
+      },
+      AUTHOR
+    );
+    const id = created.sprints[0].id;
+
+    const after = await write_plan(
+      env.DB,
+      {
+        narrative: "n",
+        sprints: [{
+          id, label: "Ticket queue", due: "2026-10-01", status: "upcoming",
+          summary: null, lead: null, domain: null, github_ref: null,
+        }],
+      },
+      AUTHOR
+    );
+    const row = after.sprints.find((x) => x.id === id)!;
+    expect(row.summary).toBeNull();
+    expect(row.lead).toBeNull();
+    expect(row.domain).toBeNull();
+    expect(row.github_ref).toBeNull();
+    // …and the fields THIS call omitted are still there.
+    expect(row.description).toBe("desc");
+    expect(row.phase).toBe("Phase 2");
+    expect(row.dates).toBe("Oct 1 – 10");
+    expect(row.urgency).toBe("high");
+  });
+
   it("update-by-id changes label/status; admin CAN set status:'done' through write_plan", async () => {
     const r1 = await write_plan(
       env.DB,

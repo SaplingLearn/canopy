@@ -82,6 +82,11 @@ input, select { font-family: inherit; }
    collapse to one column on a narrow viewport. */
 .cnpy-trow { transition:background .12s ease; cursor:pointer; }
 .cnpy-trow:hover { background:var(--hover); }
+/* Design call #6 — "needs attention" (unassigned + Submitted). The faint accent
+   fill lives HERE rather than inline so that :hover (class + pseudo-class, higher
+   specificity) still wins and the row keeps its hover background. The 2px inset
+   rule stays inline in tickets.ts. */
+.cnpy-attn { background:color-mix(in srgb,var(--accent) 4%,transparent); }
 @media (max-width:860px) {
   .cnpy-nt-grid, .cnpy-td-grid, .cnpy-sprint-grid { grid-template-columns:1fr !important; }
   .cnpy-nt-grid > div + div, .cnpy-td-grid > div + div, .cnpy-sprint-grid > div + div { border-left:none !important; padding-left:0 !important; }

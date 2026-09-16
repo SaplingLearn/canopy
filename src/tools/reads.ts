@@ -1,7 +1,7 @@
 import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, SprintProgressRow, PlanRow, EventRow, IdentityTaskRow, TicketRow, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
 import type { TicketListItem, TicketDetail, TicketRef, TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
-import { type DB, first, all } from "../db";
+import { type DB, first, all, ph, fanOut } from "../db";
 import { getProgress } from "./progress";
 // The sprint read model lives next to the sprint writers; `query()` borrows its
 // progress RULE so the assembled sprint body and the Roadmap can never disagree.
@@ -199,9 +199,6 @@ export interface TicketListFilter {
   me?: string;
 }
 
-/** `IN (?, ?, …)` placeholders for a list of bound params. */
-const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ");
-
 export async function list_tickets(db: DB, filter: TicketListFilter = {}): Promise<TicketListItem[]> {
   const seg = filter.seg ?? "open";
   const assignee = filter.assignee ?? "anyone";
@@ -215,7 +212,9 @@ export async function list_tickets(db: DB, filter: TicketListFilter = {}): Promi
   }
   if (assignee === "me") {
     // An unresolvable `me` (no principal) matches nothing rather than everything.
-    clauses.push(`EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id AND a.login = ?)`);
+    // NOCASE, like `persons.handle` and `getPerson` — a principal spelled with a
+    // different case must not silently match nothing.
+    clauses.push(`EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id AND a.login = ? COLLATE NOCASE)`);
     params.push(filter.me ?? "");
   } else if (assignee === "unassigned") {
     clauses.push(`NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`);
@@ -228,29 +227,32 @@ export async function list_tickets(db: DB, filter: TicketListFilter = {}): Promi
   );
   if (rows.length === 0) return [];
 
+  // The queue is org-wide and unpaginated, so these id lists routinely outgrow
+  // D1's 100-bound-parameter ceiling: every one goes through `fanOut` (src/db.ts).
   const ids = rows.map((r) => r.id);
-  const idPh = ph(ids.length);
 
-  const assigneeRows = await all<{ ticket_id: number; login: string }>(
+  const assigneeRows = await fanOut<{ ticket_id: number; login: string }>(
     db,
-    `SELECT ticket_id, login FROM ticket_assignees WHERE ticket_id IN (${idPh}) ORDER BY login ASC`,
-    ...ids
+    ids,
+    (p) => `SELECT ticket_id, login FROM ticket_assignees WHERE ticket_id IN (${p}) ORDER BY login ASC`
   );
-  const linkRows = await all<{ ticket_id: number; n: number }>(
+  const linkRows = await fanOut<{ ticket_id: number; n: number }>(
     db,
-    `SELECT ticket_id, COUNT(*) AS n FROM ticket_links WHERE ticket_id IN (${idPh}) GROUP BY ticket_id`,
-    ...ids
+    ids,
+    (p) => `SELECT ticket_id, COUNT(*) AS n FROM ticket_links WHERE ticket_id IN (${p}) GROUP BY ticket_id`
   );
-  const subRows = await all<{ parent_id: number; n: number }>(
+  const subRows = await fanOut<{ parent_id: number; n: number }>(
     db,
-    `SELECT parent_id, COUNT(*) AS n FROM tickets WHERE parent_id IN (${idPh}) GROUP BY parent_id`,
-    ...ids
+    ids,
+    (p) => `SELECT parent_id, COUNT(*) AS n FROM tickets WHERE parent_id IN (${p}) GROUP BY parent_id`
   );
 
   const sprintIds = [...new Set(rows.map((r) => r.sprint_id).filter((v): v is number => v !== null))];
-  const sprintRows = sprintIds.length
-    ? await all<{ id: number; title: string }>(db, `SELECT id, title FROM sprints WHERE id IN (${ph(sprintIds.length)})`, ...sprintIds)
-    : [];
+  const sprintRows = await fanOut<{ id: number; title: string }>(
+    db,
+    sprintIds,
+    (p) => `SELECT id, title FROM sprints WHERE id IN (${p})`
+  );
 
   const byTicket = new Map<number, string[]>();
   for (const a of assigneeRows) {
@@ -555,45 +557,35 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
 
-  // 2. Hydrate base rows in bulk (one round-trip per type), then assemble.
+  // 2. Hydrate base rows in bulk (one round-trip per type per CHUNK — `fetchCap`
+  //    reaches 150, so every key list here can outgrow D1's 100-param ceiling),
+  //    then assemble.
   const docKeys = candidates.filter((c) => c.type === "doc").map((c) => c.key);
   const feedKeys = candidates.filter((c) => c.type === "feed").map((c) => Number(c.key));
   const adrKeys = candidates.filter((c) => c.type === "decision").map((c) => Number(c.key));
 
   const docMap = new Map<string, DocRow>();
   const stagedMap = new Map<string, DocVersionRow[]>();
-  if (docKeys.length) {
-    const ph = docKeys.map(() => "?").join(", ");
-    for (const d of await all<DocRow>(db, `SELECT * FROM docs WHERE slug IN (${ph})`, ...docKeys)) docMap.set(d.slug, d);
-    for (const v of await all<DocVersionRow>(
-      db,
-      `SELECT * FROM doc_versions WHERE status = 'staged' AND slug IN (${ph}) ORDER BY version ASC`,
-      ...docKeys
-    )) {
-      const list = stagedMap.get(v.slug) ?? [];
-      list.push(v);
-      stagedMap.set(v.slug, list);
-    }
+  for (const d of await fanOut<DocRow>(db, docKeys, (p) => `SELECT * FROM docs WHERE slug IN (${p})`)) docMap.set(d.slug, d);
+  for (const v of await fanOut<DocVersionRow>(
+    db,
+    docKeys,
+    (p) => `SELECT * FROM doc_versions WHERE status = 'staged' AND slug IN (${p}) ORDER BY version ASC`
+  )) {
+    const list = stagedMap.get(v.slug) ?? [];
+    list.push(v);
+    stagedMap.set(v.slug, list);
   }
 
   const feedMap = new Map<string, FeedRow>();
-  if (feedKeys.length) {
-    const ph = feedKeys.map(() => "?").join(", ");
-    for (const f of await all<FeedRow>(db, `SELECT * FROM feed WHERE id IN (${ph})`, ...feedKeys)) feedMap.set(String(f.id), f);
-  }
+  for (const f of await fanOut<FeedRow>(db, feedKeys, (p) => `SELECT * FROM feed WHERE id IN (${p})`)) feedMap.set(String(f.id), f);
 
   const adrMap = new Map<string, AdrRow>();
-  if (adrKeys.length) {
-    const ph = adrKeys.map(() => "?").join(", ");
-    for (const a of await all<AdrRow>(db, `SELECT * FROM adrs WHERE id IN (${ph})`, ...adrKeys)) adrMap.set(String(a.id), a);
-  }
+  for (const a of await fanOut<AdrRow>(db, adrKeys, (p) => `SELECT * FROM adrs WHERE id IN (${p})`)) adrMap.set(String(a.id), a);
 
   const ticketKeys = candidates.filter((c) => c.type === "ticket").map((c) => Number(c.key));
   const ticketMap = new Map<string, TicketRow>();
-  if (ticketKeys.length) {
-    const ph = ticketKeys.map(() => "?").join(", ");
-    for (const t of await all<TicketRow>(db, `SELECT * FROM tickets WHERE id IN (${ph})`, ...ticketKeys)) ticketMap.set(String(t.id), t);
-  }
+  for (const t of await fanOut<TicketRow>(db, ticketKeys, (p) => `SELECT * FROM tickets WHERE id IN (${p})`)) ticketMap.set(String(t.id), t);
 
   // Roadmap hydration: sprint ids (from 'sprint:<id>' refs) + the plan flag.
   const sprintIds = candidates
@@ -602,11 +594,8 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
   const needPlan = candidates.some((c) => c.type === "sprint" && c.key === "plan");
 
   const sprintMap = new Map<string, SprintRow>();
-  if (sprintIds.length) {
-    const ph = sprintIds.map(() => "?").join(", ");
-    for (const sp of await all<SprintRow>(db, `SELECT * FROM sprints WHERE id IN (${ph})`, ...sprintIds)) {
-      sprintMap.set(`sprint:${sp.id}`, sp);
-    }
+  for (const sp of await fanOut<SprintRow>(db, sprintIds, (p) => `SELECT * FROM sprints WHERE id IN (${p})`)) {
+    sprintMap.set(`sprint:${sp.id}`, sp);
   }
   const progressMap = sprintIds.length ? await getProgress(db) : new Map<number, SprintProgressRow>();
   // The ticket half of the progress line, for the hydrated sprints only — one

@@ -146,6 +146,21 @@ describe("ticketq renderer", () => {
     expect(s.text).toContain("Meilin Zhao");
   });
 
+  it("lists at most 5 unassigned tickets and counts the rest as '+N more waiting in Tickets'", async () => {
+    // TOP = 5: a digest is a nudge, not the queue. The cap and the overflow line
+    // are the contract — without the line the reader would think the org has 5.
+    for (let i = 1; i <= 6; i++) await file(`Unassigned ${i}`, { at: `2026-09-0${i}T12:00:00Z` });
+
+    const s = (await kind().render(env.DB, LOGIN, WINDOW))!;
+    expect(s.summary).toBe("6 tickets unassigned");
+    // newest first, so 6 … 2 are shown and the OLDEST (1) is the one that rolls up
+    for (const i of [6, 5, 4, 3, 2]) expect(s.html).toContain(`Unassigned ${i}`);
+    expect(s.html).not.toContain("Unassigned 1<");
+    expect(s.html).toContain("+1 more waiting in Tickets");
+    expect(s.text).toContain("+1 more waiting in Tickets");
+    expect(s.text.split("\n").filter((l) => l.includes("unassigned  ")).length).toBe(5);
+  });
+
   it("lists the recipient's open assigned tickets with status and sprint, omitting closed ones and other people's", async () => {
     const sprint = (await create_sprint(env.DB, SprintCreate.parse({ label: "Queue hardening" }), LOGIN)).id;
     await file("Mine, in progress", { assignees: [LOGIN], sprint_id: sprint, at: "2026-09-10T12:00:00Z" }).then((id) =>

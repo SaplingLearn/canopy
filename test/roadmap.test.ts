@@ -106,6 +106,22 @@ describe("roadmap HTTP routes (session-gated)", () => {
     expect(body.sprints[0].progress).toEqual({ closed: 4, total: 6, pct: 67 });
   });
 
+  it("GET /roadmap sorts by due date with an UNSCHEDULED sprint LAST, not first", async () => {
+    // `POST /sprints` (the New sprint panel) makes `target_date = ''` the default,
+    // so the blank is the COMMON shape now. '' sorts first lexicographically, which
+    // would put every undated sprint at the top of the roadmap; SPRINT_ORDER pins
+    // them last. This is the one assertion over the route that catches a drift.
+    await seedSprint("Unscheduled", "upcoming", "");
+    await seedSprint("Later", "upcoming", "2026-12-01");
+    await seedSprint("Sooner", "upcoming", "2026-10-01");
+
+    const res = await app.request("/roadmap", { headers: { cookie: await cookieFor("andres") } }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Awaited<ReturnType<typeof get_plan>>;
+    expect(body.sprints.map((s) => s.label)).toEqual(["Sooner", "Later", "Unscheduled"]);
+    expect(body.sprints[2].due).toBeNull();     // '' surfaces as due: null
+  });
+
   it("POST /sprints/:id/complete flips status for an authenticated principal", async () => {
     const id = await seedSprint("GA", "in_progress");
     const res = await app.request(`/sprints/${id}/complete`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);

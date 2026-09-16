@@ -33,6 +33,7 @@ vi.mock("../web/src/markdown", () => ({
 import { sprintCard, newSprintPanel, newSprintToggle, sprintScreen, sprintTags, shortDue, type NewSprintState } from "../web/src/sprints";
 import { render, initialState, type AppState } from "../web/src/render";
 import { parseHash } from "../web/src/hash";
+import { avatarStack } from "../web/src/tickets";
 import type { SprintView, SprintDetail, SprintTicketRow, SprintResourceView } from "@shared/sprints";
 import type { PersonSummary } from "../web/src/api";
 
@@ -78,7 +79,7 @@ function detail(o: Partial<SprintDetail> & { id: number; label: string }): Sprin
 
 const spTicket = (o: Partial<SprintTicketRow> & { id: number; title: string; depth: 0 | 1 }): SprintTicketRow => ({
   body: "", category: "bug", priority: "normal", status: "submitted", requester: "meilin",
-  parent_id: null, sprint_id: 3, created_at: ago(2 * D), updated_at: ago(D), ...o,
+  parent_id: null, sprint_id: 3, created_at: ago(2 * D), updated_at: ago(D), assignees: [], ...o,
 });
 
 const resource = (o: Partial<SprintResourceView> = {}): SprintResourceView => ({
@@ -382,6 +383,25 @@ describe("sprintScreen", () => {
     // children render UNDER their root, and each row opens its ticket
     expect(html.indexOf('data-arg="10"')).toBeLessThan(html.indexOf('data-arg="11"'));
     expect(html.match(/data-act="openTicket"/g)).toHaveLength(2);
+  });
+
+  it("stacks the assignee avatars on a ticket row, and shows none when nobody is on it (design 514)", () => {
+    const html = sprintScreen({
+      detail: detail({
+        id: 3, label: "S",
+        tickets: [
+          spTicket({ id: 10, title: "Two on it", depth: 0, assignees: ["meilin", "sanaok"] }),
+          spTicket({ id: 11, title: "Nobody on it", depth: 0 }),
+        ],
+      }),
+      persons: PERSONS, resourceDraft: "",
+    });
+    const withAvs = html.slice(html.indexOf('data-arg="10"'), html.indexOf('data-arg="11"'));
+    const without = html.slice(html.indexOf('data-arg="11"'));
+    // the same overlapping stack the queue and the sprint card use
+    expect(withAvs).toContain(avatarStack(["meilin", "sanaok"], PERSONS, 18));
+    expect(withAvs).toContain("margin-left:-7px");
+    expect(without).not.toContain("margin-left:-7px");
   });
 
   it("shows the design's empty state when the sprint has no tickets", () => {
