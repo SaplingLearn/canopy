@@ -17,7 +17,8 @@ export const targetsRemote = (argv) => argv.includes("--remote");
 /**
  * Turn parsed fixture objects into standalone, escaped SQL statements (no
  * trailing ";"), reset statements first. FK-safe ordering: events before
- * pr_summaries, sprints before sprint_progress / sprint_resources.
+ * pr_summaries, sprints before sprint_progress / sprint_resources / tickets,
+ * tickets before ticket_assignees / _links / _comments / _events.
  */
 export function buildSeedStatements(fx) {
   const s = [...RESET_STATEMENTS];
@@ -95,6 +96,50 @@ export function buildSeedStatements(fx) {
             `${num(sp.id)}, ${q(r.url)}, ${q(r.kind)}, ${q(r.label)}, ${q(r.meta)})`
         );
       }
+    }
+  }
+
+  // Tickets (0024) — after the sprints above, so `sprint_id` points at a row that
+  // exists (it is a soft INTEGER ref, but the seed should still read coherently),
+  // and after the person seed in RESET_STATEMENTS (`tickets.requester` FKs
+  // persons(handle)). Explicit ids so the fixture can wire parent/child and so
+  // the children below can name their ticket.
+  //
+  // parent_id is set in a SECOND pass: it references tickets(id), which D1
+  // enforces, so a child listed before its parent would fail the INSERT. The
+  // UPDATE makes the fixture's order irrelevant.
+  for (const t of fx.tickets?.tickets ?? []) {
+    s.push(
+      `INSERT INTO tickets (id, title, body, category, priority, status, requester, parent_id, sprint_id, created_at, updated_at) VALUES (` +
+        `${num(t.id)}, ${q(t.title)}, ${q(t.body)}, ${q(t.category)}, ${q(t.priority)}, ${q(t.status)}, ${q(t.requester)}, NULL, ${num(t.sprint_id)}, ${q(t.created_at)}, ${q(t.updated_at)})`
+    );
+  }
+  for (const t of fx.tickets?.tickets ?? []) {
+    if (t.parent_id !== null && t.parent_id !== undefined) {
+      s.push(`UPDATE tickets SET parent_id = ${num(t.parent_id)} WHERE id = ${num(t.id)}`);
+    }
+    for (const login of t.assignees ?? []) {
+      s.push(`INSERT INTO ticket_assignees (ticket_id, login) VALUES (${num(t.id)}, ${q(login)})`);
+    }
+    // Links carry the parsed shape shared/tickets.ts parseTicketLink would produce.
+    for (const l of t.links ?? []) {
+      s.push(
+        `INSERT INTO ticket_links (ticket_id, url, kind, label, meta, created_by, created_at) VALUES (` +
+          `${num(t.id)}, ${q(l.url)}, ${q(l.kind)}, ${q(l.label)}, ${q(l.meta)}, ${q(l.created_by)}, ${q(l.created_at)})`
+      );
+    }
+    for (const cm of t.comments ?? []) {
+      s.push(
+        `INSERT INTO ticket_comments (ticket_id, author, body, created_at) VALUES (` +
+          `${num(t.id)}, ${q(cm.author)}, ${q(cm.body)}, ${q(cm.created_at)})`
+      );
+    }
+    // The full history, opening row (from_status NULL) included.
+    for (const ev of t.events ?? []) {
+      s.push(
+        `INSERT INTO ticket_events (ticket_id, actor, from_status, to_status, created_at) VALUES (` +
+          `${num(t.id)}, ${q(ev.actor)}, ${q(ev.from_status)}, ${q(ev.to_status)}, ${q(ev.created_at)})`
+      );
     }
   }
 

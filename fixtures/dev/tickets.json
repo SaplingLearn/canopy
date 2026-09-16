@@ -1,0 +1,182 @@
+{
+  "_comment": [
+    "The locked design's seven seed tickets (Canopy Tickets.dc.html › seed()), translated",
+    "to our schema: statuses lowercase snake, person handles instead of the design's demo",
+    "logins, sprint ids 3 / 4 (the two in_progress sprints in roadmap.json) and null for the",
+    "backlog. The design's relative offsets are anchored at 2026-07-06T12:00:00Z, one day",
+    "after the seeded plan's updated_at, so the queue reads as 'this week'.",
+    "Handle mapping from the design's demo logins: jose-a → Jose-Gael-Cruz-Lopez,",
+    "dev-raj → AndresL230, the assignee 'meilin' → lpcooper-arch, the assignee 'sanaok'",
+    "→ Darkest-Teddy. meilin / sanaok stay themselves as REQUESTERS — they are the two",
+    "non-engineer staff seeded in scripts/seed/reset.mjs, and the whole point of the queue.",
+    "Ticket 2 is a sub-ticket of ticket 3 (the one parent/child pair); ticket 3 carries the",
+    "two links; tickets 1 and 6 are unassigned + open, so the sidebar badge reads 2."
+  ],
+  "tickets": [
+    {
+      "id": 1,
+      "title": "CSV export from the gradebook fails over 1,000 rows",
+      "body": "Exporting a full-school gradebook downloads an empty file. Under ~1,000 rows it works. Ops needs this for the end-of-term reports on Friday.",
+      "category": "bug",
+      "priority": "high",
+      "status": "submitted",
+      "requester": "meilin",
+      "parent_id": null,
+      "sprint_id": 3,
+      "created_at": "2026-07-06T10:00:00Z",
+      "updated_at": "2026-07-06T10:00:00Z",
+      "assignees": [],
+      "links": [],
+      "comments": [],
+      "events": [
+        { "actor": "meilin", "from_status": null, "to_status": "submitted", "created_at": "2026-07-06T10:00:00Z" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Access to the staging environment for the QA pass",
+      "body": "The curriculum QA pass runs next week and needs a staging login that mirrors the production roles.",
+      "category": "access",
+      "priority": "normal",
+      "status": "in_progress",
+      "requester": "sanaok",
+      "parent_id": 3,
+      "sprint_id": 4,
+      "created_at": "2026-07-05T12:00:00Z",
+      "updated_at": "2026-07-06T07:00:00Z",
+      "assignees": ["lpcooper-arch"],
+      "links": [],
+      "comments": [],
+      "events": [
+        { "actor": "sanaok", "from_status": null, "to_status": "submitted", "created_at": "2026-07-05T12:00:00Z" },
+        { "actor": "lpcooper-arch", "from_status": "submitted", "to_status": "in_progress", "created_at": "2026-07-06T07:00:00Z" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Add a “lesson duration” field to the curriculum planner",
+      "body": "Teachers keep planning lessons that run long. A duration field per lesson, summed per unit, would let them see total time before the term starts.",
+      "category": "request",
+      "priority": "normal",
+      "status": "in_progress",
+      "requester": "meilin",
+      "parent_id": null,
+      "sprint_id": 3,
+      "created_at": "2026-07-04T12:00:00Z",
+      "updated_at": "2026-07-06T08:00:00Z",
+      "assignees": ["AndresL230"],
+      "links": [
+        {
+          "url": "https://github.com/SaplingLearn/sapling/issues/214",
+          "kind": "github",
+          "label": "sapling #214",
+          "meta": "GITHUB · ISSUE",
+          "created_by": "AndresL230",
+          "created_at": "2026-07-05T14:00:00Z"
+        },
+        {
+          "url": "https://www.figma.com/design/planner-duration",
+          "kind": "figma",
+          "label": "Planner duration",
+          "meta": "FIGMA · DESIGN",
+          "created_by": "AndresL230",
+          "created_at": "2026-07-05T14:05:00Z"
+        }
+      ],
+      "comments": [
+        { "author": "meilin", "body": "Even a plain minutes field would help — no need for anything fancy.", "created_at": "2026-07-04T12:00:00Z" },
+        { "author": "AndresL230", "body": "Started on this. @meilin the planner needs a schema migration first — expect it on staging Thursday.", "created_at": "2026-07-06T08:00:00Z" }
+      ],
+      "events": [
+        { "actor": "meilin", "from_status": null, "to_status": "submitted", "created_at": "2026-07-04T12:00:00Z" },
+        { "actor": "AndresL230", "from_status": "submitted", "to_status": "in_progress", "created_at": "2026-07-05T14:00:00Z" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Why did Monday's enrollment digest arrive twice?",
+      "body": "Both copies were identical, sent four minutes apart. Just checking nothing is double-counting enrollments.",
+      "category": "question",
+      "priority": "low",
+      "status": "done",
+      "requester": "meilin",
+      "parent_id": null,
+      "sprint_id": 3,
+      "created_at": "2026-07-03T12:00:00Z",
+      "updated_at": "2026-07-04T12:00:00Z",
+      "assignees": ["Darkest-Teddy"],
+      "links": [],
+      "comments": [
+        { "author": "Darkest-Teddy", "body": "A retry fired after a slow send was already through. Data was fine; the dedupe window is fixed as of yesterday.", "created_at": "2026-07-04T12:00:00Z" }
+      ],
+      "events": [
+        { "actor": "meilin", "from_status": null, "to_status": "submitted", "created_at": "2026-07-03T12:00:00Z" },
+        { "actor": "Darkest-Teddy", "from_status": "submitted", "to_status": "in_progress", "created_at": "2026-07-04T09:00:00Z" },
+        { "actor": "Darkest-Teddy", "from_status": "in_progress", "to_status": "done", "created_at": "2026-07-04T12:00:00Z" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Bulk-archive last term's classrooms",
+      "body": "Could we get a one-click archive for all classrooms from the previous term?",
+      "category": "request",
+      "priority": "normal",
+      "status": "declined",
+      "requester": "sanaok",
+      "parent_id": null,
+      "sprint_id": null,
+      "created_at": "2026-07-01T12:00:00Z",
+      "updated_at": "2026-07-02T12:00:00Z",
+      "assignees": [],
+      "links": [],
+      "comments": [
+        { "author": "meilin", "body": "The term rollover job already archives these automatically on Sep 30 — declining as covered.", "created_at": "2026-07-02T12:00:00Z" }
+      ],
+      "events": [
+        { "actor": "sanaok", "from_status": null, "to_status": "submitted", "created_at": "2026-07-01T12:00:00Z" },
+        { "actor": "meilin", "from_status": "submitted", "to_status": "declined", "created_at": "2026-07-02T12:00:00Z" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Report builder times out on the attendance view",
+      "body": "Any attendance report over one term spins for ~60s and then errors. Smaller ranges are fine. Started sometime last week.",
+      "category": "bug",
+      "priority": "normal",
+      "status": "submitted",
+      "requester": "sanaok",
+      "parent_id": null,
+      "sprint_id": null,
+      "created_at": "2026-07-06T11:15:00Z",
+      "updated_at": "2026-07-06T11:15:00Z",
+      "assignees": [],
+      "links": [],
+      "comments": [],
+      "events": [
+        { "actor": "sanaok", "from_status": null, "to_status": "submitted", "created_at": "2026-07-06T11:15:00Z" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "SSO login loops for one staff account",
+      "body": "One staff account bounces between the login page and the app without ever landing. Clearing cookies doesn't help.",
+      "category": "bug",
+      "priority": "high",
+      "status": "in_progress",
+      "requester": "sanaok",
+      "parent_id": null,
+      "sprint_id": 3,
+      "created_at": "2026-07-06T06:00:00Z",
+      "updated_at": "2026-07-06T08:00:00Z",
+      "assignees": ["Jose-Gael-Cruz-Lopez"],
+      "links": [],
+      "comments": [
+        { "author": "Jose-Gael-Cruz-Lopez", "body": "Reproduced — the session cookie is being set with the wrong domain for this account's tenant. Fix in progress.", "created_at": "2026-07-06T08:00:00Z" }
+      ],
+      "events": [
+        { "actor": "sanaok", "from_status": null, "to_status": "submitted", "created_at": "2026-07-06T06:00:00Z" },
+        { "actor": "Jose-Gael-Cruz-Lopez", "from_status": "submitted", "to_status": "in_progress", "created_at": "2026-07-06T08:00:00Z" }
+      ]
+    }
+  ]
+}

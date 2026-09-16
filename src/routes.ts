@@ -8,7 +8,16 @@ import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
 import { consume } from "./consumer";
 import { runBackfill } from "./tools/backfill";
-import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks } from "./tools/reads";
+import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
+import {
+  create_ticket, transition_ticket, toggle_assignee, add_ticket_link,
+  set_ticket_sprint, set_ticket_parent, add_ticket_comment,
+  TicketError, TICKET_ERROR_STATUS,
+} from "./tools/tickets";
+import {
+  TicketCreate, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
+  TicketSprintSet, TicketParentSet, TicketCommentAdd, TicketSeg, TicketAssigneeFilter, TicketCategory,
+} from "@shared/tickets";
 import { promote_doc, ratify_adr, complete_sprint, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
@@ -72,8 +81,8 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "sprint" =>
-        t === "doc" || t === "decision" || t === "feed" || t === "sprint"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "sprint" | "ticket" =>
+        t === "doc" || t === "decision" || t === "feed" || t === "sprint" || t === "ticket"))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "technical" || spaceRaw === "product" ? spaceRaw : undefined;
@@ -282,6 +291,166 @@ app.post("/admin/backfill", async (c) => {
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);
   return c.json(res);
+});
+
+// ── Tickets (session-cookie only, NEVER MCP): the one queue the whole org files
+// into. Every route below is a DIRECT AUTHORED WRITE in the promote class — no
+// consume(), no gate, no staged state, no proposals. The requester/actor/author
+// is ALWAYS the authenticated principal; a client-supplied one is ignored. ────
+
+/** Map a TicketError onto its status (404 unknown / 409 rule / 400 payload). */
+const ticketFail = (c: Context<AppEnv>, e: unknown): Response => {
+  if (e instanceof TicketError) return c.json({ error: e.message }, TICKET_ERROR_STATUS[e.code]);
+  throw e; // not ours — a real 500
+};
+
+/** The id path param, or null when it is not an integer. */
+const ticketId = (c: Context<AppEnv>): number | null => {
+  const id = Number(c.req.param("id"));
+  return Number.isInteger(id) ? id : null;
+};
+
+/** Every write answers with the freshly re-read detail DTO, so one round-trip repaints. */
+const ticketDetailResponse = async (c: Context<AppEnv>, id: number): Promise<Response> => {
+  const ticket = await get_ticket(c.env.DB, id);
+  if (!ticket) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true, ticket });
+};
+
+app.post("/tickets", async (c) => {
+  const parsed = TicketCreate.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    // The principal is the requester, full stop — parsed.data has no requester field.
+    const id = await create_ticket(c.env.DB, parsed.data, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// The queue list. seg=open|closed|all (open = submitted + in_progress),
+// assignee=anyone|me|unassigned (me = the principal), category = a vocab value
+// ('all'/absent = every category). Sorted updated_at DESC.
+app.get("/tickets", async (c) => {
+  const segRaw = c.req.query("seg");
+  const asgRaw = c.req.query("assignee");
+  const catRaw = c.req.query("category");
+
+  const seg = TicketSeg.safeParse(segRaw ?? "open");
+  if (!seg.success) return c.json({ error: "invalid seg", issues: seg.error.issues }, 400);
+  const assignee = TicketAssigneeFilter.safeParse(asgRaw ?? "anyone");
+  if (!assignee.success) return c.json({ error: "invalid assignee", issues: assignee.error.issues }, 400);
+  let category: TicketCategory | undefined;
+  if (catRaw !== undefined && catRaw !== "" && catRaw !== "all") {
+    const parsed = TicketCategory.safeParse(catRaw);
+    if (!parsed.success) return c.json({ error: "invalid category", issues: parsed.error.issues }, 400);
+    category = parsed.data;
+  }
+
+  const tickets = await list_tickets(c.env.DB, {
+    seg: seg.data,
+    assignee: assignee.data,
+    category,
+    me: c.get("principal").handle,
+  });
+  return c.json({ tickets });
+});
+
+// REGISTERED BEFORE /tickets/:id ON PURPOSE: Hono matches in registration order,
+// so a later ':id' route would otherwise swallow the literal '/tickets/badge'.
+app.get("/tickets/badge", async (c) => c.json({ count: await ticket_badge(c.env.DB) }));
+
+app.get("/tickets/:id", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const ticket = await get_ticket(c.env.DB, id);
+  if (!ticket) return c.json({ error: "not found" }, 404);
+  return c.json(ticket);
+});
+
+// A status move. Legality is decided by the ONE shared transition table; an
+// illegal move is a 409 and writes nothing at all (not even a history row).
+app.post("/tickets/:id/status", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketTransition.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await transition_ticket(c.env.DB, id, parsed.data.to, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// Assignment is immediate and reversible, so it is a toggle with no confirm step.
+app.post("/tickets/:id/assignees", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketAssigneeToggle.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await toggle_assignee(c.env.DB, id, parsed.data.login, parsed.data.on);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+app.post("/tickets/:id/links", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketLinkAdd.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await add_ticket_link(c.env.DB, id, parsed.data.raw, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// sprint_id null = the backlog. An unknown sprint id is a 404, not a silent write.
+app.post("/tickets/:id/sprint", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketSprintSet.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await set_ticket_sprint(c.env.DB, id, parsed.data.sprint_id);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// Nest child_id under :id. Tickets nest ONE level — the four rejections live in
+// set_ticket_parent and come back as 409s with the database untouched.
+app.post("/tickets/:id/parent", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketParentSet.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await set_ticket_parent(c.env.DB, id, parsed.data.child_id);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+app.post("/tickets/:id/comment", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketCommentAdd.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await add_ticket_comment(c.env.DB, id, parsed.data.body, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
 });
 
 // Human confirmation (session-gated): flip a live sprint to 'done'. Admin action

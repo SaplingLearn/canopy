@@ -52,7 +52,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `src/` — the Worker. `index.ts` (fetch entry: `/mcp` by bearer, `/webhook/github` by HMAC, everything
   else to the Hono app; plus the `scheduled()` progress backstop), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
-  `plan.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
+  `plan.ts`, `tickets.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
   Email notifications section), `db.ts` (D1 helpers), `auth/` (`persons.ts` — the identity root;
   `google.ts` — second provider; `onboard.ts` — the sign-in fork + onboarding cookie; `invites.ts`),
   `env.ts`.
@@ -114,15 +114,26 @@ like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan
 (agent-proposed content), add it to the gate — never a second ingestion surface; authored/computed writes
 stay direct in the promote class.
 
+**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, ten session-cookie routes in
+`routes.ts`, NEVER MCP tools): `create_ticket` (opening `ticket_events` row) / `transition_ticket` /
+`toggle_assignee` / `add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`.
+A ticket is filed by a signed-in human, so there is no vocab gate, no confidence, no staged state — and
+`done` / `declined` are set by a person, never inferred from a PR merging. Every write bumps
+`tickets.updated_at` (the queue's sort key); the status machine is `canTransition` in `shared/tickets.ts`
+and is never re-declared server-side; an illegal move or a nesting-rule break is a 409 that writes
+nothing; tickets nest exactly ONE level (`set_ticket_parent`'s four rejections).
+
 ## Read side — FTS5 query engine
 
 `src/tools/reads.ts` exposes a ranked FTS5 `query()` engine (bm25, title/summary weighted) that backs
-both MCP `query` and `GET /search`, over four types: `doc` / `decision` / `feed` / `sprint`. Each
+both MCP `query` and `GET /search`, over five types: `doc` / `decision` / `feed` / `sprint` / `ticket`. Each
 result is authority-flagged: `live` / `staged_pending` / `unpromoted` / `draft`. The doc/feed/ADR index
 lives in `migrations/0008_fts.sql` (recreated in `0011_fts_recreate.sql`); `0013_roadmap_fts.sql` adds a
 standalone `roadmap_fts` over the plan narrative + sprints (refs `plan` / `sprint:<id>`, re-keyed by
-0025) so `query` surfaces the roadmap. `get_doc`
-is the exact-slug fetch (all versions + live body).
+0025) so `query` surfaces the roadmap, and `0024_tickets.sql`'s `tickets_fts` backs the `ticket` type
+(ids `ticket:<id>`, always authority `live` — a ticket is an authored human write with no staged state).
+`get_doc` is the exact-slug fetch (all versions + live body); `list_tickets` / `get_ticket` /
+`ticket_badge` are the queue's read projections (no N+1 — grouped queries keyed by ticket id).
 
 - **MCP `query`** defaults `include_staged: true` — agents see staged/unpromoted context (authority-flagged).
 - **`GET /search`** (human UI) defaults `include_staged: false` — shows only settled (`live`) content.

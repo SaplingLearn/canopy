@@ -1,5 +1,6 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, SprintProgressRow, PlanRow, EventRow, IdentityTaskRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, SprintProgressRow, PlanRow, EventRow, IdentityTaskRow, TicketRow, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
+import type { TicketListItem, TicketDetail, TicketRef, TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
 import { type DB, first, all } from "../db";
 import { getProgress } from "./progress";
 
@@ -173,6 +174,146 @@ export async function list_identity_tasks(db: DB): Promise<IdentityTaskWithSampl
   return out;
 }
 
+// ── Tickets (the org-wide queue) ──────────────────────────────────────────────
+//
+// Read-only projections over the 0024 tables. Everything here is a fixed number
+// of round-trips: the rows come back in ONE query, then each derived column
+// (assignees, link counts, sub counts, sprint labels) is a single grouped query
+// keyed by ticket id. No per-row fan-out — the queue renders the whole org.
+
+/** The `seg` filter: Open = not yet resolved by a person. */
+const SEG_STATUSES: Record<TicketSeg, readonly string[]> = {
+  open: ["submitted", "in_progress"],
+  closed: ["done", "declined"],
+  all: ["submitted", "in_progress", "done", "declined"],
+};
+
+export interface TicketListFilter {
+  seg?: TicketSeg;
+  assignee?: TicketAssigneeFilter;
+  category?: TicketCategory;
+  /** The signed-in principal's handle — what `assignee: 'me'` resolves to. */
+  me?: string;
+}
+
+/** `IN (?, ?, …)` placeholders for a list of bound params. */
+const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ");
+
+export async function list_tickets(db: DB, filter: TicketListFilter = {}): Promise<TicketListItem[]> {
+  const seg = filter.seg ?? "open";
+  const assignee = filter.assignee ?? "anyone";
+  const statuses = SEG_STATUSES[seg];
+
+  const clauses: string[] = [`t.status IN (${ph(statuses.length)})`];
+  const params: unknown[] = [...statuses];
+  if (filter.category) {
+    clauses.push(`t.category = ?`);
+    params.push(filter.category);
+  }
+  if (assignee === "me") {
+    // An unresolvable `me` (no principal) matches nothing rather than everything.
+    clauses.push(`EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id AND a.login = ?)`);
+    params.push(filter.me ?? "");
+  } else if (assignee === "unassigned") {
+    clauses.push(`NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`);
+  }
+
+  const rows = await all<TicketRow>(
+    db,
+    `SELECT t.* FROM tickets t WHERE ${clauses.join(" AND ")} ORDER BY t.updated_at DESC, t.id DESC`,
+    ...params
+  );
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const idPh = ph(ids.length);
+
+  const assigneeRows = await all<{ ticket_id: number; login: string }>(
+    db,
+    `SELECT ticket_id, login FROM ticket_assignees WHERE ticket_id IN (${idPh}) ORDER BY login ASC`,
+    ...ids
+  );
+  const linkRows = await all<{ ticket_id: number; n: number }>(
+    db,
+    `SELECT ticket_id, COUNT(*) AS n FROM ticket_links WHERE ticket_id IN (${idPh}) GROUP BY ticket_id`,
+    ...ids
+  );
+  const subRows = await all<{ parent_id: number; n: number }>(
+    db,
+    `SELECT parent_id, COUNT(*) AS n FROM tickets WHERE parent_id IN (${idPh}) GROUP BY parent_id`,
+    ...ids
+  );
+
+  const sprintIds = [...new Set(rows.map((r) => r.sprint_id).filter((v): v is number => v !== null))];
+  const sprintRows = sprintIds.length
+    ? await all<{ id: number; title: string }>(db, `SELECT id, title FROM sprints WHERE id IN (${ph(sprintIds.length)})`, ...sprintIds)
+    : [];
+
+  const byTicket = new Map<number, string[]>();
+  for (const a of assigneeRows) {
+    const list = byTicket.get(a.ticket_id) ?? [];
+    list.push(a.login);
+    byTicket.set(a.ticket_id, list);
+  }
+  const links = new Map(linkRows.map((r) => [r.ticket_id, r.n]));
+  const subs = new Map(subRows.map((r) => [r.parent_id, r.n]));
+  const sprintLabels = new Map(sprintRows.map((r) => [r.id, r.title]));
+
+  return rows.map((r) => ({
+    ...r,
+    assignees: byTicket.get(r.id) ?? [],
+    link_count: links.get(r.id) ?? 0,
+    sub_count: subs.get(r.id) ?? 0,
+    sprint_label: r.sprint_id !== null ? sprintLabels.get(r.sprint_id) ?? null : null,
+  }));
+}
+
+/** One ticket, whole: assignees, links, comments, history, parent + children, sprint. */
+export async function get_ticket(db: DB, id: number): Promise<TicketDetail | null> {
+  const t = await first<TicketRow>(db, `SELECT * FROM tickets WHERE id = ?`, id);
+  if (!t) return null;
+
+  const assignees = (
+    await all<{ login: string }>(db, `SELECT login FROM ticket_assignees WHERE ticket_id = ? ORDER BY login ASC`, id)
+  ).map((a) => a.login);
+  const links = await all<TicketLinkRow>(db, `SELECT * FROM ticket_links WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`, id);
+  const comments = await all<TicketCommentRow>(db, `SELECT * FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`, id);
+  const events = await all<TicketEventRow>(db, `SELECT * FROM ticket_events WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`, id);
+  const children = await all<TicketRef>(
+    db,
+    `SELECT id, title, status FROM tickets WHERE parent_id = ? ORDER BY updated_at DESC, id DESC`,
+    id
+  );
+  const parent = t.parent_id !== null
+    ? await first<TicketRef>(db, `SELECT id, title, status FROM tickets WHERE id = ?`, t.parent_id)
+    : null;
+  const sprintRow = t.sprint_id !== null
+    ? await first<{ id: number; title: string }>(db, `SELECT id, title FROM sprints WHERE id = ?`, t.sprint_id)
+    : null;
+
+  return {
+    ...t,
+    assignees,
+    links,
+    comments,
+    events,
+    parent,
+    children,
+    sprint: sprintRow ? { id: sprintRow.id, label: sprintRow.title } : null,
+  };
+}
+
+/** The sidebar badge: active tickets nobody has picked up (unassigned + open). */
+export async function ticket_badge(db: DB): Promise<number> {
+  const row = await first<{ n: number }>(
+    db,
+    `SELECT COUNT(*) AS n FROM tickets t
+      WHERE t.status IN ('submitted', 'in_progress')
+        AND NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`
+  );
+  return row?.n ?? 0;
+}
+
 // ── query(): ranked, assembled FTS5 retrieval (Phase 1 read-side brain) ───────
 //
 // One engine. Per requested type, bm25-ranked FTS5 (title/summary weighted above
@@ -185,7 +326,7 @@ export async function list_identity_tasks(db: DB): Promise<IdentityTaskWithSampl
 // RRF (Reciprocal Rank Fusion). The QueryResult envelope is the stable contract;
 // this normalize-bm25-then-global-sort is the FTS-only special case of that merge.
 
-type QueryType = "doc" | "decision" | "feed" | "sprint";
+type QueryType = "doc" | "decision" | "feed" | "sprint" | "ticket";
 
 // Internal assembled record: a superset carrying everything both a primary
 // (full body) and a pointer (snippet) need, so we hydrate once per candidate.
@@ -210,7 +351,7 @@ interface Assembled {
 // A raw candidate from one type's FTS (or browse) pass, before hydration.
 interface Candidate {
   type: QueryType;
-  key: string;      // doc slug | feed id | adr id (as text) | roadmap ref ('sprint:<id>' | 'plan')
+  key: string;      // doc slug | feed id | adr id | ticket id (as text) | roadmap ref ('sprint:<id>' | 'plan')
   score: number;    // normalized so higher = better
   snippet: string;  // fts5 snippet() or a browse body slice
 }
@@ -252,7 +393,7 @@ function assembleSprintBody(sp: SprintRow, progress: SprintProgressRow | undefin
 }
 
 export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
-  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "sprint"];
+  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "sprint", "ticket"];
   const limit = Math.trunc(Math.min(Math.max(req.limit ?? 6, 0), 50));
   const pointerLimit = Math.trunc(Math.min(Math.max(req.pointer_limit ?? 20, 0), 100));
   const includeStaged = req.include_staged ?? false;
@@ -366,6 +507,27 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
 
+  // Tickets: one FTS pass over tickets_fts (title weighted 5, like every other
+  // type). Tickets carry neither section nor space, so they drop out under docsOnly.
+  if (types.includes("ticket") && !docsOnly) {
+    if (match) {
+      const rows = await all<{ key: string; rank: number; snip: string }>(
+        db,
+        `SELECT ticket_id AS key, bm25(tickets_fts, 1.0, 5.0, 1.0) AS rank,
+                snippet(tickets_fts, -1, ${SNIPPET}) AS snip
+         FROM tickets_fts WHERE tickets_fts MATCH ? ORDER BY rank LIMIT ${fetchCap}`,
+        match
+      );
+      for (const r of rows) candidates.push({ type: "ticket", key: String(r.key), score: -r.rank, snippet: r.snip });
+    } else {
+      const rows = await all<{ key: number }>(
+        db,
+        `SELECT id AS key FROM tickets ORDER BY updated_at DESC, id DESC LIMIT ${fetchCap}`
+      );
+      for (const r of rows) candidates.push({ type: "ticket", key: String(r.key), score: 0, snippet: "" });
+    }
+  }
+
   // 2. Hydrate base rows in bulk (one round-trip per type), then assemble.
   const docKeys = candidates.filter((c) => c.type === "doc").map((c) => c.key);
   const feedKeys = candidates.filter((c) => c.type === "feed").map((c) => Number(c.key));
@@ -397,6 +559,13 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
   if (adrKeys.length) {
     const ph = adrKeys.map(() => "?").join(", ");
     for (const a of await all<AdrRow>(db, `SELECT * FROM adrs WHERE id IN (${ph})`, ...adrKeys)) adrMap.set(String(a.id), a);
+  }
+
+  const ticketKeys = candidates.filter((c) => c.type === "ticket").map((c) => Number(c.key));
+  const ticketMap = new Map<string, TicketRow>();
+  if (ticketKeys.length) {
+    const ph = ticketKeys.map(() => "?").join(", ");
+    for (const t of await all<TicketRow>(db, `SELECT * FROM tickets WHERE id IN (${ph})`, ...ticketKeys)) ticketMap.set(String(t.id), t);
   }
 
   // Roadmap hydration: sprint ids (from 'sprint:<id>' refs) + the plan flag.
@@ -475,6 +644,18 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
         current_version: null, pending_version: null, staged_body: null, confidence: adr.confidence,
         updated_at: adr.created_at, updated_by: adr.created_by,
         score: c.score, snippet: c.snippet || browseSnippet(body),
+      };
+    } else if (c.type === "ticket") {
+      // A ticket is a human authored row — there is no staged or draft state for
+      // it to be in, so it is ALWAYS authority "live" (and therefore visible to
+      // the human Search, which drops everything not settled).
+      const t = ticketMap.get(c.key);
+      if (!t) continue;
+      a = {
+        type: "ticket", id: `ticket:${t.id}`, title: t.title, section: null, space: null,
+        body: t.body, authority: "live", current_version: null, pending_version: null,
+        staged_body: null, confidence: null, updated_at: t.updated_at, updated_by: t.requester,
+        score: c.score, snippet: c.snippet || browseSnippet(t.body),
       };
     } else {
       // sprint: either the plan singleton (ref 'plan') or a sprint row.

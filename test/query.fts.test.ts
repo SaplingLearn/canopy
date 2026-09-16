@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { query } from "../src/tools/reads";
 import { propose_doc_update, promote_doc, append_feed, stage_adr, ratify_adr } from "../src/tools/writes";
+import { create_ticket } from "../src/tools/tickets";
+import { seedPerson } from "./helpers/persons";
 import { run, nowIso } from "../src/db";
 
 const AUTHOR = "tester";
@@ -134,6 +136,41 @@ describe("query() — FTS5 engine (triggers, ranking, bundle, authority, browse)
     const r = await query(env.DB, { q: "", types: ["feed"] });
     expect(r.primary.map((p) => p.title)).toEqual(["newest", "middle", "oldest"]);
     expect(r.meta.engine).toBe("fts5");
+  });
+
+  it("tickets: a title term ranks first among mixed types, stays visible to the human search, and vanishes on delete", async () => {
+    await seedPerson(AUTHOR);
+    // The same term in a ticket TITLE, a doc body and a feed body — title weight
+    // (bm25 …, 5.0, …) must put the ticket first.
+    const id = await create_ticket(
+      env.DB,
+      { title: "Gradebook tamarind export fails", body: "over 1,000 rows", category: "bug", priority: "high", assignees: [] },
+      AUTHOR
+    );
+    await stageDoc("tamarind-doc", "Unrelated Guide", "a passing mention of tamarind in the body");
+    await promote_doc(env.DB, "tamarind-doc", 1, AUTHOR);
+    await append_feed(env.DB, { author: AUTHOR, summary: "unrelated entry", body: "tamarind again, in a feed body" });
+
+    const r = await query(env.DB, { q: "tamarind" });
+    expect(r.primary.map((p) => p.type)).toContain("ticket");
+    expect(r.primary[0].type).toBe("ticket");
+    expect(r.primary[0].id).toBe(`ticket:${id}`);
+    expect(r.primary[0].title).toBe("Gradebook tamarind export fails");
+    expect(r.primary[0].body).toBe("over 1,000 rows");
+    // A ticket is an authored human write: always live, so the HUMAN search
+    // (include_staged:false, which drops unpromoted/draft) still returns it.
+    expect(r.primary[0].authority).toBe("live");
+    const human = await query(env.DB, { q: "tamarind", include_staged: false });
+    expect(human.primary.find((p) => p.id === `ticket:${id}`)?.authority).toBe("live");
+
+    // Deleting the base row cascades into tickets_fts (the AFTER DELETE trigger).
+    await run(env.DB, `DELETE FROM ticket_events WHERE ticket_id = ?`, id);
+    await run(env.DB, `DELETE FROM tickets WHERE id = ?`, id);
+    const after = await query(env.DB, { q: "tamarind" });
+    expect(after.primary.find((p) => p.type === "ticket")).toBeUndefined();
+    expect(after.pointers.find((p) => p.type === "ticket")).toBeUndefined();
+    // …the other two types are untouched.
+    expect(after.primary.map((p) => p.id)).toContain("tamarind-doc");
   });
 
   it("section filter narrows to docs and excludes feed/decision", async () => {

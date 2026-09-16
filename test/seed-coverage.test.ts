@@ -3,7 +3,7 @@ import { env } from "cloudflare:test";
 import { buildSeedStatements } from "../scripts/seed/build.mjs";
 import { getMyWork } from "../src/tools/mywork";
 import { get_plan } from "../src/tools/plan";
-import { query, get_feed, list_proposals, list_needs_triage, list_adrs, list_identity_tasks } from "../src/tools/reads";
+import { query, get_feed, list_proposals, list_needs_triage, list_adrs, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "../src/tools/reads";
 import { all } from "../src/db";
 import docs from "../fixtures/dev/docs.json";
 import feed from "../fixtures/dev/feed.json";
@@ -12,8 +12,9 @@ import triage from "../fixtures/dev/triage.json";
 import roadmap from "../fixtures/dev/roadmap.json";
 import events from "../fixtures/dev/events.json";
 import identity from "../fixtures/dev/identity.json";
+import tickets from "../fixtures/dev/tickets.json";
 
-const fx = { docs, feed, adrs, triage, roadmap, events, identity };
+const fx = { docs, feed, adrs, triage, roadmap, events, identity, tickets };
 
 beforeEach(async () => {
   for (const stmt of buildSeedStatements(fx)) {
@@ -68,6 +69,51 @@ describe("dev seed lights up every surface", () => {
     const ids = await all<{ provider: string; person: string }>(env.DB, `SELECT provider, person FROM identities`);
     expect(ids.filter((i) => i.person === "meilin").map((i) => i.provider)).toEqual(["google"]);
     expect(ids.filter((i) => i.person === "sanaok").map((i) => i.provider)).toEqual(["google"]);
+  });
+
+  it("Tickets: the queue lights up — badge, links, nesting, sprint labels, comments, history", async () => {
+    // The sidebar badge is non-zero, so the nav renders it out of the box.
+    const badge = await ticket_badge(env.DB);
+    expect(badge).toBeGreaterThan(0);
+
+    // `seg=open` = submitted + in_progress only; nothing closed leaks in.
+    const open = await list_tickets(env.DB, { seg: "open" });
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.every((t) => t.status === "submitted" || t.status === "in_progress")).toBe(true);
+    // …and the closed segment is populated too (the seed has a done and a declined).
+    const closed = await list_tickets(env.DB, { seg: "closed" });
+    expect(new Set(closed.map((t) => t.status))).toEqual(new Set(["done", "declined"]));
+
+    // Every requester is one of the two non-engineer staff — the queue's whole point.
+    const allTickets = await list_tickets(env.DB, { seg: "all" });
+    expect(new Set(allTickets.map((t) => t.requester))).toEqual(new Set(["meilin", "sanaok"]));
+    // …and the badge counts exactly the unassigned open ones.
+    expect(badge).toBe(open.filter((t) => t.assignees.length === 0).length);
+
+    // A ticket with two links, and it is a parent with a child.
+    const linked = allTickets.find((t) => t.link_count === 2);
+    expect(linked, "no seeded ticket carries two links").toBeDefined();
+    expect(linked!.sub_count).toBe(1);
+    expect(linked!.sprint_label, "a sprint-assigned ticket shows its sprint label").not.toBeNull();
+
+    const detail = (await get_ticket(env.DB, linked!.id))!;
+    expect(detail.children.length).toBe(1);
+    expect(detail.parent).toBeNull();
+    expect(new Set(detail.links.map((l) => l.kind))).toEqual(new Set(["github", "figma"]));
+    expect(detail.comments.length).toBeGreaterThan(0);
+    // The opening row is there, so the history reads "opened · SUBMITTED".
+    expect(detail.events[0].from_status).toBeNull();
+    expect(detail.events[0].to_status).toBe("submitted");
+
+    // The child points back at it, and lives in a different sprint.
+    const child = (await get_ticket(env.DB, detail.children[0].id))!;
+    expect(child.parent?.id).toBe(detail.id);
+    expect(child.sprint?.id).not.toBe(detail.sprint?.id);
+
+    // Assignees are engineers; assignee:'me' narrows to one person's tickets.
+    const mine = await list_tickets(env.DB, { seg: "all", assignee: "me", me: "AndresL230" });
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.every((t) => t.assignees.includes("AndresL230"))).toBe(true);
   });
 
   it("Search: ranked hits for a known term", async () => {

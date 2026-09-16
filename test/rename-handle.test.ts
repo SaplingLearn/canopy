@@ -14,6 +14,7 @@ import {
   route_triage, resolve_triage,
   ensure_identity_task, map_identity,
 } from "../src/tools/writes";
+import { create_ticket, add_ticket_comment } from "../src/tools/tickets";
 
 const post = (path: string, c: string, body: unknown) =>
   app.request(path, { method: "POST", headers: { cookie: c, "content-type": "application/json" }, body: JSON.stringify(body) }, env);
@@ -58,17 +59,19 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
   ); // events.recorded_by
   await write_plan(env.DB, { narrative: "n", sprints: [] }, handle); // plan.updated_by + plan_versions.created_by
   // Tickets (0024): tickets.requester + ticket_assignees.login + ticket_links.created_by
-  // + ticket_comments.author + ticket_events.actor. Direct inserts for now — the
-  // ticket writers (src/tools/tickets.ts) land in Phase 2; swap these for them then.
-  const ticket = await run(env.DB,
-    `INSERT INTO tickets (title, body, category, priority, status, requester, created_at, updated_at) VALUES ('Rename test ticket', 'b', 'other', 'normal', 'submitted', ?, ?, ?)`,
-    handle, nowIso(), nowIso());
-  const ticketId = ticket.meta.last_row_id;
-  await run(env.DB, `INSERT INTO ticket_assignees (ticket_id, login) VALUES (?, ?)`, ticketId, handle);
-  await run(env.DB, `INSERT INTO ticket_links (ticket_id, url, kind, label, meta, created_by, created_at) VALUES (?, 'https://github.com/SaplingLearn/sapling/issues/1', 'github', 'sapling #1', 'GITHUB · ISSUE', ?, ?)`,
-    ticketId, handle, nowIso());
-  await run(env.DB, `INSERT INTO ticket_comments (ticket_id, author, body, created_at) VALUES (?, ?, 'looking into it', ?)`, ticketId, handle, nowIso());
-  await run(env.DB, `INSERT INTO ticket_events (ticket_id, actor, from_status, to_status, created_at) VALUES (?, ?, NULL, 'submitted', ?)`, ticketId, handle, nowIso());
+  // + ticket_comments.author + ticket_events.actor — all five through the REAL
+  // writers (src/tools/tickets.ts, Phase 2). create_ticket alone covers requester,
+  // the assignee, the link and the OPENING event row; the comment writer covers
+  // ticket_comments.author.
+  const ticketId = await create_ticket(
+    env.DB,
+    {
+      title: "Rename test ticket", body: "b", category: "other", priority: "normal",
+      assignees: [handle], link: "#1",
+    },
+    handle
+  );
+  await add_ticket_comment(env.DB, ticketId, "looking into it", handle);
   await run(env.DB, `INSERT INTO notification_policy (kind, default_cadence, enabled, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)`,
     "rename_test_kind", "off", 1, nowIso(), handle); // notification_policy.updated_by
   await run(env.DB, `INSERT INTO notification_prefs (user_id, kind, cadence, updated_at) VALUES (?, ?, ?, ?)`,
