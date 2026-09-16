@@ -40,5 +40,8 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/apply-migrations.ts"],
+    // Only this checkout's suite: a git worktree parked under .claude/worktrees
+    // carries its own copy of test/ and must not be discovered from here.
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/.wrangler/**"],
   },
 });
