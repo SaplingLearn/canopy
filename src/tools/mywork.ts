@@ -54,8 +54,31 @@ interface RawIssue {
     updated_at: string;
     assignees: { login: string }[];
     labels: string[];
-    milestone?: { title?: string | null; due_on?: string | null } | null;
+    // GitHub's own key — not Canopy vocabulary. The group an issue belongs to on
+    // GitHub; Canopy resolves its `number` to a SPRINT below.
+    milestone?: { number?: number | null; title?: string | null; due_on?: string | null } | null;
   };
+}
+
+/**
+ * GitHub group number → the sprint that claims it, in ONE query. A sprint's
+ * `github_ref` is JSON: a bare number IS a GitHub group number (the array form
+ * is a list of issue numbers and claims no group). First sprint wins if two
+ * claim the same number; a malformed ref claims nothing.
+ */
+async function sprintTitlesByGroupNumber(db: DB): Promise<Map<number, string>> {
+  const rows = await all<{ title: string; github_ref: string }>(
+    db,
+    `SELECT title, github_ref FROM sprints WHERE github_ref IS NOT NULL ORDER BY id ASC`
+  );
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    try {
+      const parsed = JSON.parse(r.github_ref) as unknown;
+      if (typeof parsed === "number" && !out.has(parsed)) out.set(parsed, r.title);
+    } catch { /* malformed ref → claims nothing */ }
+  }
+  return out;
 }
 
 interface IssueSnapshotRow {
@@ -103,13 +126,15 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
      WHERE e.rn = 1
      ORDER BY e.ref_number ASC`
   );
+  const sprintByGroup = await sprintTitlesByGroupNumber(db);
   const todo: MyWorkTodo[] = [];
   for (const row of issueRows) {
     const parsed = JSON.parse(row.raw) as RawIssue;
     const issue = parsed.issue;
     if (issue.state !== "open") continue;
     if (!issue.assignees.some((a) => logins.includes(a.login))) continue;
-    const m = issue.milestone;
+    const group = issue.milestone; // GitHub's own key — not Canopy vocabulary
+    const claimed = typeof group?.number === "number" ? sprintByGroup.get(group.number) ?? null : null;
     todo.push({
       number: issue.number,
       title: stripPriority(issue.title),
@@ -119,8 +144,14 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
       updatedAt: issue.updated_at,
       summary: row.summary,
       displayTitle: row.s_title,
-      // legacy raws captured before 0018 lack a milestone title — hide the row.
-      milestone: m?.title ? { title: m.title, dueOn: m.due_on ?? null } : null,
+      // The SPRINT whose github_ref claims this issue's GitHub group number;
+      // when none does, the GitHub group's own title stands in. Legacy raws
+      // captured before 0018 carry neither — the row is hidden.
+      sprint: claimed
+        ? { title: claimed, dueOn: group?.due_on ?? null }
+        : group?.title
+        ? { title: group.title, dueOn: group.due_on ?? null }
+        : null,
       nextStep: row.s_next_step,
     });
   }

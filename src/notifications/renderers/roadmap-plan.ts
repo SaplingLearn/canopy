@@ -85,7 +85,7 @@ async function render(db: DB, _login: string, window: Window): Promise<Section |
 export const roadmapPlanKind: NotificationKind<DB> = {
   id: "roadmap_plan",
   label: "Roadmap plan changes",
-  description: "Sprints added, changed, reordered, or confirmed done.",
+  description: "Sprint progress and slips.",
   defaultCadence: "weekly",
   allowedCadences: ["daily", "weekly", "off"],
   render,

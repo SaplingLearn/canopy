@@ -11,10 +11,10 @@ const pr = (n: number, title: string, what: string, why: string | null, impact: 
     footer: `${K.chip("MERGED", "green")}<span style="padding-left:8px;">into <span style="font-family:'Geist Mono',ui-monospace,Menlo,monospace;">main</span></span>`,
     first,
   });
-const issue = (n: number, title: string, summary: string, milestone: string | null, next: string | null, prio: string | null, labels: string[], first = false) =>
+const issue = (n: number, title: string, summary: string, sprint: string | null, next: string | null, prio: string | null, labels: string[], first = false) =>
   K.item({
     title, number: n, url: `https://github.com/SaplingLearn/sapling/issues/${n}`,
-    rows: [K.row("Summary", K.prose(summary)), ...(milestone ? [K.row("Milestone", milestone)] : []), ...(next ? [K.row("Next step", K.prose(next), "accent")] : [])],
+    rows: [K.row("Summary", K.prose(summary)), ...(sprint ? [K.row("Sprint", sprint)] : []), ...(next ? [K.row("Next step", K.prose(next), "accent")] : [])],
     footer: [prio ? K.chip(prio, "amber") : "", ...labels.map((l) => K.chip(l, "muted"))].filter(Boolean).join(" ") || undefined,
     first,
   });
@@ -52,7 +52,7 @@ export function sampleSections(): Section[] {
         pr(142, "Constant-time MCP token comparison", "Bearer tokens are now compared with `timingSafeEqual` instead of `===`, and the hash lookup no longer short-circuits on length.", "A timing side-channel could leak how many leading bytes of a token matched.", "Token checks take the same time whether or not a token is valid. No change for callers.", true) +
         pr(139, "GitHub org-membership check on sign-in", "The OAuth callback now calls `GET /user/memberships/orgs/SaplingLearn` and rejects anyone who is not an active member.", null, "Non-members land on the “not a member” screen instead of an empty app.") +
         `<div style="${S.label}padding-top:${SP.l}px;padding-bottom:${SP.s}px;">OPEN &amp; ASSIGNED</div>` +
-        issue(175, "Audit retention + compaction policy", "Decide how long raw webhook payloads are kept and when they compact into summaries.", "Launch <span style=\"font-size:11.5px;\">&middot; due Sep 20</span>", "Draft the retention table for the ADR and get it in front of the team.", "P1", ["policy", "storage"], true) +
+        issue(175, "Audit retention + compaction policy", "Decide how long raw webhook payloads are kept and when they compact into summaries.", "Sprint 12 <span style=\"font-size:11.5px;\">&middot; due Sep 20</span>", "Draft the retention table for the ADR and get it in front of the team.", "P1", ["policy", "storage"], true) +
         issue(227, "Progress bar from closed/total", "Sprint cards should show progress from the stored closed/total counts, never a live GitHub call.", null, "Wire `sprint_progress` into the roadmap card.", null, ["roadmap"]),
       text: "  merged  #142  Constant-time MCP token comparison\n                What changed: Bearer tokens are now compared with timingSafeEqual instead of ===.\n  merged  #139  GitHub org-membership check on sign-in\n  open    #175  [P1] Audit retention + compaction policy\n                Next step: Draft the retention table for the ADR and get it in front of the team.\n  open    #227  Progress bar from closed/total\n                Next step: Wire sprint_progress into the roadmap card.",
     },

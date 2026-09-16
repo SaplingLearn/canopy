@@ -28,7 +28,7 @@ function prEvent(over: Partial<CapturedEvent> & { number: number; login: string;
       merged_at: merged ? NOW : null,
       closed_at: NOW,
       user: { login },
-      milestone: null,
+      milestone: null, // GitHub's own key — not Canopy vocabulary
       base: baseRef ? { ref: baseRef } : null,
     },
   });
@@ -53,6 +53,7 @@ function issueEvent(over: {
   title?: string;
   labels?: string[];
   assigneeLogin?: string;
+  // GitHub's own key — not Canopy vocabulary (this is a GitHub payload literal).
   milestone?: { title?: string | null; due_on?: string | null; number?: number } | null;
 }): CapturedEvent {
   const { number, login, action, state, updatedAt, title = `Issue ${number}`, labels = [], assigneeLogin = login, milestone = null } = over;
@@ -140,7 +141,7 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
       url: "https://github.com/o/r/issues/7",
       // Not yet populated by capture/summarize — null until the follow-up lands.
       displayTitle: null,
-      milestone: null,
+      sprint: null,
       nextStep: null,
     });
 
@@ -259,7 +260,7 @@ describe("getMyWork — structured fields", () => {
     });
   });
 
-  it("projects the structured issue summary columns and the milestone into the todo", async () => {
+  it("projects the structured issue summary columns and the SPRINT into the todo", async () => {
     await seedPerson("dev", { name: "Dev" });
     await ingestEvent(
       env.DB,
@@ -278,11 +279,43 @@ describe("getMyWork — structured fields", () => {
       displayTitle: "Humanized nine",
       summary: "What it is.",
       nextStep: "Do the fix.",
-      milestone: { title: "Reliable event capture", dueOn: "2026-07-20T07:00:00Z" },
+      // No sprint claims GitHub group 3, so the group's own title stands in.
+      sprint: { title: "Reliable event capture", dueOn: "2026-07-20T07:00:00Z" },
     });
   });
 
-  it("yields nulls for a legacy raw (no base, milestone without title) and a prose-era summary row", async () => {
+  it("resolves the issue's GitHub group number to the SPRINT whose github_ref is that number", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    // Two sprints; only the second claims GitHub group 3.
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES ('Other sprint', '2026-07-01', 'upcoming', '9', ?, 'dev')`, NOW);
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES ('Sprint 12', '2026-07-20', 'in_progress', '3', ?, 'dev')`, NOW);
+    await ingestEvent(
+      env.DB,
+      issueEvent({ number: 11, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" } }),
+      "github-webhook"
+    );
+
+    const work = await getMyWork(env.DB, "dev");
+    // The SPRINT's title wins over the GitHub group's; the due date is still
+    // GitHub's `due_on`.
+    expect(work.todo[0].sprint).toEqual({ title: "Sprint 12", dueOn: "2026-07-20T07:00:00Z" });
+  });
+
+  it("an ARRAY github_ref claims no group number — the GitHub title is the fallback", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    // `[3]` is a list of ISSUE numbers, not a group number: it must not claim 3.
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES ('Issue list sprint', '2026-07-20', 'in_progress', '[3]', ?, 'dev')`, NOW);
+    await ingestEvent(
+      env.DB,
+      issueEvent({ number: 12, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3, title: "Reliable event capture", due_on: null } }),
+      "github-webhook"
+    );
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.todo[0].sprint).toEqual({ title: "Reliable event capture", dueOn: null });
+  });
+
+  it("yields nulls for a legacy raw (no base, GitHub group without a title) and a prose-era summary row", async () => {
     await seedPerson("dev", { name: "Dev" });
     await ingestEvent(env.DB, prEvent({ number: 8, login: "dev" }), "github-webhook");
     await ingestEvent(
@@ -292,7 +325,7 @@ describe("getMyWork — structured fields", () => {
     );
     const work = await getMyWork(env.DB, "dev");
     expect(work.previousActivity[0]).toMatchObject({ number: 8, displayTitle: null, what: null, why: null, impact: null, baseRef: null });
-    expect(work.todo[0]).toMatchObject({ number: 10, displayTitle: null, nextStep: null, milestone: null });
+    expect(work.todo[0]).toMatchObject({ number: 10, displayTitle: null, nextStep: null, sprint: null });
   });
 });
 

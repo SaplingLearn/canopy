@@ -27,7 +27,8 @@ function prEvent(number: number, occurredAt: string, title: string): CapturedEve
     raw: JSON.stringify({ pr: { number, title, body: "b", html_url: `https://github.com/o/r/pull/${number}`, merged: true, merged_at: occurredAt, user: { login: LOGIN }, base: { ref: "main" } } }),
   };
 }
-function issueEvent(number: number, title: string, extra: { labels?: string[]; milestone?: { title: string; due_on: string | null } | null } = {}): CapturedEvent {
+// `milestone` here is GitHub's own key — not Canopy vocabulary (a payload literal).
+function issueEvent(number: number, title: string, extra: { labels?: string[]; milestone?: { number?: number; title: string; due_on: string | null } | null } = {}): CapturedEvent {
   return {
     semantic_key: `gh:issue:${number}:open:${IN_WINDOW}`, event_type: "issue", ref_number: number, subject_login: LOGIN, provenance: "webhook", occurred_at: IN_WINDOW,
     raw: JSON.stringify({ action: "assigned", issue: { number, title, html_url: `https://github.com/o/r/issues/${number}`, state: "open", updated_at: IN_WINDOW, user: { login: LOGIN }, assignees: [{ login: LOGIN }], labels: extra.labels ?? [], milestone: extra.milestone ?? null } }),
@@ -72,12 +73,13 @@ describe("My Work items (ledger layout)", () => {
     expect(s.html).toContain("+2 more in My Work");
   });
 
-  it("renders an assigned issue as a card: Summary / Milestone · due / Next step rows, priority chip and label chips", async () => {
+  it("renders an assigned issue as a card: Summary / Sprint · due / Next step rows, priority chip and label chips", async () => {
     await ingestEvent(env.DB, issueEvent(20, "[P1] Fix the gate", { labels: ["bug", "gate", "urgent", "fourth"], milestone: { title: "Launch", due_on: "2026-09-20" } }), "github-webhook");
     await storeIssueSummary(env.DB, issueStub({ title: "Fix the gate", summary: "The gate drops items", next_step: "Add the missing branch" }), { issue_number: 20, title: "[P1] Fix the gate", body: "b" });
     const s = (await kind().render(env.DB, LOGIN, WINDOW))!;
     expect(s.html).toMatch(/Summary[\s\S]*The gate drops items/);
-    expect(s.html).toMatch(/Milestone[\s\S]*Launch[\s\S]*due Sep 20/);
+    expect(s.html).toMatch(/Sprint[\s\S]*Launch[\s\S]*due Sep 20/);
+    expect(s.html).not.toContain("Milestone");
     expect(s.html).toMatch(/Next step[\s\S]*Add the missing branch/);
     expect(s.html).toMatch(/>P1</);
     expect(s.html).toContain(THEME.amber.light);

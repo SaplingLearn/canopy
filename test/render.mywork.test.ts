@@ -46,7 +46,7 @@ function makeTodo(overrides: Partial<MyWorkTodo> = {}): MyWorkTodo {
     url: "https://github.com/SaplingLearn/sapling/issues/7",
     updatedAt: new Date().toISOString(),
     summary: null,
-    milestone: null,
+    sprint: null,
     nextStep: null,
     ...overrides,
   };
@@ -233,7 +233,7 @@ describe("todoCard", () => {
   });
 
   it("the number pill is the card's only anchor (the card is no longer one big <a>)", () => {
-    const html = todoCard(makeTodo({ summary: "prose", milestone: { title: "M", dueOn: null }, nextStep: "do it" }));
+    const html = todoCard(makeTodo({ summary: "prose", sprint: { title: "M", dueOn: null }, nextStep: "do it" }));
     expect((html.match(/<a /g) ?? []).length).toBe(1);
     expect(html).not.toMatch(/^<a /);
   });
@@ -246,19 +246,20 @@ describe("todoCard", () => {
     expect(fallback).toContain("Investigate flaky test");
   });
 
-  it("renders a Milestone row with the title and a '· due <date>' suffix when dueOn is set", () => {
-    const html = todoCard(makeTodo({ milestone: { title: "Reliable event capture", dueOn: "2026-07-20" } }));
-    expect(html).toContain("Milestone");
+  it("renders a Sprint row with the title and a '· due <date>' suffix when dueOn is set", () => {
+    const html = todoCard(makeTodo({ sprint: { title: "Reliable event capture", dueOn: "2026-07-20" } }));
+    expect(html).toContain("Sprint");
+    expect(html).not.toContain("Milestone");
     expect(html).toContain("Reliable event capture");
     expect(html).toContain("· due Jul 20");
   });
 
-  it("omits the due suffix when dueOn is null; collapses the whole row when milestone is null", () => {
-    const noDue = todoCard(makeTodo({ milestone: { title: "Reliable event capture", dueOn: null } }));
-    expect(noDue).toContain("Milestone");
+  it("omits the due suffix when dueOn is null; collapses the whole row when sprint is null", () => {
+    const noDue = todoCard(makeTodo({ sprint: { title: "Reliable event capture", dueOn: null } }));
+    expect(noDue).toContain("Sprint");
     expect(noDue).not.toContain("· due");
-    const noMilestone = todoCard(makeTodo({ milestone: null }));
-    expect(noMilestone).not.toContain("Milestone");
+    const noSprint = todoCard(makeTodo({ sprint: null }));
+    expect(noSprint).not.toContain("Sprint");
   });
 
   it("renders a Next step row (accent label) when set; collapses it when null", () => {
@@ -515,5 +516,44 @@ describe("render() — My Work's third block", () => {
     expect(html).toContain("Tickets assigned to me");
     expect(html).toContain("Couldn't load your assigned tickets right now.");
     expect(html).not.toContain("The queue has what's waiting.");
+  });
+});
+
+// ── Get Started guide copy ───────────────────────────────────────────────────
+// The guide is the one prose surface that describes My Work and the Roadmap, so
+// it drifts silently. These pin the corrected spec's wording.
+
+describe("render() — the Get Started guide", () => {
+  const guideState = () => {
+    const s = initialState();
+    return {
+      ...s,
+      view: "app" as const,
+      screen: "guide" as const,
+      me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss" as const, identities: [], org: "SaplingLearn", admin: false },
+    };
+  };
+
+  it("describes My Work as THREE lists, with the issue's sprint (never its milestone)", () => {
+    const html = render(guideState());
+    expect(html).toContain("Three lists");
+    expect(html).not.toContain("Two lists");
+    expect(html).toContain("To-Do");
+    expect(html).toContain("Previous activity");
+    expect(html).toContain("Tickets assigned to me");
+    expect(html).toContain("its sprint");
+  });
+
+  it("says sprint progress comes from its TICKETS, and the Narrative tab still links the GitHub issues", () => {
+    const html = render(guideState());
+    expect(html).toMatch(/progress comes from its[\s\S]{0,60}tickets/);
+    expect(html).toContain("done plus declined, over the total in that sprint");
+    expect(html).toMatch(/Narrative[\s\S]{0,80}links the GitHub issues behind a sprint/);
+    // The old cache-only wording is gone.
+    expect(html).not.toContain("closed/total issue counts recomputed from GitHub events");
+  });
+
+  it("carries no user-facing 'milestone' string anywhere in the guide", () => {
+    expect(render(guideState())).not.toMatch(/milestone/i);
   });
 });

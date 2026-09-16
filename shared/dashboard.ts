@@ -27,7 +27,10 @@ export interface MyWorkTodo {
   url: string;
   updatedAt: string;
   summary: string | null;
-  milestone: { title: string; dueOn: string | null } | null; // issue milestone
+  // The SPRINT this issue belongs to. Resolved in listOpenAssignedIssues from the
+  // issue's GitHub group number to the sprint whose `github_ref` is that number;
+  // when no sprint claims it, the GitHub group's own title is the fallback.
+  sprint: { title: string; dueOn: string | null } | null;
   nextStep: string | null; // suggested next step from the summarizer
 }
 
@@ -35,7 +38,7 @@ export interface MyWorkTodo {
  * One open ticket assigned to the person (Phase 5 — "Tickets assigned to me").
  * These are D1 tickets, NEVER GitHub issues, so they are their own list and are
  * never folded into `todo`: `todo` is the GitHub issue surface (it carries a
- * `number`, a `url` and a GitHub milestone), a ticket has none of those.
+ * `number` and a `url`), a ticket has neither.
  * `status` is always an OPEN status (`submitted` / `in_progress`) — closed
  * tickets never reach My Work.
  */

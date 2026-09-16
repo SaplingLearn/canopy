@@ -1154,12 +1154,12 @@ function guideView(s: AppState): string {
     <h2 style="${gH2}">Your day-to-day</h2>
 
     <h3 style="${gH3}">My Work</h3>
-    <p style="${gP}">Canopy opens on ${gStrong("My Work")}, your personal dashboard. It's a read-only projection built entirely from captured GitHub events (no live API calls), so it loads instantly. Two lists: ${gStrong("To-Do")}, your open assigned issues (each with a one-line summary, its milestone, and a suggested next step), and ${gStrong("Previous activity")}, your recently merged and closed PRs, each summarized once at capture time. ${gStrong("Sync GitHub")} pulls the latest events.</p>
-    ${gFig("mywork", `${gEm("My Work")}: your open issues with a summary, milestone, and next step, plus a Sync button to pull the latest activity.`)}
+    <p style="${gP}">Canopy opens on ${gStrong("My Work")}, your personal dashboard. It's a read-only projection over captured GitHub events and the ticket queue (no live API calls), so it loads instantly. Three lists: ${gStrong("To-Do")}, your open assigned issues (each with a one-line summary, its sprint, and a suggested next step); ${gStrong("Previous activity")}, your recently merged and closed PRs, each summarized once at capture time; and ${gStrong("Tickets assigned to me")}, the open tickets from the queue that are yours. ${gStrong("Sync GitHub")} pulls the latest events.</p>
+    ${gFig("mywork", `${gEm("My Work")}: your open issues with a summary, sprint, and next step, your recent PRs, and the tickets assigned to you.`)}
 
     <h3 style="${gH3}">Roadmap</h3>
-    <p style="${gP}">${gStrong("Roadmap")} is the admin-authored plan: a narrative of what's happening plus sprints in target-date order. Each sprint shows cached progress (closed/total issue counts recomputed from GitHub events, never fetched live at render), with overdue flags and links to the issues behind it. Toggle between the ${gStrong("Narrative")} digest and the ${gStrong("Timeline")} of sprints.</p>
-    ${gFig("roadmap", `${gEm("Roadmap")}: sprints in target-date order with cached progress bars, overdue flags, and the issues behind each one.`)}
+    <p style="${gP}">${gStrong("Roadmap")} is the admin-authored plan: a narrative of what's happening plus sprints in target-date order. Each sprint's progress comes from its ${gStrong("tickets")} — done plus declined, over the total in that sprint — with overdue flags; the ${gStrong("Narrative")} tab still links the GitHub issues behind a sprint. Toggle between the ${gStrong("Narrative")} digest and the ${gStrong("Timeline")} of sprints.</p>
+    ${gFig("roadmap", `${gEm("Roadmap")}: sprints in target-date order with their ticket progress bars, overdue flags, and the GitHub issues behind each one in the Narrative tab.`)}
 
     <h3 style="${gH3}">Feed</h3>
     <p style="${gP}">${gStrong("Feed")} is the running timeline of everything that's shipped, from people and their agents alike, newest first. Each entry links to its PR, commit, or issue, and you can filter by author, tag, or time window.</p>
@@ -1441,7 +1441,7 @@ function mwMdBody(body: string, markdownFn: (body: string) => string): string {
 function mwFooter(inner: string, gap: number): string {
   return `<div style="margin-top:auto;padding:12px 0 2px;border-top:1px solid var(--border);display:flex;align-items:center;gap:${gap}px">${inner}</div>`;
 }
-/** Human-short date for a GitHub milestone due date, e.g. "Jul 20" (the same short
+/** Human-short date for a sprint due date, e.g. "Jul 20" (the same short
  *  format relTime falls back to; date-only ISO pinned to noon to dodge TZ shift). */
 function mwDueDate(iso: string): string {
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso);
@@ -1475,16 +1475,16 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
 }
 
 /** An assigned-issue card (option 2a): title + number pill, then labeled rows —
- *  Summary (escaped prose, backtick code spans styled), Milestone (flag + title
+ *  Summary (escaped prose, backtick code spans styled), Sprint (flag + title
  *  + "· due <date>"), Next step (the one accent label) — null rows collapse —
  *  and a footer with the priority chip, labels (capped at 3, existing
  *  convention) and "updated <relTime>". Only the number pill links out. */
 export function todoCard(t: MyWorkTodo): string {
   const rows: string[] = [];
   if (t.summary) rows.push(mwRow("Summary", mwProseBody(t.summary)));
-  if (t.milestone) {
-    const due = t.milestone.dueOn ? `<span style="font-size:11.5px;color:var(--fg-40)">· due ${esc(mwDueDate(t.milestone.dueOn))}</span>` : "";
-    rows.push(mwRow("Milestone", `<div style="${MW_ROW_BODY};display:flex;align-items:center;gap:8px">${MW_FLAG_SVG}<span>${esc(t.milestone.title)}</span>${due}</div>`));
+  if (t.sprint) {
+    const due = t.sprint.dueOn ? `<span style="font-size:11.5px;color:var(--fg-40)">· due ${esc(mwDueDate(t.sprint.dueOn))}</span>` : "";
+    rows.push(mwRow("Sprint", `<div style="${MW_ROW_BODY};display:flex;align-items:center;gap:8px">${MW_FLAG_SVG}<span>${esc(t.sprint.title)}</span>${due}</div>`));
   }
   if (t.nextStep) rows.push(mwRow("Next step", mwProseBody(t.nextStep), ";color:var(--accent)"));
   const prio = t.priority ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 6px">${esc(t.priority)}</span>` : "";

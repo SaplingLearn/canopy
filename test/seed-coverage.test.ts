@@ -37,8 +37,9 @@ describe("dev seed lights up every surface", () => {
     expect(mw.previousActivity.some((p) => p.what !== null && p.displayTitle !== null)).toBe(true);
     expect(mw.previousActivity.some((p) => p.baseRef === "main")).toBe(true);
     expect(mw.todo.some((t) => t.displayTitle !== null && t.nextStep !== null)).toBe(true);
-    // Widened issue raw (0018): milestone title/due_on renders on a card.
-    expect(mw.todo.some((t) => t.milestone !== null && t.milestone.title.length > 0)).toBe(true);
+    // Widened issue raw (0018): the GitHub group's title/due_on reaches the
+    // card's Sprint row (no seeded sprint claims the group number).
+    expect(mw.todo.some((t) => t.sprint !== null && t.sprint.title.length > 0)).toBe(true);
   });
 
   it("Roadmap: narrative + sprints carrying progress, the 0025 fields, and resources", async () => {
