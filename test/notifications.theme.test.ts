@@ -4,7 +4,8 @@
  * #00A859 / #f2f2f2 look from the original email mockup is gone.
  */
 import { describe, it, expect } from "vitest";
-import { assembleMessage, EMAIL_STYLE, EMAIL_SPACE, THEME } from "../src/notifications/assemble";
+import { assembleMessage, EMAIL_STYLE, EMAIL_SPACE, EMAIL_WIDTH, THEME, emailBanner } from "../src/notifications/assemble";
+import { renderInviteEmail } from "../src/notifications/invite";
 import { sampleSections } from "../src/notifications/sample";
 
 const window = { cadence: "daily" as const, id: "2026-09-13", start: new Date("2026-09-12T12:00:00Z"), end: new Date("2026-09-13T12:00:00Z") };
@@ -128,5 +129,60 @@ describe("email spacing — 8pt grid with a 4pt sub-grid", () => {
     expect(EMAIL_STYLE.body).toContain("line-height:20px");
     const { html } = msg();
     expect(html).toContain(`padding-top:${EMAIL_SPACE.l}px;padding-bottom:${EMAIL_SPACE.s}px;">MERGED</div>`);
+  });
+});
+
+describe("email shell — width", () => {
+  const invite = () => renderInviteEmail({ inviteeName: "Priya", inviterName: "Andres", email: "p@example.com", signInUrl: "https://canopy.example/x", host: "canopy.example" }).html;
+
+  it("gives the card more room than the stock 600px, on both the attribute and the style", () => {
+    expect(EMAIL_WIDTH).toBeGreaterThan(600);
+    const { html } = msg();
+    expect(html).toContain(`width="${EMAIL_WIDTH}"`);
+    expect(html).toContain(`width:${EMAIL_WIDTH}px;max-width:100%`);
+    expect(html).not.toContain('width="600"');
+  });
+
+  it("uses that one width for the invite too, so every Canopy email is the same shell", () => {
+    expect(invite()).toContain(`width="${EMAIL_WIDTH}"`);
+    expect(invite()).toContain(`width:${EMAIL_WIDTH}px;max-width:100%`);
+  });
+
+  it("still collapses to the viewport on a phone", () => {
+    expect(msg().html).toContain("max-width:100%");
+    expect(invite()).toContain("max-width:100%");
+  });
+});
+
+describe("email banner — the brand band", () => {
+  it("paints the banner cell with the accent token, so the dark swap carries it", () => {
+    expect(emailBanner()).toMatch(/<td[^>]*background-color:#8a9a5b[^>]*>/);
+    expect(msg().html).toMatch(/<td[^>]*background-color:#8a9a5b[^>]*>/);
+  });
+
+  it("rounds the band into the top of the card rather than squaring off the shell", () => {
+    expect(emailBanner()).toMatch(/border-radius:12px 12px 0 0|border-radius:13px 13px 0 0/);
+  });
+
+  it("inverts the wordmark to white — on an accent field the ink tokens would sink into it", () => {
+    expect(emailBanner()).toMatch(/color:#ffffff[^"]*">Canopy<\/td>/);
+  });
+
+  it("drops the accent-coloured bar: it would vanish against an accent band", () => {
+    expect(emailBanner()).not.toMatch(/data-bar="[0-9]"[^>]*background-color:#8a9a5b/);
+    expect((emailBanner().match(/data-bar="/g) ?? []).length).toBe(3);
+  });
+
+  it("uses literal whites on the band, never theme tokens the dark swap would flip into the olive", () => {
+    const banner = emailBanner("Daily digest");
+    const textColors = [...banner.matchAll(/(?:^|;|")color:(#[0-9a-f]{6})/g)].map((m) => m[1]);
+    const tokens = Object.values(THEME).map((t) => t.light);
+    expect(textColors.length).toBeGreaterThan(0);
+    expect(textColors.filter((c) => tokens.includes(c))).toEqual([]);
+  });
+
+  it("still sets the cadence subline, now on the band", () => {
+    expect(emailBanner("Daily digest")).toContain("Daily digest");
+    expect(msg().html).toContain("Daily digest");
   });
 });

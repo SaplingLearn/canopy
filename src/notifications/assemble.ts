@@ -65,6 +65,14 @@ export const EMAIL_COLORS = C;
  * the paragraph gap; internal gaps never exceed the external gap around them.
  */
 export const EMAIL_SPACE = { xs: 4, s: 8, m: 16, l: 24, xl: 32 } as const;
+
+/**
+ * Card width, shared by every Canopy email (digests + invite) so they are one
+ * shell. Wider than the stock 600px — the digests read cramped at that width —
+ * while staying inside what desktop clients render without a horizontal scroll;
+ * `max-width:100%` still collapses it to the viewport on a phone.
+ */
+export const EMAIL_WIDTH = 680;
 const SP = EMAIL_SPACE;
 
 const SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
@@ -181,26 +189,40 @@ function dateRange(window: Window, timeZone: string): string {
 }
 
 /**
- * Branded header: the app's three-bar mark (rects 20/14/8 wide, stacked and
- * centred, top bar accent, bottom bar at half strength) built from plain
- * blocks because Gmail strips SVG, the wordmark beside it, and the cadence
- * line underneath. Colours come from the token map so the dark swap flips them.
+ * The Canopy banner, shared by every email: the app's three-bar mark (22/15/9
+ * wide, stacked and centred, top bar accent, bottom bar at half strength) built
+ * from plain blocks because Gmail strips SVG, the wordmark beside it, and an
+ * optional subline underneath — all reversed out of a full-bleed accent band,
+ * rounded into the top of the card. The band colour is tokenised so the dark
+ * swap flips it; the ink on top of it is not (see BAND).
  */
-function header(cadence: Window["cadence"], range: string): string {
+/**
+ * On-band ink. Deliberately literal, never THEME tokens: `darkCss()` rewrites
+ * any inline colour matching a token, which would flip these to dark ink and
+ * sink them into the olive in a dark client. The band itself IS tokenised, so
+ * it still swaps accent light -> dark.
+ */
+const BAND = { ink: "#ffffff", bar2: "#e6ebd6", bar3: "#cfd8b4", subline: "#eceedd", dot: "#cfd8b4" } as const;
+
+export function emailBanner(sublineHtml?: string): string {
   const bar = (n: number, w: number, inset: number, color: string, last = false) =>
     `<div data-bar="${n}" style="width:${w}px;height:4px;border-radius:2px;background-color:${color};margin:0 0 ${last ? 0 : 2.5}px ${inset}px;font-size:0;line-height:0;"></div>`;
-  const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
   return (
-    `<tr><td style="padding:${SP.xl}px 28px ${SP.l}px 28px;border-bottom:1px solid ${C.border};text-align:center;">` +
+    `<tr><td style="padding:${SP.xl}px 28px ${SP.l}px 28px;background-color:${C.accent};border-radius:13px 13px 0 0;text-align:center;">` +
     `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>` +
     `<td data-mark="canopy" width="24" style="vertical-align:middle;padding-right:11px;">` +
-    bar(1, 22, 0, C.accent) + bar(2, 15, 3.5, C.fg) + bar(3, 9, 6.5, C.fg55, true) +
+    bar(1, 22, 0, BAND.ink) + bar(2, 15, 3.5, BAND.bar2) + bar(3, 9, 6.5, BAND.bar3, true) +
     `</td>` +
-    `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${C.fg};">Canopy</td>` +
+    `<td style="vertical-align:middle;${SANS}font-size:22px;font-weight:600;letter-spacing:-0.02em;line-height:1;color:${BAND.ink};">Canopy</td>` +
     `</tr></table>` +
-    `<div style="${SANS}font-size:13px;line-height:20px;color:${C.fg55};padding-top:${SP.s}px;">${label} <span style="color:${C.fg40};">&middot;</span> ${escapeHtml(range)}</div>` +
+    (sublineHtml ? `<div style="${SANS}font-size:13px;line-height:20px;color:${BAND.subline};padding-top:${SP.s}px;">${sublineHtml}</div>` : "") +
     `</td></tr>`
   );
+}
+
+function header(cadence: Window["cadence"], range: string): string {
+  const label = cadence === "daily" ? "Daily digest" : "Weekly digest";
+  return emailBanner(`${label} <span style="color:${BAND.dot};">&middot;</span> ${escapeHtml(range)}`);
 }
 
 export function assembleMessage(opts: {
@@ -241,7 +263,7 @@ export function assembleMessage(opts: {
     `<body style="margin:0;padding:0;background-color:${C.ground};">` +
     (preheader ? `<div style="display:none;max-height:0px;overflow:hidden;">${escapeHtml(preheader)}.</div>` : "") +
     `<table ${EMAIL_STYLE.table} style="background-color:${C.ground};"><tr><td align="center" style="padding:36px 16px;">` +
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
+    `<table role="presentation" width="${EMAIL_WIDTH}" cellpadding="0" cellspacing="0" border="0" style="width:${EMAIL_WIDTH}px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
     header(window.cadence, range) +
     blocks.join("") +
     `<tr><td style="padding:${SP.l}px 28px ${SP.l}px 28px;border-top:1px solid ${C.border};${SANS}font-size:12px;line-height:20px;color:${C.fg40};">` +
