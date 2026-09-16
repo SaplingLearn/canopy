@@ -30,7 +30,9 @@ input, select { font-family: inherit; }
 .cnpy-nav { display:flex; align-items:center; gap:11px; width:100%; padding:9px 11px; border-radius:8px; font-size:13.5px; font-weight:500; position:relative; color:var(--fg-55); text-align:left; }
 .cnpy-nav:hover { color:var(--fg-70); background:var(--hover); }
 [data-collapsed="1"] .cnpy-nav { justify-content:center; padding:9px 0; }
-[data-screen="mywork"] .cnpy-nav.n-mywork, [data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="review"] .cnpy-nav.n-review, [data-screen="maintenance"] .cnpy-nav.n-maintenance, [data-screen="search"] .cnpy-nav.n-search { background:var(--accent-soft); color:var(--accent); }
+/* Active nav item. The three ticket screens all light Tickets; a sprint is a
+   Roadmap child, so it lights Roadmap. */
+[data-screen="mywork"] .cnpy-nav.n-mywork, [data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="review"] .cnpy-nav.n-review, [data-screen="maintenance"] .cnpy-nav.n-maintenance, [data-screen="search"] .cnpy-nav.n-search, [data-screen="tickets"] .cnpy-nav.n-tickets, [data-screen="ticketdetail"] .cnpy-nav.n-tickets, [data-screen="newticket"] .cnpy-nav.n-tickets, [data-screen="sprint"] .cnpy-nav.n-roadmap { background:var(--accent-soft); color:var(--accent); }
 .cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:9px; }
 .cnpy-chip:hover { background:var(--hover); }
 [data-collapsed="1"] .cnpy-chip { justify-content:center; padding:6px 0; }
@@ -76,6 +78,14 @@ input, select { font-family: inherit; }
 .cnpy-card:hover { border-color:var(--border-strong); }
 .cnpy-mw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:1fr; gap:14px; align-items:stretch; }
 @media (max-width:760px) { .cnpy-mw-grid { grid-template-columns:1fr; } }
+/* Tickets: the queue's table rows, and the two-column form/detail layouts that
+   collapse to one column on a narrow viewport. */
+.cnpy-trow { transition:background .12s ease; cursor:pointer; }
+.cnpy-trow:hover { background:var(--hover); }
+@media (max-width:860px) {
+  .cnpy-nt-grid, .cnpy-td-grid { grid-template-columns:1fr !important; }
+  .cnpy-nt-grid > div + div, .cnpy-td-grid > div + div { border-left:none !important; padding-left:0 !important; }
+}
 .cnpy-accentbtn { transition:filter .12s ease, transform .12s ease; }
 .cnpy-accentbtn:hover { filter:brightness(1.06); }
 .cnpy-accentbtn:active { transform:translateY(1px); }

@@ -8,13 +8,19 @@
 // `actor`) hold a person HANDLE (0023 identity root), never a GitHub login.
 
 import { z } from "zod";
+import {
+  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_LINK_KINDS,
+} from "./tickets-core";
 
-// ── controlled vocabulary (must match the CHECK constraints in 0024_tickets.sql) ─
+// ── controlled vocabulary + the status machine ───────────────────────────────
+// Both live in the ZOD-FREE ./tickets-core so the SPA can import the rule as
+// values without pulling zod into the browser bundle. They are re-exported here
+// verbatim: `@shared/tickets` stays the one import path for the whole contract.
 
-export const TICKET_CATEGORIES = ["bug", "request", "question", "access", "other"] as const;
-export const TICKET_PRIORITIES = ["low", "normal", "high"] as const;
-export const TICKET_STATUSES = ["submitted", "in_progress", "done", "declined"] as const;
-export const TICKET_LINK_KINDS = ["github", "figma", "plain"] as const;
+export {
+  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_LINK_KINDS,
+  TICKET_TRANSITIONS, canTransition, legalMoves, TICKET_STATUS_LABEL, isOpenStatus,
+} from "./tickets-core";
 
 export const TicketCategory = z.enum(TICKET_CATEGORIES);
 export const TicketPriority = z.enum(TICKET_PRIORITIES);
@@ -143,38 +149,9 @@ export const TicketAssigneeFilter = z.enum(["anyone", "me", "unassigned"]);
 export type TicketSeg = z.infer<typeof TicketSeg>;
 export type TicketAssigneeFilter = z.infer<typeof TicketAssigneeFilter>;
 
-// ── the status machine (ONE definition, enforced everywhere) ─────────────────
-// submitted → in_progress (Start) | declined
-// in_progress → done | submitted (Back)
-// done, declined are terminal.
-
-export const TICKET_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
-  submitted: ["in_progress", "declined"],
-  in_progress: ["done", "submitted"],
-  done: [],
-  declined: [],
-};
-
-export function canTransition(from: TicketStatus, to: TicketStatus): boolean {
-  return TICKET_TRANSITIONS[from].includes(to);
-}
-
-/** The moves the UI may offer from `status` (a copy — callers never mutate the table). */
-export function legalMoves(status: TicketStatus): TicketStatus[] {
-  return [...TICKET_TRANSITIONS[status]];
-}
-
-export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
-  submitted: "Submitted",
-  in_progress: "In progress",
-  done: "Done",
-  declined: "Declined",
-};
-
-/** Open = the `seg=open` segment = not yet resolved by a person. */
-export function isOpenStatus(s: TicketStatus): boolean {
-  return s === "submitted" || s === "in_progress";
-}
+// The status machine (TICKET_TRANSITIONS / canTransition / legalMoves /
+// TICKET_STATUS_LABEL / isOpenStatus) lives in ./tickets-core and is re-exported
+// at the top of this file — see the note there for why it is kept zod-free.
 
 // ── link parsing (shared so the SPA and the server agree) ────────────────────
 

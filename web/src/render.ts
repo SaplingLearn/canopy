@@ -5,7 +5,10 @@
 
 import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
 import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
-import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, PlanView } from "./api";
+import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, SprintDetail, PlanView } from "./api";
+import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory } from "./api";
+import type { TicketPriority } from "@shared/tickets";
+import { queueView, newTicketView, ticketDetailView } from "./tickets";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
 import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
@@ -23,7 +26,11 @@ import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask
 // Technical | Product). Values come from the data, not a fixed union.
 export type DocSpace = string;
 
-export type Screen = "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide" | "unsubscribe";
+export type Screen =
+  | "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide" | "unsubscribe"
+  // Tickets (Phase 5): the queue, one ticket, the new-ticket form, and a sprint.
+  // `sprint` is a Roadmap child — the sidebar highlights Roadmap while it is open.
+  | "tickets" | "ticketdetail" | "newticket" | "sprint";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -101,6 +108,40 @@ export interface AppState {
   /** The #unsubscribe screen: the flip in flight, its error, or a Settings preview (no flip). */
   unsub: { pending: boolean; error: string | null; preview: boolean };
   confirmedSprints: Record<string, boolean>;
+  // ── Tickets (Phase 5) ──────────────────────────────────────────────────────
+  /** The queue list for the CURRENT filters (the server applies seg/assignee/category). */
+  tickets: Loadable<TicketListItem[]>;
+  ticketDetail: Loadable<TicketDetail | null>;
+  /** The ticket the detail screen is showing (from `#tickets/<id>`). */
+  ticketId: number | null;
+  /** Unassigned + open, org-wide — the sidebar badge AND the queue's footer count. */
+  ticketBadge: number;
+  qSeg: TicketSeg;
+  qAssignee: TicketAssigneeFilter;
+  qCategory: TicketCategory | "all";
+  qView: "table" | "board";
+  // New-ticket form fields (the design's f* state).
+  fTitle: string;
+  /** null = nothing picked, which files as `other`. */
+  fCat: TicketCategory | null;
+  fPrio: TicketPriority;
+  fDesc: string;
+  fAsgs: string[];
+  fLink: string;
+  /** null = Backlog. */
+  fSpr: number | null;
+  // Ticket-detail-only UI state (drafts + which popover is open).
+  commentDraft: string;
+  linkDraft: string;
+  lkOpen: boolean;
+  asgMenu: boolean;
+  sprMenu: boolean;
+  relMenu: boolean;
+  /** Sprints back the queue's group headers and the ticket form's/rail's menus. */
+  sprints: Loadable<SprintView[]>;
+  /** The sprint screen's payload — Phase 5b paints it. */
+  sprintDetail: Loadable<SprintDetail | null>;
+  sprintId: number | null;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -166,6 +207,21 @@ export function initialState(): AppState {
     fromDraft: null,
     unsub: { pending: false, error: null, preview: false },
     confirmedSprints: {},
+    // Tickets — defaults transcribed from the design's `state` block: the queue
+    // opens on Open / Any assignee / All categories in the Table view, and the
+    // new-ticket form opens empty (no category → `other`, Normal, Backlog,
+    // Unassigned).
+    tickets: { status: "idle", data: [] },
+    ticketDetail: { status: "idle", data: null },
+    ticketId: null,
+    ticketBadge: 0,
+    qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
+    fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
+    commentDraft: "", linkDraft: "",
+    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false,
+    sprints: { status: "idle", data: [] },
+    sprintDetail: { status: "idle", data: null },
+    sprintId: null,
     toast: null,
     backfillSync: null,
   };
@@ -393,6 +449,14 @@ function sidebar(s: AppState): string {
       ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;flex:none;color:var(--fg-40)">${counts.maintenance}</span>`
       : "")
     : (counts.maintenance > 0 ? collapsedDot : "");
+  // Tickets badge (design call #2): unassigned ACTIVE tickets. Always accent —
+  // unlike Review's, it is a "nobody has this" signal, not a queue depth. Hidden
+  // at 0; an accent dot when the sidebar is collapsed.
+  const ticketExtra = s.ticketBadge > 0
+    ? (expanded
+      ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;height:16px;line-height:16px;padding:0 6px;border-radius:999px;flex:none;color:var(--accent);border:1px solid var(--accent);background:var(--accent-soft)">${s.ticketBadge}</span>`
+      : collapsedDot)
+    : "";
 
   return `<aside class="cnpy-aside">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 14px 14px 16px;min-height:58px">
@@ -416,6 +480,7 @@ function sidebar(s: AppState): string {
       ${navItem("goMyWork", "n-mywork", "My Work", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M3 12 12 3l9 9"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg>`)}
       ${navItem("goRoadmap", "n-roadmap", "Roadmap", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg>`)}
       ${navItem("goFeed", "n-feed", "Feed", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path></svg>`)}
+      ${navItem("goTickets", "n-tickets", "Tickets", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"></path><path d="M13 5v2M13 11v2M13 17v2"></path></svg>`, ticketExtra)}
       ${sectionLabel("Knowledge")}
       ${navItem("goDocs", "n-docs", "Docs", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path></svg>`)}
       ${navItem("goSearch", "n-search", "Search", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>`)}
@@ -437,8 +502,24 @@ function sidebar(s: AppState): string {
   </aside>`;
 }
 
+/** The "›" crumb text for the three child screens (empty on a top-level screen). */
+function headerCrumb(s: AppState): string {
+  if (s.screen === "newticket") return "New ticket";
+  if (s.screen === "ticketdetail") return s.ticketDetail.data?.title ?? "";
+  if (s.screen === "sprint") {
+    return s.sprintDetail.data?.label ?? s.sprints.data.find((sp) => sp.id === s.sprintId)?.label ?? "";
+  }
+  return "";
+}
+
 function header(s: AppState): string {
-  const titles: Record<Screen, string> = { mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", review: "Review", maintenance: "Maintenance", search: "Search", settings: "Settings", guide: "Get Started", unsubscribe: "Unsubscribe" };
+  const titles: Record<Screen, string> = {
+    mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", review: "Review",
+    maintenance: "Maintenance", search: "Search", settings: "Settings", guide: "Get Started",
+    unsubscribe: "Unsubscribe",
+    // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
+    tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
+  };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
 
@@ -500,19 +581,41 @@ function header(s: AppState): string {
       ${syncing ? "Syncing&hellip;" : "Sync GitHub"}
     </button>` : "";
 
+  // Queue chrome (the `tickets` screen only): the Table / Board toggle in the
+  // Roadmap tab idiom, plus the header's submit button.
+  const qTabStyle = (k: "table" | "board") => `display:flex;align-items:center;gap:6px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${s.qView === k ? "var(--fg)" : "var(--fg-55)"};background:${s.qView === k ? "var(--hover)" : "transparent"}`;
+  const queueControls = s.screen === "tickets" ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">
+      <button data-act="queueTable" style="${qTabStyle("table")}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>Table</button>
+      <button data-act="queueBoard" style="${qTabStyle("board")}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="16" rx="1.5"></rect><rect x="14" y="4" width="6" height="10" rx="1.5"></rect></svg>Board</button>
+    </div>
+    <button data-act="newTicket" class="cnpy-accentbtn" style="display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap;transition:filter .12s ease"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Submit a ticket</button>` : "";
+
   const themeBtn = `<button data-act="cycleTheme" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
       ${dark
         ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
         : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"></path></svg>`}
     </button>`;
 
+  // Breadcrumb (the design's titleBtnSt / crumbSt): on a CHILD screen the title
+  // becomes a back button to its parent and a "›" crumb names the child.
+  // `ticketsBack` resolves to Tickets, or Roadmap from a sprint (one act, like
+  // the design's single `back` handler).
+  const child = s.screen === "ticketdetail" || s.screen === "newticket" || s.screen === "sprint";
+  const crumb = child
+    ? `<span style="display:inline-flex;align-items:center;gap:10px;min-width:0"><span style="color:var(--fg-40);font-size:13px">›</span><span style="font-size:13px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(headerCrumb(s))}</span></span>`
+    : "";
+  const title = child
+    ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="ticketsBack" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
+    : `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">${titles[s.screen]}</h1>`;
+
   return `<header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;min-height:57px;border-bottom:1px solid var(--border);flex:none">
     <div style="display:flex;align-items:center;gap:12px;min-width:0">
-      <h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">${titles[s.screen]}</h1>
+      ${title}
+      ${crumb}
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${docsControls}${roadmapControls}${myworkControls}${themeBtn}
+      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${themeBtn}
     </div>
   </header>`;
 }
@@ -1471,6 +1574,56 @@ function maintenanceScreen(s: AppState): string {
   return `${hint}${base.slice(0, cut)}${people}${notif}${base.slice(cut)}`;
 }
 
+// ── tickets ──────────────────────────────────────────────────────────────────
+/** The queue screen with slice-level loading/error states around the pure view. */
+function ticketsScreen(s: AppState): string {
+  if (slicePending(s.tickets)) return notice("Loading the queue&hellip;");
+  if (s.tickets.status === "error") return notice("Couldn't load the ticket queue.");
+  return queueView({
+    tickets: s.tickets.data,
+    sprints: s.sprints.data,
+    persons: s.persons.data,
+    seg: s.qSeg,
+    assignee: s.qAssignee,
+    category: s.qCategory,
+    view: s.qView,
+    unassignedCount: s.ticketBadge,
+  });
+}
+
+function newTicketScreen(s: AppState): string {
+  return newTicketView({
+    title: s.fTitle,
+    category: s.fCat,
+    priority: s.fPrio,
+    description: s.fDesc,
+    assignees: s.fAsgs,
+    link: s.fLink,
+    sprintId: s.fSpr,
+    sprints: s.sprints.data,
+    persons: s.persons.data,
+  });
+}
+
+function ticketDetailScreen(s: AppState): string {
+  const slice = s.ticketDetail;
+  if (slice.status === "loading" && !slice.data) return notice("Loading the ticket&hellip;");
+  if (slice.status === "error") return notice("Couldn't load this ticket.");
+  if (!slice.data) return notice("That ticket doesn't exist.");
+  return ticketDetailView({
+    ticket: slice.data,
+    allTickets: s.tickets.data,
+    sprints: s.sprints.data,
+    persons: s.persons.data,
+    commentDraft: s.commentDraft,
+    linkDraft: s.linkDraft,
+    linkOpen: s.lkOpen,
+    asgMenu: s.asgMenu,
+    sprMenu: s.sprMenu,
+    relMenu: s.relMenu,
+  });
+}
+
 // ── root ─────────────────────────────────────────────────────────────────────
 function screenBody(s: AppState): string {
   switch (s.screen) {
@@ -1483,6 +1636,11 @@ function screenBody(s: AppState): string {
     case "search": return searchView(s);
     case "settings": return settingsView(s);
     case "guide": return guideView(s);
+    case "tickets": return ticketsScreen(s);
+    case "newticket": return newTicketScreen(s);
+    case "ticketdetail": return ticketDetailScreen(s);
+    // Phase 5b paints the sprint screen from `sprintDetail`; 5a only routes to it.
+    case "sprint": return notice("Sprint");
     default: return feedView(s);
   }
 }

@@ -10,7 +10,10 @@ import type {
 } from "@shared/rows";
 // Type-only (erased at build): the sprint DTOs the roadmap renders. Importing the
 // zod module for types costs the bundle nothing.
-import type { SprintView, SprintDetail } from "@shared/sprints";
+import type { SprintView, SprintDetail, SprintCreate } from "@shared/sprints";
+import type {
+  TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate,
+} from "@shared/tickets";
 import type { DashboardData } from "@shared/dashboard";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow } from "@shared/rows";
@@ -298,6 +301,78 @@ export function listNotificationOutbox(limit = 50): Promise<{ rows: Notification
   return getJson<{ rows: NotificationOutboxRow[] }>(`/api/notifications/outbox?limit=${limit}`);
 }
 
+// ── tickets (cookie-gated, NEVER MCP) ────────────────────────────────────────
+// Every write answers with `{ ok, ticket: TicketDetail }` — the server re-reads
+// the ticket so one round-trip repaints the screen. The queue list and the
+// detail fetch return the bare payloads (`{ tickets }` / TicketDetail).
+// The requester/actor is always the session principal; nothing here sends one.
+
+export interface TicketFilters {
+  seg?: TicketSeg;
+  assignee?: TicketAssigneeFilter;
+  /** "all" / absent = every category. */
+  category?: TicketCategory | "all";
+}
+export function listTickets(f: TicketFilters = {}): Promise<TicketListItem[]> {
+  const p = new URLSearchParams();
+  if (f.seg) p.set("seg", f.seg);
+  if (f.assignee) p.set("assignee", f.assignee);
+  if (f.category && f.category !== "all") p.set("category", f.category);
+  const qs = p.toString();
+  return getJson<{ tickets: TicketListItem[] }>(`/tickets${qs ? `?${qs}` : ""}`).then((r) => r.tickets);
+}
+export function getTicket(id: number): Promise<TicketDetail> {
+  return getJson<TicketDetail>(`/tickets/${id}`);
+}
+/** The sidebar badge: unassigned + open tickets, org-wide. */
+export function getTicketBadge(): Promise<number> {
+  return getJson<{ count: number }>("/tickets/badge").then((r) => r.count);
+}
+type TicketWrite = Promise<TicketDetail>;
+const ticketWrite = (path: string, body: unknown = {}): TicketWrite =>
+  postJson<{ ok: true; ticket: TicketDetail }>(path, body).then((r) => r.ticket);
+
+export function createTicket(body: TicketCreate): TicketWrite {
+  return ticketWrite("/tickets", body);
+}
+export function transitionTicket(id: number, to: TicketDetail["status"]): TicketWrite {
+  return ticketWrite(`/tickets/${id}/status`, { to });
+}
+export function toggleTicketAssignee(id: number, login: string, on: boolean): TicketWrite {
+  return ticketWrite(`/tickets/${id}/assignees`, { login, on });
+}
+export function addTicketLink(id: number, raw: string): TicketWrite {
+  return ticketWrite(`/tickets/${id}/links`, { raw });
+}
+export function setTicketSprint(id: number, sprintId: number | null): TicketWrite {
+  return ticketWrite(`/tickets/${id}/sprint`, { sprint_id: sprintId });
+}
+/** Nest `childId` under `parentId` — one level only; the route 409s otherwise. */
+export function setTicketParent(parentId: number, childId: number): TicketWrite {
+  return ticketWrite(`/tickets/${parentId}/parent`, { child_id: childId });
+}
+export function addTicketComment(id: number, body: string): TicketWrite {
+  return ticketWrite(`/tickets/${id}/comment`, { body });
+}
+
+// ── sprints (cookie-gated, NEVER MCP) ────────────────────────────────────────
+export function listSprints(): Promise<SprintView[]> {
+  return getJson<{ sprints: SprintView[] }>("/sprints").then((r) => r.sprints);
+}
+/** The sprint screen's payload — the bare detail (tickets + resources included). */
+export function getSprint(id: number): Promise<SprintDetail> {
+  return getJson<SprintDetail>(`/sprints/${id}`);
+}
+export function createSprint(body: SprintCreate): Promise<SprintView> {
+  return postJson<{ ok: true; sprint: SprintView }>("/sprints", body).then((r) => r.sprint);
+}
+export function setSprintActive(id: number, active: boolean): Promise<SprintView> {
+  return postJson<{ ok: true; sprint: SprintView }>(`/sprints/${id}/active`, { active }).then((r) => r.sprint);
+}
+export function addSprintResource(id: number, raw: string): Promise<SprintDetail> {
+  return postJson<{ ok: true; sprint: SprintDetail }>(`/sprints/${id}/resources`, { raw }).then((r) => r.sprint);
+}
+
 export function logout(): Promise<{ ok: true }> {
   return postJson<{ ok: true }>("/auth/logout");
 }
@@ -307,7 +382,8 @@ export function mintMcpToken(): Promise<{ token: string }> {
 
 // Re-export the row types the UI renders, so screens import shapes from one place.
 export type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow };
-export type { SprintView, SprintDetail };
+export type { SprintView, SprintDetail, SprintCreate };
+export type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate };
 export type { DashboardData };
 export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow };
 export type { InviteRow, PersonColor };
