@@ -241,6 +241,58 @@ describe("GET /sprints/:id", () => {
     expect(other.tickets.map((t) => [t.title, t.depth])).toEqual([["Outside parent", 0]]);
   });
 
+  it("sprint membership NEVER cascades: moving a parent leaves its children where they are", async () => {
+    const cookie = await cookieFor("andres");
+    const a = await createSprint(cookie, { label: "Sprint A" });
+    const b = await createSprint(cookie, { label: "Sprint B" });
+
+    const parent = await createTicket(cookie, { title: "Parent", sprint_id: a.id });
+    const child = await createTicket(cookie, { title: "Child", sprint_id: a.id });
+    expect((await post(`/tickets/${parent.id}/parent`, cookie, { child_id: child.id })).status).toBe(200);
+
+    // Linking a child did NOT touch its sprint (both were already in A).
+    const sprintOf = async (id: number) =>
+      (await first<{ sprint_id: number | null }>(env.DB, `SELECT sprint_id FROM tickets WHERE id = ?`, id))!.sprint_id;
+    expect(await sprintOf(child.id)).toBe(a.id);
+
+    // Move the PARENT to sprint B. The child stays in A — there is no cascade.
+    expect((await post(`/tickets/${parent.id}/sprint`, cookie, { sprint_id: b.id })).status).toBe(200);
+    expect(await sprintOf(parent.id)).toBe(b.id);
+    expect(await sprintOf(child.id), "the child does not follow its parent").toBe(a.id);
+
+    // Move the parent to the BACKLOG. Still no cascade.
+    expect((await post(`/tickets/${parent.id}/sprint`, cookie, { sprint_id: null })).status).toBe(200);
+    expect(await sprintOf(parent.id)).toBeNull();
+    expect(await sprintOf(child.id)).toBe(a.id);
+
+    // The sprint screens agree: A lists the orphaned child as a ROOT (its parent
+    // is invisible here), B lists only the parent.
+    expect((await detailOf(cookie, a.id)).tickets.map((t) => [t.title, t.depth])).toEqual([["Child", 0]]);
+    expect((await detailOf(cookie, b.id)).tickets).toEqual([]);
+  });
+
+  it("linking a child NEVER pulls it into its parent's sprint, and no DB trigger does it either", async () => {
+    const cookie = await cookieFor("andres");
+    const a = await createSprint(cookie, { label: "Sprint A" });
+    const parent = await createTicket(cookie, { title: "Parent in A", sprint_id: a.id });
+    const child = await createTicket(cookie, { title: "Backlog child" }); // no sprint
+
+    expect((await post(`/tickets/${parent.id}/parent`, cookie, { child_id: child.id })).status).toBe(200);
+    const row = (await first<{ sprint_id: number | null; parent_id: number | null }>(
+      env.DB, `SELECT sprint_id, parent_id FROM tickets WHERE id = ?`, child.id
+    ))!;
+    expect(row.parent_id).toBe(parent.id);
+    expect(row.sprint_id, "set_ticket_parent never writes sprint_id").toBeNull();
+
+    // And the schema carries no trigger that could do it behind the routes' back:
+    // the only triggers on `tickets` are 0024's three FTS ones.
+    const triggers = await all<{ name: string; sql: string }>(
+      env.DB, `SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'tickets'`
+    );
+    expect(triggers.map((t) => t.name).sort()).toEqual(["tickets_fts_ad", "tickets_fts_ai", "tickets_fts_au"]);
+    expect(triggers.every((t) => !/sprint_id/i.test(t.sql))).toBe(true);
+  });
+
   it("dedupes resources by url — sprint_resources first, a ticket link with the same url drops out", async () => {
     const cookie = await cookieFor("andres");
     const sp = await createSprint(cookie, { label: "Resourced" });
