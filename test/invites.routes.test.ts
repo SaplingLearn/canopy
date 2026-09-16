@@ -20,6 +20,19 @@ describe("renderInviteEmail", () => {
     expect(m.text).toContain("https://canopy.test/auth/google/login?login_hint=priya.n%40gmail.com");
     expect(m.html).not.toContain("Unsubscribe");
   });
+
+  it("carries the same Canopy banner as the digests: three-bar mark, no SVG, wordmark beside it", () => {
+    const m = renderInviteEmail({ inviteeName: "Priya", inviterName: "Andres", email: "priya.n@gmail.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
+    expect(m.html).not.toContain("<svg");
+    expect(m.html).toContain('data-mark="canopy"');
+    expect((m.html.match(/data-bar="/g) ?? []).length).toBe(3);
+    expect(m.html).toMatch(/data-mark="canopy"[\s\S]*?Canopy<\/(span|strong|td)>/);
+  });
+
+  it("centres that banner the way the digest shell does", () => {
+    const m = renderInviteEmail({ inviteeName: null, inviterName: "Andres", email: "priya.n@gmail.com", signInUrl: "https://canopy.test/x", host: "canopy.test" });
+    expect(m.html).toMatch(/<td[^>]*text-align:center[^>]*>[\s\S]*?<table[^>]*align="center"[^>]*>[\s\S]*?data-mark="canopy"/);
+  });
 });
 
 describe("/invites (admin, session-cookie)", () => {

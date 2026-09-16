@@ -4,7 +4,7 @@
 import type { Env } from "../env";
 import { type DB, nowIso } from "../db";
 import { escapeHtml } from "./html";
-import { EMAIL_COLORS as C, EMAIL_FONT, FONTS_HREF, EMAIL_STYLE } from "./assemble";
+import { EMAIL_COLORS as C, EMAIL_FONT, FONTS_HREF, EMAIL_STYLE, EMAIL_WIDTH, EMAIL_SPACE as SP, emailBanner } from "./assemble";
 import { deliveryFor } from "./resend";
 import { loadSettings } from "./cron";
 import { getPerson } from "../auth/persons";
@@ -23,9 +23,9 @@ export function renderInviteEmail(o: { inviteeName: string | null; inviterName: 
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title><link href="${FONTS_HREF}" rel="stylesheet"></head>` +
     `<body style="margin:0;padding:0;background-color:${C.ground};">` +
     `<table ${EMAIL_STYLE.table} style="background-color:${C.ground};"><tr><td align="center" style="padding:36px 16px;">` +
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
-    `<tr><td style="padding:28px 28px 8px 28px;${EMAIL_FONT.sans}font-size:15px;font-weight:600;color:${C.fg};">Canopy</td></tr>` +
-    `<tr><td style="padding:8px 28px 0 28px;"><div style="${p}color:${C.fg};">${hi}</div>` +
+    `<table role="presentation" width="${EMAIL_WIDTH}" cellpadding="0" cellspacing="0" border="0" style="width:${EMAIL_WIDTH}px;max-width:100%;background-color:${C.bg};border:1px solid ${C.border};border-radius:13px;">` +
+    emailBanner() +
+    `<tr><td style="padding:${SP.xl}px 28px 0 28px;"><div style="${p}color:${C.fg};">${hi}</div>` +
     `<div style="${p}">${escapeHtml(o.inviterName)} invited you to Canopy, the Sapling team's shared workspace. Sign in with this Google address to pick your handle and get started.</div>` +
     `<div style="padding:6px 0 20px 0;"><a href="${escapeHtml(o.signInUrl)}" style="${button}">Sign in with Google</a></div>` +
     `<div style="${EMAIL_FONT.sans}font-size:12.5px;line-height:20px;color:${C.fg55};padding-bottom:24px;">This invite is for <span style="${EMAIL_FONT.mono}">${escapeHtml(o.email)}</span>. If you weren't expecting it, you can ignore this email.</div></td></tr>` +
