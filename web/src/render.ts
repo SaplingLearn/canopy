@@ -8,9 +8,11 @@ import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColo
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, SprintDetail, PlanView } from "./api";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory } from "./api";
 import type { TicketPriority } from "@shared/tickets";
-import { queueView, newTicketView, ticketDetailView } from "./tickets";
+import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip } from "./tickets";
+import { sprintCard, newSprintPanel, newSprintToggle, sprintScreen } from "./sprints";
+import type { SprintUrgency, SprintDomain } from "@shared/sprints";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
-import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
+import type { DashboardData, MyWorkPr, MyWorkTodo, MyWorkTicket } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
 import { renderMarkdown } from "./markdown";
 import { extractOutline } from "./outline";
@@ -139,9 +141,19 @@ export interface AppState {
   relMenu: boolean;
   /** Sprints back the queue's group headers and the ticket form's/rail's menus. */
   sprints: Loadable<SprintView[]>;
-  /** The sprint screen's payload — Phase 5b paints it. */
+  /** The sprint screen's payload. */
   sprintDetail: Loadable<SprintDetail | null>;
   sprintId: number | null;
+  // The Roadmap Timeline's New sprint panel (the design's ns* state). `label` is
+  // the only required field, so `nsName` is what arms "Create sprint".
+  nsOpen: boolean;
+  nsName: string;
+  nsDates: string;
+  nsDesc: string;
+  nsUrg: SprintUrgency;
+  nsDue: string;
+  nsLead: string | null;
+  nsDom: SprintDomain | null;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -222,6 +234,7 @@ export function initialState(): AppState {
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
+    nsOpen: false, nsName: "", nsDates: "", nsDesc: "", nsUrg: "normal", nsDue: "", nsLead: null, nsDom: null,
     toast: null,
     backfillSync: null,
   };
@@ -845,80 +858,57 @@ function roadmapEnriched(sprints: SprintView[], confirmedSprints: Record<string,
   };
 }
 
+/**
+ * The Roadmap's Timeline tab: the plan as a sequence of sprint cards, grouped
+ * In Progress (active) / Upcoming / Done (§C.6). Every card is `sprintCard` from
+ * ./sprints — the ONE place a sprint is painted, shared with nothing else on this
+ * screen so the card and the Sprint screen can never drift.
+ *
+ * The header also carries the "New sprint" toggle; the panel it opens renders
+ * above the first group (`POST /sprints` creates the sprint unscheduled and
+ * inactive, so it lands in Upcoming).
+ */
 function roadmapNarrative(s: AppState): string {
-  const { list, doneCount, overdueCount } = roadmapEnriched(s.roadmap.data.sprints, s.confirmedSprints);
-  const total = list.length;
+  const sprints = s.roadmap.data.sprints;
+  const total = sprints.length;
+  const isDone = (sp: SprintView) => sp.status === "done" || !!s.confirmedSprints[String(sp.id)];
 
-  const inProgress = list.filter((m) => !m.done && m.badge.label === "In progress");
-  const upcoming = list.filter((m) => !m.done && m.badge.label === "Upcoming");
-  const done = list.filter((m) => m.done);
+  const inProgress = sprints.filter((sp) => !isDone(sp) && sp.active);
+  const upcoming = sprints.filter((sp) => !isDone(sp) && !sp.active);
+  const done = sprints.filter(isDone);
 
   const sectionHeading = (label: string, color: string): string =>
     `<div style="display:flex;align-items:center;gap:9px;margin:28px 0 12px"><span style="width:7px;height:7px;border-radius:50%;flex:none;background:${color}"></span><span style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:${color}">${label}</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
 
-  const sprintRow = (m: (typeof list)[0]): string => {
-    const dateNote = m.done
-      ? `Completed by ${m.dateLabel}`
-      : m.overdue
-      ? `Was due ${m.dateLabel} — overdue`
-      : m.isNext
-      ? `Next up · due ${m.dateLabel}`
-      : `Due ${m.dateLabel}`;
-    const barColor = m.done ? "var(--green)" : m.overdue ? "var(--red)" : "var(--accent)";
-    const phasePrefix = m.phase ? `${esc(m.phase)} · ` : "";
-    const progressBar = m.total !== null && m.closed !== null
-      ? `<div style="display:flex;align-items:center;gap:10px;margin-top:11px">
-          <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${m.pct}%;background:${barColor}"></div></div>
-          <span style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;flex:none">${m.closed}/${m.total} closed</span>
-        </div>`
-      : "";
-    const ready = m.ready ? `<div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--accent);flex:1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"></path></svg><span style="color:var(--fg-70)">All linked issues are closed — <strong style="color:var(--fg);font-weight:600">ready to complete</strong>.</span></div>
-        <button data-act="confirmSprint" data-arg="${m.id}" class="cnpy-accentbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Confirm done</button>
-      </div>` : "";
-    const refChips = sprintRefChips(m.github_ref);
-    return `<div style="padding:14px 16px;border:1px solid var(--border);border-radius:11px;margin-bottom:8px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-            <span style="font-size:14.5px;font-weight:600;letter-spacing:-0.01em">${esc(m.title)}</span>
-            ${m.isNext ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px">NEXT</span>` : ""}
-            ${m.overdue ? `<span style="font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px">OVERDUE</span>` : ""}
-          </div>
-          ${m.about ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${linkifyRefs(m.about)}</p>` : ""}
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-            <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${phasePrefix}${dateNote}</span>
-          </div>
-          ${progressBar}
-          ${refChips.length ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:10px">${refChips.map(ghChip).join("")}</div>` : ""}
-          ${ready}
-        </div>
-      </div>
-    </div>`;
-  };
-
-  const renderGroup = (items: (typeof list), heading: string, color: string): string =>
-    items.length === 0 ? "" : `${sectionHeading(heading, color)}${items.map(sprintRow).join("")}`;
+  const renderGroup = (items: SprintView[], heading: string, color: string): string =>
+    items.length === 0
+      ? ""
+      : `${sectionHeading(heading, color)}${items.map((sp) => sprintCard(sp, s.persons.data, { done: isDone(sp) })).join("")}`;
 
   const intro = total === 0
     ? notice("No sprints yet.")
     : `<p style="font-size:14px;line-height:1.7;color:var(--fg-70);margin:0 0 4px">
-        ${total} sprint${total !== 1 ? "s" : ""} track the coarse goals above issue-level work.
-        ${doneCount > 0 ? `<strong style="color:var(--fg);font-weight:600">${doneCount} ${doneCount === 1 ? "is" : "are"} done.</strong>` : ""}
-        ${overdueCount > 0 ? `<span style="color:var(--red)">${overdueCount} overdue.</span>` : ""}
-        Progress reflects cached issue counts recorded from GitHub events.
+        The plan is a sequence of time-boxed sprints, each a container of tickets with its own screen.
+        <strong style="color:var(--fg);font-weight:600">Progress is live</strong> — computed from each sprint's done tickets.
       </p>`;
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
     <div style="margin-bottom:20px">
       <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
       <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 12px">Roadmap Overview</h1>
-      ${intro}
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="flex:1;min-width:0">${intro}</div>
+        ${newSprintToggle(s.nsOpen)}
+      </div>
     </div>
+    ${newSprintPanel({
+      open: s.nsOpen, name: s.nsName, dates: s.nsDates, desc: s.nsDesc,
+      urgency: s.nsUrg, due: s.nsDue, lead: s.nsLead, domain: s.nsDom,
+    }, s.persons.data)}
     ${renderGroup(inProgress, "In Progress", "var(--amber)")}
     ${renderGroup(upcoming, "Upcoming", "var(--blue)")}
     ${renderGroup(done, "Done", "var(--green)")}
-    ${total > 0 ? `<div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Sprints are coarse goals — the altitude above GitHub issues.</div>` : ""}
+    ${total > 0 ? `<div style="text-align:center;padding:14px 0 0;font-size:11.5px;color:var(--fg-40)">Sprints are the plan — each one is a time-boxed container of tickets with its own screen.</div>` : ""}
   </div>`;
 }
 
@@ -1497,6 +1487,36 @@ export function todoCard(t: MyWorkTodo): string {
   </div>`;
 }
 
+/**
+ * A ticket assigned to me, in the To-do card treatment (design call #9 / design
+ * 611–637): title + a `#<id>` pill, then the labeled rows — Summary (the ticket
+ * body as escaped prose; the row collapses when the body is empty), Requester,
+ * Sprint ("Backlog" when it has none) — and a footer with the status pill, the
+ * monochrome priority chip and "updated <relTime>".
+ *
+ * The `#<id>` pill NAVIGATES (data-act="openTicket") rather than linking out: a
+ * ticket is a D1 row on this origin, never a GitHub issue (ADR-007), so there is
+ * no external URL to point at — that is exactly what separates this block from
+ * the To-do cards above it.
+ */
+export function ticketCard(t: MyWorkTicket, personOf: (handle: string) => PersonSummary | null): string {
+  const rows: string[] = [];
+  if (t.body.trim()) rows.push(mwRow("Summary", mwProseBody(t.body)));
+  rows.push(mwRow("Requester", `<div style="${MW_ROW_BODY};display:flex;align-items:center;gap:8px">${personChip(personOf(t.requester), 20, t.requester)}${handleTag(personOf(t.requester), t.requester, 13)}</div>`));
+  rows.push(mwRow("Sprint", `<div style="${MW_ROW_BODY}">${esc(t.sprint?.label ?? "Backlog")}</div>`));
+  const footer = mwFooter(
+    `${ticketPill(t.status)}${priorityChip(t.priority)}<span style="font-size:11px;color:var(--fg-40);margin-left:auto;white-space:nowrap">updated ${relTime(t.updatedAt)}</span>`,
+    6
+  );
+  return `<div class="cnpy-card" style="${MW_CARD}">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px">
+      <span style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:var(--fg);flex:1;min-width:0">${esc(t.title)}</span>
+      <button data-act="openTicket" data-arg="${t.id}" class="cnpy-numpill" style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:3px 8px;display:flex;align-items:center;gap:5px;margin-top:2px;flex:none">#${t.id}${MW_ARROW_SVG}</button>
+    </div>
+    <div style="display:flex;flex-direction:column;flex:1">${rows.join("")}${footer}</div>
+  </div>`;
+}
+
 function myWorkView(s: AppState): string {
   const slice = s.mywork;
   if (slice.status === "loading" && !slice.data) return wrapMyWork(notice("Loading your work&hellip;"));
@@ -1521,10 +1541,20 @@ function myWorkView(s: AppState): string {
       ? mwEmptyHint("No open issues assigned to you.")
       : `<div class="cnpy-mw-grid">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
 
+  // The third block (design call #9): the org's ticket queue, filtered to what is
+  // assigned to me and still open. Tickets are NEVER folded into `todo` — that
+  // list is the GitHub issue surface.
+  const ticketsBody = d.degraded
+    ? mwDegradedHint("Couldn't load your assigned tickets right now.")
+    : d.tickets.length === 0
+      ? mwEmptyHint("No tickets assigned to you. The queue has what's waiting.")
+      : `<div class="cnpy-mw-grid">${d.tickets.map((t) => ticketCard(t, (h) => personFor(s, h))).join("")}</div>`;
+
   const activity = mwSection("Previous activity", activityBody);
   const todo = mwSection("To-do", todoBody);
+  const tickets = mwSection("Tickets assigned to me", ticketsBody);
 
-  return wrapMyWork(`${hero}${todo}${activity}`);
+  return wrapMyWork(`${hero}${todo}${activity}${tickets}`);
 }
 
 /** A list slice that hasn't produced data yet (idle/loading with nothing cached). */
@@ -1624,6 +1654,15 @@ function ticketDetailScreen(s: AppState): string {
   });
 }
 
+/** The sprint screen with slice-level loading/error states around the pure view. */
+function sprintScreenBody(s: AppState): string {
+  const slice = s.sprintDetail;
+  if ((slice.status === "loading" || slice.status === "idle") && !slice.data) return notice("Loading the sprint&hellip;");
+  if (slice.status === "error") return notice("Couldn't load this sprint.");
+  if (!slice.data) return notice("That sprint doesn't exist.");
+  return sprintScreen({ detail: slice.data, persons: s.persons.data, resourceDraft: s.linkDraft });
+}
+
 // ── root ─────────────────────────────────────────────────────────────────────
 function screenBody(s: AppState): string {
   switch (s.screen) {
@@ -1639,8 +1678,7 @@ function screenBody(s: AppState): string {
     case "tickets": return ticketsScreen(s);
     case "newticket": return newTicketScreen(s);
     case "ticketdetail": return ticketDetailScreen(s);
-    // Phase 5b paints the sprint screen from `sprintDetail`; 5a only routes to it.
-    case "sprint": return notice("Sprint");
+    case "sprint": return sprintScreenBody(s);
     default: return feedView(s);
   }
 }

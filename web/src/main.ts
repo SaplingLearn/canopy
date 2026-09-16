@@ -17,9 +17,11 @@ import {
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
   addTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
+  getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
   Unauthorized, NotFound, ApiError,
 } from "./api";
+import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
 import { parseHash, hashForRoute, type Route } from "./hash";
 import {
   TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUS_LABEL, TICKET_STATUSES,
@@ -194,8 +196,11 @@ function loadForScreen(screen: Screen): void {
       if (state.ticketId !== null) loadTicketDetail(state.ticketId);
       else rerender();
       break;
-    // Phase 5b loads + paints the sprint screen; 5a only routes to it.
-    case "sprint": loadSprintsIfNeeded(); rerender(); break;
+    case "sprint":
+      loadSprintsIfNeeded();
+      if (state.sprintId !== null) loadSprintDetail(state.sprintId);
+      else rerender();
+      break;
     default: rerender(); break; // guide — no data load
   }
 }
@@ -627,6 +632,30 @@ function loadSprintsIfNeeded(): void {
   if (state.sprints.status === "idle" || state.sprints.status === "error") loadSprints();
 }
 
+let sprintDetailSeq = 0;
+function loadSprintDetail(id: number): void {
+  const seq = ++sprintDetailSeq;
+  // Keep the sprint on screen while it refreshes; clear it when opening another.
+  const keep = state.sprintDetail.data?.id === id ? state.sprintDetail.data : null;
+  state.sprintDetail = { status: "loading", data: keep };
+  rerender();
+  getSprint(id)
+    .then((sp) => { if (seq !== sprintDetailSeq) return; state.sprintDetail = { status: "ok", data: sp }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== sprintDetailSeq) return;
+      // A deleted/unknown id is "no such sprint", not a failure to load.
+      if (e instanceof ApiError && e.status === 404) { state.sprintDetail = { status: "ok", data: null }; rerender(); return; }
+      state.sprintDetail = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function sprintErr(e: unknown): void {
+  if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+  flash(e instanceof ApiError ? e.message : "Could not update the sprint");
+}
+
 /** Display name (first name only where the design shows one) for a stored handle. */
 function personName(handle: string): string {
   return state.persons.data.find((p) => p.handle.toLowerCase() === handle.toLowerCase())?.name || handle;
@@ -882,9 +911,90 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       const id = Number(arg);
       if (!Number.isInteger(id)) return;
       state.screen = "sprint";
-      state.sprintId = id;            // Phase 5b loads + paints the sprint screen
+      state.sprintId = id;
+      state.linkDraft = "";           // the rail's "Add a URL…" box shares this draft
       loadSprintsIfNeeded();
+      loadSprintDetail(id);
+      return;
+    }
+
+    // ── Roadmap: the New sprint panel (design 156–197) ───────────────────────
+    case "nsToggle": state.nsOpen = !state.nsOpen; break;
+    case "nsField":
+      if (arg === "name") state.nsName = value ?? "";
+      else if (arg === "dates") state.nsDates = value ?? "";
+      else if (arg === "desc") state.nsDesc = value ?? "";
+      else if (arg === "due") state.nsDue = value ?? "";
+      else return;
+      break;                          // rerenders: "Create sprint" arms on a non-empty name
+    case "nsUrg":
+      if (arg && (SPRINT_URGENCIES as readonly string[]).includes(arg)) state.nsUrg = arg as SprintUrgency;
       break;
+    case "nsLead":
+      if (!arg) return;
+      state.nsLead = state.nsLead === arg ? null : arg;   // single choice, click again to clear
+      break;
+    case "nsDom":
+      if (!arg || !(SPRINT_DOMAINS as readonly string[]).includes(arg)) return;
+      state.nsDom = state.nsDom === arg ? null : (arg as SprintDomain);
+      break;
+    case "nsCreate": {
+      const label = state.nsName.trim();
+      if (!label) return;             // the button is inert, but guard the dispatch too
+      createSprint({
+        label,
+        dates: state.nsDates.trim() || null,
+        summary: state.nsDesc.trim() || null,
+        urgency: state.nsUrg,
+        due: state.nsDue.trim() || null,
+        lead: state.nsLead,
+        domain: state.nsDom,
+      })
+        .then((sp) => {
+          state.nsOpen = false;
+          state.nsName = ""; state.nsDates = ""; state.nsDesc = "";
+          state.nsUrg = "normal"; state.nsDue = ""; state.nsLead = null; state.nsDom = null;
+          loadSprints();              // the queue's group headers + the form's chips read this
+          loadRoadmap();              // the new card belongs on the timeline immediately
+          flash(`${sp.label} created — it's on the Roadmap now`);
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not create the sprint");
+        });
+      return;
+    }
+
+    // ── Sprint screen ────────────────────────────────────────────────────────
+    case "sprintActive": {
+      const id = state.sprintId;
+      if (id === null || (arg !== "0" && arg !== "1")) return;
+      const active = arg === "1";
+      setSprintActive(id, active)
+        .then((sp) => {
+          loadSprintDetail(id);
+          loadSprints();
+          if (state.roadmap.status !== "idle") loadRoadmap();
+          flash(active ? `${sp.label} is active` : `${sp.label} is no longer active`);
+        })
+        .catch(sprintErr);
+      return;
+    }
+    case "sprintResourceDraft": state.linkDraft = value ?? ""; return;   // echoes live
+    case "sprintResourceAdd": {
+      const id = state.sprintId;
+      const raw = state.linkDraft.trim();
+      if (id === null || !raw) return;
+      addSprintResource(id, raw)
+        .then((sp) => {
+          state.linkDraft = "";
+          state.sprintDetail = { status: "ok", data: sp };
+          // The server parses the raw input, so the toast names the STORED label.
+          const added = sp.resources.find((r) => r.url === raw) ?? sp.resources[sp.resources.length - 1];
+          flash(added ? `Resource added: ${added.label}` : "Resource added");
+        })
+        .catch(sprintErr);
+      return;
     }
 
     // ── Tickets: the queue's filters + view toggle (every filter refetches) ──

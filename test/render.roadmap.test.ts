@@ -153,9 +153,9 @@ describe("render() — Roadmap narrative tab", () => {
 // ── full render() — timeline tab ─────────────────────────────────────────────
 
 describe("render() — Roadmap timeline tab", () => {
-  it("shows cached progress as 4/6 closed (no live GitHub)", () => {
+  it("shows cached progress as 4/6 done (no live GitHub)", () => {
     const html = render(stateWithPlan(makePlanView(), "timeline"));
-    expect(html).toContain("4/6 closed");
+    expect(html).toContain("4/6 done");
   });
 
   it("shows the phase as a small mono suffix before the date label, · separated", () => {
@@ -193,7 +193,7 @@ describe("render() — Roadmap timeline tab", () => {
     const empty = makeSprint({ id: 4, label: "Nothing counted", progress: { closed: 0, total: 0, pct: 0 } });
     const html = render(stateWithPlan(makePlanView({ sprints: [empty] }), "timeline"));
     expect(html).toContain("Nothing counted");
-    expect(html).not.toContain("0/0 closed");
+    expect(html).not.toContain("0/0 done");
     expect(html).not.toContain("ready to complete");
     expect(html).not.toContain('data-act="confirmSprint"');
   });

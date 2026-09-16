@@ -22,13 +22,19 @@
 
 import { z } from "zod";
 import type { TicketRow } from "./tickets";
+import {
+  SPRINT_URGENCIES, SPRINT_DOMAINS, SPRINT_STATUSES, SPRINT_RESOURCE_KINDS,
+} from "./sprints-core";
 
 // ── controlled vocabulary (must match the CHECK constraints in 0025_sprints.sql) ─
+// Declared in the ZOD-FREE ./sprints-core so the SPA can iterate them as values
+// (the New sprint panel's urgency segment / domain chips) without pulling zod
+// into the browser bundle. Re-exported verbatim: `@shared/sprints` stays the one
+// import path for the whole contract.
 
-export const SPRINT_URGENCIES = ["low", "normal", "high"] as const;
-export const SPRINT_DOMAINS = ["notifications", "tickets", "gate", "feed", "search", "infra"] as const;
-export const SPRINT_STATUSES = ["upcoming", "in_progress", "done"] as const;
-export const SPRINT_RESOURCE_KINDS = ["github", "figma", "plain"] as const;
+export {
+  SPRINT_URGENCIES, SPRINT_DOMAINS, SPRINT_STATUSES, SPRINT_RESOURCE_KINDS,
+} from "./sprints-core";
 
 export const SprintUrgency = z.enum(SPRINT_URGENCIES);
 export const SprintDomain = z.enum(SPRINT_DOMAINS);

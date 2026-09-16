@@ -11,8 +11,9 @@
  * mockMd pattern so we never call the real renderMarkdown (DOMPurify) here.
  */
 import { describe, it, expect } from "vitest";
-import { prActivityCard, todoCard, render, initialState } from "../web/src/render";
-import type { MyWorkPr, MyWorkTodo, DashboardData } from "@shared/dashboard";
+import { prActivityCard, todoCard, ticketCard, render, initialState } from "../web/src/render";
+import type { MyWorkPr, MyWorkTodo, MyWorkTicket, DashboardData } from "@shared/dashboard";
+import type { PersonSummary } from "../web/src/api";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,28 @@ function makeTodo(overrides: Partial<MyWorkTodo> = {}): MyWorkTodo {
     summary: null,
     milestone: null,
     nextStep: null,
+    ...overrides,
+  };
+}
+
+const PERSONS: PersonSummary[] = [
+  { handle: "meilin", name: "Meilin Zhao", color: "rose", avatar_url: null },
+  { handle: "alice", name: "Alice Ng", color: "moss", avatar_url: null },
+];
+const personOf = (h: string) => PERSONS.find((p) => p.handle.toLowerCase() === h.toLowerCase()) ?? null;
+
+function makeTicket(overrides: Partial<MyWorkTicket> = {}): MyWorkTicket {
+  return {
+    id: 12,
+    title: "SSO login loops on Safari",
+    body: "It bounces me back to the sign-in page.",
+    category: "bug",
+    priority: "high",
+    status: "submitted",
+    requester: "meilin",
+    sprint: { id: 3, label: "Sprint 13 — Tickets" },
+    updatedAt: new Date(Date.now() - 3600_000).toISOString(),
+    createdAt: new Date(Date.now() - 7200_000).toISOString(),
     ...overrides,
   };
 }
@@ -279,6 +302,7 @@ describe("render() — My Work screen", () => {
       person: "alice",
       previousActivity: [makePr({ what: null })],
       todo: [makeTodo()],
+      tickets: [],
       degraded: false,
     };
     const html = render(stateWithDashboard(data));
@@ -291,6 +315,7 @@ describe("render() — My Work screen", () => {
       person: "alice",
       previousActivity: [makePr({ what: null })],
       todo: [makeTodo()],
+      tickets: [],
       degraded: false,
     };
     const html = render(stateWithDashboard(data));
@@ -302,6 +327,7 @@ describe("render() — My Work screen", () => {
       person: "alice",
       previousActivity: [],
       todo: [],
+      tickets: [],
       degraded: false,
     };
     const html = render(stateWithDashboard(data));
@@ -310,14 +336,14 @@ describe("render() — My Work screen", () => {
   });
 
   it("empty lists show dashed-card hints, not crashes", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const html = render(stateWithDashboard(data));
     expect(html).toContain("Previous activity");
     expect(html).toContain("To-do");
   });
 
   it("degraded:true renders a degraded hint instead of a normal empty state", () => {
-    const data: DashboardData = { person: null, previousActivity: [], todo: [], degraded: true };
+    const data: DashboardData = { person: null, previousActivity: [], todo: [], tickets: [], degraded: true };
     const html = render(stateWithDashboard(data));
     expect(html).toContain("Previous activity");
     expect(html).toContain("To-do");
@@ -325,20 +351,20 @@ describe("render() — My Work screen", () => {
 
   // ── admin-only Sync GitHub button (server-side backfill trigger) ────────────
   it("renders the Sync GitHub backfill button for an admin me", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const html = render(stateWithDashboard(data, true));
     expect(html).toContain('data-act="adminBackfill"');
     expect(html).toContain("Sync GitHub");
   });
 
   it("does NOT render the Sync GitHub button for a non-admin me", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const html = render(stateWithDashboard(data, false));
     expect(html).not.toContain('data-act="adminBackfill"');
   });
 
   it("shows a disabled Sync button while backfillSync is set", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const s = { ...stateWithDashboard(data, true), backfillSync: { phase: "progress", prSummarizedCount: 66, prsTotal: 146, issueSummarizedCount: 3, issuesTotal: 10 } as const };
     const html = render(s);
     expect(html).toContain("disabled");
@@ -347,7 +373,7 @@ describe("render() — My Work screen", () => {
   });
 
   it("renders two progress bars — PRs and issues — while backfillSync is in progress", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const s = { ...stateWithDashboard(data, true), backfillSync: { phase: "progress", prSummarizedCount: 66, prsTotal: 146, issueSummarizedCount: 3, issuesTotal: 10 } as const };
     const html = render(s);
     expect(html).toContain("66 of 146 PRs summarized");
@@ -357,7 +383,7 @@ describe("render() — My Work screen", () => {
   });
 
   it("renders an inventory-taking line — never '0 of 0' bars — while the first batch is in flight", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const s = { ...stateWithDashboard(data, true), backfillSync: { phase: "starting" } as const };
     const html = render(s);
     expect(html).toContain("Syncing GitHub");
@@ -366,7 +392,7 @@ describe("render() — My Work screen", () => {
   });
 
   it("renders no progress modal when backfillSync is null", () => {
-    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], degraded: false };
+    const data: DashboardData = { person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false };
     const html = render(stateWithDashboard(data, true));
     expect(html).not.toContain("Syncing GitHub");
   });
@@ -387,9 +413,107 @@ describe("render() — My Work screen", () => {
       person: "alice",
       previousActivity: [makePr({ what: null })],
       todo: [makeTodo()],
+      tickets: [],
       degraded: false,
     };
     const html = render(stateWithDashboard(data));
     expect(html.indexOf("To-do")).toBeLessThan(html.indexOf("Previous activity"));
+  });
+});
+
+// ── Phase 5b: the third block — tickets assigned to me ──────────────────────
+
+describe("ticketCard", () => {
+  it("renders the title, an in-app #id pill (never an external link), and the labeled rows", () => {
+    const html = ticketCard(makeTicket(), personOf);
+    expect(html).toContain("SSO login loops on Safari");
+    expect(html).toContain('data-act="openTicket" data-arg="12"');
+    expect(html).toContain(">#12");
+    expect(html).not.toContain("github.com");      // a ticket is a D1 row, not a GitHub issue
+    expect(html).not.toContain('target="_blank"');
+    expect(html).toContain("Summary");
+    expect(html).toContain("It bounces me back to the sign-in page.");
+    expect(html).toContain("Requester");
+    expect(html).toContain("meilin");
+    expect(html).toContain("Sprint");
+    expect(html).toContain("Sprint 13 — Tickets");
+  });
+
+  it("collapses the Summary row when the body is empty, and reads Backlog with no sprint", () => {
+    const html = ticketCard(makeTicket({ body: "   ", sprint: null }), personOf);
+    expect(html).not.toContain("Summary");
+    expect(html).toContain("Backlog");
+  });
+
+  it("footers with the tinted status pill, the monochrome priority chip and 'updated <rel>'", () => {
+    const html = ticketCard(makeTicket({ status: "in_progress", priority: "low" }), personOf);
+    expect(html).toContain(">IN PROGRESS<");
+    expect(html).toContain(">LOW<");
+    expect(html).toContain("updated ");
+    // design call #5: In progress is tinted accent, the priority chip stays monochrome.
+    const prio = html.slice(html.indexOf(">LOW<") - 300, html.indexOf(">LOW<"));
+    expect(prio).not.toContain("var(--amber)");
+    expect(prio).not.toContain("var(--green)");
+  });
+
+  it("escapes a hostile title, body and sprint label", () => {
+    const html = ticketCard(makeTicket({
+      title: "<img src=x onerror=alert(1)>",
+      body: "<script>alert(2)</script>",
+      sprint: { id: 1, label: "<b>boom</b>" },
+    }), personOf);
+    expect(html).not.toContain("<img src=x");
+    expect(html).not.toContain("<script>alert(2)</script>");
+    expect(html).not.toContain("<b>boom</b>");
+    expect(html).toContain("&lt;img");
+  });
+});
+
+describe("render() — My Work's third block", () => {
+  function stateWith(data: DashboardData) {
+    const s = initialState();
+    return {
+      ...s,
+      view: "app" as const,
+      screen: "mywork" as const,
+      me: { handle: "alice", name: "Alice", avatar_url: null, color: "moss" as const, identities: [], org: "SaplingLearn", admin: false },
+      persons: { status: "ok" as const, data: PERSONS },
+      mywork: { status: "ok" as const, data },
+    };
+  }
+  const dash = (o: Partial<DashboardData> = {}): DashboardData =>
+    ({ person: "alice", previousActivity: [], todo: [], tickets: [], degraded: false, ...o });
+
+  it("renders the heading, in the design's order: To-do, Previous activity, then Tickets assigned to me", () => {
+    const html = render(stateWith(dash({ previousActivity: [makePr({ what: null })], todo: [makeTodo()], tickets: [makeTicket()] })));
+    expect(html).toContain("Tickets assigned to me");
+    expect(html.indexOf("To-do")).toBeLessThan(html.indexOf("Previous activity"));
+    expect(html.indexOf("Previous activity")).toBeLessThan(html.indexOf("Tickets assigned to me"));
+  });
+
+  it("shows the exact empty copy when nothing is assigned", () => {
+    const html = render(stateWith(dash()));
+    expect(html).toContain("No tickets assigned to you. The queue has what's waiting.");
+  });
+
+  it("renders one ticket card per DTO row and NONE of them inside the To-do grid", () => {
+    const html = render(stateWith(dash({ todo: [makeTodo()], tickets: [makeTicket({ id: 12 }), makeTicket({ id: 13, title: "Second ticket" })] })));
+    expect(html).toContain('data-act="openTicket" data-arg="12"');
+    expect(html).toContain('data-act="openTicket" data-arg="13"');
+    // Both ticket pills live AFTER the "Tickets assigned to me" heading, i.e. in
+    // the third section — never in the To-do grid above it.
+    const third = html.indexOf("Tickets assigned to me");
+    expect(html.indexOf('data-arg="12"')).toBeGreaterThan(third);
+    expect(html.indexOf('data-arg="13"')).toBeGreaterThan(third);
+    expect(html.slice(0, third)).not.toContain('data-act="openTicket"');
+    // …and the To-do card's own number pill is still an external issue link.
+    expect(html.slice(0, third)).toContain("https://github.com/SaplingLearn/sapling/issues/7");
+  });
+
+  it("degraded:true shows a hint in the ticket block, not the empty copy", () => {
+    const html = render(stateWith(dash({ person: null, degraded: true })));
+    expect(html).toContain("Tickets assigned to me");
+    expect(html).toContain("Couldn't load your assigned tickets right now.");
+    expect(html).not.toContain("The queue has what's waiting.");
   });
 });

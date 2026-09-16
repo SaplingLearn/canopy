@@ -1,4 +1,4 @@
-import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
+import type { DashboardData, MyWorkPr, MyWorkTodo, MyWorkTicket } from "@shared/dashboard";
 import type { EventRow, PersonRow } from "@shared/rows";
 import { type DB, all, first } from "../db";
 import { getPerson, listIdentities } from "../auth/persons";
@@ -14,8 +14,9 @@ export type MyWork = DashboardData;
 
 const PR_LIMIT = 6;
 const TODO_LIMIT = 6;
+const TICKET_LIMIT = 6;
 
-const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], degraded });
+const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], tickets: [], degraded });
 
 // Priority is parsed from a leading "[P0]"–"[P3]" tag on the issue title; the
 // tag is stripped from the displayed title.
@@ -129,13 +130,63 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
   return todo;
 }
 
+interface AssignedTicketRow {
+  id: number;
+  title: string;
+  body: string;
+  category: MyWorkTicket["category"];
+  priority: MyWorkTicket["priority"];
+  status: MyWorkTicket["status"];
+  requester: string;
+  sprint_id: number | null;
+  sprint_label: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The OPEN tickets `handle` is an assignee of, most recently updated first.
+ * D1-only, one query (the sprint label joins in) — the queue is org-scale but a
+ * person's own assignments are not. `ticket_assignees.login` holds a person
+ * HANDLE (§C.2), so this is keyed on the handle directly, NOT on a GitHub login:
+ * a Google-only person (no `identities` row at all) still sees their tickets.
+ * Closed tickets (`done` / `declined`) never appear — My Work is what is open.
+ */
+export async function listAssignedTickets(db: DB, handle: string, limit = TICKET_LIMIT): Promise<MyWorkTicket[]> {
+  const rows = await all<AssignedTicketRow>(
+    db,
+    `SELECT t.id, t.title, t.body, t.category, t.priority, t.status, t.requester,
+            t.sprint_id, s.title AS sprint_label, t.created_at, t.updated_at
+       FROM tickets t
+       JOIN ticket_assignees a ON a.ticket_id = t.id AND a.login = ?
+       LEFT JOIN sprints s ON s.id = t.sprint_id
+      WHERE t.status IN ('submitted', 'in_progress')
+      ORDER BY t.updated_at DESC, t.id DESC
+      LIMIT ${Math.trunc(limit)}`,
+    handle
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    body: r.body,
+    category: r.category,
+    priority: r.priority,
+    status: r.status,
+    requester: r.requester,
+    sprint: r.sprint_id !== null && r.sprint_label !== null ? { id: r.sprint_id, label: r.sprint_label } : null,
+    updatedAt: r.updated_at,
+    createdAt: r.created_at,
+  }));
+}
+
 /**
  * The personal My Work projection for `handle` (a person handle). person comes
  * from `persons` directly; an unmapped/unknown handle is a captured-but-
  * unsurfaced no-op (empty projection, degraded:false — the events themselves
  * are never dropped). The GitHub logins to query are every `identities` row
  * for the person — usually just the one login that IS their handle. A person
- * with no GitHub identity at all (e.g. Google-only) surfaces with empty lists.
+ * with no GitHub identity at all (e.g. Google-only) surfaces with empty EVENT
+ * lists but still gets their assigned tickets (those key on the handle).
  * Any D1 failure degrades the whole projection to empty with degraded:true
  * rather than throwing.
  */
@@ -144,8 +195,13 @@ export async function getMyWork(db: DB, handle: string): Promise<MyWork> {
     const me = await getPerson(db, handle);
     if (!me) return EMPTY(false);
 
+    // Tickets are keyed on the person HANDLE, not on a GitHub login, so they are
+    // read BEFORE the identity fork: a Google-only person (no github identity)
+    // has no PRs and no assigned issues but can still own half the queue.
+    const tickets = await listAssignedTickets(db, handle);
+
     const logins = (await listIdentities(db, handle)).filter((i) => i.provider === "github").map((i) => i.subject);
-    if (logins.length === 0) return { person: me.name ?? me.handle, previousActivity: [], todo: [], degraded: false };
+    if (logins.length === 0) return { person: me.name ?? me.handle, previousActivity: [], todo: [], tickets, degraded: false };
 
     const prRows = await all<PrEventJoinRow>(
       db,
@@ -161,7 +217,7 @@ export async function getMyWork(db: DB, handle: string): Promise<MyWork> {
     const previousActivity: MyWorkPr[] = prRows.map(toMyWorkPr);
     const todo = await listOpenAssignedIssues(db, logins);
 
-    return { person: me.name ?? me.handle, previousActivity, todo: todo.slice(0, TODO_LIMIT), degraded: false };
+    return { person: me.name ?? me.handle, previousActivity, todo: todo.slice(0, TODO_LIMIT), tickets, degraded: false };
   } catch {
     return EMPTY(true);
   }

@@ -1,6 +1,9 @@
-// DTOs for the personal "My Work" dashboard: two explicitly separate lists off
-// the captured-event stream. Lives in shared/ (the only cross-layer location) so
-// the Worker (src/) and the web build (web/) agree on the shape.
+// DTOs for the personal "My Work" dashboard: three explicitly separate lists —
+// two off the captured-event stream (PRs, assigned issues) and one off the D1
+// ticket queue. Lives in shared/ (the only cross-layer location) so the Worker
+// (src/) and the web build (web/) agree on the shape.
+
+import type { TicketCategory, TicketPriority, TicketStatus } from "./tickets-core";
 
 export interface MyWorkPr {
   number: number;
@@ -28,9 +31,31 @@ export interface MyWorkTodo {
   nextStep: string | null; // suggested next step from the summarizer
 }
 
+/**
+ * One open ticket assigned to the person (Phase 5 — "Tickets assigned to me").
+ * These are D1 tickets, NEVER GitHub issues, so they are their own list and are
+ * never folded into `todo`: `todo` is the GitHub issue surface (it carries a
+ * `number`, a `url` and a GitHub milestone), a ticket has none of those.
+ * `status` is always an OPEN status (`submitted` / `in_progress`) — closed
+ * tickets never reach My Work.
+ */
+export interface MyWorkTicket {
+  id: number;
+  title: string;
+  body: string; // the ticket's description, rendered as escaped prose (never markdown)
+  category: TicketCategory;
+  priority: TicketPriority;
+  status: Extract<TicketStatus, "submitted" | "in_progress">;
+  requester: string; // person handle who filed it
+  sprint: { id: number; label: string } | null; // null = Backlog
+  updatedAt: string;
+  createdAt: string;
+}
+
 export interface DashboardData {
   person: string | null; // identity-mapped name; null if unmapped
   previousActivity: MyWorkPr[]; // summarized merged/closed PRs, 5 most recent
   todo: MyWorkTodo[]; // open issues assigned to the person
+  tickets: MyWorkTicket[]; // open queue tickets assigned to the person (NEVER in `todo`)
   degraded: boolean; // D1 projection unavailable
 }

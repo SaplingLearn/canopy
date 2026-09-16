@@ -83,8 +83,8 @@ input, select { font-family: inherit; }
 .cnpy-trow { transition:background .12s ease; cursor:pointer; }
 .cnpy-trow:hover { background:var(--hover); }
 @media (max-width:860px) {
-  .cnpy-nt-grid, .cnpy-td-grid { grid-template-columns:1fr !important; }
-  .cnpy-nt-grid > div + div, .cnpy-td-grid > div + div { border-left:none !important; padding-left:0 !important; }
+  .cnpy-nt-grid, .cnpy-td-grid, .cnpy-sprint-grid { grid-template-columns:1fr !important; }
+  .cnpy-nt-grid > div + div, .cnpy-td-grid > div + div, .cnpy-sprint-grid > div + div { border-left:none !important; padding-left:0 !important; }
 }
 .cnpy-accentbtn { transition:filter .12s ease, transform .12s ease; }
 .cnpy-accentbtn:hover { filter:brightness(1.06); }

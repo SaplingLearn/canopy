@@ -72,6 +72,41 @@ describe("emailNotificationsSection", () => {
   });
 });
 
+// Phase 5b (§5's Settings bullet): Settings iterates the registry, so the
+// "Ticket queue" row costs the SPA nothing — it appears the moment Phase 6
+// registers the `ticketq` kind. This pins that: a prefs view carrying the kind
+// renders its row with the full Daily / Weekly / Off segment.
+describe("emailNotificationsSection — the Ticket queue row (registry-driven)", () => {
+  const ticketq = {
+    id: "ticketq",
+    label: "Ticket queue",
+    description: "New and unassigned tickets across the org.",
+    allowedCadences: ["daily", "weekly", "off"] as const,
+    cadence: "daily" as const,
+    orgDefault: "daily" as const,
+    inherited: true,
+  };
+
+  it("renders a Ticket queue row with Daily/Weekly/Off segments and the ORG DEFAULT marker", () => {
+    const view = emailNotificationsSection({
+      prefs: prefs({ kinds: [{ ...ticketq, allowedCadences: [...ticketq.allowedCadences] }] }),
+      loading: false, error: null, emailEditing: false, emailDraft: "",
+    });
+    expect(view).toContain("Ticket queue");
+    expect(view).toContain("New and unassigned tickets across the org.");
+    expect(view).toContain('data-act="setKindCadence" data-arg="ticketq:daily"');
+    expect(view).toContain('data-act="setKindCadence" data-arg="ticketq:weekly"');
+    expect(view).toContain('data-act="setKindCadence" data-arg="ticketq:off"');
+    expect(view).toContain("ORG DEFAULT");
+    expect(view).not.toContain('data-act="resetKind" data-arg="ticketq"'); // inherited → nothing to reset
+  });
+
+  it("is absent from Settings when the org disabled it (the prefs view omits disabled kinds)", () => {
+    const view = emailNotificationsSection({ prefs: prefs({ kinds: [] }), loading: false, error: null, emailEditing: false, emailDraft: "" });
+    expect(view).not.toContain("Ticket queue");
+  });
+});
+
 describe("unsubscribeView", () => {
   it("confirms with the address and offers Settings", () => {
     const v = unsubscribeView({ email: "jose@sapling.dev", pending: false, error: null });

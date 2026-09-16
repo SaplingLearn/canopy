@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all } from "../src/db";
+import { all, run, nowIso } from "../src/db";
 import { ingestEvent } from "../src/consumer";
 import { storePrSummary, storeIssueSummary, type Summarizer, type PrSummary, type IssueSummary } from "../src/tools/summarize";
 import { getMyWork } from "../src/tools/mywork";
+import { create_ticket, transition_ticket } from "../src/tools/tickets";
+import type { TicketCreate } from "@shared/tickets";
 import { seedPerson } from "./helpers/persons";
 import type { EventRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
@@ -200,7 +202,7 @@ describe("getMyWork — unmapped login", () => {
     await ingestEvent(env.DB, ev, "github-webhook");
 
     const work = await getMyWork(env.DB, "stranger");
-    expect(work).toEqual({ person: null, previousActivity: [], todo: [], degraded: false });
+    expect(work).toEqual({ person: null, previousActivity: [], todo: [], tickets: [], degraded: false });
 
     const rows = await all<EventRow>(env.DB, `SELECT * FROM events`);
     expect(rows).toHaveLength(1); // captured, never dropped
@@ -212,7 +214,7 @@ describe("getMyWork — person with no GitHub identity (e.g. Google-only)", () =
     await seedPerson("priya", { name: "Priya", github: false });
 
     const work = await getMyWork(env.DB, "priya");
-    expect(work).toEqual({ person: "Priya", previousActivity: [], todo: [], degraded: false });
+    expect(work).toEqual({ person: "Priya", previousActivity: [], todo: [], tickets: [], degraded: false });
   });
 });
 
@@ -291,5 +293,98 @@ describe("getMyWork — structured fields", () => {
     const work = await getMyWork(env.DB, "dev");
     expect(work.previousActivity[0]).toMatchObject({ number: 8, displayTitle: null, what: null, why: null, impact: null, baseRef: null });
     expect(work.todo[0]).toMatchObject({ number: 10, displayTitle: null, nextStep: null, milestone: null });
+  });
+});
+
+// ── Phase 5b: the third My Work list — tickets assigned to me ────────────────
+// Tickets are D1 rows keyed on a person HANDLE (never a GitHub login), so this
+// block drives the real writers (`create_ticket` / `transition_ticket` /
+// `set_ticket_sprint`) and reads the projection back off `getMyWork`.
+
+describe("getMyWork — tickets assigned to me", () => {
+  async function seedSprintRow(title: string): Promise<number> {
+    const now = nowIso();
+    const res = await run(
+      env.DB,
+      `INSERT INTO sprints (title, target_date, status, created_at, created_by, updated_at) VALUES (?, '2026-09-01', 'in_progress', ?, 'dev', ?)`,
+      title, now, now
+    );
+    return res.meta.last_row_id as number;
+  }
+  const mk = (o: Partial<TicketCreate> & { title: string }): TicketCreate => ({
+    body: "", category: "other", priority: "normal", assignees: [], ...o,
+  });
+
+  it("lists MY open tickets and never anyone else's, with the requester and sprint", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    await seedPerson("meilin", { name: "Meilin Zhao", github: false });
+    const sprintId = await seedSprintRow("Sprint 13 — Tickets");
+
+    const mine = await create_ticket(env.DB, mk({ title: "Mine", body: "Please fix.", priority: "high", category: "bug", assignees: ["dev"], sprint_id: sprintId }), "meilin");
+    await create_ticket(env.DB, mk({ title: "Theirs", assignees: ["meilin"] }), "meilin");
+    await create_ticket(env.DB, mk({ title: "Nobody's" }), "meilin");
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets.map((t) => t.title)).toEqual(["Mine"]);
+    expect(work.tickets[0]).toMatchObject({
+      id: mine, title: "Mine", body: "Please fix.", category: "bug", priority: "high",
+      status: "submitted", requester: "meilin", sprint: { id: sprintId, label: "Sprint 13 — Tickets" },
+    });
+  });
+
+  it("a ticket with no sprint carries sprint: null (Backlog)", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    await create_ticket(env.DB, mk({ title: "Backlogged", assignees: ["dev"] }), "dev");
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets[0].sprint).toBeNull();
+  });
+
+  it("drops a ticket once a person closes it (done AND declined), and never puts tickets in todo", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    const a = await create_ticket(env.DB, mk({ title: "Will be done", assignees: ["dev"] }), "dev");
+    const b = await create_ticket(env.DB, mk({ title: "Will be declined", assignees: ["dev"] }), "dev");
+    const c = await create_ticket(env.DB, mk({ title: "Stays open", assignees: ["dev"] }), "dev");
+
+    await transition_ticket(env.DB, a, "in_progress", "dev");
+    await transition_ticket(env.DB, a, "done", "dev");
+    await transition_ticket(env.DB, b, "declined", "dev");
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets.map((t) => t.id)).toEqual([c]);
+    expect(work.todo).toEqual([]); // tickets are NEVER folded into the GitHub-issue list
+  });
+
+  it("orders by updated_at DESC — a touched ticket jumps to the front", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    const first_ = await create_ticket(env.DB, mk({ title: "First", assignees: ["dev"] }), "dev");
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await create_ticket(env.DB, mk({ title: "Second", assignees: ["dev"] }), "dev");
+    expect((await getMyWork(env.DB, "dev")).tickets.map((t) => t.title)).toEqual(["Second", "First"]);
+
+    await new Promise((r) => setTimeout(r, 5));
+    await transition_ticket(env.DB, first_, "in_progress", "dev");
+    expect((await getMyWork(env.DB, "dev")).tickets.map((t) => t.title)).toEqual(["First", "Second"]);
+    expect(second).toBeGreaterThan(first_);
+  });
+
+  it("caps the list at 6, keeping the most recently updated", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    for (let i = 1; i <= 8; i++) {
+      await create_ticket(env.DB, mk({ title: `T${i}`, assignees: ["dev"] }), "dev");
+      await new Promise((r) => setTimeout(r, 3));
+    }
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets).toHaveLength(6);
+    expect(work.tickets.map((t) => t.title)).toEqual(["T8", "T7", "T6", "T5", "T4", "T3"]);
+  });
+
+  it("a Google-only person (no github identity) still sees their tickets", async () => {
+    await seedPerson("sanaok", { name: "Sana Okafor", github: false });
+    await create_ticket(env.DB, mk({ title: "Access request", assignees: ["sanaok"] }), "sanaok");
+    const work = await getMyWork(env.DB, "sanaok");
+    expect(work.person).toBe("Sana Okafor");
+    expect(work.tickets.map((t) => t.title)).toEqual(["Access request"]);
+    expect(work.previousActivity).toEqual([]);
+    expect(work.todo).toEqual([]);
   });
 });

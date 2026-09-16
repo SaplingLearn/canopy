@@ -281,7 +281,7 @@ app.get("/me/dashboard", async (c) => {
     return c.json(data);
   } catch {
     // Absolute backstop: never 500. Anything unexpected (D1) → empty degraded payload.
-    const empty: DashboardData = { person: null, previousActivity: [], todo: [], degraded: true };
+    const empty: DashboardData = { person: null, previousActivity: [], todo: [], tickets: [], degraded: true };
     return c.json(empty);
   }
 });
