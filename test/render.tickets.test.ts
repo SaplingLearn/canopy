@@ -338,13 +338,32 @@ describe("queueView — the needs-attention rule (design call #6)", () => {
   for (const [name, t, want] of cases) {
     it(`${want ? "marks" : "leaves plain"}: ${name}`, () => {
       const html = queueView(queueProps({ tickets: [t], seg: "all" }));
-      expect(html.includes("box-shadow:inset 2px 0 0 var(--accent)")).toBe(want);
+      // The marker is the faint `.cnpy-attn` fill and NOTHING else.
+      expect(html.includes("cnpy-attn")).toBe(want);
     });
   }
 
   it("marks exactly the unassigned submitted rows in a mixed queue", () => {
     const html = queueView(queueProps({ tickets: cases.map(([, t]) => t), seg: "all" }));
-    expect(html.match(/box-shadow:inset 2px 0 0 var\(--accent\)/g)?.length).toBe(1);
+    expect(html.match(/cnpy-attn/g)?.length).toBe(1);
+  });
+
+  it("marks the board CARD the same way, fill only", () => {
+    const board = queueView(queueProps({ tickets: cases.map(([, t]) => t), seg: "all", view: "board" }));
+    expect(board.match(/cnpy-attn/g)?.length).toBe(1);
+    expect(board).toContain("cnpy-card cnpy-attn");
+  });
+
+  it("carries NO inset left rule — owner request: the fill alone marks it", () => {
+    // Table rows and board cards both: the 2px accent edge must not come back,
+    // in any form, while the faint fill stays.
+    for (const view of ["table", "board"] as const) {
+      const html = queueView(queueProps({ tickets: cases.map(([, t]) => t), seg: "all", view }));
+      expect(html).toContain("cnpy-attn");                     // the fill survives
+      expect(html).not.toContain("box-shadow:inset 2px 0 0 var(--accent)");
+      expect(html).not.toMatch(/box-shadow:inset/);
+      expect(html).not.toMatch(/border-left:\s*2px/);
+    }
   });
 });
 

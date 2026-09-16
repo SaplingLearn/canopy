@@ -113,10 +113,11 @@ export const SEG_STATUSES: Record<TicketSeg, TicketStatus[]> = {
 export function needsAttention(t: { assignees: string[]; status: TicketStatus }): boolean {
   return t.assignees.length === 0 && t.status === "submitted";
 }
-/** The 2px inset rule stays inline; the faint fill moves to `.cnpy-attn` in
- *  canopy.css so `.cnpy-trow:hover` (class + pseudo-class) still outranks it and
- *  a needs-attention row keeps its hover background. */
-const NEEDS_ATTENTION_STYLE = "box-shadow:inset 2px 0 0 var(--accent);";
+/** The marker is the faint fill ALONE — `.cnpy-attn` in canopy.css, kept there
+ *  rather than inline so `.cnpy-trow:hover` (class + pseudo-class) still outranks
+ *  it and a needs-attention row keeps its hover background. The 2px inset left
+ *  rule this used to carry inline was dropped at the owner's request: the fill
+ *  says it quietly enough, in both the table rows and the board cards. */
 const NEEDS_ATTENTION_CLASS = " cnpy-attn";
 
 const segBtnStyle = (on: boolean) =>
@@ -187,10 +188,9 @@ function relationChip(t: TicketListItem): string {
 
 function tableRow(t: TicketListItem, persons: PersonSummary[]): string {
   const attn = needsAttention(t);
-  const rowStyle = attn ? NEEDS_ATTENTION_STYLE : "";
   const asgText = assigneeLabel(t.assignees, persons);
   const asgStyle = t.assignees.length ? "color:var(--fg-70)" : "color:var(--fg-55);font-style:italic";
-  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-trow${attn ? NEEDS_ATTENTION_CLASS : ""}" style="display:grid;grid-template-columns:${TABLE_COLS};gap:12px;align-items:center;width:100%;text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);transition:background .12s ease;${rowStyle}">
+  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-trow${attn ? NEEDS_ATTENTION_CLASS : ""}" style="display:grid;grid-template-columns:${TABLE_COLS};gap:12px;align-items:center;width:100%;text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);transition:background .12s ease">
     <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>${relationChip(t)}</div>
     <div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(persons, t.requester), 20, t.requester)}<span style="font-size:12.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nameOf(persons, t.requester))}</span></div>
     <div>${categoryChip(t.category)}</div>
@@ -265,7 +265,7 @@ function tableView(p: QueueProps): string {
 
 function boardCard(t: TicketListItem, persons: PersonSummary[]): string {
   const asgStyle = t.assignees.length ? "color:var(--fg-70)" : "color:var(--fg-55);font-style:italic";
-  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-card${needsAttention(t) ? NEEDS_ATTENTION_CLASS : ""}" style="display:block;width:100%;text-align:left;padding:12px 13px;border-radius:11px;border:1px solid var(--border);margin-bottom:8px;transition:all .12s ease;${needsAttention(t) ? NEEDS_ATTENTION_STYLE : ""}">
+  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-card${needsAttention(t) ? NEEDS_ATTENTION_CLASS : ""}" style="display:block;width:100%;text-align:left;padding:12px 13px;border-radius:11px;border:1px solid var(--border);margin-bottom:8px;transition:all .12s ease">
     <div style="font-size:13.5px;font-weight:600;letter-spacing:-0.005em;line-height:1.4;color:var(--fg)">${esc(t.title)}</div>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px">${categoryChip(t.category)}${priorityChip(t.priority)}${t.sprint_label ? sprintTag(t.sprint_label) : ""}</div>
     <div style="display:flex;align-items:center;gap:7px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)">

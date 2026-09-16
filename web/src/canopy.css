@@ -84,8 +84,9 @@ input, select { font-family: inherit; }
 .cnpy-trow:hover { background:var(--hover); }
 /* Design call #6 — "needs attention" (unassigned + Submitted). The faint accent
    fill lives HERE rather than inline so that :hover (class + pseudo-class, higher
-   specificity) still wins and the row keeps its hover background. The 2px inset
-   rule stays inline in tickets.ts. */
+   specificity) still wins and the row keeps its hover background. It is now the
+   WHOLE marker: the 2px inset left rule that tickets.ts used to add inline was
+   dropped at the owner's request — no box-shadow, no left border here either. */
 .cnpy-attn { background:color-mix(in srgb,var(--accent) 4%,transparent); }
 @media (max-width:860px) {
   .cnpy-nt-grid, .cnpy-td-grid, .cnpy-sprint-grid { grid-template-columns:1fr !important; }
