@@ -29,6 +29,7 @@ import {
 } from "@shared/tickets-core";
 import { decodeReviewId } from "./triage-map";
 import { initialOnboard } from "./people";
+import { mentionTokenAt, mentionCandidates, applyMention } from "./mentions";
 import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
 
@@ -841,7 +842,10 @@ function scheduleRenameCheck(): void {
 }
 
 // ── action dispatch ──────────────────────────────────────────────────────────
-function dispatch(act: string, arg: string | null, value: string | null): void {
+// `caret` is the text cursor of the field that produced the event (the input
+// delegate passes `selectionStart` for inputs/textareas). Only the @mention
+// picker needs it; every other case ignores it.
+function dispatch(act: string, arg: string | null, value: string | null, caret: number | null = null): void {
   switch (act) {
     // auth state navigation (how the screens become reachable)
     case "signIn":
@@ -916,7 +920,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       if (!Number.isInteger(id)) return;
       state.screen = "ticketdetail";
       state.ticketId = id;
-      state.commentDraft = ""; state.linkDraft = "";
+      state.commentDraft = ""; state.mention = null; state.linkDraft = "";
       state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
       loadSprintsIfNeeded();
       loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
@@ -1150,14 +1154,41 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
         .catch(ticketErr);
       return;
     }
-    case "ticketComment": state.commentDraft = value ?? ""; break;   // rerenders: Post arms on non-empty
+    case "ticketComment": {
+      // rerenders: Post arms on non-empty, and the @mention picker opens/closes
+      // purely as a function of where the caret now sits in the new text.
+      state.commentDraft = value ?? "";
+      const tok = mentionTokenAt(state.commentDraft, caret ?? state.commentDraft.length);
+      // Every keystroke re-aims at the top row: the list just changed under it.
+      state.mention = tok ? { query: tok.query, start: tok.start, index: 0 } : null;
+      break;
+    }
+    // Committing a candidate — from a click on a row or Enter/Tab on the
+    // textarea. The token's end is derivable from the token itself
+    // (`@` + query), so this never has to read the live caret back.
+    case "mentionPick": {
+      const m = state.mention;
+      if (!m || !arg) return;
+      const next = applyMention(state.commentDraft, m.start, m.start + 1 + m.query.length, arg);
+      state.commentDraft = next.text;
+      state.mention = null;
+      rerender();
+      // rerender() restores focus + the OLD caret by data-field; put the caret
+      // after the inserted "@handle " instead, so typing continues the sentence.
+      const box = mount.querySelector<HTMLTextAreaElement>('[data-field="ticketComment"]');
+      if (box) {
+        box.focus();
+        try { box.setSelectionRange(next.caret, next.caret); } catch { /* not a text field */ }
+      }
+      return;
+    }
     case "ticketCommentPost": {
       const id = state.ticketId;
       const body = state.commentDraft.trim();
       if (id === null || !body) return;
       const seq = claimTicketDetail();
       addTicketComment(id, body)
-        .then((t) => { state.commentDraft = ""; applyTicketWrite(t, "Comment posted", seq); })
+        .then((t) => { state.commentDraft = ""; state.mention = null; applyTicketWrite(t, "Comment posted", seq); })
         .catch(ticketErr);
       return;
     }
@@ -1601,7 +1632,60 @@ mount.addEventListener("change", (e) => {
 mount.addEventListener("input", (e) => {
   const el = e.target as HTMLElement;
   if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.dataset.act) {
-    dispatch(el.dataset.act, el.dataset.arg ?? null, el.value);
+    // The caret rides along: "ticketComment" needs it to decide whether the
+    // cursor is inside an @mention token. Every other case ignores it.
+    dispatch(el.dataset.act, el.dataset.arg ?? null, el.value, el.selectionStart);
+  }
+});
+
+// ── @mention picker: keyboard + the mousedown/blur race ──────────────────────
+//
+// A mousedown on a picker row would blur the textarea, and the focusout below
+// closes the picker — which removes the row before its `click` ever fires. So
+// rows preventDefault on mousedown: focus never leaves the textarea, no blur
+// happens, and the row's click reaches the EXISTING click delegate normally.
+mount.addEventListener("mousedown", (e) => {
+  if ((e.target as Element | null)?.closest?.('[data-act="mentionPick"]')) e.preventDefault();
+});
+
+// Clicking genuinely elsewhere closes the picker. `focusout` (not `blur`,
+// which doesn't bubble) so one listener on the mount covers the textarea.
+mount.addEventListener("focusout", (e) => {
+  if (!state.mention) return;
+  if (!(e.target as Element | null)?.closest?.('[data-field="ticketComment"]')) return;
+  // rerender() swaps the whole mount's innerHTML and re-focuses the textarea,
+  // which some browsers surface as a focusout. Settle a tick first and close
+  // only if focus really left the box — otherwise an arrow key would close
+  // the very picker it was moving through.
+  setTimeout(() => {
+    if (!state.mention) return;
+    if (document.activeElement?.closest('[data-field="ticketComment"]')) return;
+    state.mention = null;
+    rerender();
+  }, 0);
+});
+
+// Arrow/Enter/Tab/Escape belong to the picker ONLY while it is open — with it
+// closed, Enter keeps the textarea's normal newline and Tab still moves focus.
+mount.addEventListener("keydown", (e) => {
+  const m = state.mention;
+  if (!m) return;
+  if (!(e.target as Element | null)?.closest?.('[data-field="ticketComment"]')) return;
+  const cands = mentionCandidates(state.persons.data, m.query);
+  if (!cands.length) return;
+  const n = cands.length;
+  switch (e.key) {
+    case "ArrowDown": e.preventDefault(); state.mention = { ...m, index: (m.index + 1) % n }; rerender(); break;
+    case "ArrowUp": e.preventDefault(); state.mention = { ...m, index: (m.index - 1 + n) % n }; rerender(); break;
+    case "Enter":
+    case "Tab": {
+      e.preventDefault();
+      const pick = cands[((m.index % n) + n) % n];
+      if (pick) dispatch("mentionPick", pick.handle, null);
+      break;
+    }
+    case "Escape": e.preventDefault(); state.mention = null; rerender(); break;
+    default: break;
   }
 });
 

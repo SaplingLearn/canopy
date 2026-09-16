@@ -134,6 +134,12 @@ export interface AppState {
   fSpr: number | null;
   // Ticket-detail-only UI state (drafts + which popover is open).
   commentDraft: string;
+  /**
+   * The open @mention picker over the comment box: the token being typed
+   * (`start` is the index of its `@` in `commentDraft`) plus the active row.
+   * null = closed. Reset whenever the detail changes or a comment posts.
+   */
+  mention: { query: string; start: number; index: number } | null;
   linkDraft: string;
   lkOpen: boolean;
   asgMenu: boolean;
@@ -229,7 +235,7 @@ export function initialState(): AppState {
     ticketBadge: 0,
     qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
-    commentDraft: "", linkDraft: "",
+    commentDraft: "", mention: null, linkDraft: "",
     lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false,
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
@@ -1661,6 +1667,7 @@ function ticketDetailScreen(s: AppState): string {
     sprints: s.sprints.data,
     persons: s.persons.data,
     commentDraft: s.commentDraft,
+    mention: s.mention,
     linkDraft: s.linkDraft,
     linkOpen: s.lkOpen,
     asgMenu: s.asgMenu,

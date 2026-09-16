@@ -22,6 +22,7 @@ import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "./api";
 import { esc, attr, relTime, primaryBtn } from "./ui";
 import { personChip } from "./people";
+import { mentionCandidates } from "./mentions";
 
 // ── shared atoms ─────────────────────────────────────────────────────────────
 
@@ -393,6 +394,12 @@ export interface TicketDetailProps {
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /**
+   * The open @mention token in the comment box (main.ts computes it from the
+   * textarea's value + caret). null = the picker is closed. Candidates are
+   * derived here, so "no candidates" also renders nothing.
+   */
+  mention: { query: string; start: number; index: number } | null;
 }
 
 /**
@@ -506,6 +513,33 @@ function linkedWorkBlock(p: TicketDetailProps): string {
     </div>${chips}${linkedLine}${field}`;
 }
 
+/**
+ * The @mention autocomplete list, hung under the comment textarea. Beyond the
+ * locked design (which has no picker), so it borrows the design's own popover
+ * skin: bordered card on `--bg`, soft shadow, `--hover` on the active row.
+ *
+ * Renders "" when the picker is closed OR when nothing matches — the caller
+ * never has to check twice. Rows dispatch `mentionPick` with the handle.
+ */
+function mentionPicker(p: TicketDetailProps): string {
+  if (!p.mention) return "";
+  const cands = mentionCandidates(p.persons, p.mention.query);
+  if (!cands.length) return "";
+  // main.ts wraps the index as it moves, but a stale index (the query narrowed
+  // the list between keystrokes) must never paint an out-of-range row.
+  const active = ((p.mention.index % cands.length) + cands.length) % cands.length;
+  const rows = cands.map((c, i) =>
+    `<button data-act="mentionPick" data-arg="${attr(c.handle)}" role="option" aria-selected="${i === active}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:6px 9px;border-radius:7px;background:${i === active ? "var(--hover)" : "transparent"}">
+      ${personChip(c, 20, c.handle)}
+      <span style="font-size:13px;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name || c.handle)}</span>
+      <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);margin-left:auto;flex:none">@${esc(c.handle)}</span>
+    </button>`).join("");
+  return `<div role="listbox" aria-label="Mention someone" style="position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:5px">
+    ${rows}
+    <div style="font-family:var(--mono);font-size:10.5px;color:var(--fg-40);padding:5px 9px 3px;border-top:1px solid var(--border);margin-top:4px">↑↓ to move · Enter to mention · Esc to close</div>
+  </div>`;
+}
+
 interface ThreadRow { ts: number; html: string }
 
 function threadBlock(p: TicketDetailProps): string {
@@ -547,8 +581,11 @@ function threadBlock(p: TicketDetailProps): string {
       <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${t.comments.length} ${t.comments.length === 1 ? "comment" : "comments"}</div>
     </div>
     ${rows.map((r) => r.html).join("")}
-    <div style="border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px">
-      <textarea data-act="ticketComment" data-field="ticketComment" placeholder="Write a comment — @mention to loop someone in…" style="width:100%;min-height:60px;border:none;outline:none;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;resize:vertical">${esc(p.commentDraft)}</textarea>
+    <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px">
+      <div style="position:relative">
+        <textarea data-act="ticketComment" data-field="ticketComment" placeholder="Write a comment — @mention to loop someone in…" style="width:100%;min-height:60px;border:none;outline:none;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;resize:vertical">${esc(p.commentDraft)}</textarea>
+        ${mentionPicker(p)}
+      </div>
       <div style="display:flex;justify-content:flex-end;margin-top:8px">${primaryBtn("Comment", canPost, "ticketCommentPost", "")}</div>
     </div>`;
 }

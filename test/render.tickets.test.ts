@@ -96,7 +96,7 @@ function formProps(o: Partial<NewTicketProps> = {}): NewTicketProps {
 function detailProps(t: TicketDetail, o: Partial<TicketDetailProps> = {}): TicketDetailProps {
   return {
     ticket: t, allTickets: [], sprints: [], persons: PERSONS,
-    commentDraft: "", linkDraft: "", linkOpen: false,
+    commentDraft: "", mention: null, linkDraft: "", linkOpen: false,
     asgMenu: false, sprMenu: false, relMenu: false,
     ...o,
   };
@@ -705,6 +705,72 @@ describe("ticketDetailView — the thread", () => {
     expect(html).toContain("@nobody");
     expect(html).not.toContain(chip("nobody"));
     expect(html).not.toContain(">@nobody</span>");
+  });
+});
+
+describe("ticketDetailView — the @mention picker", () => {
+  const d = detail({ id: 1, title: "T" });
+  const open = (query: string, index = 0, start = 0) =>
+    ticketDetailView(detailProps(d, { commentDraft: `@${query}`, mention: { query, start, index } }));
+
+  it("is hidden when nothing is being mentioned", () => {
+    const html = ticketDetailView(detailProps(d, { commentDraft: "hello", mention: null }));
+    expect(html).not.toContain('data-act="mentionPick"');
+    expect(html).not.toContain('role="listbox"');
+  });
+
+  it("renders a listbox of candidate rows under the comment box", () => {
+    const html = open("sa");
+    expect(html).toContain('role="listbox"');
+    expect(html).toContain('data-act="mentionPick" data-arg="sanaok"');
+    expect(html).toContain('role="option"');
+    // Each row carries the name and the @handle, and the picker is anchored.
+    expect(html).toContain("Sana Okafor");
+    expect(html).toContain("@sanaok</span>");
+    expect(html).toContain("position:absolute;top:calc(100% + 6px)");
+    // It sits INSIDE the comment box, right after the textarea.
+    expect(html).toMatch(/<\/textarea>\s*<div role="listbox"/);
+  });
+
+  it("lists every person on an empty query (the @ was just typed)", () => {
+    const html = open("");
+    for (const p of PERSONS) expect(html).toContain(`data-arg="${p.handle}"`);
+  });
+
+  it("matches a first name, not just a handle", () => {
+    const html = open("Meil");
+    expect(html).toContain('data-arg="meilin"');
+    expect(html).not.toContain('data-arg="sanaok"');
+  });
+
+  it("is hidden when the query matches nobody", () => {
+    const html = open("zzzz");
+    expect(html).not.toContain('data-act="mentionPick"');
+    expect(html).not.toContain('role="listbox"');
+  });
+
+  it("paints only the active row, and moves it with the index", () => {
+    const first = open("", 0);
+    const second = open("", 1);
+    const hits = (h: string) => h.split("background:var(--hover)").length - 1;
+    expect(hits(first)).toBe(1);
+    expect(hits(second)).toBe(1);
+    // index 0 → jose-a (names ascending); index 1 → meilin.
+    expect(first).toContain('data-arg="jose-a" role="option" aria-selected="true"');
+    expect(first).toContain('data-arg="meilin" role="option" aria-selected="false"');
+    expect(second).toContain('data-arg="meilin" role="option" aria-selected="true"');
+    expect(second).toContain('data-arg="jose-a" role="option" aria-selected="false"');
+  });
+
+  it("wraps a stale index rather than painting no row at all", () => {
+    // The query narrowed to one candidate while the index was still on row 2.
+    const html = open("sana", 2);
+    expect(html.split("background:var(--hover)").length - 1).toBe(1);
+    expect(html).toContain('data-arg="sanaok" role="option" aria-selected="true"');
+  });
+
+  it("carries the keyboard hint", () => {
+    expect(open("sa")).toContain("↑↓ to move · Enter to mention · Esc to close");
   });
 });
 
