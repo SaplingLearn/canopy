@@ -148,12 +148,19 @@ describe("complete_sprint", () => {
     expect((await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, seeded.id))!.status).toBe("done");
   });
 
-  it("refuses an unknown sprint and a second completion", async () => {
+  it("refuses an unknown sprint and a second completion, with TYPED codes", async () => {
     await seedPerson(ADMIN);
-    expect(failed(await callTool(ADMIN, "complete_sprint", { id: 4242 })).error).toMatch(/no such sprint/i);
+    // The two refusals are different answers for an agent — retry with a real id,
+    // versus nothing left to do — so they must not both arrive as a bare message.
+    const unknown = failed(await callTool(ADMIN, "complete_sprint", { id: 4242 }));
+    expect(unknown.error).toMatch(/no such sprint/i);
+    expect(unknown.code).toBe("not_found");
+
     const seeded = await seedSprint("Once");
     ok(await callTool(ADMIN, "complete_sprint", { id: seeded.id }));
-    expect(failed(await callTool(ADMIN, "complete_sprint", { id: seeded.id })).error).toMatch(/already done/i);
+    const again = failed(await callTool(ADMIN, "complete_sprint", { id: seeded.id }));
+    expect(again.error).toMatch(/already done/i);
+    expect(again.code).toBe("conflict");
   });
 });
 

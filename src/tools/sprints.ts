@@ -362,8 +362,12 @@ export async function set_sprint_active(db: DB, id: number, active: boolean): Pr
  */
 export async function complete_sprint(db: DB, id: number): Promise<SprintRow> {
   const sp = await first<SprintRow>(db, `SELECT * FROM sprints WHERE id = ?`, id);
-  if (!sp) throw new Error(`no such sprint: ${id}`);
-  if (sp.status === "done") throw new Error(`sprint already done: ${id}`);
+  // Typed like every other writer in this file: the MCP adapter surfaces `code`
+  // to the caller, and "no such sprint" vs "already done" are different answers
+  // for an agent (retry with a real id, versus nothing to do). The cookie route
+  // catches both into the same 400 it always did, so the web path is unchanged.
+  if (!sp) throw new SprintError("not_found", `no such sprint: ${id}`);
+  if (sp.status === "done") throw new SprintError("conflict", `sprint already done: ${id}`);
   const updated_at = nowIso();
   await run(db, `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
   return { ...sp, status: "done", updated_at };

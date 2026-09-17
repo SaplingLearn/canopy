@@ -6,10 +6,26 @@ allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_ticke
 
 # Canopy — the team's shared context store
 
-Canopy holds the team's docs, decisions, roadmap, and a running feed of what everyone — people and
-their coding agents — has done. The golden rule: **agents only ever stage changes; a human confirms
-the ones that matter.** Nothing an agent writes goes live until someone promotes it, so the store
-stays trustworthy no matter how many agents write to it.
+Canopy holds the team's docs, decisions, roadmap, a ticket queue the whole org files into, and a
+running feed of what everyone — people and their coding agents — has done.
+
+The golden rule is about **what an agent may assert on its own**: **proposed knowledge is staged and a
+human confirms it.** A doc edit, an ADR, a feed entry — none of it goes live until somebody promotes
+it, however many agents are writing.
+
+**Authored work is not knowledge, and is not staged.** A ticket is somebody's request and a sprint is
+the team's plan; both take effect immediately, the same as when a person clicks the button. What
+bounds those is not a queue but **scope**: a ticket write needs the ticket to be assigned to you
+already, and sprint writes need admin. So there are two write classes, and it is worth knowing which
+one you are in:
+
+| | Staged — a human confirms | Direct — takes effect now |
+|---|---|---|
+| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`) |
+| **Why** | an agent proposing knowledge can be wrong, and a wrong doc is believed | a request or a plan is an act, not a claim — and it is visibly somebody's |
+| **What bounds it** | the gate: vocab, confidence, content-hash dedupe, then Triage | scope: your own lane, or admin |
+
+Read the two sections below in that light.
 
 This skill is the **map**. The actual work is done by two focused skills and a set of MCP tools — they
 stay separate on purpose (one must auto-fire, one must never), and this skill ties them together.

@@ -89,9 +89,15 @@ a resolved ticket.
 
 ### 4. One call, then report what changed
 
-Every write returns the whole ticket. Report the real new state from that response — status,
-assignees, sprint — not what you intended to happen. If the call came back with a `code`, say what it
-means and what the person should do:
+Report what the response actually says, not what you intended to happen. The two surfaces return
+different shapes, so do not go looking for ticket fields after a sprint write:
+
+- **Ticket writes** return the whole ticket — read `status`, `assignees` and `sprint` back off it.
+- **Sprint writes** return sprint data and no ticket at all: `create_sprint` and `set_sprint_active`
+  return the sprint view (`label`, `due`, `status`/`active`, progress), `add_sprint_resource` returns
+  the sprint with its tickets and merged resources, `complete_sprint` returns the raw sprint row.
+
+If the call came back with a `code`, say what it means and what the person should do:
 
 | code | what it means | what to say |
 |---|---|---|
