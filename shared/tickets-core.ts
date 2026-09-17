@@ -27,13 +27,19 @@ export type TicketStatus = (typeof TICKET_STATUSES)[number];
 export type TicketLinkKind = (typeof TICKET_LINK_KINDS)[number];
 
 // ── the status machine (ONE definition, enforced everywhere) ─────────────────
-// submitted → in_progress (Start) | declined
-// in_progress → done | submitted (Back)
-// done, declined are terminal.
+// A status is SET by a person, from the status control itself — there are no
+// accept/reject action buttons, and assignment never implies a status (an
+// assignee is assigned, full stop). The table is what the control may offer:
+//
+// submitted   → in_progress | declined
+// in_progress → done | declined | submitted     (declined WITHOUT going back first)
+// done, declined are terminal — a resolved ticket is not re-opened.
+//
+// The order here is the pipeline's, which is the order the control lists them in.
 
 export const TICKET_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   submitted: ["in_progress", "declined"],
-  in_progress: ["done", "submitted"],
+  in_progress: ["done", "declined", "submitted"],
   done: [],
   declined: [],
 };

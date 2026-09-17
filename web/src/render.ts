@@ -8,7 +8,7 @@ import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColo
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, SprintDetail, PlanView } from "./api";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory } from "./api";
 import type { TicketPriority } from "@shared/tickets";
-import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip } from "./tickets";
+import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip, type StatusMenuAnchor } from "./tickets";
 import { sprintCard, newSprintPanel, newSprintToggle, sprintScreen } from "./sprints";
 import type { SprintUrgency, SprintDomain } from "@shared/sprints";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
@@ -150,6 +150,8 @@ export interface AppState {
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /** Which of the ticket's two status controls has its menu open (null = neither). */
+  stMenu: StatusMenuAnchor | null;
   /** Sprints back the queue's group headers and the ticket form's/rail's menus. */
   sprints: Loadable<SprintView[]>;
   /** The sprint screen's payload. */
@@ -241,7 +243,7 @@ export function initialState(): AppState {
     qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "",
-    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false,
+    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
@@ -1680,6 +1682,7 @@ function ticketDetailScreen(s: AppState): string {
     asgMenu: s.asgMenu,
     sprMenu: s.sprMenu,
     relMenu: s.relMenu,
+    stMenu: s.stMenu,
   });
 }
 

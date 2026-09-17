@@ -14,7 +14,7 @@
 // whole of zod into the browser bundle. Types still come from @shared/tickets.)
 
 import {
-  legalMoves, isOpenStatus, TICKET_STATUS_LABEL, TICKET_CATEGORIES, TICKET_PRIORITIES,
+  legalMoves, isOpenStatus, TICKET_STATUSES, TICKET_STATUS_LABEL, TICKET_CATEGORIES, TICKET_PRIORITIES,
   type TicketStatus, type TicketCategory, type TicketPriority,
 } from "@shared/tickets-core";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter } from "@shared/tickets";
@@ -419,6 +419,8 @@ export interface TicketDetailProps {
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /** Which status control has its menu open (null = neither). */
+  stMenu: StatusMenuAnchor | null;
   /**
    * The open @mention token in the comment box (main.ts computes it from the
    * textarea's value + caret). null = the picker is closed. Candidates are
@@ -449,13 +451,6 @@ export function relCandidates(
 }
 
 /** Legal-move button copy. `submitted` as a TARGET is the "Back" move. */
-const MOVE_LABEL: Record<TicketStatus, string> = {
-  in_progress: "Start",
-  declined: "Decline",
-  done: "Done",
-  submitted: "Back to submitted",
-};
-
 /** Escape, then paint `@mentions` that resolve to a person (design's `mention()`). */
 function mentionize(text: string, persons: PersonSummary[]): string {
   const known = new Map<string, string>();
@@ -520,14 +515,38 @@ function sprintMenuBox(sprints: SprintView[], current: number | null, act: strin
   return `${MENU_BACKDROP}<div style="${MENU_BOX};width:230px;min-width:100%;max-height:298px;overflow-y:auto">${rows}</div>`;
 }
 
-function transitionButtons(status: TicketStatus): string {
+/** Which anchor has the status menu open — the header control or the rail's
+ *  STATUS row. Both render the same menu, so one flag naming the anchor keeps
+ *  exactly one of them open. */
+export type StatusMenuAnchor = "header" | "rail";
+
+/** THE status control. A status is a property a person SETS, so it is rendered
+ *  as the pill you click, not as a row of action buttons: the old "Start" +
+ *  "Decline" pair read as an accept/reject gate on the assignment, which is not
+ *  what a status is (and assignment never gated anything — `toggle_assignee`
+ *  does not touch status). The menu lists the statuses in pipeline order with
+ *  the current one ticked; only the moves `TICKET_TRANSITIONS` allows are
+ *  clickable, so the control can never offer what the route would 409. A
+ *  terminal status has no moves and renders as a plain pill. */
+function statusControl(status: TicketStatus, open: boolean, anchor: StatusMenuAnchor): string {
   const moves = legalMoves(status);
-  if (moves.length === 0) return "";
-  const [primary, ...rest] = moves;
-  const secondary = rest.map((to) =>
-    `<button data-act="ticketStatus" data-arg="${to}" class="cnpy-outlinebtn" style="background:transparent;border:1px solid var(--border-strong);border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;transition:all .12s ease">${MOVE_LABEL[to]}</button>`).join("");
-  const prim = `<button data-act="ticketStatus" data-arg="${primary}" class="cnpy-accentbtn" style="background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:9px 17px;font-size:13px;font-weight:600;white-space:nowrap;transition:filter .12s ease">${MOVE_LABEL[primary]}</button>`;
-  return `${secondary}${prim}`;
+  if (moves.length === 0) return ticketPill(status);
+  // A row is the PILL itself — `ticketPill` already spells the status out, so a
+  // label beside it would just say it twice.
+  const rows = TICKET_STATUSES.filter((s) => s === status || moves.includes(s)).map((s) => {
+    const on = s === status;
+    const row = "display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;white-space:nowrap";
+    return on
+      ? `<div style="${row}">${ticketPill(s)}${checkMark(true)}</div>`
+      : `<button data-act="ticketStatus" data-arg="${s}" class="${MENU_ROW_CLASS}" style="${row}">${ticketPill(s)}${checkMark(false)}</button>`;
+  }).join("");
+  const menu = open ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:172px;min-width:100%">${rows}</div>` : "";
+  return `<div style="position:relative">
+    <button data-act="ticketStatusMenu" data-arg="${anchor}" title="Set status" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:5px 9px 5px 7px;border-radius:9px;border:1px solid var(--border-strong);transition:all .12s ease">
+      ${ticketPill(status)}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;color:var(--fg-40)"><path d="m6 9 6 6 6-6"></path></svg>
+    </button>${menu}
+  </div>`;
 }
 
 function linkedWorkBlock(p: TicketDetailProps): string {
@@ -768,7 +787,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
           <span style="color:var(--fg-40);white-space:nowrap">&middot; opened ${esc(relTime(t.created_at))}</span>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${transitionButtons(t.status)}</div>
+      <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${statusControl(t.status, p.stMenu === "header", "header")}</div>
     </div>
     <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px;min-height:calc(${CARD_MIN_H} - 92px)">
       <div style="min-width:0">
@@ -779,7 +798,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
       <div style="border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
         <div>
           <div style="${RAIL_SECTION_HEAD}"><div style="${MONO_EYEBROW}">Properties</div></div>
-          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">STATUS</div><div>${ticketPill(t.status)}</div></div>
+          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">STATUS</div><div style="min-width:0">${statusControl(t.status, p.stMenu === "rail", "rail")}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">CATEGORY</div><div>${categoryChip(t.category)}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">PRIORITY</div><div>${priorityChip(t.priority)}</div></div>
         </div>

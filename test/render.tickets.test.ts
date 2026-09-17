@@ -20,6 +20,7 @@ import {
   type QueueProps, type NewTicketProps, type TicketDetailProps,
 } from "../web/src/tickets";
 import type { TicketListItem, TicketDetail, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/tickets";
+import { TICKET_STATUS_LABEL, type TicketStatus } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "../web/src/api";
 import { WORK_SHELL } from "../web/src/ui";
@@ -98,7 +99,7 @@ function detailProps(t: TicketDetail, o: Partial<TicketDetailProps> = {}): Ticke
   return {
     ticket: t, allTickets: [], sprints: [], persons: PERSONS,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "", linkOpen: false,
-    asgMenu: false, sprMenu: false, relMenu: false,
+    asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
     ...o,
   };
 }
@@ -605,32 +606,54 @@ describe("newTicketView", () => {
 
 // ── ticket detail ────────────────────────────────────────────────────────────
 
-describe("ticketDetailView — transitions (design call #7)", () => {
-  it("submitted offers Start + Decline only", () => {
-    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" })));
+describe("ticketDetailView — the status control (design call #7)", () => {
+  const props = (status: TicketStatus, stMenu: "header" | "rail" | null = null) =>
+    detailProps(detail({ id: 1, title: "T", status }), { stMenu });
+
+  it("shows the status as a pill you click — no accept/reject action buttons", () => {
+    const html = ticketDetailView(props("submitted"));
+    // Two controls: the header's and the rail's STATUS row.
+    expect(html.match(/data-act="ticketStatusMenu"/g)?.length).toBe(2);
+    expect(html).toContain('data-act="ticketStatusMenu" data-arg="header"');
+    expect(html).toContain('data-act="ticketStatusMenu" data-arg="rail"');
+    // Nothing is settable until a menu is open, and the old copy is gone.
+    expect(html).not.toContain('data-act="ticketStatus"');
+    expect(html).not.toContain(">Start<");
+    expect(html).not.toContain(">Decline<");
+    expect(html).not.toContain("Back to submitted");
+  });
+
+  it("offers submitted → in progress | declined, with the current status ticked", () => {
+    const html = ticketDetailView(props("submitted", "header"));
     expect(html).toContain('data-act="ticketStatus" data-arg="in_progress"');
-    expect(html).toContain(">Start<");
     expect(html).toContain('data-act="ticketStatus" data-arg="declined"');
-    expect(html).toContain(">Decline<");
-    expect(html).not.toContain('data-arg="done"');
-    expect(html.match(/data-act="ticketStatus"/g)?.length).toBe(2);
+    expect(html).not.toContain('data-act="ticketStatus" data-arg="done"');
+    // The current status is listed but inert (a ticked row, not a button).
+    expect(html).not.toContain('data-act="ticketStatus" data-arg="submitted"');
+    expect(html).toContain("color:var(--accent)");
+    // One menu opens at a time — the rail's control stays closed.
+    expect(html.match(/data-act="ticketStatus" /g)?.length).toBe(2);
   });
 
-  it("in_progress offers Done + Back only", () => {
-    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "in_progress" })));
+  it("offers in progress → done | declined | submitted — declining no longer needs a trip back", () => {
+    const html = ticketDetailView(props("in_progress", "rail"));
     expect(html).toContain('data-act="ticketStatus" data-arg="done"');
-    expect(html).toContain(">Done<");
+    expect(html).toContain('data-act="ticketStatus" data-arg="declined"');
     expect(html).toContain('data-act="ticketStatus" data-arg="submitted"');
-    expect(html).toContain(">Back to submitted<");
-    expect(html).not.toContain('data-arg="declined"');
-    expect(html.match(/data-act="ticketStatus"/g)?.length).toBe(2);
+    expect(html.match(/data-act="ticketStatus" /g)?.length).toBe(3);
   });
 
-  it("offers nothing from a terminal status", () => {
+  it("renders a terminal status as a plain pill — no control, nothing to set", () => {
     for (const status of ["done", "declined"] as const) {
-      const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status })));
+      const html = ticketDetailView(props(status, "header"));
+      expect(html).not.toContain('data-act="ticketStatusMenu"');
       expect(html).not.toContain('data-act="ticketStatus"');
+      expect(html).toContain(TICKET_STATUS_LABEL[status].toUpperCase());
     }
+  });
+
+  it("dismisses the open menu with the shared backdrop", () => {
+    expect(ticketDetailView(props("submitted", "header"))).toContain('data-act="closeTicketMenus"');
   });
 });
 
