@@ -32,6 +32,11 @@ orient (load-context)  →   do the work   →   record (record-session)
 > model-invocable (auto-orient); `record-session` **must** be explicit-only (never log on its own).
 > They can't share one `SKILL.md`. This `canopy` skill is the umbrella that documents both.
 
+Alongside the loop: **`tickets`** (explicit-only) works the ticket queue and, for an admin, the
+sprints; **`my-work`** reads your own plate; **`read-plan`** / **`update-plan`** read and write the
+roadmap plan. Reading tickets, sprints and the roadmap needs no skill — those tools are registered for
+every principal.
+
 ## Authority is load-bearing
 
 The writer identity behind every read/write is the person's **handle** (the GitHub login, for migrated
@@ -78,11 +83,32 @@ tools. The roadmap plan itself is **admin-authored**, not staged by agents: the 
 wraps the `update_plan` MCP tool (direct, non-destructively versioned, promote-class) — agents cannot
 propose a sprint at all (the roadmap-proposal queue was retired), and sprint `done` is admin-set.
 
-**Tickets and sprints are read-only over MCP.** There is no `create_ticket`, no `transition_ticket`,
-no `create_sprint` — every ticket and sprint write is a human authored write over a session-cookie
-route in the web app. An agent can see what has been asked for and what is in a sprint; it cannot
-file, assign, resolve or re-home any of it. Ticket `done` / `declined` and sprint `done` are set by a
-person, never inferred from a PR merging or an issue closing.
+### Tickets and sprints — writes in your own lane
+
+Ticket writes go **direct**, in the same promote class as the cookie routes: no gate, no staging, no
+triage step — a ticket write is org-visible immediately. What bounds them is scope, not staging:
+
+> **You may write only to tickets already assigned to you.** Filing (`create_ticket`) is the one
+> unscoped write.
+
+- **`create_ticket`** — file a ticket. The requester is you. Its `assignees` is the **only**
+  agent-reachable assignment in Canopy: there is no `toggle_assignee` tool and never will be, because
+  assignment is the data the lane rule is built on. After filing, assigning is web-only.
+- **`transition_ticket` / `add_ticket_comment` / `add_ticket_link` / `set_ticket_sprint` /
+  `set_ticket_parent`** — scoped. Outside your lane you get `{"code": "forbidden"}` and nothing is
+  written. `set_ticket_parent` needs the lane on both tickets.
+- **Sprint writes are ADMIN-ONLY**: `create_sprint`, `set_sprint_active`, `complete_sprint`,
+  `add_sprint_resource`. A non-admin does not see them in `tools/list` at all.
+- One admin exception to the lane: an admin may `set_ticket_sprint` on any ticket, because composing
+  a sprint is sprint management. It spreads to no other verb.
+
+**`done` / `declined` on a ticket, and `done` on a sprint, are still never INFERRED** — not from a PR
+merging, an issue closing, the cron, or every ticket in a sprint resolving. A person asks for them,
+through their own token. The **`tickets`** skill is the explicit-only wrapper for all of this.
+
+Note there is **no provenance**: a write made through your token is recorded as *you*, with nothing
+marking it agent-made. Use the `tickets` skill's `comment_prefix` config if your team wants agent
+comments recognizable.
 
 ## Connect an agent over MCP
 
@@ -102,7 +128,7 @@ export CANOPY_MCP_TOKEN=canopy_mcp_…        # the plugin's MCP config reads th
 claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp \
   --header "Authorization: Bearer canopy_mcp_…"
 # then copy the skill folders into another repo / your home dir:
-cp -r .claude/skills/{canopy,load-context,record-session} ~/.claude/skills/
+cp -r .claude/skills/{canopy,load-context,record-session,tickets} ~/.claude/skills/
 ```
 
 The skills are bundled in this repo under `plugins/canopy/skills/` (the in-repo `.claude/skills/*`
