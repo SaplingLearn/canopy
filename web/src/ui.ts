@@ -74,3 +74,12 @@ export function relTime(iso: string | null): string {
   if (days < 7) return `${days}d ago`;
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
+
+/** The frame the four ticket/sprint screens sit in. These are WORK surfaces — a
+ *  queue table, a filing form, a thread beside a rail — so they take the window
+ *  instead of sitting in a narrow column the way Feed and Roadmap (reading
+ *  surfaces) deliberately do: fluid to 1440px, with a gutter that grows with the
+ *  viewport. Reading measures are capped per block inside (a ticket body, a
+ *  sprint description), never by starving the whole frame. */
+export const WORK_SHELL =
+  "width:100%;max-width:1440px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px";

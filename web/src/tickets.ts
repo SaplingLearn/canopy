@@ -20,7 +20,7 @@ import {
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "./api";
-import { esc, attr, relTime, primaryBtn } from "./ui";
+import { esc, attr, relTime, primaryBtn, WORK_SHELL } from "./ui";
 import { personChip } from "./people";
 import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 
@@ -307,7 +307,7 @@ function boardView(p: QueueProps): string {
 
 /** The whole queue screen: filter row + Table or Board. */
 export function queueView(p: QueueProps): string {
-  return `<div style="max-width:1080px;margin:0 auto;padding:26px 32px 100px">
+  return `<div style="${WORK_SHELL}">
     ${filterRow(p)}
     ${p.view === "board" ? boardView(p) : tableView(p)}
   </div>`;
@@ -332,6 +332,12 @@ export interface NewTicketProps {
    *  rail's picker uses (the two screens are never mounted together). */
   sprMenu: boolean;
 }
+
+/** How tall a ticket screen's body runs: the window, less the header, the
+ *  shell's own padding and a bottom breath. The form's card and the detail's
+ *  two columns both take it, so a ticket screen fills the window it is in
+ *  rather than floating in the top third of a large one. */
+const CARD_MIN_H = "calc(100vh - 210px)";
 
 const FIELD_LABEL = "display:block;font-size:13px;font-weight:500;margin-bottom:8px";
 const TEXT_INPUT =
@@ -367,14 +373,14 @@ export function newTicketView(p: NewTicketProps): string {
       personChipButton("ntAssignee", pp.handle, pp.name || pp.handle, p.assignees.includes(pp.handle), personChip(pp, 20, pp.handle))))
     .join("");
 
-  return `<div style="max-width:960px;margin:0 auto;padding:28px 32px 100px">
-    <div style="border:1px solid var(--border);border-radius:13px;padding:26px 28px">
-      <div class="cnpy-nt-grid" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:28px">
-        <div style="min-width:0">
+  return `<div style="${WORK_SHELL}">
+    <div style="border:1px solid var(--border);border-radius:13px;padding:26px 28px;display:flex;flex-direction:column;min-height:${CARD_MIN_H}">
+      <div class="cnpy-nt-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 288px;gap:32px;flex:1;min-height:0">
+        <div style="min-width:0;display:flex;flex-direction:column">
           <label style="${FIELD_LABEL}">Title</label>
           <input data-act="ntTitle" data-field="ntTitle" value="${attr(p.title)}" placeholder="One line: what do you need?" style="${TEXT_INPUT}" />
           <label style="${FIELD_LABEL};margin:20px 0 8px">Description</label>
-          <textarea data-act="ntDescription" data-field="ntDescription" placeholder="What's happening, and what would good look like?" style="width:100%;min-height:190px;padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;outline:none;resize:vertical">${esc(p.description)}</textarea>
+          <textarea data-act="ntDescription" data-field="ntDescription" placeholder="What's happening, and what would good look like?" style="width:100%;flex:1;min-height:190px;padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;outline:none;resize:vertical">${esc(p.description)}</textarea>
           <label style="${FIELD_LABEL};margin:20px 0 8px">Linked work <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
           <input data-act="ntLink" data-field="ntLink" value="${attr(p.link)}" placeholder="GitHub or Figma URL, or #issue-number" style="${TEXT_INPUT};height:38px;font-size:12.5px;font-family:var(--mono)" />
         </div>
@@ -753,7 +759,7 @@ function relationsRail(p: TicketDetailProps): string {
 
 export function ticketDetailView(p: TicketDetailProps): string {
   const t = p.ticket;
-  return `<div style="max-width:1000px;margin:0 auto;padding:26px 32px 100px">
+  return `<div style="${WORK_SHELL}">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
       <div style="flex:1;min-width:0">
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
@@ -764,7 +770,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${transitionButtons(t.status)}</div>
     </div>
-    <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px">
+    <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px;min-height:calc(${CARD_MIN_H} - 92px)">
       <div style="min-width:0">
         <div style="font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap;max-width:640px">${esc(t.body)}</div>
         ${linkedWorkBlock(p)}

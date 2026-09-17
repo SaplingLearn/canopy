@@ -22,6 +22,7 @@ import {
 import type { TicketListItem, TicketDetail, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "../web/src/api";
+import { WORK_SHELL } from "../web/src/ui";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -486,6 +487,32 @@ describe("queueView — the row", () => {
 });
 
 // ── new ticket ───────────────────────────────────────────────────────────────
+
+describe("the ticket screens' frame", () => {
+  it("gives the queue, the form and the detail the SAME full-width work shell", () => {
+    const shells = [
+      queueView(queueProps()),
+      newTicketView(formProps()),
+      ticketDetailView(detailProps(detail({ id: 1, title: "T" }))),
+    ];
+    for (const html of shells) {
+      expect(html).toContain(WORK_SHELL);
+      // None of them is capped at the old narrow measures.
+      expect(html).not.toContain("max-width:960px");
+      expect(html).not.toContain("max-width:1000px");
+      expect(html).not.toContain("max-width:1080px");
+    }
+  });
+
+  it("keeps the form's rail a rail — fixed, so a wide window grows the fields", () => {
+    expect(newTicketView(formProps())).toContain("grid-template-columns:minmax(0,1fr) 288px");
+  });
+
+  it("runs the form's card and the detail's columns down the window", () => {
+    expect(newTicketView(formProps())).toContain("min-height:calc(100vh - 210px)");
+    expect(ticketDetailView(detailProps(detail({ id: 1, title: "T" })))).toContain("min-height:calc(calc(100vh - 210px) - 92px)");
+  });
+});
 
 describe("newTicketView", () => {
   it("keeps Submit inert until the title is non-empty", () => {
