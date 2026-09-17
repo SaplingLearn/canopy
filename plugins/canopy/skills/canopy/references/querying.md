@@ -61,8 +61,10 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
 - **`list_tickets` / `get_ticket <id>`** — you want the ticket queue by filter (`seg`, `assignee`,
   `category`) or one whole ticket. Use `query` with `types: ["ticket"]` to search ticket TEXT;
   use `list_tickets` to enumerate by state. Both reads are unscoped — you see the whole org's queue.
-  The ticket WRITE tools are scoped to tickets already assigned to you (`create_ticket` excepted), and
-  sprint writes are admin-only; see the `canopy` skill, or the `tickets` skill to drive them.
+  The ticket WRITE tools are scoped to tickets already assigned to you, with TWO exceptions:
+  `create_ticket` is unscoped (filing is how work enters the queue), and an **admin** may call
+  `set_ticket_sprint` on any ticket (composing a sprint is sprint management — it spreads to no other
+  verb). Sprint writes are admin-only. See the `canopy` skill, or the `tickets` skill to drive them.
 - **`get_my_work`** — you want your own previous-activity + to-do projection from captured GitHub events.
 
 `query` is read-only and safe to call freely.
