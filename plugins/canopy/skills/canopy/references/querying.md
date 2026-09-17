@@ -60,7 +60,9 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
   tickets (roots then sub-tickets) and its merged resource links.
 - **`list_tickets` / `get_ticket <id>`** — you want the ticket queue by filter (`seg`, `assignee`,
   `category`) or one whole ticket. Use `query` with `types: ["ticket"]` to search ticket TEXT;
-  use `list_tickets` to enumerate by state. Both are read-only — no MCP tool writes a ticket.
+  use `list_tickets` to enumerate by state. Both reads are unscoped — you see the whole org's queue.
+  The ticket WRITE tools are scoped to tickets already assigned to you (`create_ticket` excepted), and
+  sprint writes are admin-only; see the `canopy` skill, or the `tickets` skill to drive them.
 - **`get_my_work`** — you want your own previous-activity + to-do projection from captured GitHub events.
 
 `query` is read-only and safe to call freely.

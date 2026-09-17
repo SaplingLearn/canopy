@@ -28,7 +28,10 @@ umbrella, and `load-context` is the reader that orients before work.
   payload per explicit request.
 - **Never auto-fire.** A natural endpoint (tests pass, branch done) is not a trigger — an auto-firing
   writer floods the store and erodes trust.
-- Never **promote, ratify, or complete** anything — those are human-only HTTP routes, not yours.
+- Never **promote, ratify, or complete** anything. Promote and ratify are cookie routes you cannot
+  reach at all; `complete_sprint` IS an MCP tool for an admin — and still not yours, because a sprint
+  is finished when a person says so, never because a session wrapped up. Same for resolving a ticket:
+  recording work is not closing the request that asked for it.
 
 ## Procedure
 
