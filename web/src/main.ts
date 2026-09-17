@@ -1079,7 +1079,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
           loadTicketBadge();
           flash(assigned.length
             ? `Ticket submitted — assigned to ${assigned.join(", ")}`
-            : "Ticket submitted — it's in the queue as Submitted");
+            : "Ticket submitted — it's in the queue for triage");
         })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }

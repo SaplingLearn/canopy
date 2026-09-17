@@ -116,9 +116,9 @@ function appState(o: Partial<AppState> = {}): AppState {
 // ── atoms ────────────────────────────────────────────────────────────────────
 
 describe("ticketPill / priorityChip / age (design call #5)", () => {
-  it("tints Submitted blue, In progress accent, Done muted, Declined red at reduced opacity", () => {
+  it("tints Triage blue, In progress accent, Done muted, Declined red at reduced opacity", () => {
     expect(ticketPill("submitted")).toContain("var(--blue)");
-    expect(ticketPill("submitted")).toContain("SUBMITTED");
+    expect(ticketPill("submitted")).toContain("TRIAGE");
     expect(ticketPill("in_progress")).toContain("var(--accent)");
     expect(ticketPill("in_progress")).toContain("IN PROGRESS");
     expect(ticketPill("done")).toContain("color:var(--fg-55);border:1px solid var(--border-strong)");
@@ -415,9 +415,9 @@ describe("queueView — board columns follow the segment", () => {
     (html.match(/letter-spacing:\.08em;white-space:nowrap;color:var\(--(?:accent|blue|fg-40)\)">([A-Z ]+)</g) ?? [])
       .map((m) => m.replace(/.*">/, "").replace(/<$/, ""));
 
-  it("open → SUBMITTED + IN PROGRESS", () => {
+  it("open → TRIAGE + IN PROGRESS", () => {
     const html = queueView(queueProps({ tickets: rows, view: "board", seg: "open" }));
-    expect(columnLabels(html)).toEqual(["SUBMITTED", "IN PROGRESS"]);
+    expect(columnLabels(html)).toEqual(["TRIAGE", "IN PROGRESS"]);
     expect(SEG_STATUSES.open).toEqual(["submitted", "in_progress"]);
   });
 
@@ -428,13 +428,13 @@ describe("queueView — board columns follow the segment", () => {
 
   it("all → four columns in status order", () => {
     const html = queueView(queueProps({ tickets: rows, view: "board", seg: "all" }));
-    expect(columnLabels(html)).toEqual(["SUBMITTED", "IN PROGRESS", "DONE", "DECLINED"]);
+    expect(columnLabels(html)).toEqual(["TRIAGE", "IN PROGRESS", "DONE", "DECLINED"]);
     expect(html).toContain("grid-template-columns:repeat(4,minmax(0,1fr))");
   });
 
   it("colors the headers per the design and shows a dashed placeholder for an empty column", () => {
     const html = queueView(queueProps({ tickets: [rows[0]], view: "board", seg: "open" }));
-    expect(html).toContain("color:var(--blue)\">SUBMITTED");
+    expect(html).toContain("color:var(--blue)\">TRIAGE");
     expect(html).toContain("color:var(--accent)\">IN PROGRESS");
     expect(html).toContain("border:1px dashed var(--border)");
     expect(html).toContain("Nothing here");
@@ -507,6 +507,17 @@ describe("the ticket screens' frame", () => {
 
   it("keeps the form's rail a rail — fixed, so a wide window grows the fields", () => {
     expect(newTicketView(formProps())).toContain("grid-template-columns:minmax(0,1fr) 288px");
+  });
+
+  it("lets the thread absorb the leftover height so the composer rides the bottom", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T" })));
+    // The main column is a flex column whose thread block grows...
+    expect(html).toContain("min-width:0;display:flex;flex-direction:column");
+    expect(html).toContain("display:flex;flex-direction:column;flex:1;min-height:0");
+    // ...and the composer is the one part that does not.
+    const box = html.slice(html.indexOf('data-act="ticketComment"'));
+    expect(html.slice(0, html.indexOf('data-act="ticketComment"'))).toContain("border-radius:11px;padding:12px;margin-top:16px;flex:none");
+    expect(box).toContain('data-act="ticketCommentPost"');
   });
 
   it("runs the form's card and the detail's columns down the window", () => {
@@ -734,7 +745,7 @@ describe("relCandidates — the sub-ticket add menu's filter", () => {
     })));
     expect(withRel).toContain("PARENT TICKET");
     expect(withRel).toContain("Parent ticket");
-    expect(withRel).toContain("SUB-TICKET · SUBMITTED");
+    expect(withRel).toContain("SUB-TICKET · TRIAGE");
     expect(withRel).toContain('data-act="openTicket" data-arg="4"');
     expect(withRel).toContain('data-act="openTicket" data-arg="5"');
     expect(withRel).not.toContain("No linked tickets");
@@ -753,9 +764,9 @@ describe("ticketDetailView — the thread", () => {
       ],
     })));
     expect(html).toContain("opened this ticket");
-    expect(html).not.toContain("opened · SUBMITTED");
-    expect(html).toContain("Submitted → In progress");
-    expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("Submitted → In progress"));
+    expect(html).not.toContain("opened · TRIAGE");
+    expect(html).toContain("Triage → In progress");
+    expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("Triage → In progress"));
   });
 
   it("merges comments and history ascending by time", () => {
@@ -768,7 +779,7 @@ describe("ticketDetailView — the thread", () => {
       ],
     })));
     expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("SECOND"));
-    expect(html.indexOf("SECOND")).toBeLessThan(html.indexOf("Submitted → In progress"));
+    expect(html.indexOf("SECOND")).toBeLessThan(html.indexOf("Triage → In progress"));
     expect(html).toContain("1 comment<");
   });
 

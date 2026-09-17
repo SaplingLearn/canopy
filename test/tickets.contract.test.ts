@@ -73,9 +73,9 @@ describe("ticket status machine", () => {
     expect(isOpenStatus("declined")).toBe(false);
   });
 
-  it("TICKET_STATUS_LABEL is the design's display vocabulary", () => {
+  it("TICKET_STATUS_LABEL is the design's display vocabulary — `submitted` reads Triage", () => {
     expect(TICKET_STATUS_LABEL).toEqual({
-      submitted: "Submitted",
+      submitted: "Triage",
       in_progress: "In progress",
       done: "Done",
       declined: "Declined",

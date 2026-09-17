@@ -53,8 +53,14 @@ export function legalMoves(status: TicketStatus): TicketStatus[] {
   return [...TICKET_TRANSITIONS[status]];
 }
 
+/** The DISPLAY vocabulary — the DB values never change. `submitted` reads
+ *  "Triage" because that is what the state is for a reader: filed, waiting for
+ *  a person to pick it up or decide against it. It is deliberately NOT called
+ *  "Open" (the queue's `seg=open` covers `submitted` AND `in_progress`, so one
+ *  status owning that word would contradict `isOpenStatus`) and not "Backlog"
+ *  (a sprint-less ticket is already in the Backlog group). */
 export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
-  submitted: "Submitted",
+  submitted: "Triage",
   in_progress: "In progress",
   done: "Done",
   declined: "Declined",

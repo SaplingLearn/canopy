@@ -30,7 +30,7 @@ import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 const CHIP_BASE =
   "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none;";
 
-/** Tinted pill styling for one status — design call #5: Submitted blue,
+/** Tinted pill styling for one status — design call #5: Triage blue,
  *  In progress green (accent), Done muted, Declined red at reduced opacity. */
 function ticketPillStyle(status: TicketStatus): string {
   const tint = (c: string) =>
@@ -108,7 +108,7 @@ export const SEG_STATUSES: Record<TicketSeg, TicketStatus[]> = {
   all: ["submitted", "in_progress", "done", "declined"],
 };
 
-/** Design call #6 — "needs attention" = unassigned AND Submitted. Rendered as the
+/** Design call #6 — "needs attention" = unassigned AND `submitted` (Triage). Rendered as the
  *  selected-card idiom (2px inset left rule + faint fill), never a new color. */
 export function needsAttention(t: { assignees: string[]; status: TicketStatus }): boolean {
   return t.assignees.length === 0 && t.status === "submitted";
@@ -450,7 +450,6 @@ export function relCandidates(
     isOpenStatus(x.status));
 }
 
-/** Legal-move button copy. `submitted` as a TARGET is the "Back" move. */
 /** Escape, then paint `@mentions` that resolve to a person (design's `mention()`). */
 function mentionize(text: string, persons: PersonSummary[]): string {
   const known = new Map<string, string>();
@@ -668,19 +667,24 @@ function threadBlock(p: TicketDetailProps): string {
   // of text from running under the button.
   const boxHeight = Math.max(p.commentHeight ?? COMMENT_BOX.height, COMMENT_BOX.minHeight);
   const textarea = `<textarea data-act="ticketComment" data-field="ticketComment" placeholder="Write a comment — @mention to loop someone in…" style="display:block;width:100%;height:${boxHeight}px;min-height:${COMMENT_BOX.minHeight}px;padding:${COMMENT_BOX.padTop}px 0 ${COMMENT_BOX.padBottom}px;border:none;outline:none;background:transparent;color:var(--fg);font-size:${COMMENT_BOX.fontSize}px;line-height:${COMMENT_BOX.lineRatio};resize:none">${esc(p.commentDraft)}</textarea>`;
-  return `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:30px;padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
+  // The thread is what absorbs the column's leftover height (the screen is as
+  // tall as it is wide-ish now): the rows grow, so the composer sits at the
+  // bottom of the window rather than halfway up an empty column.
+  return `<div style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:30px;padding-bottom:9px;border-bottom:1px solid var(--border-strong);flex:none">
       <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">THREAD</div>
       <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${t.comments.length} ${t.comments.length === 1 ? "comment" : "comments"}</div>
     </div>
-    ${rows.map((r) => r.html).join("")}
-    <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px">
+    <div style="flex:1;min-height:0">${rows.map((r) => r.html).join("")}</div>
+    <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px;flex:none">
       <div style="position:relative">
         ${textarea}
         ${mentionPicker(p, boxHeight)}
       </div>
       ${COMMENT_GRIP}
       ${primaryBtn("Comment", canPost, "ticketCommentPost", "", "position:absolute;right:8px;bottom:8px")}
-    </div>`;
+    </div>
+  </div>`;
 }
 
 function assigneeRail(p: TicketDetailProps): string {
@@ -790,7 +794,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
       <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${statusControl(t.status, p.stMenu === "header", "header")}</div>
     </div>
     <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px;min-height:calc(${CARD_MIN_H} - 92px)">
-      <div style="min-width:0">
+      <div style="min-width:0;display:flex;flex-direction:column">
         <div style="font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap;max-width:640px">${esc(t.body)}</div>
         ${linkedWorkBlock(p)}
         ${threadBlock(p)}
