@@ -109,21 +109,35 @@ export function agentCreateTicket(db: DB, input: TicketCreate, requester: string
   return create_ticket(db, input, requester);
 }
 
+/**
+ * Move a ticket's status, inside the lane. Every move in the shared table is
+ * reachable — `done` and `declined` included, because the bearer token IS the
+ * person (design D1) and refusing them here would withhold them from the person,
+ * not from a machine. What the invariant forbids is INFERENCE, and nothing on
+ * this path infers: a caller asked, under that person's own credential.
+ */
 export async function agentTransitionTicket(db: DB, env: Env, id: number, to: TicketStatus, actor: string): Promise<void> {
   await assertTicketWritable(db, env, id, actor, "transition_ticket");
   await transition_ticket(db, id, to, actor);
 }
 
+/** Append a comment, inside the lane. Attributed to the author with no provenance
+ *  marking it agent-written (design D4) — the skill's `comment_prefix` is the only
+ *  thing that makes one recognizable. */
 export async function agentAddTicketComment(db: DB, env: Env, id: number, body: string, author: string): Promise<number> {
   await assertTicketWritable(db, env, id, author, "add_ticket_comment");
   return add_ticket_comment(db, id, body, author);
 }
 
+/** Attach linked work, inside the lane. `raw` goes through the SHARED parser, so
+ *  `#214` resolves the same way it does when a person types it into the web UI. */
 export async function agentAddTicketLink(db: DB, env: Env, id: number, raw: string, by: string): Promise<number> {
   await assertTicketWritable(db, env, id, by, "add_ticket_link");
   return add_ticket_link(db, id, raw, by);
 }
 
+/** Move a ticket into a sprint, or back to the backlog (`null`). The ONE verb an
+ *  admin may use outside their lane — see the D6 note on assertTicketWritable. */
 export async function agentSetTicketSprint(db: DB, env: Env, id: number, sprintId: number | null, actor: string): Promise<void> {
   await assertTicketWritable(db, env, id, actor, "set_ticket_sprint");
   await set_ticket_sprint(db, id, sprintId);
