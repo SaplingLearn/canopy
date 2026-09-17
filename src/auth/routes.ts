@@ -13,6 +13,7 @@ import { getPerson, listIdentities, findIdentity, handleAvailable, createPerson,
 import { run } from "../db";
 import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, ONBOARD_TTL_S, type ProviderProfile, type ForkResult } from "./onboard";
 import { findLiveInvite, acceptInvite } from "./invites";
+import { sendWelcome } from "../notifications/welcome";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
 export interface AuthDeps { fetchImpl?: typeof fetch; now?: () => number }
@@ -176,6 +177,17 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     deleteCookie(c, ONBOARD_COOKIE, { path: "/" });
     const { id } = await createSession(c.env.DB, parsed.data.handle);
     await setSessionCookie(c, id, c.env.COOKIE_SECRET);
+    // The welcome email, once the person exists and their session is in hand. It
+    // is a courtesy, not part of the write: `sendWelcome` never throws, and its
+    // outcome is deliberately ignored here so a mailer problem can never cost
+    // somebody their sign-up. No address on file (GitHub returned none) = no mail.
+    const email = p.email;
+    if (email) {
+      const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
+      await sendWelcome(c.env, c.env.DB, {
+        email, name: parsed.data.name ?? p.name, handle: parsed.data.handle, origin, fetchImpl: deps.fetchImpl,
+      });
+    }
     return c.json({ ok: true, handle: parsed.data.handle });
   });
 
