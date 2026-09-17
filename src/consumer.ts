@@ -1,12 +1,12 @@
-import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, MilestoneProposal, CapturedEvent } from "@shared/contract";
+import type { IngestPayload, FeedEntry, DocProposal, AdrDraft, CapturedEvent } from "@shared/contract";
 // NOTE: CapturedEvent is imported for ingestEvent's signature only — the webhook
 // (src/webhook.ts) calls ingestEvent directly. There is no `events` arm on
 // IngestPayload: subject_login is trustworthy only once the webhook has verified
 // the delivery's HMAC, so no bearer/cookie payload may route events through here.
 import { isSection, isTag } from "@shared/vocabulary";
-import type { DocRow, DocVersionRow, AdrRow, MilestoneProposalRow, ProcessedItemRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, AdrRow, ProcessedItemRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "./db";
-import { append_feed, propose_doc_update, stage_adr, route_triage, stage_milestone_proposal, ensure_identity_task } from "./tools/writes";
+import { append_feed, propose_doc_update, stage_adr, route_triage, ensure_identity_task } from "./tools/writes";
 import { contentHash } from "./hash";
 import { changeKind } from "./diff";
 import type { Principal } from "./auth/principal";
@@ -39,10 +39,6 @@ export type DocIngestResult =
   | { outcome: "unchanged"; slug?: string }
   | { outcome: "triaged"; reason: string };
 export type AdrIngestResult =
-  | { outcome: "written"; id: number }
-  | { outcome: "unchanged"; id?: number }
-  | { outcome: "triaged"; reason: string };
-export type MilestoneIngestResult =
   | { outcome: "written"; id: number }
   | { outcome: "unchanged"; id?: number }
   | { outcome: "triaged"; reason: string };
@@ -204,8 +200,8 @@ export async function ingestAdrDraft(db: DB, draft: AdrDraft, author: string, le
 
   // NUL separator — it cannot appear in the joined fields, preventing boundary
   // collisions (["ab","c"] vs ["a","bc"]). Written as an escape sequence so the
-  // file isn't treated as binary by grep. Stored content_hash values (adrs,
-  // milestone_proposals) were computed with this separator — do not change it.
+  // file isn't treated as binary by grep. Stored `adrs.content_hash` values were
+  // computed with this separator — do not change it.
   const hash = await contentHash([draft.title, draft.context, draft.decision, draft.rationale].join("\u0000"));
   const dup = await first<AdrRow>(db, `SELECT * FROM adrs WHERE content_hash = ? AND status != 'rejected' LIMIT 1`, hash);
   if (dup) {
@@ -215,51 +211,6 @@ export async function ingestAdrDraft(db: DB, draft: AdrDraft, author: string, le
 
   const id = await stage_adr(db, draft, author, hash);
   if (ledger) await ledgerRecord(db, ledger, "adr", "staged", String(id));
-  return { outcome: "written", id };
-}
-
-/** Milestones: 'done' (a human action) and low confidence → triage; identity by title or
- *  github_ref already present among staged proposals → drop; else stage with content_hash. */
-export async function ingestMilestoneProposal(
-  db: DB,
-  proposal: MilestoneProposal,
-  author: string,
-  ledger?: LedgerRef
-): Promise<MilestoneIngestResult> {
-  if (ledger && (await ledgerLookup(db, ledger))) return { outcome: "unchanged" };
-
-  if (proposal.status === "done") {
-    const reason = "milestone completion is a human action";
-    await route_triage(db, { raw: proposal, reason, source_author: author });
-    if (ledger) await ledgerRecord(db, ledger, "milestone", "triaged", null);
-    return { outcome: "triaged", reason };
-  }
-  if (proposal.confidence === "low") {
-    const reason = "low confidence milestone proposal";
-    await route_triage(db, { raw: proposal, reason, source_author: author });
-    if (ledger) await ledgerRecord(db, ledger, "milestone", "triaged", null);
-    return { outcome: "triaged", reason };
-  }
-
-  const github_ref = proposal.github_ref === undefined ? null : JSON.stringify(proposal.github_ref);
-  const dup = await first<MilestoneProposalRow>(
-    db,
-    `SELECT * FROM milestone_proposals
-       WHERE staged_status = 'staged' AND (title = ? OR (github_ref IS NOT NULL AND github_ref = ?)) LIMIT 1`,
-    proposal.title,
-    github_ref
-  );
-  if (dup) {
-    if (ledger) await ledgerRecord(db, ledger, "milestone", "unchanged", String(dup.id));
-    return { outcome: "unchanged", id: dup.id };
-  }
-
-  // NUL separator as an escape sequence — see the note on ingestAdrDraft's hash.
-  const hash = await contentHash(
-    [proposal.title, proposal.target_date, proposal.status, github_ref ?? "", proposal.change_summary].join("\u0000")
-  );
-  const id = await stage_milestone_proposal(db, proposal, author, hash);
-  if (ledger) await ledgerRecord(db, ledger, "milestone", "staged", String(id));
   return { outcome: "written", id };
 }
 

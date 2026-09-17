@@ -364,7 +364,6 @@ function makeMaintProps(overrides: Partial<MaintenanceProps> = {}): MaintenanceP
       kinds: [
         { key: "doc", label: "Doc section" },
         { key: "adr", label: "Decision record" },
-        { key: "milestone", label: "Roadmap note" },
         { key: "feed", label: "Feed update" },
       ],
       sections: ["reference", "context", "decisions"],
@@ -479,9 +478,10 @@ describe("assignPanel — per-type targets from the real vocabulary", () => {
     expect(html).toContain("cnpy-accentbtn");
   });
 
-  it("adr and milestone kinds need no target", () => {
-    expect(assignPanel("7", assign, "adr", null, null, [])).toContain("No target needed");
-    expect(assignPanel("7", assign, "milestone", null, null, [])).toContain("No target needed");
+  it("the adr kind needs no target (and says what it files as)", () => {
+    const html = assignPanel("7", assign, "adr", null, null, []);
+    expect(html).toContain("No target needed");
+    expect(html).toContain("decision draft");
   });
 });
 

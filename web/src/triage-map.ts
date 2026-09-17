@@ -110,7 +110,6 @@ export const ASSIGN_OPTIONS: AssignOptions = {
   kinds: [
     { key: "doc", label: "Doc section" },
     { key: "adr", label: "Decision record" },
-    { key: "milestone", label: "Roadmap note" },
     { key: "feed", label: "Feed update" },
   ],
   sections: SECTIONS.filter((s) => s !== "needs-triage"),

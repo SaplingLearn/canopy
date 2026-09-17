@@ -32,13 +32,13 @@ function prItem(pr: ReturnType<typeof toMyWorkPr>, first: boolean): string {
   return K.item({ title: escapeHtml(pr.displayTitle ?? pr.title), number: pr.number, url: escapeHtml(pr.url), rows, footer: `${K.chip("MERGED", "green")}${into}`, first });
 }
 
-/** An assigned-issue item, mirroring todoCard: Summary / Milestone / Next step rows, priority + label chips. */
+/** An assigned-issue item, mirroring todoCard: Summary / Sprint / Next step rows, priority + label chips. */
 function issueItem(i: Awaited<ReturnType<typeof listOpenAssignedIssues>>[number], first: boolean): string {
   const rows: string[] = [];
   if (i.summary) rows.push(K.row("Summary", K.prose(escapeHtml(i.summary))));
-  if (i.milestone) {
-    const due = i.milestone.dueOn ? ` <span style="font-size:11.5px;">&middot; due ${escapeHtml(shortDate(i.milestone.dueOn))}</span>` : "";
-    rows.push(K.row("Milestone", `${escapeHtml(i.milestone.title)}${due}`));
+  if (i.sprint) {
+    const due = i.sprint.dueOn ? ` <span style="font-size:11.5px;">&middot; due ${escapeHtml(shortDate(i.sprint.dueOn))}</span>` : "";
+    rows.push(K.row("Sprint", `${escapeHtml(i.sprint.title)}${due}`));
   }
   if (i.nextStep) rows.push(K.row("Next step", K.prose(escapeHtml(i.nextStep)), "accent"));
   const chips = [

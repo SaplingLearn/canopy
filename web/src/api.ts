@@ -5,9 +5,15 @@
 // @shared rows. All requests carry the session cookie (credentials:"same-origin");
 // the MCP bearer is for /mcp only and never appears here.
 import type {
-  FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, EventRow,
+  FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, EventRow,
   PersonColor, InviteRow,
 } from "@shared/rows";
+// Type-only (erased at build): the sprint DTOs the roadmap renders. Importing the
+// zod module for types costs the bundle nothing.
+import type { SprintView, SprintDetail, SprintCreate } from "@shared/sprints";
+import type {
+  TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate,
+} from "@shared/tickets";
 import type { DashboardData } from "@shared/dashboard";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow } from "@shared/rows";
@@ -84,7 +90,7 @@ export function getDoc(slug: string): Promise<{ doc: DocRow; versions: DocVersio
 // The read-side query envelope, re-declared here (web/ can't import the @shared
 // contract's Zod module). Mirrors shared/contract.ts QueryResult exactly.
 export type Authority = "live" | "staged_pending" | "unpromoted" | "draft";
-export type QueryType = "doc" | "decision" | "feed" | "milestone";
+export type QueryType = "doc" | "decision" | "feed" | "sprint";
 export interface QueryPrimary {
   type: QueryType; id: string; title: string;
   section: string | null; space: string | null;
@@ -112,17 +118,16 @@ export function search(q: string, opts: { types?: QueryType[]; section?: string;
   return getJson<{ result: QueryResult }>(`/search${qs ? `?${qs}` : ""}`).then((r) => r.result);
 }
 
-export type MilestoneWithProgress = MilestoneRow & { progress: { closed: number; total: number; computed_at: string } | null };
-
-// The roadmap read is the ADMIN plan: an authored narrative + version metadata alongside
-// the milestones (each merged with cached, event-derived progress — no live GitHub). Mirrors
-// src/tools/plan.ts's PlanView exactly (web/ can't import src/, so it's re-declared here).
+// The roadmap read is the ADMIN plan: an authored narrative + version metadata
+// alongside the sprints (each carrying its computed progress — no live GitHub).
+// Mirrors src/tools/plan.ts's PlanView exactly (web/ can't import src/, so the
+// envelope is re-declared here; SprintView itself comes from @shared/sprints).
 export interface PlanView {
   narrative: string;
   version: number;
   updated_at: string | null;
   updated_by: string | null;
-  milestones: MilestoneWithProgress[];
+  sprints: SprintView[];
 }
 export function getRoadmap(): Promise<PlanView> {
   return getJson<PlanView>("/roadmap");
@@ -134,10 +139,6 @@ export function listNeedsTriage(): Promise<NeedsTriageRow[]> {
 export function listAdrs(status?: string): Promise<AdrRow[]> {
   return getJson<{ adrs: AdrRow[] }>(`/adrs${status ? `?status=${encodeURIComponent(status)}` : ""}`).then((r) => r.adrs);
 }
-export function listMilestoneProposals(): Promise<MilestoneProposalRow[]> {
-  return getJson<{ proposals: MilestoneProposalRow[] }>("/milestone-proposals").then((r) => r.proposals);
-}
-
 export interface MeIdentity { provider: "github" | "google"; label: string; linked_at: string }
 export interface Me { handle: string; name: string | null; avatar_url: string | null; color: PersonColor; identities: MeIdentity[]; org: string; admin: boolean }
 export function getMe(): Promise<Me> {
@@ -245,11 +246,9 @@ export function promoteDoc(slug: string, version: number): Promise<{ ok: true }>
 export function ratifyAdr(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/adr/${id}/ratify`);
 }
-export function promoteMilestoneProposal(id: number): Promise<{ ok: true }> {
-  return postJson<{ ok: true }>(`/milestone-proposals/${id}/promote`);
-}
-export function completeMilestone(id: number): Promise<{ ok: true }> {
-  return postJson<{ ok: true }>(`/milestones/${id}/complete`);
+/** Admin confirmation: flip a live sprint to 'done'. Never inferred anywhere. */
+export function completeSprint(id: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/sprints/${id}/complete`);
 }
 
 // ── triage write-back (Phase 3): reject / discard / assign-materialize ─────────
@@ -259,13 +258,10 @@ export function rejectDoc(slug: string, version: number): Promise<{ ok: true }> 
 export function rejectAdr(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/adr/${id}/reject`);
 }
-export function rejectMilestoneProposal(id: number): Promise<{ ok: true }> {
-  return postJson<{ ok: true }>(`/milestone-proposals/${id}/reject`);
-}
 export function discardTriage(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/needs-triage/${id}/discard`);
 }
-export interface AssignTarget { type?: "doc" | "adr" | "milestone" | "feed"; section?: string; space?: "technical" | "product"; tags?: string[]; }
+export interface AssignTarget { type?: "doc" | "adr" | "feed"; section?: string; space?: "technical" | "product"; tags?: string[]; }
 export function assignTriage(id: number, target: AssignTarget): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/needs-triage/${id}/assign`, target);
 }
@@ -305,6 +301,78 @@ export function listNotificationOutbox(limit = 50): Promise<{ rows: Notification
   return getJson<{ rows: NotificationOutboxRow[] }>(`/api/notifications/outbox?limit=${limit}`);
 }
 
+// ── tickets (cookie-gated, NEVER MCP) ────────────────────────────────────────
+// Every write answers with `{ ok, ticket: TicketDetail }` — the server re-reads
+// the ticket so one round-trip repaints the screen. The queue list and the
+// detail fetch return the bare payloads (`{ tickets }` / TicketDetail).
+// The requester/actor is always the session principal; nothing here sends one.
+
+export interface TicketFilters {
+  seg?: TicketSeg;
+  assignee?: TicketAssigneeFilter;
+  /** "all" / absent = every category. */
+  category?: TicketCategory | "all";
+}
+export function listTickets(f: TicketFilters = {}): Promise<TicketListItem[]> {
+  const p = new URLSearchParams();
+  if (f.seg) p.set("seg", f.seg);
+  if (f.assignee) p.set("assignee", f.assignee);
+  if (f.category && f.category !== "all") p.set("category", f.category);
+  const qs = p.toString();
+  return getJson<{ tickets: TicketListItem[] }>(`/tickets${qs ? `?${qs}` : ""}`).then((r) => r.tickets);
+}
+export function getTicket(id: number): Promise<TicketDetail> {
+  return getJson<TicketDetail>(`/tickets/${id}`);
+}
+/** The sidebar badge: unassigned + open tickets, org-wide. */
+export function getTicketBadge(): Promise<number> {
+  return getJson<{ count: number }>("/tickets/badge").then((r) => r.count);
+}
+type TicketWrite = Promise<TicketDetail>;
+const ticketWrite = (path: string, body: unknown = {}): TicketWrite =>
+  postJson<{ ok: true; ticket: TicketDetail }>(path, body).then((r) => r.ticket);
+
+export function createTicket(body: TicketCreate): TicketWrite {
+  return ticketWrite("/tickets", body);
+}
+export function transitionTicket(id: number, to: TicketDetail["status"]): TicketWrite {
+  return ticketWrite(`/tickets/${id}/status`, { to });
+}
+export function toggleTicketAssignee(id: number, login: string, on: boolean): TicketWrite {
+  return ticketWrite(`/tickets/${id}/assignees`, { login, on });
+}
+export function addTicketLink(id: number, raw: string): TicketWrite {
+  return ticketWrite(`/tickets/${id}/links`, { raw });
+}
+export function setTicketSprint(id: number, sprintId: number | null): TicketWrite {
+  return ticketWrite(`/tickets/${id}/sprint`, { sprint_id: sprintId });
+}
+/** Nest `childId` under `parentId` — one level only; the route 409s otherwise. */
+export function setTicketParent(parentId: number, childId: number): TicketWrite {
+  return ticketWrite(`/tickets/${parentId}/parent`, { child_id: childId });
+}
+export function addTicketComment(id: number, body: string): TicketWrite {
+  return ticketWrite(`/tickets/${id}/comment`, { body });
+}
+
+// ── sprints (cookie-gated, NEVER MCP) ────────────────────────────────────────
+export function listSprints(): Promise<SprintView[]> {
+  return getJson<{ sprints: SprintView[] }>("/sprints").then((r) => r.sprints);
+}
+/** The sprint screen's payload — the bare detail (tickets + resources included). */
+export function getSprint(id: number): Promise<SprintDetail> {
+  return getJson<SprintDetail>(`/sprints/${id}`);
+}
+export function createSprint(body: SprintCreate): Promise<SprintView> {
+  return postJson<{ ok: true; sprint: SprintView }>("/sprints", body).then((r) => r.sprint);
+}
+export function setSprintActive(id: number, active: boolean): Promise<SprintView> {
+  return postJson<{ ok: true; sprint: SprintView }>(`/sprints/${id}/active`, { active }).then((r) => r.sprint);
+}
+export function addSprintResource(id: number, raw: string): Promise<SprintDetail> {
+  return postJson<{ ok: true; sprint: SprintDetail }>(`/sprints/${id}/resources`, { raw }).then((r) => r.sprint);
+}
+
 export function logout(): Promise<{ ok: true }> {
   return postJson<{ ok: true }>("/auth/logout");
 }
@@ -313,7 +381,9 @@ export function mintMcpToken(): Promise<{ token: string }> {
 }
 
 // Re-export the row types the UI renders, so screens import shapes from one place.
-export type { FeedRow, DocRow, DocVersionRow, MilestoneRow, AdrRow, NeedsTriageRow, MilestoneProposalRow };
+export type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow };
+export type { SprintView, SprintDetail, SprintCreate };
+export type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate };
 export type { DashboardData };
 export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow };
 export type { InviteRow, PersonColor };

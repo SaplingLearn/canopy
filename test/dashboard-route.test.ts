@@ -31,7 +31,7 @@ function mergedPrEvent(number: number, login: string, occurredAt: string): Captu
         merged_at: occurredAt,
         closed_at: occurredAt,
         user: { login },
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
@@ -56,7 +56,7 @@ function openIssueEvent(number: number, login: string, updatedAt: string): Captu
         user: { login },
         assignees: [{ login }],
         labels: ["bug"],
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
@@ -107,10 +107,35 @@ describe("GET /me/dashboard (session-gated)", () => {
       url: "https://github.com/o/r/issues/7",
     });
 
+    expect(body.tickets).toEqual([]); // no tickets assigned → the third list is present and empty
+
     // Revert guard: the old ROADMAP.md/focus dashboard shape is gone for good.
     expect(body).not.toHaveProperty("focus");
     expect(body).not.toHaveProperty("workingNow");
     expect(body).not.toHaveProperty("assignedIssues");
     expect(body).not.toHaveProperty("feed");
+  });
+
+  it("carries the third list — open tickets assigned to the principal, never in todo", async () => {
+    const cookie = await cookieFor("AndresL230");
+    await seedPerson("meilin", { name: "Meilin Zhao", github: false });
+    const created = await app.request("/tickets", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ title: "SSO login loops", body: "It bounces me back.", priority: "high", assignees: ["AndresL230"] }),
+    }, env);
+    expect(created.status).toBe(200);
+    // Someone else's ticket must not leak into my dashboard.
+    await app.request("/tickets", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ title: "Not mine", assignees: ["meilin"] }),
+    }, env);
+
+    const res = await app.request("/me/dashboard", { headers: { cookie } }, env);
+    const body = (await res.json()) as DashboardData;
+    expect(body.tickets.map((t) => t.title)).toEqual(["SSO login loops"]);
+    expect(body.tickets[0]).toMatchObject({ status: "submitted", priority: "high", requester: "AndresL230", sprint: null });
+    expect(body.todo).toEqual([]); // tickets are a SEPARATE list, never folded into todo
   });
 });

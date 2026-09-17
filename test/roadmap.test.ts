@@ -1,80 +1,41 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all, first } from "../src/db";
-import { IngestPayload } from "@shared/contract";
-import { ingestMilestoneProposal, consume } from "../src/consumer";
-import type { MilestoneProposalRow, MilestoneRow, NeedsTriageRow } from "@shared/rows";
-import { fetchMilestoneProgress, upsertProgress } from "../src/tools/progress";
+import { all, first, run, nowIso } from "../src/db";
+import type { SprintRow } from "@shared/rows";
+import { fetchGithubRefProgress, upsertProgress } from "../src/tools/progress";
 import { get_plan, write_plan } from "../src/tools/plan";
-import { promote_milestone_proposal, complete_milestone, stage_milestone_proposal } from "../src/tools/writes";
+import { complete_sprint } from "../src/tools/writes";
+import { create_ticket, transition_ticket } from "../src/tools/tickets";
+import type { TicketCreate } from "@shared/tickets";
 import { app } from "../src/routes";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildCanopyMcpServer } from "../src/mcp";
 import type { Env } from "../src/env";
-import { cookieFor } from "./helpers/persons";
+import { cookieFor, seedPerson } from "./helpers/persons";
 
-const sessionMeta = { id: "sess-roadmap", author: "x", ended_at: "2026-06-24T00:00:00Z", skill_version: "1.0" };
-
-describe("milestone proposal gate", () => {
-  it("stages a valid proposal; it is NOT a live milestone until promoted", async () => {
-    const r = await ingestMilestoneProposal(
-      env.DB,
-      { title: "GA", target_date: "2026-09-01", status: "in_progress", github_ref: [1, 2], change_summary: "kickoff", confidence: "high" },
-      "andres"
-    );
-    expect(r.outcome).toBe("written");
-
-    const staged = await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`);
-    expect(staged.length).toBe(1);
-    expect(staged[0].staged_status).toBe("staged");
-    expect(JSON.parse(staged[0].github_ref!)).toEqual([1, 2]);
-
-    const live = await all<MilestoneRow>(env.DB, `SELECT * FROM milestones`);
-    expect(live.length).toBe(0); // not live until the human promote route runs
-  });
-
-  it("routes a 'done'-status proposal to triage (completion is a human action)", async () => {
-    const r = await ingestMilestoneProposal(
-      env.DB,
-      { title: "Done?", target_date: "2026-09-01", status: "done", change_summary: "s", confidence: "high" },
-      "andres"
-    );
-    expect(r.outcome).toBe("triaged");
-    expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
-    const triage = await all<NeedsTriageRow>(env.DB, `SELECT * FROM needs_triage`);
-    expect(triage[0].reason).toContain("completion");
-  });
-
-  it("routes a low-confidence proposal to triage", async () => {
-    const r = await ingestMilestoneProposal(
-      env.DB,
-      { title: "Maybe", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "low" },
-      "andres"
-    );
-    expect(r.outcome).toBe("triaged");
-    expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
-  });
-
-  it("consume() no longer carries a milestone_proposals arm — zod strips it, nothing is staged", async () => {
-    // Task 9: milestone_proposals was retired from IngestPayload. A raw payload
-    // still carrying it parses fine (zod strips unknown keys) but stages nothing —
-    // the gate fn above (driven directly) is what triage-assign still relies on.
-    const rawPayload: unknown = {
-      session: sessionMeta,
-      milestone_proposals: [
-        { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" },
-      ],
-    };
-    const payload = IngestPayload.parse(rawPayload);
-    expect((payload as Record<string, unknown>).milestone_proposals).toBeUndefined();
-
-    await consume(env.DB, payload, { handle: "andres" });
-    expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
-  });
+/** A TicketCreate with the schema's defaults filled in (these tests bypass the route's parse). */
+const ticket = (o: Partial<TicketCreate> & { title: string }): TicketCreate => ({
+  body: "", category: "other", priority: "normal", assignees: [], ...o,
 });
 
-// A stub `fetch` returning canned GitHub issue/milestone JSON, keyed by URL.
+/** Insert a sprint straight into D1 (the shape a pre-0025 row had). */
+async function seedSprint(title: string, status: SprintRow["status"], targetDate = "2026-09-01"): Promise<number> {
+  const now = nowIso();
+  const res = await run(
+    env.DB,
+    `INSERT INTO sprints (title, target_date, status, created_at, created_by, updated_at) VALUES (?, ?, ?, ?, 'andres', ?)`,
+    title,
+    targetDate,
+    status,
+    now,
+    now
+  );
+  return res.meta.last_row_id as number;
+}
+
+// A stub `fetch` returning canned GitHub issue / issue-group JSON, keyed by URL.
+// (A bare github_ref IS the number of an issue GROUP on GitHub.)
 function stubFetch(map: Record<string, unknown>): typeof fetch {
   return (async (url: string | URL | Request) => {
     const u = String(url);
@@ -84,74 +45,53 @@ function stubFetch(map: Record<string, unknown>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-describe("fetchMilestoneProgress", () => {
+describe("fetchGithubRefProgress", () => {
   it("counts closed vs total across an issue-number array", async () => {
     const fetchImpl = stubFetch({ "/issues/1": { state: "closed" }, "/issues/2": { state: "open" } });
-    const p = await fetchMilestoneProgress({ token: "t", repo: "o/r", ref: "[1,2]", fetchImpl });
+    const p = await fetchGithubRefProgress({ token: "t", repo: "o/r", ref: "[1,2]", fetchImpl });
     expect(p).toEqual({ closed: 1, total: 2 });
   });
 
-  it("reads counts directly from a milestone object", async () => {
+  it("reads counts directly from a GitHub issue-group object", async () => {
+    // `/milestones/` is GitHub's own REST path — not Canopy vocabulary.
     const fetchImpl = stubFetch({ "/milestones/5": { open_issues: 3, closed_issues: 7, state: "open" } });
-    const p = await fetchMilestoneProgress({ token: "t", repo: "o/r", ref: "5", fetchImpl });
+    const p = await fetchGithubRefProgress({ token: "t", repo: "o/r", ref: "5", fetchImpl });
     expect(p).toEqual({ closed: 7, total: 10 });
   });
 
   it("falls back to null on a non-OK GitHub response (expired/revoked token), never throws", async () => {
     const fetchImpl = (async () => new Response("unauthorized", { status: 401 })) as unknown as typeof fetch;
-    const p = await fetchMilestoneProgress({ token: "stale", repo: "o/r", ref: "[1]", fetchImpl });
+    const p = await fetchGithubRefProgress({ token: "stale", repo: "o/r", ref: "[1]", fetchImpl });
     expect(p).toBeNull();
   });
 
   it("skips a missing issue (404) but keeps counting the resolvable ones", async () => {
     const fetchImpl = stubFetch({ "/issues/1": { state: "closed" }, "/issues/3": { state: "open" } }); // issue 2 → 404
-    const p = await fetchMilestoneProgress({ token: "t", repo: "o/r", ref: "[1,2,3]", fetchImpl });
+    const p = await fetchGithubRefProgress({ token: "t", repo: "o/r", ref: "[1,2,3]", fetchImpl });
     expect(p).toEqual({ closed: 1, total: 2 });
   });
 });
 
-describe("promote_milestone_proposal + complete_milestone", () => {
-  it("promotes a staged proposal into a live milestone (and not before)", async () => {
-    const pid = await stage_milestone_proposal(
-      env.DB,
-      { title: "GA", target_date: "2026-09-01", status: "in_progress", github_ref: [1, 2], change_summary: "s", confidence: "high" },
-      "andres"
-    );
-    expect(await all<MilestoneRow>(env.DB, `SELECT * FROM milestones`)).toHaveLength(0);
-
-    const m = await promote_milestone_proposal(env.DB, pid, "andres");
-    expect(m.status).toBe("in_progress");
-    expect(m.title).toBe("GA");
-
-    const proposal = await first<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals WHERE id = ?`, pid);
-    expect(proposal?.staged_status).toBe("promoted");
-    await expect(promote_milestone_proposal(env.DB, pid, "andres")).rejects.toThrow(); // no double-promote
-  });
-
-  it("complete_milestone flips a live milestone to 'done'; rejects missing/already-done", async () => {
-    const pid = await stage_milestone_proposal(
-      env.DB,
-      { title: "GA", target_date: "2026-09-01", status: "in_progress", change_summary: "s", confidence: "high" },
-      "andres"
-    );
-    const m = await promote_milestone_proposal(env.DB, pid, "andres");
-    const done = await complete_milestone(env.DB, m.id);
+describe("complete_sprint", () => {
+  it("flips a live sprint to 'done'; rejects missing/already-done", async () => {
+    const id = await seedSprint("GA", "in_progress");
+    const done = await complete_sprint(env.DB, id);
     expect(done.status).toBe("done");
-    const row = await first<MilestoneRow>(env.DB, `SELECT * FROM milestones WHERE id = ?`, m.id);
+    const row = await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, id);
     expect(row?.status).toBe("done");
-    await expect(complete_milestone(env.DB, m.id)).rejects.toThrow();   // already done
-    await expect(complete_milestone(env.DB, 9999)).rejects.toThrow();   // missing
+    await expect(complete_sprint(env.DB, id)).rejects.toThrow();     // already done
+    await expect(complete_sprint(env.DB, 9999)).rejects.toThrow();   // missing
   });
 });
 
 describe("roadmap HTTP routes (session-gated)", () => {
-  it("GET /roadmap reads the plan store — narrative + milestones + cached progress, no live GitHub — and 401s without a session", async () => {
-    const { milestones } = await write_plan(
+  it("GET /roadmap reads the plan store — narrative + sprints + progress, no live GitHub — and 401s without a session", async () => {
+    const { sprints } = await write_plan(
       env.DB,
-      { narrative: "Q3 push", milestones: [{ title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: 3 }] },
+      { narrative: "Q3 push", sprints: [{ label: "GA", due: "2026-09-01", status: "upcoming", github_ref: 3 }] },
       "andres"
     );
-    await upsertProgress(env.DB, milestones[0].id, 4, 6, "event");
+    await upsertProgress(env.DB, sprints[0].id, 4, 6, "event");
 
     const unauth = await app.request("/roadmap", {}, env);
     expect(unauth.status).toBe(401);
@@ -160,36 +100,93 @@ describe("roadmap HTTP routes (session-gated)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Awaited<ReturnType<typeof get_plan>>;
     expect(body.narrative).toBe("Q3 push");
-    expect(body.milestones).toHaveLength(1);
-    expect(body.milestones[0].title).toBe("GA");
-    expect(body.milestones[0].progress).toEqual({ closed: 4, total: 6, computed_at: expect.any(String) });
+    expect(body.sprints).toHaveLength(1);
+    expect(body.sprints[0].label).toBe("GA");
+    expect(body.sprints[0].due).toBe("2026-09-01");
+    expect(body.sprints[0].active).toBe(false);
+    // No tickets in the sprint → the bar is 0/0; the 4/6 cache lands on `issues`.
+    expect(body.sprints[0].progress).toEqual({ closed: 0, total: 0, pct: 0 });
+    expect(body.sprints[0].issues).toEqual({ closed: 4, total: 6 });
   });
 
-  it("POST /milestones/:id/complete flips status for an authenticated principal", async () => {
-    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "in_progress", change_summary: "s", confidence: "high" }, "andres");
-    const m = await promote_milestone_proposal(env.DB, pid, "andres");
-    const res = await app.request(`/milestones/${m.id}/complete`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
+  it("GET /roadmap sorts by due date with an UNSCHEDULED sprint LAST, not first", async () => {
+    // `POST /sprints` (the New sprint panel) makes `target_date = ''` the default,
+    // so the blank is the COMMON shape now. '' sorts first lexicographically, which
+    // would put every undated sprint at the top of the roadmap; SPRINT_ORDER pins
+    // them last. This is the one assertion over the route that catches a drift.
+    await seedSprint("Unscheduled", "upcoming", "");
+    await seedSprint("Later", "upcoming", "2026-12-01");
+    await seedSprint("Sooner", "upcoming", "2026-10-01");
+
+    const res = await app.request("/roadmap", { headers: { cookie: await cookieFor("andres") } }, env);
     expect(res.status).toBe(200);
-    const row = await first<MilestoneRow>(env.DB, `SELECT * FROM milestones WHERE id = ?`, m.id);
+    const body = (await res.json()) as Awaited<ReturnType<typeof get_plan>>;
+    expect(body.sprints.map((s) => s.label)).toEqual(["Sooner", "Later", "Unscheduled"]);
+    expect(body.sprints[2].due).toBeNull();     // '' surfaces as due: null
+  });
+
+  it("POST /sprints/:id/complete flips status for an authenticated principal", async () => {
+    const id = await seedSprint("GA", "in_progress");
+    const res = await app.request(`/sprints/${id}/complete`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: true; sprint: SprintRow };
+    expect(body.sprint.status).toBe("done");
+    const row = await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, id);
     expect(row?.status).toBe("done");
   });
 
-  it("POST /milestone-proposals/:id/promote materializes a live milestone", async () => {
-    const pid = await stage_milestone_proposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" }, "andres");
-    const res = await app.request(`/milestone-proposals/${pid}/promote`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
+  it("POST /sprints/:id/complete 401s without a session and leaves the sprint alone", async () => {
+    const id = await seedSprint("GA", "in_progress");
+    const res = await app.request(`/sprints/${id}/complete`, { method: "POST" }, env);
+    expect(res.status).toBe(401);
+    const row = await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, id);
+    expect(row?.status).toBe("in_progress");
+  });
+
+  it("POST /sprints/:id/complete 400s on an unknown sprint", async () => {
+    const res = await app.request(`/sprints/9999/complete`, { method: "POST", headers: { cookie: await cookieFor("andres") } }, env);
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toContain("no such sprint");
+  });
+
+  it("GET /roadmap renders a LEGACY-shaped row (title/target_date/status, never touched by the plan write) with its active flag, TICKETS-ONLY progress and separate issues", async () => {
+    const cookie = await cookieFor("andres");
+    await seedPerson("beatrix");
+    // The pre-0025 row shape: no summary/dates/urgency/lead/domain, no
+    // plan_versions entry — exactly what a migrated row looks like.
+    const id = await seedSprint("Legacy row", "in_progress", "2026-09-01");
+    await upsertProgress(env.DB, id, 2, 3, "event");          // the GitHub half (cache)
+    const a = await create_ticket(env.DB, ticket({ title: "shipped", sprint_id: id, assignees: ["beatrix"] }), "andres");
+    await create_ticket(env.DB, ticket({ title: "still open", sprint_id: id }), "andres");
+    await transition_ticket(env.DB, a, "in_progress", "andres");
+    await transition_ticket(env.DB, a, "done", "andres");
+
+    const res = await app.request("/roadmap", { headers: { cookie } }, env);
     expect(res.status).toBe(200);
-    expect(await all<MilestoneRow>(env.DB, `SELECT * FROM milestones`)).toHaveLength(1);
+    const body = (await res.json()) as Awaited<ReturnType<typeof get_plan>>;
+    const sp = body.sprints.find((s) => s.id === id)!;
+    expect(sp.label).toBe("Legacy row");        // title → label
+    expect(sp.due).toBe("2026-09-01");          // target_date → due
+    expect(sp.active).toBe(true);               // status in_progress → active
+    // 1 of 2 TICKETS done. The 2/3 issue cache stays on its own field — the old
+    // combined number was 3/5, which this assertion now pins against.
+    expect(sp.progress).toEqual({ closed: 1, total: 2, pct: 50 });
+    expect(sp.issues).toEqual({ closed: 2, total: 3 });
+    expect(sp.members).toEqual(["beatrix"]);
+    // The 0025 columns are simply null on a legacy row — nothing throws.
+    expect(sp.summary).toBeNull();
+    expect(sp.urgency).toBe("normal");
   });
 });
 
 describe("registered MCP get_roadmap tool", () => {
   it("returns the same PlanView shape as GET /roadmap — the plan store, no token plumbing", async () => {
-    const { milestones } = await write_plan(
+    const { sprints } = await write_plan(
       env.DB,
-      { narrative: "MCP view", milestones: [{ title: "GA", target_date: "2026-09-01", status: "upcoming", github_ref: 3 }] },
+      { narrative: "MCP view", sprints: [{ label: "GA", due: "2026-09-01", status: "in_progress", github_ref: 3 }] },
       "andres"
     );
-    await upsertProgress(env.DB, milestones[0].id, 4, 6, "event");
+    await upsertProgress(env.DB, sprints[0].id, 4, 6, "event");
 
     const server = buildCanopyMcpServer(env as unknown as Env, { handle: "andres" });
     const client = new Client({ name: "test", version: "1.0.0" });
@@ -204,9 +201,64 @@ describe("registered MCP get_roadmap tool", () => {
       expect(res.isError).toBeFalsy();
       const body = JSON.parse(res.content[0].text) as Awaited<ReturnType<typeof get_plan>>;
       expect(body.narrative).toBe("MCP view");
-      expect(body.milestones).toHaveLength(1);
-      expect(body.milestones[0].title).toBe("GA");
-      expect(body.milestones[0].progress).toEqual({ closed: 4, total: 6, computed_at: expect.any(String) });
+      expect(body.sprints).toHaveLength(1);
+      expect(body.sprints[0].label).toBe("GA");
+      expect(body.sprints[0].active).toBe(true);
+      expect(body.sprints[0].progress).toEqual({ closed: 0, total: 0, pct: 0 });
+      expect(body.sprints[0].issues).toEqual({ closed: 4, total: 6 });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("counts ONLY the sprint's TICKETS into progress, reports issues separately, and lists its members, on a legacy-shaped row", async () => {
+    await seedPerson("andres");
+    await seedPerson("beatrix");
+    const id = await seedSprint("Legacy row", "in_progress", "2026-09-01");
+    await upsertProgress(env.DB, id, 2, 3, "event");
+    const a = await create_ticket(env.DB, ticket({ title: "shipped", sprint_id: id, assignees: ["beatrix"] }), "andres");
+    await create_ticket(env.DB, ticket({ title: "still open", sprint_id: id }), "andres");
+    await transition_ticket(env.DB, a, "in_progress", "andres");
+    await transition_ticket(env.DB, a, "done", "andres");
+
+    const server = buildCanopyMcpServer(env as unknown as Env, { handle: "andres" });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const res = (await client.callTool({ name: "get_roadmap", arguments: {} })) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+      expect(res.isError).toBeFalsy();
+      const body = JSON.parse(res.content[0].text) as Awaited<ReturnType<typeof get_plan>>;
+      const sp = body.sprints.find((s) => s.id === id)!;
+      expect(sp.active).toBe(true);
+      // Tickets only: 1 of 2. The 2/3 cache is the `issues` field, not the bar
+      // (the old combined number was 3/5).
+      expect(sp.progress).toEqual({ closed: 1, total: 2, pct: 50 });
+      expect(sp.issues).toEqual({ closed: 2, total: 3 });
+      expect(sp.members).toEqual(["beatrix"]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("MCP registers NO sprint write tool — sprint writes are cookie routes only", async () => {
+    const server = buildCanopyMcpServer(env as unknown as Env, { handle: "andres" });
+    const client = new Client({ name: "test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      for (const banned of ["complete_sprint", "create_sprint", "set_sprint_active", "promote_sprint", "propose_sprint"]) {
+        expect(names).not.toContain(banned);
+      }
+      expect(await all(env.DB, `SELECT * FROM sprints`)).toHaveLength(0);
     } finally {
       await client.close();
       await server.close();

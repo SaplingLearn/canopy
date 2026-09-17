@@ -37,14 +37,16 @@ describe("identity_tasks schema (0016)", () => {
       env.DB,
       `INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('github', 'leaky-login', 'leaky-login', 'AndresL230', '2026-01-01T00:00:00Z', 'test')`
     );
-    expect((await all<IdentityRow>(env.DB, `SELECT * FROM identities`)).length).toBe(5);
+    expect((await all<IdentityRow>(env.DB, `SELECT * FROM identities`)).length).toBe(7); // 6 seeded + the leak
   });
 
   it("beforeEach resets identities back to exactly the dev/test seed", async () => {
     const identities = await all<IdentityRow>(env.DB, `SELECT * FROM identities ORDER BY subject`);
-    expect(identities.length).toBe(4);
+    // Four github identities (the engineers) + two google ones (the non-engineer
+    // requesters seeded for the ticket queue) = the whole dev/test seed.
+    expect(identities.length).toBe(6);
     expect(identities.map((i) => i.subject).sort()).toEqual(
-      ["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "lpcooper-arch"].sort()
+      ["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "google-sub-meilin", "google-sub-sanaok", "lpcooper-arch"].sort()
     );
     expect(await first<IdentityRow>(env.DB, `SELECT * FROM identities WHERE subject = 'leaky-login'`)).toBeNull();
   });

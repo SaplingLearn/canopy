@@ -86,9 +86,13 @@ describe("updateProfile / listPersons", () => {
     expect(after?.created_at).toBe(before?.created_at);
     expect(await updateProfile(env.DB, "nobody", { color: "moss" })).toBeNull();
   });
-  it("listPersons returns the seeded four, handle-sorted, with color", async () => {
+  it("listPersons returns the whole seeded directory, handle-sorted, with color", async () => {
+    // Six since the tickets build: the four engineers plus the two Google-only
+    // non-engineer requesters (meilin / sanaok) the queue is filed by.
     const rows = await listPersons(env.DB);
-    expect(rows.map((r) => r.handle)).toEqual(["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "lpcooper-arch"]);
+    expect(rows.map((r) => r.handle)).toEqual(
+      ["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "lpcooper-arch", "meilin", "sanaok"]
+    );
     expect(rows[0].color).toBe("moss");
   });
 });

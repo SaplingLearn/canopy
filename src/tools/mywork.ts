@@ -1,4 +1,4 @@
-import type { DashboardData, MyWorkPr, MyWorkTodo } from "@shared/dashboard";
+import type { DashboardData, MyWorkPr, MyWorkTodo, MyWorkTicket } from "@shared/dashboard";
 import type { EventRow, PersonRow } from "@shared/rows";
 import { type DB, all, first } from "../db";
 import { getPerson, listIdentities } from "../auth/persons";
@@ -14,8 +14,9 @@ export type MyWork = DashboardData;
 
 const PR_LIMIT = 6;
 const TODO_LIMIT = 6;
+const TICKET_LIMIT = 6;
 
-const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], degraded });
+const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: [], todo: [], tickets: [], degraded });
 
 // Priority is parsed from a leading "[P0]"–"[P3]" tag on the issue title; the
 // tag is stripped from the displayed title.
@@ -53,8 +54,31 @@ interface RawIssue {
     updated_at: string;
     assignees: { login: string }[];
     labels: string[];
-    milestone?: { title?: string | null; due_on?: string | null } | null;
+    // GitHub's own key — not Canopy vocabulary. The group an issue belongs to on
+    // GitHub; Canopy resolves its `number` to a SPRINT below.
+    milestone?: { number?: number | null; title?: string | null; due_on?: string | null } | null;
   };
+}
+
+/**
+ * GitHub group number → the sprint that claims it, in ONE query. A sprint's
+ * `github_ref` is JSON: a bare number IS a GitHub group number (the array form
+ * is a list of issue numbers and claims no group). First sprint wins if two
+ * claim the same number; a malformed ref claims nothing.
+ */
+async function sprintTitlesByGroupNumber(db: DB): Promise<Map<number, string>> {
+  const rows = await all<{ title: string; github_ref: string }>(
+    db,
+    `SELECT title, github_ref FROM sprints WHERE github_ref IS NOT NULL ORDER BY id ASC`
+  );
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    try {
+      const parsed = JSON.parse(r.github_ref) as unknown;
+      if (typeof parsed === "number" && !out.has(parsed)) out.set(parsed, r.title);
+    } catch { /* malformed ref → claims nothing */ }
+  }
+  return out;
 }
 
 interface IssueSnapshotRow {
@@ -102,13 +126,15 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
      WHERE e.rn = 1
      ORDER BY e.ref_number ASC`
   );
+  const sprintByGroup = await sprintTitlesByGroupNumber(db);
   const todo: MyWorkTodo[] = [];
   for (const row of issueRows) {
     const parsed = JSON.parse(row.raw) as RawIssue;
     const issue = parsed.issue;
     if (issue.state !== "open") continue;
     if (!issue.assignees.some((a) => logins.includes(a.login))) continue;
-    const m = issue.milestone;
+    const group = issue.milestone; // GitHub's own key — not Canopy vocabulary
+    const claimed = typeof group?.number === "number" ? sprintByGroup.get(group.number) ?? null : null;
     todo.push({
       number: issue.number,
       title: stripPriority(issue.title),
@@ -118,8 +144,14 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
       updatedAt: issue.updated_at,
       summary: row.summary,
       displayTitle: row.s_title,
-      // legacy raws captured before 0018 lack a milestone title — hide the row.
-      milestone: m?.title ? { title: m.title, dueOn: m.due_on ?? null } : null,
+      // The SPRINT whose github_ref claims this issue's GitHub group number;
+      // when none does, the GitHub group's own title stands in. Legacy raws
+      // captured before 0018 carry neither — the row is hidden.
+      sprint: claimed
+        ? { title: claimed, dueOn: group?.due_on ?? null }
+        : group?.title
+        ? { title: group.title, dueOn: group.due_on ?? null }
+        : null,
       nextStep: row.s_next_step,
     });
   }
@@ -129,13 +161,66 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
   return todo;
 }
 
+interface AssignedTicketRow {
+  id: number;
+  title: string;
+  body: string;
+  category: MyWorkTicket["category"];
+  priority: MyWorkTicket["priority"];
+  status: MyWorkTicket["status"];
+  requester: string;
+  sprint_id: number | null;
+  sprint_label: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The OPEN tickets `handle` is an assignee of, most recently updated first.
+ * D1-only, one query (the sprint label joins in) — the queue is org-scale but a
+ * person's own assignments are not. `ticket_assignees.login` holds a person
+ * HANDLE (§C.2), so this is keyed on the handle directly, NOT on a GitHub login:
+ * a Google-only person (no `identities` row at all) still sees their tickets.
+ * The comparison is `COLLATE NOCASE`, matching `persons.handle`'s collation and
+ * `getPerson` — a caller spelling the handle in another case must not be told
+ * "nothing assigned to you" while holding half the queue.
+ * Closed tickets (`done` / `declined`) never appear — My Work is what is open.
+ */
+export async function listAssignedTickets(db: DB, handle: string, limit = TICKET_LIMIT): Promise<MyWorkTicket[]> {
+  const rows = await all<AssignedTicketRow>(
+    db,
+    `SELECT t.id, t.title, t.body, t.category, t.priority, t.status, t.requester,
+            t.sprint_id, s.title AS sprint_label, t.created_at, t.updated_at
+       FROM tickets t
+       JOIN ticket_assignees a ON a.ticket_id = t.id AND a.login = ? COLLATE NOCASE
+       LEFT JOIN sprints s ON s.id = t.sprint_id
+      WHERE t.status IN ('submitted', 'in_progress')
+      ORDER BY t.updated_at DESC, t.id DESC
+      LIMIT ${Math.trunc(limit)}`,
+    handle
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    body: r.body,
+    category: r.category,
+    priority: r.priority,
+    status: r.status,
+    requester: r.requester,
+    sprint: r.sprint_id !== null && r.sprint_label !== null ? { id: r.sprint_id, label: r.sprint_label } : null,
+    updatedAt: r.updated_at,
+    createdAt: r.created_at,
+  }));
+}
+
 /**
  * The personal My Work projection for `handle` (a person handle). person comes
  * from `persons` directly; an unmapped/unknown handle is a captured-but-
  * unsurfaced no-op (empty projection, degraded:false — the events themselves
  * are never dropped). The GitHub logins to query are every `identities` row
  * for the person — usually just the one login that IS their handle. A person
- * with no GitHub identity at all (e.g. Google-only) surfaces with empty lists.
+ * with no GitHub identity at all (e.g. Google-only) surfaces with empty EVENT
+ * lists but still gets their assigned tickets (those key on the handle).
  * Any D1 failure degrades the whole projection to empty with degraded:true
  * rather than throwing.
  */
@@ -144,8 +229,13 @@ export async function getMyWork(db: DB, handle: string): Promise<MyWork> {
     const me = await getPerson(db, handle);
     if (!me) return EMPTY(false);
 
+    // Tickets are keyed on the person HANDLE, not on a GitHub login, so they are
+    // read BEFORE the identity fork: a Google-only person (no github identity)
+    // has no PRs and no assigned issues but can still own half the queue.
+    const tickets = await listAssignedTickets(db, me.handle);
+
     const logins = (await listIdentities(db, handle)).filter((i) => i.provider === "github").map((i) => i.subject);
-    if (logins.length === 0) return { person: me.name ?? me.handle, previousActivity: [], todo: [], degraded: false };
+    if (logins.length === 0) return { person: me.name ?? me.handle, previousActivity: [], todo: [], tickets, degraded: false };
 
     const prRows = await all<PrEventJoinRow>(
       db,
@@ -161,7 +251,7 @@ export async function getMyWork(db: DB, handle: string): Promise<MyWork> {
     const previousActivity: MyWorkPr[] = prRows.map(toMyWorkPr);
     const todo = await listOpenAssignedIssues(db, logins);
 
-    return { person: me.name ?? me.handle, previousActivity, todo: todo.slice(0, TODO_LIMIT), degraded: false };
+    return { person: me.name ?? me.handle, previousActivity, todo: todo.slice(0, TODO_LIMIT), tickets, degraded: false };
   } catch {
     return EMPTY(true);
   }

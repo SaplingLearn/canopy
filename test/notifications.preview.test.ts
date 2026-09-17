@@ -57,6 +57,12 @@ describe("GET /api/notifications/preview", () => {
     expect(html).toContain("My Work");
     expect(html).toContain("Review queue");
     expect(html).toContain("Roadmap plan changes");
+    // …one canned section per registry kind, ticketq included, so the preview
+    // shows the whole digest rather than three quarters of it.
+    expect(html).toContain("Ticket queue");
+    expect(html).toContain("UNASSIGNED");
+    expect(html).toContain("ASSIGNED TO YOU");
+    expect(html).toContain("Gradebook export comes back empty");
     expect(html).toContain("sample");
   });
 

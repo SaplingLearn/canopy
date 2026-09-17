@@ -43,15 +43,6 @@ export const TriageItem = z.object({
   reason: z.string(),
 });
 
-export const MilestoneProposal = z.object({
-  title: z.string(),
-  target_date: z.string(),
-  status: z.enum(["upcoming", "in_progress", "done"]),
-  github_ref: z.union([z.number(), z.array(z.number())]).optional(),
-  change_summary: z.string(),
-  confidence: z.enum(["high", "low"]),
-});
-
 // A captured GitHub event (webhook/backfill). subject_login is who the event is
 // ABOUT — a second identity, distinct from the writer principal — and is trusted
 // only because the webhook branch verified the delivery's HMAC before the gate.
@@ -71,7 +62,9 @@ export const CapturedEvent = z.object({
 // envelope does not change when that happens.
 export const QueryRequest = z.object({
   q: z.string().default(""),
-  types: z.array(z.enum(["doc", "decision", "feed", "milestone"])).optional(), // default all
+  // NOTE: no "ticket" — tickets_fts exists but tickets are NOT in the /search
+  // fan-out; the Tickets screen is their surface.
+  types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(), // default all
   section: z.string().optional(),
   space: z.enum(["technical", "product"]).optional(),
   include_staged: z.boolean().optional(), // caller sets the default (MCP true, HTTP false)
@@ -82,7 +75,7 @@ export const QueryRequest = z.object({
 export const Authority = z.enum(["live", "staged_pending", "unpromoted", "draft"]);
 
 export const QueryPrimary = z.object({
-  type: z.enum(["doc", "decision", "feed", "milestone"]),
+  type: z.enum(["doc", "decision", "feed", "sprint"]),
   id: z.string(),
   title: z.string(),
   section: z.string().nullable(),
@@ -99,7 +92,7 @@ export const QueryPrimary = z.object({
 });
 
 export const QueryPointer = z.object({
-  type: z.enum(["doc", "decision", "feed", "milestone"]),
+  type: z.enum(["doc", "decision", "feed", "sprint"]),
   id: z.string(),
   title: z.string(),
   snippet: z.string(),
@@ -126,7 +119,6 @@ export type FeedEntry = z.infer<typeof FeedEntry>;
 export type DocProposal = z.infer<typeof DocProposal>;
 export type AdrDraft = z.infer<typeof AdrDraft>;
 export type TriageItem = z.infer<typeof TriageItem>;
-export type MilestoneProposal = z.infer<typeof MilestoneProposal>;
 export type CapturedEvent = z.infer<typeof CapturedEvent>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
 export type QueryRequest = z.infer<typeof QueryRequest>;

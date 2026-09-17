@@ -36,6 +36,7 @@ function openIssue(number: number, login: string): CapturedEvent {
   const updatedAt = "2026-09-10T15:00:00Z";
   return {
     semantic_key: `gh:issue:${number}:assigned:${updatedAt}`, event_type: "issue", ref_number: number, subject_login: login, provenance: "webhook", occurred_at: updatedAt,
+    // GitHub's own key — not Canopy vocabulary (a payload literal).
     raw: JSON.stringify({ action: "assigned", issue: { number, title: `Issue ${number}`, html_url: `https://github.com/o/r/issues/${number}`, state: "open", updated_at: updatedAt, user: { login }, assignees: [{ login }], labels: [], milestone: null } }),
   };
 }

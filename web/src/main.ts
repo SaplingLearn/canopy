@@ -7,7 +7,7 @@ import "./canopy.css";
 import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
-  completeMilestone,
+  completeSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill,
@@ -15,10 +15,21 @@ import {
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
+  listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
+  addTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
+  getSprint, createSprint, setSprintActive, addSprintResource,
+  type TicketDetail,
   Unauthorized, NotFound, ApiError,
 } from "./api";
+import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
+import { parseHash, hashForRoute, type Route } from "./hash";
+import {
+  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUS_LABEL, TICKET_STATUSES,
+  type TicketCategory, type TicketPriority, type TicketStatus,
+} from "@shared/tickets-core";
 import { decodeReviewId } from "./triage-map";
 import { initialOnboard } from "./people";
+import { mentionTokenAt, mentionCandidates, applyMention, caretLine, COMMENT_BOX } from "./mentions";
 import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
 
@@ -50,7 +61,9 @@ function rerender(): void {
   const field = active?.getAttribute?.("data-field") ?? null;
   let selStart = 0;
   let selEnd = 0;
-  if (field && active instanceof HTMLInputElement) {
+  // Textareas carry a caret too (the new-ticket description, the comment box),
+  // so they are captured/restored exactly like inputs.
+  if (field && (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
     selStart = active.selectionStart ?? 0;
     selEnd = active.selectionEnd ?? 0;
   }
@@ -60,7 +73,7 @@ function rerender(): void {
   mount.innerHTML = render(state);
   restoreScroll(mount, scroll, state.screen);
   if (field) {
-    const el = mount.querySelector<HTMLInputElement>(`[data-field="${field}"]`);
+    const el = mount.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-field="${field}"]`);
     if (el) {
       el.focus();
       try { el.setSelectionRange(selStart, selEnd); } catch { /* non-text input */ }
@@ -80,9 +93,10 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
-  // Reflect the current screen in the URL hash so a reload restores it.
+  // Reflect the current route in the URL hash so a reload restores it. The ticket
+  // and sprint screens carry an id, so this is hashForRoute, not `#${screen}`.
   if (state.view === "app") {
-    const want = `#${state.screen}`;
+    const want = hashForRoute(currentRoute());
     if (location.hash !== want) history.replaceState(null, "", want);
   }
 }
@@ -90,8 +104,11 @@ function rerender(): void {
 // Back/forward or a manually edited hash → switch screens.
 window.addEventListener("hashchange", () => {
   if (state.view !== "app") return;
-  const s = screenFromHash();
-  if (s !== state.screen) { state.screen = s; loadForScreen(s); }
+  const r = parseHash(location.hash);
+  const cur = currentRoute();
+  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId) return;
+  applyRoute(r);
+  loadForScreen(r.screen);
 });
 
 // Minimal CSS.escape shim for id selectors (heading ids are already slug-safe).
@@ -148,11 +165,17 @@ function persist(key: string, value: string): void {
 }
 
 // ── screen ↔ URL hash (so a reload stays on the current page) ─────────────────
-const SCREENS: Screen[] = ["mywork", "feed", "docs", "roadmap", "review", "maintenance", "search", "settings", "guide", "unsubscribe"];
-function screenFromHash(): Screen {
-  const h = location.hash.replace(/^#/, "") as Screen;
-  return SCREENS.includes(h) ? h : "mywork";
+// Parsing/serializing lives in ./hash as pure functions (unit-tested); this
+// module is the only one that touches `location`.
+function currentRoute(): Route {
+  return { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
 }
+function applyRoute(r: Route): void {
+  state.screen = r.screen;
+  state.ticketId = r.ticketId;
+  state.sprintId = r.sprintId;
+}
+
 // Kick off the data load for a screen (mirrors the go* dispatch cases).
 function loadForScreen(screen: Screen): void {
   switch (screen) {
@@ -165,6 +188,20 @@ function loadForScreen(screen: Screen): void {
     case "mywork": loadMyWorkIfNeeded(); break;
     case "settings": loadNotifPrefsIfNeeded(); break;
     case "unsubscribe": runUnsubscribe(); break;
+    // The queue's sprint group headers and the form/rail menus all read `sprints`.
+    case "tickets": loadSprintsIfNeeded(); loadTicketsIfNeeded(); break;
+    case "newticket": loadSprintsIfNeeded(); rerender(); break;
+    case "ticketdetail":
+      loadSprintsIfNeeded();
+      loadTicketsIfNeeded();                       // the sub-ticket candidate list
+      if (state.ticketId !== null) loadTicketDetail(state.ticketId);
+      else rerender();
+      break;
+    case "sprint":
+      loadSprintsIfNeeded();
+      if (state.sprintId !== null) loadSprintDetail(state.sprintId);
+      else rerender();
+      break;
     default: rerender(); break; // guide — no data load
   }
 }
@@ -435,7 +472,7 @@ function loadRoadmap(): void {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
       state.roadmap = {
         status: "error",
-        data: { narrative: "", version: 0, updated_at: null, updated_by: null, milestones: [] },
+        data: { narrative: "", version: 0, updated_at: null, updated_by: null, sprints: [] },
         error: e instanceof Error ? e.message : String(e),
       };
       rerender();
@@ -525,6 +562,134 @@ function loadIdentityTasks(): void {
 function loadIdentityTasksIfNeeded(): void {
   if (state.identityTasks.status === "idle" || state.identityTasks.status === "error") loadIdentityTasks();
   else rerender();
+}
+
+// ── tickets + sprints ────────────────────────────────────────────────────────
+// The queue list is server-filtered, so every filter change refetches. Writes
+// refetch it too (never locally patch a row — the server is the shape of truth),
+// hence the seq guard: a slow earlier response must not overwrite a fresher one.
+let ticketsSeq = 0;
+function loadTickets(): void {
+  const seq = ++ticketsSeq;
+  state.tickets = { status: "loading", data: state.tickets.data };
+  rerender();
+  listTickets({ seg: state.qSeg, assignee: state.qAssignee, category: state.qCategory })
+    .then((rows) => { if (seq !== ticketsSeq) return; state.tickets = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== ticketsSeq) return;
+      state.tickets = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadTicketsIfNeeded(): void {
+  if (state.tickets.status === "idle" || state.tickets.status === "error") loadTickets();
+  else rerender();
+}
+
+let ticketDetailSeq = 0;
+function loadTicketDetail(id: number): void {
+  const seq = ++ticketDetailSeq;
+  // Keep the current ticket on screen while it refreshes; clear it when opening a different one.
+  const keep = state.ticketDetail.data?.id === id ? state.ticketDetail.data : null;
+  state.ticketDetail = { status: "loading", data: keep };
+  rerender();
+  getTicket(id)
+    .then((t) => { if (seq !== ticketDetailSeq) return; state.ticketDetail = { status: "ok", data: t }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      if (seq !== ticketDetailSeq) return;
+      // A deleted/unknown id is "no such ticket", not a failure to load.
+      if (e instanceof ApiError && e.status === 404) { state.ticketDetail = { status: "ok", data: null }; rerender(); return; }
+      state.ticketDetail = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+/** The sidebar badge — loaded at boot (it shows on EVERY screen) and after every
+ *  ticket write. A failure leaves the previous count rather than flashing 0. */
+function loadTicketBadge(): void {
+  getTicketBadge()
+    .then((count) => { state.ticketBadge = count; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) unauth(e); });
+}
+
+let sprintsSeq = 0;
+function loadSprints(): void {
+  const seq = ++sprintsSeq;
+  state.sprints = { status: "loading", data: state.sprints.data };
+  listSprints()
+    .then((rows) => { if (seq !== sprintsSeq) return; state.sprints = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== sprintsSeq) return;
+      state.sprints = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+/** Unlike the other IfNeeded loaders this one never rerenders on a hit — its
+ *  callers are already rerendering for their own screen. */
+function loadSprintsIfNeeded(): void {
+  if (state.sprints.status === "idle" || state.sprints.status === "error") loadSprints();
+}
+
+let sprintDetailSeq = 0;
+function loadSprintDetail(id: number): void {
+  const seq = ++sprintDetailSeq;
+  // Keep the sprint on screen while it refreshes; clear it when opening another.
+  const keep = state.sprintDetail.data?.id === id ? state.sprintDetail.data : null;
+  state.sprintDetail = { status: "loading", data: keep };
+  rerender();
+  getSprint(id)
+    .then((sp) => { if (seq !== sprintDetailSeq) return; state.sprintDetail = { status: "ok", data: sp }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== sprintDetailSeq) return;
+      // A deleted/unknown id is "no such sprint", not a failure to load.
+      if (e instanceof ApiError && e.status === 404) { state.sprintDetail = { status: "ok", data: null }; rerender(); return; }
+      state.sprintDetail = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+
+function sprintErr(e: unknown): void {
+  if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+  flash(e instanceof ApiError ? e.message : "Could not update the sprint");
+}
+
+/** Display name (first name only where the design shows one) for a stored handle. */
+function personName(handle: string): string {
+  return state.persons.data.find((p) => p.handle.toLowerCase() === handle.toLowerCase())?.name || handle;
+}
+const personFirstName = (handle: string): string => personName(handle).split(" ")[0];
+
+/**
+ * Claim the ticket-detail slice for a write that is about to go out, and return
+ * the sequence number to hand back to `applyTicketWrite`.
+ *
+ * Assignment is a no-confirm immediate toggle (design call #7), so two clicks
+ * inside one round-trip window are expected: "Assign to X" then the X remove
+ * button. Both writes are correct server-side, but without a guard whichever
+ * RESPONSE lands last wins the screen — and the rail can end up showing X
+ * assigned over a database that says otherwise, until the user leaves and
+ * re-enters the ticket. Bumping the same counter `loadTicketDetail` uses means
+ * the newest write (or load) owns the slice and every earlier response is
+ * dropped.
+ */
+const claimTicketDetail = (): number => ++ticketDetailSeq;
+
+/** Every ticket write answers with the fresh detail: adopt it (unless a newer
+ *  write/load has since claimed the slice — see `claimTicketDetail`), toast,
+ *  refresh the badge, and refetch the queue when it is already on screen / cached. */
+function applyTicketWrite(t: TicketDetail, msg: string, seq: number): void {
+  if (seq === ticketDetailSeq) state.ticketDetail = { status: "ok", data: t };
+  loadTicketBadge();
+  if (state.tickets.status !== "idle") loadTickets();
+  flash(msg);
+}
+function ticketErr(e: unknown): void {
+  if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+  flash(e instanceof ApiError ? e.message : "Could not update the ticket");
 }
 
 // ── auth-expired transition (shared by every loader/write below) ────────────
@@ -677,7 +842,10 @@ function scheduleRenameCheck(): void {
 }
 
 // ── action dispatch ──────────────────────────────────────────────────────────
-function dispatch(act: string, arg: string | null, value: string | null): void {
+// `caret` is the text cursor of the field that produced the event (the input
+// delegate passes `selectionStart` for inputs/textareas). Only the @mention
+// picker needs it; every other case ignores it.
+function dispatch(act: string, arg: string | null, value: string | null, caret: number | null = null): void {
   switch (act) {
     // auth state navigation (how the screens become reachable)
     case "signIn":
@@ -731,7 +899,304 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
-    case "goRoadmap": state.screen = "roadmap"; loadRoadmapIfNeeded(); loadFeedIfNeeded(); return;
+    case "goRoadmap": state.screen = "roadmap"; state.sprintId = null; loadRoadmapIfNeeded(); loadFeedIfNeeded(); return;
+
+    // ── Tickets: navigation ──────────────────────────────────────────────────
+    case "goTickets": state.screen = "tickets"; state.ticketId = null; loadSprintsIfNeeded(); loadTicketsIfNeeded(); return;
+    case "newTicket":
+      state.screen = "newticket";
+      state.fTitle = ""; state.fCat = null; state.fPrio = "normal";
+      state.fDesc = ""; state.fAsgs = []; state.fLink = ""; state.fSpr = null;
+      loadSprintsIfNeeded();
+      break;
+    // The header breadcrumb's back button — one act, resolved against the screen
+    // it was clicked from (the design's single `back` handler).
+    case "ticketsBack":
+      if (state.screen === "sprint") { state.screen = "roadmap"; state.sprintId = null; loadRoadmapIfNeeded(); loadFeedIfNeeded(); return; }
+      state.screen = "tickets"; state.ticketId = null; loadSprintsIfNeeded(); loadTicketsIfNeeded(); return;
+    // Also the act the Search screen's ticket cards have emitted since Phase 2.
+    case "openTicket": {
+      const id = Number(arg);
+      if (!Number.isInteger(id)) return;
+      state.screen = "ticketdetail";
+      state.ticketId = id;
+      state.commentDraft = ""; state.mention = null; state.commentHeight = null; state.linkDraft = "";
+      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
+      loadSprintsIfNeeded();
+      loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
+      loadTicketDetail(id);
+      return;
+    }
+    case "openSprint": {
+      const id = Number(arg);
+      if (!Number.isInteger(id)) return;
+      state.screen = "sprint";
+      state.sprintId = id;
+      state.linkDraft = "";           // the rail's "Add a URL…" box shares this draft
+      loadSprintsIfNeeded();
+      loadSprintDetail(id);
+      return;
+    }
+
+    // ── Roadmap: the New sprint panel (design 156–197) ───────────────────────
+    case "nsToggle": state.nsOpen = !state.nsOpen; break;
+    case "nsField":
+      if (arg === "name") state.nsName = value ?? "";
+      else if (arg === "dates") state.nsDates = value ?? "";
+      else if (arg === "desc") state.nsDesc = value ?? "";
+      else if (arg === "due") state.nsDue = value ?? "";
+      else return;
+      break;                          // rerenders: "Create sprint" arms on a non-empty name
+    case "nsUrg":
+      if (arg && (SPRINT_URGENCIES as readonly string[]).includes(arg)) state.nsUrg = arg as SprintUrgency;
+      break;
+    case "nsLead":
+      if (!arg) return;
+      state.nsLead = state.nsLead === arg ? null : arg;   // single choice, click again to clear
+      break;
+    case "nsDom":
+      if (!arg || !(SPRINT_DOMAINS as readonly string[]).includes(arg)) return;
+      state.nsDom = state.nsDom === arg ? null : (arg as SprintDomain);
+      break;
+    case "nsCreate": {
+      const label = state.nsName.trim();
+      if (!label) return;             // the button is inert, but guard the dispatch too
+      createSprint({
+        label,
+        dates: state.nsDates.trim() || null,
+        summary: state.nsDesc.trim() || null,
+        urgency: state.nsUrg,
+        due: state.nsDue.trim() || null,
+        lead: state.nsLead,
+        domain: state.nsDom,
+      })
+        .then((sp) => {
+          state.nsOpen = false;
+          state.nsName = ""; state.nsDates = ""; state.nsDesc = "";
+          state.nsUrg = "normal"; state.nsDue = ""; state.nsLead = null; state.nsDom = null;
+          loadSprints();              // the queue's group headers + the form's chips read this
+          loadRoadmap();              // the new card belongs on the timeline immediately
+          flash(`${sp.label} created — it's on the Roadmap now`);
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not create the sprint");
+        });
+      return;
+    }
+
+    // ── Sprint screen ────────────────────────────────────────────────────────
+    case "sprintActive": {
+      const id = state.sprintId;
+      if (id === null || (arg !== "0" && arg !== "1")) return;
+      const active = arg === "1";
+      setSprintActive(id, active)
+        .then((sp) => {
+          loadSprintDetail(id);
+          loadSprints();
+          if (state.roadmap.status !== "idle") loadRoadmap();
+          flash(active ? `${sp.label} is active` : `${sp.label} is no longer active`);
+        })
+        .catch(sprintErr);
+      return;
+    }
+    case "sprintResourceDraft": state.linkDraft = value ?? ""; return;   // echoes live
+    case "sprintResourceAdd": {
+      const id = state.sprintId;
+      const raw = state.linkDraft.trim();
+      if (id === null || !raw) return;
+      addSprintResource(id, raw)
+        .then((sp) => {
+          state.linkDraft = "";
+          state.sprintDetail = { status: "ok", data: sp };
+          // The server parses the raw input, so the toast names the STORED label.
+          const added = sp.resources.find((r) => r.url === raw) ?? sp.resources[sp.resources.length - 1];
+          flash(added ? `Resource added: ${added.label}` : "Resource added");
+        })
+        .catch(sprintErr);
+      return;
+    }
+
+    // ── Tickets: the queue's filters + view toggle (every filter refetches) ──
+    case "queueSeg":
+      if (arg === "open" || arg === "closed" || arg === "all") { state.qSeg = arg; loadTickets(); }
+      return;
+    case "queueAssignee":
+      if (value === "anyone" || value === "me" || value === "unassigned") { state.qAssignee = value; loadTickets(); }
+      return;
+    case "queueCategory": {
+      const v = value ?? "all";
+      if (v !== "all" && !(TICKET_CATEGORIES as readonly string[]).includes(v)) return;
+      state.qCategory = v as TicketCategory | "all";
+      loadTickets();
+      return;
+    }
+    case "queueTable": state.qView = "table"; break;
+    case "queueBoard": state.qView = "board"; break;
+
+    // ── Tickets: the new-ticket form ─────────────────────────────────────────
+    case "ntTitle": state.fTitle = value ?? ""; break;   // rerenders: Submit arms on a non-empty title
+    case "ntDescription": state.fDesc = value ?? ""; return;   // echoes live; nothing renders off it
+    case "ntLink": state.fLink = value ?? ""; return;
+    case "ntCategory":
+      if (arg && (TICKET_CATEGORIES as readonly string[]).includes(arg)) state.fCat = arg as TicketCategory;
+      break;
+    case "ntPriority":
+      if (arg && (TICKET_PRIORITIES as readonly string[]).includes(arg)) state.fPrio = arg as TicketPriority;
+      break;
+    case "ntSprint": state.fSpr = arg ? Number(arg) : null; break;   // "" = Backlog
+    case "ntAssignee":
+      if (arg === null) return;
+      if (arg === "") state.fAsgs = [];                              // the "Unassigned" chip clears
+      else state.fAsgs = state.fAsgs.includes(arg) ? state.fAsgs.filter((h) => h !== arg) : [...state.fAsgs, arg];
+      break;
+    case "ntSubmit": {
+      const title = state.fTitle.trim();
+      if (!title) return;                                            // the button is inert, but guard the dispatch too
+      const link = state.fLink.trim();
+      const assigned = state.fAsgs.map(personFirstName);
+      createTicket({
+        title,
+        body: state.fDesc.trim(),
+        category: state.fCat ?? "other",                             // no chip picked = `other`
+        priority: state.fPrio,
+        assignees: [...state.fAsgs],
+        sprint_id: state.fSpr,
+        ...(link ? { link } : {}),
+      })
+        .then(() => {
+          state.fTitle = ""; state.fCat = null; state.fPrio = "normal";
+          state.fDesc = ""; state.fAsgs = []; state.fLink = ""; state.fSpr = null;
+          state.screen = "tickets"; state.ticketId = null;
+          loadTickets();
+          loadTicketBadge();
+          flash(assigned.length
+            ? `Ticket submitted — assigned to ${assigned.join(", ")}`
+            : "Ticket submitted — it's in the queue as Submitted");
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not submit the ticket");
+        });
+      return;
+    }
+
+    // ── Tickets: the detail screen ───────────────────────────────────────────
+    case "ticketStatus": {
+      const id = state.ticketId;
+      if (id === null || !arg || !(TICKET_STATUSES as readonly string[]).includes(arg)) return;
+      const to = arg as TicketStatus;
+      // "Back" is the only move whose button copy differs from the status label.
+      const label = to === "submitted" ? "Back to submitted" : TICKET_STATUS_LABEL[to];
+      const seq = claimTicketDetail();
+      transitionTicket(id, to).then((t) => applyTicketWrite(t, `Status: ${label}`, seq)).catch(ticketErr);
+      return;
+    }
+    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; break;
+    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; break;
+    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; break;
+    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; break;
+    // Assignment is immediate and reversible — no confirm step (design call #7).
+    case "ticketAsgAdd": {
+      const id = state.ticketId;
+      if (id === null || !arg) return;
+      state.asgMenu = false;
+      const seq = claimTicketDetail();
+      toggleTicketAssignee(id, arg, true).then((t) => applyTicketWrite(t, `Assigned to ${personName(arg)}`, seq)).catch(ticketErr);
+      return;
+    }
+    case "ticketAsgRemove": {
+      const id = state.ticketId;
+      if (id === null || !arg) return;
+      const seq = claimTicketDetail();
+      toggleTicketAssignee(id, arg, false).then((t) => applyTicketWrite(t, `${personName(arg)} removed`, seq)).catch(ticketErr);
+      return;
+    }
+    case "ticketSprintSet": {
+      const id = state.ticketId;
+      if (id === null) return;
+      state.sprMenu = false;
+      const sprintId = arg ? Number(arg) : null;
+      if ((state.ticketDetail.data?.sprint?.id ?? null) === sprintId) break;   // already there — just close the menu
+      const label = sprintId === null ? null : state.sprints.data.find((sp) => sp.id === sprintId)?.label ?? "";
+      const seq = claimTicketDetail();
+      setTicketSprint(id, sprintId)
+        .then((t) => applyTicketWrite(t, label === null ? "Moved to Backlog" : `Moved to ${label}`, seq))
+        .catch(ticketErr);
+      return;
+    }
+    case "ticketRelAdd": {
+      const id = state.ticketId;
+      const child = Number(arg);
+      if (id === null || !Number.isInteger(child)) return;
+      state.relMenu = false;
+      const seq = claimTicketDetail();
+      setTicketParent(id, child)
+        .then((t) => applyTicketWrite(t, "Added as sub-ticket — this ticket is now its parent", seq))
+        .catch(ticketErr);
+      return;
+    }
+    case "ticketLinkToggle": state.lkOpen = !state.lkOpen; break;
+    case "ticketLinkDraft": state.linkDraft = value ?? ""; return;   // echoes live
+    case "ticketLinkAdd": {
+      const id = state.ticketId;
+      const raw = state.linkDraft.trim();
+      if (id === null || !raw) return;
+      const seq = claimTicketDetail();
+      addTicketLink(id, raw)
+        .then((t) => {
+          state.linkDraft = "";
+          state.lkOpen = false;
+          // The server parses the raw input, so the toast names the STORED label.
+          const added = t.links[t.links.length - 1];
+          applyTicketWrite(t, added ? `Linked: ${added.label}` : "Linked", seq);
+        })
+        .catch(ticketErr);
+      return;
+    }
+    case "ticketComment": {
+      // rerenders: Post arms on non-empty, and the @mention picker opens/closes
+      // purely as a function of where the caret now sits in the new text.
+      state.commentDraft = value ?? "";
+      const at = caret ?? state.commentDraft.length;
+      const tok = mentionTokenAt(state.commentDraft, at);
+      // Every keystroke re-aims at the top row: the list just changed under it.
+      // `line` is the caret's line — the picker hangs under THAT line, so it
+      // follows the writer down a multi-line draft.
+      state.mention = tok
+        ? { query: tok.query, start: tok.start, index: 0, line: caretLine(state.commentDraft, at) }
+        : null;
+      break;
+    }
+    // Committing a candidate — from a click on a row or Enter/Tab on the
+    // textarea. The token's end is derivable from the token itself
+    // (`@` + query), so this never has to read the live caret back.
+    case "mentionPick": {
+      const m = state.mention;
+      if (!m || !arg) return;
+      const next = applyMention(state.commentDraft, m.start, m.start + 1 + m.query.length, arg);
+      state.commentDraft = next.text;
+      state.mention = null;
+      rerender();
+      // rerender() restores focus + the OLD caret by data-field; put the caret
+      // after the inserted "@handle " instead, so typing continues the sentence.
+      const box = mount.querySelector<HTMLTextAreaElement>('[data-field="ticketComment"]');
+      if (box) {
+        box.focus();
+        try { box.setSelectionRange(next.caret, next.caret); } catch { /* not a text field */ }
+      }
+      return;
+    }
+    case "ticketCommentPost": {
+      const id = state.ticketId;
+      const body = state.commentDraft.trim();
+      if (id === null || !body) return;
+      const seq = claimTicketDetail();
+      addTicketComment(id, body)
+        .then((t) => { state.commentDraft = ""; state.mention = null; state.commentHeight = null; applyTicketWrite(t, "Comment posted", seq); })
+        .catch(ticketErr);
+      return;
+    }
 
     // roadmap tab toggle
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
@@ -859,13 +1324,13 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
     // settings — display name echoes live; everything else is Phase 2
     case "setDisplayName": state.displayName = value ?? ""; break;
 
-    case "confirmMilestone": {
+    case "confirmSprint": {
       if (!arg) return;
-      completeMilestone(Number(arg))
-        .then(() => { flash("Milestone marked done"); loadRoadmap(); })
+      completeSprint(Number(arg))
+        .then(() => { flash("Sprint marked done"); loadRoadmap(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Could not complete milestone");
+          flash(e instanceof ApiError ? e.message : "Could not complete sprint");
         });
       return;
     }
@@ -889,7 +1354,7 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
       break;
     }
     case "maintAssignKind":
-      if (arg === "doc" || arg === "adr" || arg === "milestone" || arg === "feed") {
+      if (arg === "doc" || arg === "adr" || arg === "feed") {
         state.assignKind = arg;
         state.assignSection = null;
         state.assignSpace = null;
@@ -1150,7 +1615,9 @@ function dispatch(act: string, arg: string | null, value: string | null): void {
 // default behavior (open the GitHub link in a new tab).
 mount.addEventListener("click", (e) => {
   const target = e.target as Element;
-  if (target.closest("input, select, a[href]")) return;
+  // Textareas carry data-act too (the description / comment drafts); clicking
+  // into one must place the caret, not dispatch the act with a null value.
+  if (target.closest("input, select, textarea, a[href]")) return;
   const el = target.closest<HTMLElement>("[data-act]");
   if (!el) return;
   dispatch(el.dataset.act ?? "", el.dataset.arg ?? null, null);
@@ -1169,8 +1636,94 @@ mount.addEventListener("change", (e) => {
 
 mount.addEventListener("input", (e) => {
   const el = e.target as HTMLElement;
-  if (el instanceof HTMLInputElement && el.dataset.act) {
-    dispatch(el.dataset.act, el.dataset.arg ?? null, el.value);
+  if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.dataset.act) {
+    // The caret rides along: "ticketComment" needs it to decide whether the
+    // cursor is inside an @mention token. Every other case ignores it.
+    dispatch(el.dataset.act, el.dataset.arg ?? null, el.value, el.selectionStart);
+  }
+});
+
+// ── @mention picker: keyboard + the mousedown/blur race ──────────────────────
+//
+// A mousedown on a picker row would blur the textarea, and the focusout below
+// closes the picker — which removes the row before its `click` ever fires. So
+// rows preventDefault on mousedown: focus never leaves the textarea, no blur
+// happens, and the row's click reaches the EXISTING click delegate normally.
+mount.addEventListener("mousedown", (e) => {
+  if ((e.target as Element | null)?.closest?.('[data-act="mentionPick"]')) e.preventDefault();
+});
+
+// Clicking genuinely elsewhere closes the picker. `focusout` (not `blur`,
+// which doesn't bubble) so one listener on the mount covers the textarea.
+mount.addEventListener("focusout", (e) => {
+  if (!state.mention) return;
+  if (!(e.target as Element | null)?.closest?.('[data-field="ticketComment"]')) return;
+  // rerender() swaps the whole mount's innerHTML and re-focuses the textarea,
+  // which some browsers surface as a focusout. Settle a tick first and close
+  // only if focus really left the box — otherwise an arrow key would close
+  // the very picker it was moving through.
+  setTimeout(() => {
+    if (!state.mention) return;
+    if (document.activeElement?.closest('[data-field="ticketComment"]')) return;
+    state.mention = null;
+    rerender();
+  }, 0);
+});
+
+// ── comment box: the bottom-left resize grip ─────────────────────────────────
+//
+// The textarea sets `resize:none` — the native handle writes its height INLINE
+// on the element, and the very next keystroke's rerender() swaps the whole
+// mount's innerHTML, so a native resize survived exactly one character. This
+// drag puts the height in `state.commentHeight` instead, where it outlives the
+// swap, and moves the affordance to the corner the Comment button vacated.
+// (`commentGrip` has no dispatch case on purpose: the click it also fires falls
+// through to `default: return`, a no-op.)
+mount.addEventListener("pointerdown", (e) => {
+  if (!(e.target as Element | null)?.closest?.('[data-act="commentGrip"]')) return;
+  const box = mount.querySelector<HTMLTextAreaElement>('[data-field="ticketComment"]');
+  if (!box) return;
+  e.preventDefault();                       // no text selection while dragging
+  const startY = e.clientY;
+  const startHeight = box.getBoundingClientRect().height;
+  const move = (ev: PointerEvent) => {
+    const h = Math.max(COMMENT_BOX.minHeight, Math.round(startHeight + (ev.clientY - startY)));
+    state.commentHeight = h;
+    // Paint it straight onto the live element: a rerender per pointermove would
+    // rebuild the screen (and steal the caret) dozens of times a second.
+    box.style.height = `${h}px`;
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
+});
+
+// Arrow/Enter/Tab/Escape belong to the picker ONLY while it is open — with it
+// closed, Enter keeps the textarea's normal newline and Tab still moves focus.
+mount.addEventListener("keydown", (e) => {
+  const m = state.mention;
+  if (!m) return;
+  if (!(e.target as Element | null)?.closest?.('[data-field="ticketComment"]')) return;
+  const cands = mentionCandidates(state.persons.data, m.query);
+  if (!cands.length) return;
+  const n = cands.length;
+  switch (e.key) {
+    case "ArrowDown": e.preventDefault(); state.mention = { ...m, index: (m.index + 1) % n }; rerender(); break;
+    case "ArrowUp": e.preventDefault(); state.mention = { ...m, index: (m.index - 1 + n) % n }; rerender(); break;
+    case "Enter":
+    case "Tab": {
+      e.preventDefault();
+      const pick = cands[((m.index % n) + n) % n];
+      if (pick) dispatch("mentionPick", pick.handle, null);
+      break;
+    }
+    case "Escape": e.preventDefault(); state.mention = null; rerender(); break;
+    default: break;
   }
 });
 
@@ -1222,8 +1775,9 @@ if (params.get("denied") === "1") {
         const back = sessionStorage.getItem("canopy.returnHash");
         if (back) { sessionStorage.removeItem("canopy.returnHash"); history.replaceState(null, "", back); }
       } catch { /* ignore */ }
-      // Restore the screen from the URL hash (reload stays put) instead of always My Work.
-      state.screen = screenFromHash();
+      // Restore the route from the URL hash (reload stays put, including
+      // #tickets/<id> and #sprints/<id>) instead of always My Work.
+      applyRoute(parseHash(location.hash));
       loadForScreen(state.screen);
       // A conflicting Link redirect lands here directly (full page load to
       // /?link=conflict#settings), not through the goSettings dispatch case.
@@ -1234,6 +1788,8 @@ if (params.get("denied") === "1") {
       loadDraftAdrs();
       loadNeedsTriage();
       loadIdentityTasks();
+      // The Tickets badge shows on every screen too — unassigned + open, org-wide.
+      loadTicketBadge();
       // The persons directory backs every colored chip (sidebar, feed, docs,
       // Settings › Profile, Maintenance › People) — load it on every screen too.
       loadPersons();

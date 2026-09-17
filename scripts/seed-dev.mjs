@@ -23,6 +23,7 @@ const fx = {
   adrs: load("adrs.json"),
   triage: load("triage.json"),
   roadmap: load("roadmap.json"),
+  tickets: load("tickets.json"),
   events: load("events.json"),
   identity: load("identity.json"),
 };

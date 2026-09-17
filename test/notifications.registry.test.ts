@@ -42,11 +42,24 @@ describe("shared notification schemas", () => {
 });
 
 describe("registry", () => {
-  it("has the three initial kinds with the spec's defaults and allowed cadences", () => {
-    expect(REGISTRY.map((k) => k.id)).toEqual(["my_work", "review_queue", "roadmap_plan"]);
+  it("has the four kinds with the spec's defaults and allowed cadences", () => {
+    expect(REGISTRY.map((k) => k.id)).toEqual(["my_work", "review_queue", "roadmap_plan", "ticketq"]);
     expect(getKind("my_work")).toMatchObject({ defaultCadence: "daily", allowedCadences: ["daily", "weekly", "off"] });
     expect(getKind("review_queue")).toMatchObject({ defaultCadence: "daily", allowedCadences: ["daily", "off"] });
-    expect(getKind("roadmap_plan")).toMatchObject({ defaultCadence: "weekly", allowedCadences: ["daily", "weekly", "off"] });
+    expect(getKind("roadmap_plan")).toMatchObject({
+      // The Maintenance policy row's copy, verbatim from the corrected spec.
+      description: "Sprint progress and slips.",
+      defaultCadence: "weekly",
+      allowedCadences: ["daily", "weekly", "off"],
+    });
+    expect(REGISTRY.every((k) => !/milestone/i.test(k.description) && !/milestone/i.test(k.label))).toBe(true);
+    // Phase 6 (the tickets build): the queue digest, org-wide + your own plate.
+    expect(getKind("ticketq")).toMatchObject({
+      label: "Ticket queue",
+      description: "New and unassigned tickets across the org.",
+      defaultCadence: "daily",
+      allowedCadences: ["daily", "weekly", "off"],
+    });
     expect(getKind("nope")).toBeUndefined();
   });
 

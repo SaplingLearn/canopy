@@ -1,6 +1,6 @@
 ---
 name: update-plan
-description: Use when an admin explicitly asks to update, rewrite, or change the roadmap plan — narrative or milestones, including marking a milestone done (triggers — "update the plan", "rewrite the roadmap narrative", "add a milestone", "mark this milestone done"). Explicit invocation only — must never auto-fire.
+description: Use when an admin explicitly asks to update, rewrite, or change the roadmap plan — narrative or sprints, including marking a sprint done (triggers — "update the plan", "rewrite the roadmap narrative", "add a sprint", "mark this sprint done"). Explicit invocation only — must never auto-fire.
 disable-model-invocation: true
 allowed-tools: mcp__canopy__get_roadmap, mcp__canopy__update_plan
 ---
@@ -9,7 +9,7 @@ allowed-tools: mcp__canopy__get_roadmap, mcp__canopy__update_plan
 
 ## Overview
 
-Writes the roadmap plan — narrative and milestones — through the **direct, admin-authored**
+Writes the roadmap plan — narrative and **sprints** — through the **direct, admin-authored**
 `update_plan` MCP tool. This is a **promote-class** write, not the ingestion gate: there is no
 staging/triage step and no confirmation queue. It IS still non-destructive — every call bumps the
 plan version and snapshots the prior state (`plan_versions`), so nothing is lost — but it takes
@@ -22,7 +22,11 @@ skill does so itself, in step 1) so you never write blind.
 ## When to use / NOT use
 
 - Use only when an admin **explicitly** asks to change the plan: rewrite the narrative, add/edit a
-  milestone, or mark one done.
+  sprint, or mark one done.
+- **Not** for moving tickets in or out of a sprint. Which tickets belong to a sprint is set from the
+  Tickets UI (`POST /tickets/:id/sprint`), never from the plan write. This skill owns the sprint's own
+  fields only — and since a sprint's progress bar counts its tickets, re-homing a ticket is how that
+  bar moves, not an `update_plan` call.
 - **Never auto-fire.** Reading the plan, discussing it, or noticing drift is not license to write it —
   that's `read-plan`'s job. Only an explicit ask reaches this skill.
 - Never infer `status: 'done'` from issue/PR activity — `done` is only ever admin-said-so, here or via
@@ -34,14 +38,14 @@ skill does so itself, in step 1) so you never write blind.
 
 Call `mcp__canopy__get_roadmap` before composing anything. Carry forward:
 - The current `narrative` (you'll pass a full replacement, so start from what's live).
-- Every existing milestone's **`id`** — pass `id` on a milestone you're editing so the tool updates it
-  in place; a milestone omitted from your call is **untouched**, not deleted. Omitting `id` on a new
+- Every existing sprint's **`id`** — pass `id` on a sprint you're editing so the tool updates it
+  in place; a sprint omitted from your call is **untouched**, not deleted. Omitting `id` on a new
   entry creates it.
 
 ### 2. Show the admin a diff and get confirmation
 
 Before writing, lay out plainly what will change: narrative before/after (or "narrative unchanged"),
-and per milestone — created / edited (with the specific fields changing) / left untouched. Get the
+and per sprint — created / edited (with the specific fields changing) / left untouched. Get the
 admin's explicit go-ahead on that diff before calling the write tool. If they want changes, revise the
 diff and re-confirm — don't call `update_plan` speculatively.
 
@@ -52,19 +56,48 @@ Once confirmed, make **exactly one** call:
 ```jsonc
 {
   "narrative": "<full narrative text>",
-  "milestones": [
-    { "id": 3, "title": "...", "description": "...", "phase": "...", "target_date": "2026-09-01",
-      "status": "in_progress", "github_ref": 42 },
-    { "title": "<new milestone, no id>", "target_date": "2026-10-15", "status": "upcoming" }
+  "sprints": [
+    { "id": 3, "label": "Ticket queue", "summary": "One queue the whole org files into.",
+      "description": "markdown — **bold**, `code`, links, ### headings, - bullets",
+      "phase": "Now", "dates": "Sep 16 – Sep 30", "due": "2026-09-30",
+      "status": "in_progress", "urgency": "high", "lead": "AndresL230", "domain": "tickets",
+      "github_ref": 42 },
+    { "label": "<new sprint, no id>", "due": "2026-10-15", "status": "upcoming" }
   ]
 }
 ```
 
-- `id` present → update that milestone; `id` absent → create one.
-- Milestones you don't list are left exactly as they are — you don't need to round-trip every
-  milestone, only the ones changing.
+The sprint vocabulary (the DTO's words, not the column names):
+
+| field | meaning |
+|---|---|
+| `label` | the sprint name (required) |
+| `due` | target date, `YYYY-MM-DD` (required) |
+| `summary` | one line under the label on the Roadmap card |
+| `description` | markdown body, rendered on the sprint screen |
+| `phase` | coarse plan label — "Now", "Weeks 3-4", "Later" |
+| `dates` | human date range, e.g. "Sep 16 – Sep 30" |
+| `status` | `upcoming` \| `in_progress` \| `done` (`in_progress` = the Roadmap's **active**) |
+| `urgency` | `low` \| `normal` \| `high` (defaults `normal`) |
+| `lead` | a person **handle** |
+| `domain` | `notifications` \| `tickets` \| `gate` \| `feed` \| `search` \| `infra` |
+| `github_ref` | a GitHub milestone number, or an array of issue numbers |
+
+- `id` present → update that sprint; `id` absent → create one.
+- On an update, a field you **omit** is left unchanged (`label`, `due` and `status` are required, so
+  they always overwrite); passing an explicit `null` is how you **clear** one. Sprint fields also come
+  from the Roadmap's New sprint panel, so never re-send a field blank just to fill the shape.
+- **You never write progress.** A sprint's `closed/total/pct` is computed at read time as
+  **the tickets in the sprint plus the GitHub issues behind `github_ref`** — `total` = tickets +
+  cached issues, `closed` = tickets a person marked `done`/`declined` + cached closed issues. A
+  sprint with neither reads `0/0`. Editing `github_ref` changes the issue half (the webhook and the
+  cron backstop keep its cache current); the ticket half moves only when someone files, resolves or
+  re-homes a ticket in the Tickets UI.
+- Sprints you don't list are left exactly as they are — you don't need to round-trip every
+  sprint, only the ones changing.
 - `status: 'done'` is legal here (this is the one agent-reachable path allowed to set it) — only set
-  it when the admin explicitly confirmed the milestone is done, never inferred from closed issues.
+  it when the admin explicitly confirmed the sprint is done, never inferred from closed issues or from
+  every ticket in the sprint being resolved.
 - Report back the new plan `version` the tool returns.
 
 ## Hard rules (invariants)
@@ -77,7 +110,7 @@ Once confirmed, make **exactly one** call:
 - **Confirm the diff before writing** — no silent writes.
 - **`done` is admin-said-so only** — set here or via the web Confirm-done button, never inferred from
   GitHub activity, issue closure percentage, or `get_events`.
-- **One call.** Compose the full milestones array (with unchanged ones simply omitted) and call
+- **One call.** Compose the full sprints array (with unchanged ones simply omitted) and call
   `update_plan` once — this is a direct write, not a reconciling batch, so there's no replay safety net
   if you call it twice with different content.
 - This is **not** the ingestion gate — no staging, no triage, no `record_session`. Don't route plan
@@ -85,7 +118,9 @@ Once confirmed, make **exactly one** call:
 
 ## Common mistakes
 
-- Forgetting a milestone's `id` when editing it → the tool creates a duplicate instead of updating.
+- Forgetting a sprint's `id` when editing it → the tool creates a duplicate instead of updating.
+- Using the pre-rename field names (`title` / `target_date`) instead of `label` / `due` → the tool
+  rejects the call as a validation error.
 - Setting `status: 'done'` because issues look closed, without the admin having said so.
 - Skipping the diff/confirmation step and writing straight from the ask.
 - Calling `get_roadmap` after deciding what to write instead of before — you lose the current `id`s

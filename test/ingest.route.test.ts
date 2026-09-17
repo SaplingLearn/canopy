@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { app } from "../src/routes";
 import { all, first } from "../src/db";
-import type { DocRow, DocVersionRow, FeedRow, MilestoneProposalRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow } from "@shared/rows";
 import type { IngestResult } from "../src/consumer";
 import { cookieFor as authedCookie } from "./helpers/persons";
 
@@ -149,7 +149,7 @@ describe("live POST /ingest route", () => {
     expect(Array.isArray(body.issues)).toBe(true);
   });
 
-  it("narrows the contract: a payload still carrying milestone_proposals/focus (legacy keys, the latter's table now dropped entirely) is 200'd (stripped by zod), and writes zero rows to the milestone_proposals table", async () => {
+  it("narrows the contract: a payload still carrying the retired arms (the roadmap-proposal queue and focus, both tables now dropped) is 200'd, stripped by zod, and writes nothing", async () => {
     const cookie = await authedCookie("agent-user");
     const payload = {
       session: {
@@ -158,15 +158,24 @@ describe("live POST /ingest route", () => {
         ended_at: "2026-06-28T00:00:00Z",
         skill_version: "2.0",
       },
-      milestone_proposals: [
-        { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "ga", confidence: "high" },
+      // Both of these were real IngestPayload arms once. Their tables are gone
+      // (0014 dropped focus; 0025 dropped the roadmap-proposal queue), so the only
+      // correct behaviour is to drop the keys on the floor: not a 400, not a write.
+      sprint_proposals: [
+        { label: "GA", due: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" },
       ],
       focus: { working_on: "narrow the contract", next_up: "ship it" },
     };
 
     const res = await postIngest(payload, cookie);
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: true; result: Record<string, unknown> };
+    // The result envelope has exactly the four surviving arms — nothing else ran.
+    expect(Object.keys(body.result).sort()).toEqual(["adrs", "docs", "feed", "triage"]);
 
-    expect(await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).toHaveLength(0);
+    // …and nothing landed anywhere: no sprint created, no triage row raised.
+    expect(await all(env.DB, `SELECT * FROM sprints`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM needs_triage`)).toHaveLength(0);
+    expect(await all<FeedRow>(env.DB, `SELECT * FROM feed`)).toHaveLength(0);
   });
 });

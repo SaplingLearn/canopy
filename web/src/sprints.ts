@@ -1,0 +1,393 @@
+// Sprints surface — componentized from `Canopy Tickets.dc.html` (the locked
+// design): the Roadmap Timeline's sprint cards (design 770–805), the New sprint
+// panel (design 156–197) and the Sprint screen (design 490–571).
+//
+// Same contract as tickets.ts / review.ts / maintenance.ts: every function here
+// is PURELY presentational. Data arrives through props, output is an HTML string
+// in the app's template-string idiom (inline styles over the canopy.css custom
+// properties), and interactions dispatch through data-act / data-arg handled in
+// main.ts. No fetching, no state, no inline data.
+//
+// A sprint is the container the Roadmap shows; its progress is `closed/total`
+// over the sprint's TICKETS ONLY (closed = done + declined) — computed
+// server-side (src/tools/sprints.ts `sprintProgress`) and read off
+// `SprintView.progress` here. Nothing is recomputed in the browser. The cached
+// GitHub issue counts (`SprintView.issues`) are NOT shown on these surfaces;
+// they appear only in the Roadmap's Narrative spotlight (web/src/render.ts).
+
+import type {
+  SprintView, SprintDetail, SprintUrgency, SprintDomain, SprintResourceView, SprintTicketRow,
+} from "@shared/sprints";
+import { SPRINT_URGENCIES, SPRINT_DOMAINS } from "@shared/sprints-core";
+import type { PersonSummary } from "./api";
+import { esc, attr } from "./ui";
+import { personChip } from "./people";
+import { renderMarkdown } from "./markdown";
+import { ticketPill, priorityChip, age, avatarStack } from "./tickets";
+
+// ── atoms ────────────────────────────────────────────────────────────────────
+
+/** The design's `tagBase` — the mono chip every sprint tag is drawn from. */
+const TAG_BASE =
+  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 7px;white-space:nowrap;flex:none;";
+/** The design's `tint(c)` — colored text, 45% border, 12% fill. */
+const tint = (c: string): string =>
+  `${TAG_BASE}color:${c};border:1px solid color-mix(in srgb,${c} 45%,transparent);background:color-mix(in srgb,${c} 12%,transparent)`;
+
+const tag = (text: string, style: string): string => `<span style="${style}">${esc(text)}</span>`;
+
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/** The design's due strings are short and shouty ("SEP 26"); the DTO carries an
+ *  ISO date. Anything unparseable falls through uppercased rather than showing
+ *  "Invalid Date". */
+export function shortDue(due: string): string {
+  const m = due.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return due.toUpperCase();
+  return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`;
+}
+
+/** The long date label the Roadmap has always shown ("Sep 1, 2026"). */
+function longDate(due: string): string {
+  const d = new Date(`${due}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? due : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function person(persons: PersonSummary[], handle: string): PersonSummary | null {
+  return persons.find((p) => p.handle.toLowerCase() === handle.toLowerCase()) ?? null;
+}
+const nameOf = (persons: PersonSummary[], handle: string): string => person(persons, handle)?.name || handle;
+const firstNameOf = (persons: PersonSummary[], handle: string): string => nameOf(persons, handle).split(" ")[0];
+
+/**
+ * The design's `sprTagsOf`: exactly one urgency tag (▲ HIGH amber / NORMAL /
+ * LOW muted), then DUE when the sprint has a due date, then the DOMAIN in blue.
+ * The order is load-bearing — it is the card's reading order.
+ */
+export function sprintTags(sp: Pick<SprintView, "urgency" | "due" | "domain">): string {
+  const tags: string[] = [];
+  if (sp.urgency === "high") tags.push(tag("▲ HIGH", tint("var(--amber)")));
+  else if (sp.urgency === "low") tags.push(tag("LOW", `${TAG_BASE}color:var(--fg-40);border:1px solid var(--border)`));
+  else tags.push(tag("NORMAL", `${TAG_BASE}color:var(--fg-55);border:1px solid var(--border)`));
+  if (sp.due) tags.push(tag(`DUE ${shortDue(sp.due)}`, `${TAG_BASE}color:var(--fg-55);border:1px solid var(--border-strong)`));
+  if (sp.domain) tags.push(tag(sp.domain.toUpperCase(), tint("var(--blue)")));
+  return tags.join("");
+}
+
+/** The lead block: avatar + first name + " · lead". Hidden (empty) with no lead. */
+function leadBlock(lead: string | null, persons: PersonSummary[]): string {
+  if (!lead) return "";
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex:none">${personChip(person(persons, lead), 18, lead)}<span style="font-size:11px;font-weight:500;color:var(--fg-55);white-space:nowrap">${esc(firstNameOf(persons, lead))} · lead</span></span>`;
+}
+
+const NEXT_UP_STYLE =
+  "font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px";
+const OVERDUE_STYLE =
+  "font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px";
+
+// ── the Roadmap Timeline card ────────────────────────────────────────────────
+
+export interface SprintCardOpts {
+  /** Treat the sprint as done although the server still says otherwise — the
+   *  Confirm-done click is optimistic (`AppState.confirmedSprints`). */
+  done?: boolean;
+}
+
+/**
+ * One sprint as the Roadmap Timeline shows it (design 770–805): label, the
+ * NEXT UP badge on anything not yet active, the urgency/DUE/DOMAIN tags, the
+ * lead, the summary, "phase · dates", the progress bar with "closed/total done",
+ * the member avatars and "Open sprint →".
+ *
+ * Everything is derived from the view, so the card is the same on every surface.
+ * `dates` is the human range the admin authored ("SEP 8 – 19"); when it is
+ * absent the card falls back to the Roadmap's own date note (Due / Was due …
+ * overdue / Completed by), which is what the plan has always shown.
+ *
+ * A sprint whose bar is full but which nobody has confirmed gets the
+ * "ready to complete" row + Confirm-done button — completion is a HUMAN act,
+ * never inferred from the counts (§A: "Done … set by a person").
+ */
+export function sprintCard(sp: SprintView, persons: PersonSummary[], opts: SprintCardOpts = {}): string {
+  const done = opts.done ?? sp.status === "done";
+  const counted = sp.progress.total > 0;
+  const ready = !done && counted && sp.progress.closed >= sp.progress.total;
+  const dueTime = sp.due ? new Date(`${sp.due}T12:00:00`).getTime() : Number.POSITIVE_INFINITY;
+  const overdue = !done && !ready && dueTime < Date.now();
+  // The design shows NEXT UP on every card that is not yet running.
+  const nextUp = !done && !sp.active;
+
+  const dateLabel = sp.due ? longDate(sp.due) : "No target date";
+  const fallbackNote = done
+    ? `Completed by ${dateLabel}`
+    : overdue
+      ? `Was due ${dateLabel} — overdue`
+      : `Due ${dateLabel}`;
+  const dateNote = [sp.phase, sp.dates ? sp.dates.toLowerCase() : fallbackNote]
+    .filter((v): v is string => !!v)
+    .join(" · ");
+
+  const barColor = done ? "var(--green)" : overdue ? "var(--red)" : "var(--accent)";
+  const bar = counted
+    ? `<div style="display:flex;align-items:center;gap:10px;margin-top:11px">
+        <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${sp.progress.pct}%;background:${barColor}"></div></div>
+        <span style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;flex:none">${sp.progress.closed}/${sp.progress.total} done</span>
+      </div>`
+    : "";
+
+  const readyRow = ready
+    ? `<div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--accent);flex:1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"></path></svg><span style="color:var(--fg-70)">Every ticket and issue in this sprint is closed — <strong style="color:var(--fg);font-weight:600">ready to complete</strong>.</span></div>
+        <button data-act="confirmSprint" data-arg="${sp.id}" class="cnpy-accentbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Confirm done</button>
+      </div>`
+    : "";
+
+  return `<div style="padding:14px 16px;border:1px solid var(--border);border-radius:11px;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+      <span style="font-size:14.5px;font-weight:600;letter-spacing:-0.01em">${esc(sp.label)}</span>
+      ${nextUp ? `<span style="${NEXT_UP_STYLE}">NEXT UP</span>` : ""}
+      ${overdue ? `<span style="${OVERDUE_STYLE}">OVERDUE</span>` : ""}
+      <span style="flex:1"></span>
+      ${sprintTags(sp)}
+      ${leadBlock(sp.lead, persons)}
+    </div>
+    ${sp.summary ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${esc(sp.summary)}</p>` : ""}
+    <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${esc(dateNote)}</span>
+    ${bar}
+    <div style="display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)">
+      ${avatarStack(sp.members, persons)}
+      <span style="flex:1"></span>
+      <button data-act="openSprint" data-arg="${sp.id}" class="cnpy-link" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--accent);white-space:nowrap">Open sprint<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+    </div>
+    ${readyRow}
+  </div>`;
+}
+
+// ── the New sprint panel (design 156–197) ────────────────────────────────────
+
+/** The panel's `ns*` slice of AppState, passed whole. */
+export interface NewSprintState {
+  open: boolean;
+  name: string;
+  dates: string;
+  desc: string;
+  urgency: SprintUrgency;
+  due: string;
+  lead: string | null;
+  domain: SprintDomain | null;
+}
+
+const NS_LABEL = "display:block;font-size:12.5px;font-weight:500;margin-bottom:7px";
+const NS_INPUT =
+  "width:100%;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:13px;outline:none";
+const segStyle = (on: boolean) =>
+  `padding:4px 13px;border-radius:7px;font-size:12px;font-weight:500;color:${on ? "var(--fg);background:var(--hover)" : "var(--fg-55);background:transparent"}`;
+const chipStyle = (on: boolean) =>
+  `padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}`;
+/** The hover layer's hooks (canopy.css), exactly as the ticket form uses them:
+ *  the picked chip/segment is painted inline and carries `is-on`, so the hover
+ *  rule only firms up the ones that are NOT the current choice. */
+const segClass = (on: boolean) => `cnpy-segbtn${on ? " is-on" : ""}`;
+const chipClass = (on: boolean) => `cnpy-pickchip${on ? " is-on" : ""}`;
+
+/**
+ * The New sprint panel. Closed → renders NOTHING (the toggle lives in the
+ * Roadmap's Timeline header, next to the section intro). "Create sprint" is
+ * inert until the sprint has a name — the only required field, exactly like the
+ * new-ticket form's title (and `POST /sprints` enforces the same rule).
+ * Lead and Codebase domain are single-choice chips that toggle OFF when the
+ * current pick is clicked again (the design's `s.nsLead === l ? null : l`).
+ */
+export function newSprintPanel(s: NewSprintState, persons: PersonSummary[]): string {
+  if (!s.open) return "";
+  const canCreate = s.name.trim().length > 0;
+
+  const urgSegs = SPRINT_URGENCIES.map((u) =>
+    `<button data-act="nsUrg" data-arg="${u}" class="${segClass(s.urgency === u)}" style="${segStyle(s.urgency === u)}">${u.charAt(0).toUpperCase() + u.slice(1)}</button>`).join("");
+
+  const leadChips = persons.map((p) =>
+    `<button data-act="nsLead" data-arg="${attr(p.handle)}" class="${chipClass(s.lead === p.handle)}" style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${s.lead === p.handle ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}">${personChip(p, 20, p.handle)}${esc(p.name || p.handle)}</button>`).join("");
+
+  const domChips = SPRINT_DOMAINS.map((d) =>
+    `<button data-act="nsDom" data-arg="${d}" class="${chipClass(s.domain === d)}" style="${chipStyle(s.domain === d)};font-family:var(--mono)">${d}</button>`).join("");
+
+  const createStyle = canCreate
+    ? "background:var(--accent);color:var(--accent-fg);border:1px solid transparent"
+    : "background:transparent;color:var(--fg-40);border:1px solid var(--border);cursor:default";
+
+  return `<div style="border:1px solid var(--border-strong);border-radius:13px;padding:18px 20px;margin:14px 0 6px">
+    <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px">
+      <div style="min-width:0">
+        <label style="${NS_LABEL}">Sprint name</label>
+        <input data-act="nsField" data-arg="name" data-field="ns-name" value="${attr(s.name)}" placeholder="Sprint 14" style="${NS_INPUT}" />
+      </div>
+      <div style="min-width:0">
+        <label style="${NS_LABEL}">Dates</label>
+        <input data-act="nsField" data-arg="dates" data-field="ns-dates" value="${attr(s.dates)}" placeholder="Oct 6 – 17" style="${NS_INPUT}" />
+      </div>
+    </div>
+    <label style="${NS_LABEL};margin:15px 0 7px">Goal <span style="font-weight:400;color:var(--fg-40)">— what this sprint is for</span></label>
+    <input data-act="nsField" data-arg="desc" data-field="ns-desc" value="${attr(s.desc)}" placeholder="One sentence describing the sprint's goal" style="${NS_INPUT}" />
+    <div style="display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;margin-top:15px;align-items:end">
+      <div>
+        <label style="${NS_LABEL}">Urgency</label>
+        <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${urgSegs}</div>
+      </div>
+      <div style="min-width:0">
+        <label style="${NS_LABEL}">Due date</label>
+        <input data-act="nsField" data-arg="due" data-field="ns-due" value="${attr(s.due)}" placeholder="2026-10-17" style="${NS_INPUT};height:34px" />
+      </div>
+    </div>
+    <label style="${NS_LABEL};margin:15px 0 7px">Lead</label>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${leadChips}</div>
+    <label style="${NS_LABEL};margin:15px 0 7px">Codebase domain</label>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${domChips}</div>
+    <div style="font-size:11.5px;color:var(--fg-40);margin-top:12px">Sprints are the roadmap — a new sprint appears on the Roadmap timeline automatically.</div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <button data-act="nsToggle" class="cnpy-outlinebtn" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Cancel</button>
+      <button data-act="nsCreate" style="border-radius:8px;padding:7px 15px;font-size:12.5px;font-weight:600;${createStyle}">Create sprint</button>
+    </div>
+  </div>`;
+}
+
+/** The "New sprint" toggle button — the Timeline header affordance the panel opens from. */
+export function newSprintToggle(open: boolean): string {
+  return `<button data-act="nsToggle" style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;border:1px solid ${open ? "var(--border-strong)" : "var(--border)"};color:${open ? "var(--fg)" : "var(--fg-70)"};white-space:nowrap;flex:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>New sprint</button>`;
+}
+
+// ── the Sprint screen (design 490–571) ───────────────────────────────────────
+
+const PROP_ROW = "display:grid;grid-template-columns:74px 1fr;gap:10px;align-items:center;height:30px";
+const PROP_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
+const PROP_CHIP =
+  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px;white-space:nowrap";
+const RAIL_EYEBROW =
+  "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)";
+const ACTIVE_CHIP =
+  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:5px;padding:2px 7px;white-space:nowrap";
+
+/** The resource-chip icons — the SAME three the ticket detail's linked-work chips use. */
+const RESOURCE_ICON: Record<string, string> = {
+  github: `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>`,
+  figma: `<svg width="12" height="17" viewBox="0 0 38 57" aria-hidden="true"><path fill="#1abcfe" d="M19 28.5a9.5 9.5 0 1 1 19 0 9.5 9.5 0 0 1-19 0z"></path><path fill="#0acf83" d="M0 47.5A9.5 9.5 0 0 1 9.5 38H19v9.5a9.5 9.5 0 1 1-19 0z"></path><path fill="#ff7262" d="M19 0v19h9.5a9.5 9.5 0 1 0 0-19H19z"></path><path fill="#f24e1e" d="M0 9.5A9.5 9.5 0 0 0 9.5 19H19V0H9.5A9.5 9.5 0 0 0 0 9.5z"></path><path fill="#a259ff" d="M0 28.5A9.5 9.5 0 0 0 9.5 38H19V19H9.5A9.5 9.5 0 0 0 0 28.5z"></path></svg>`,
+  plain: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path></svg>`,
+};
+/** Defense in depth: a stored resource url must be http(s) before it reaches an href. */
+const safeHref = (u: string): string => (/^https?:\/\//i.test(u) ? u : "#");
+
+function resourceRow(lk: SprintResourceView): string {
+  return `<a href="${attr(safeHref(lk.url))}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;text-decoration:none;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+    <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)">${RESOURCE_ICON[lk.kind] ?? RESOURCE_ICON.plain}</span>
+    <span style="min-width:0;flex:1">
+      <span style="display:block;font-size:12px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(lk.label)}</span>
+      <span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${esc(lk.meta)}</span>
+    </span>
+  </a>`;
+}
+
+/** One ticket row. `depth: 1` = a child under its root: indented 34px with the ↳ chevron.
+ *  The assignee avatars sit between the title and the chips (design 514). */
+function sprintTicketRow(t: SprintTicketRow, persons: PersonSummary[]): string {
+  const child = t.depth === 1;
+  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-trow" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);transition:background .12s ease;${child ? "padding-left:34px" : ""}">
+    ${child ? `<span style="color:var(--fg-40);flex:none">↳</span>` : ""}
+    <span style="flex:1;min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
+    ${avatarStack(t.assignees, persons, 18)}
+    ${priorityChip(t.priority)}
+    ${ticketPill(t.status)}
+    <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);flex:none;width:34px;text-align:right">${esc(age(t.created_at))}</span>
+  </button>`;
+}
+
+export interface SprintScreenProps {
+  detail: SprintDetail;
+  persons: PersonSummary[];
+  /** The Resources rail's "Add a URL…" draft (shared with the ticket detail's link draft). */
+  resourceDraft: string;
+}
+
+/**
+ * The Sprint screen: the sprint's own page, reached from a Roadmap card's
+ * "Open sprint →" or from a queue group header. Two columns — the ticket list on
+ * the left under the title/description/progress, the properties + assignees +
+ * resources rail on the right (design 490–571).
+ *
+ * The description is MARKDOWN (§C.5: "becomes markdown" is a render-side change),
+ * so it goes through renderMarkdown — the same sanitizing pipeline doc bodies and
+ * the plan narrative use — and is never interpolated raw.
+ *
+ * "Mark active / Mark inactive" is the human control behind
+ * `POST /sprints/:id/active`; `done` is NEVER set here (§C.6 — the plan write or
+ * the Roadmap's Confirm-done own that).
+ */
+export function sprintScreen(p: SprintScreenProps): string {
+  const sp = p.detail;
+  const activeChip = sp.active ? `<span style="${ACTIVE_CHIP}">ACTIVE</span>` : "";
+  const activeBtn = sp.status === "done"
+    ? ""
+    : `<button data-act="sprintActive" data-arg="${sp.active ? "0" : "1"}" class="cnpy-outlinebtn" style="padding:4px 11px;border-radius:7px;border:1px solid var(--border-strong);font-size:11.5px;font-weight:500;color:var(--fg-70);flex:none">${sp.active ? "Mark inactive" : "Mark active"}</button>`;
+
+  const tickets = sp.tickets.length > 0
+    ? sp.tickets.map((t) => sprintTicketRow(t, p.persons)).join("")
+    : `<div style="border:1px dashed var(--border-strong);border-radius:11px;padding:20px;text-align:center;font-size:12.5px;color:var(--fg-40);margin-top:12px">No tickets in this sprint yet — move some from the queue's sprint picker.</div>`;
+
+  const members = sp.members.length > 0
+    ? `<div style="display:flex;flex-direction:column;gap:6px">${sp.members.map((h) =>
+        `<div style="display:flex;align-items:center;gap:9px;padding:4px 0">${personChip(person(p.persons, h), 22, h)}<span style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nameOf(p.persons, h))}</span></div>`).join("")}</div>`
+    : "";
+
+  const resources = sp.resources.length > 0
+    ? `<div style="display:flex;flex-direction:column;gap:7px;margin-bottom:10px">${sp.resources.map(resourceRow).join("")}</div>`
+    : "";
+
+  const prop = (label: string, cell: string) =>
+    `<div style="${PROP_ROW}"><div style="${PROP_LABEL}">${label}</div><div>${cell}</div></div>`;
+
+  return `<div style="max-width:1000px;margin:0 auto;padding:26px 32px 100px">
+    <div class="cnpy-sprint-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:28px">
+      <div style="min-width:0">
+        <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(sp.label)}</h2>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:9px;font-size:12px;color:var(--fg-55)">
+          ${activeChip}
+          ${activeBtn}
+          ${sp.phase ? `<span style="color:var(--fg-40);white-space:nowrap">${esc(sp.phase)}</span>` : ""}
+        </div>
+        ${sp.description
+          ? `<div class="cnpy-md" style="font-size:13.5px;line-height:1.65;color:var(--fg-70);max-width:640px;margin-top:14px">${renderMarkdown(sp.description)}</div>`
+          : sp.summary
+            ? `<div style="font-size:13.5px;line-height:1.65;color:var(--fg-70);max-width:640px;margin-top:14px">${esc(sp.summary)}</div>`
+            : ""}
+        <div style="display:flex;align-items:center;gap:12px;margin:16px 0 26px">
+          <div style="flex:1;height:6px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${sp.progress.pct}%;background:var(--accent)"></div></div>
+          <span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${sp.progress.closed}/${sp.progress.total} done</span>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
+          <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">TICKETS IN THIS SPRINT</div>
+        </div>
+        ${tickets}
+      </div>
+      <div style="border-left:1px solid var(--border);padding-left:22px">
+        <div style="${RAIL_EYEBROW};margin-bottom:8px">Properties</div>
+        <div style="display:flex;flex-direction:column">
+          ${prop("DATES", `<span style="${PROP_CHIP}">${esc(sp.dates ?? "—")}</span>`)}
+          ${prop("DUE", `<span style="${PROP_CHIP}">${esc(sp.due ? shortDue(sp.due) : "—")}</span>`)}
+          ${prop("URGENCY", sprintTags({ urgency: sp.urgency, due: null, domain: null }))}
+          ${prop("DOMAIN", sp.domain ? tag(sp.domain.toUpperCase(), tint("var(--blue)")) : `<span style="${PROP_CHIP}">—</span>`)}
+          ${prop("LEAD", sp.lead
+            ? `<div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(p.persons, sp.lead), 20, sp.lead)}<span style="font-size:12.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nameOf(p.persons, sp.lead))}</span></div>`
+            : `<span style="font-size:12.5px;color:var(--fg-40)">Unassigned</span>`)}
+        </div>
+        <div style="${RAIL_EYEBROW};margin:22px 0 8px">Assignees</div>
+        ${members}
+        <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">Everyone assigned to a ticket in this sprint.</div>
+        <div style="${RAIL_EYEBROW};margin:22px 0 8px">Resources</div>
+        ${resources}
+        <div style="display:flex;gap:7px">
+          <input data-act="sprintResourceDraft" data-field="sprint-resource" value="${attr(p.resourceDraft)}" placeholder="Add a URL…" style="flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:11.5px;font-family:var(--mono);outline:none" />
+          <button data-act="sprintResourceAdd" class="cnpy-outlinebtn" style="padding:0 11px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg-70);flex:none">Add</button>
+        </div>
+        <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">Sprint-level links plus everything linked from its tickets.</div>
+      </div>
+    </div>
+  </div>`;
+}

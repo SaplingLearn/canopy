@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { IngestPayload } from "@shared/contract";
-import { consume, ingestDocProposal, ingestFeedEntry, ingestMilestoneProposal } from "../src/consumer";
+import { consume, ingestDocProposal, ingestFeedEntry } from "../src/consumer";
 import { promote_doc } from "../src/tools/writes";
 import { all, first } from "../src/db";
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, MilestoneProposalRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow } from "@shared/rows";
 
 const AUTHOR = "real-user";
 const meta = (id: string) => ({ id, author: "advisory", ended_at: "2026-06-24T00:00:00Z", skill_version: "2.0" });
@@ -127,7 +127,7 @@ describe("reconciler — confidence + space", () => {
   });
 });
 
-describe("reconciler — ADR + milestone dedupe", () => {
+describe("reconciler — ADR dedupe", () => {
   it("drops an identical ADR (content hash) but stages a different one", async () => {
     const a = IngestPayload.parse({ session: meta("A-1"), adr_drafts: [{ title: "T", context: "c", decision: "d", rationale: "r", confidence: "high" }] });
     const b = IngestPayload.parse({ session: meta("A-2"), adr_drafts: [{ title: "T", context: "c", decision: "d", rationale: "r", confidence: "high" }] });
@@ -139,18 +139,6 @@ describe("reconciler — ADR + milestone dedupe", () => {
     expect((await all<AdrRow>(env.DB, `SELECT * FROM adrs`)).length).toBe(2);
   });
 
-  it("drops a milestone with an already-staged title but stages a new one", async () => {
-    // milestone_proposals is no longer an IngestPayload arm (Task 9) — the gate fn
-    // itself still enforces this dedupe, driven directly (as triage-assign does).
-    const a = await ingestMilestoneProposal(env.DB, { title: "GA", target_date: "2026-09-01", status: "upcoming", change_summary: "s", confidence: "high" }, AUTHOR);
-    const b = await ingestMilestoneProposal(env.DB, { title: "GA", target_date: "2026-10-01", status: "in_progress", change_summary: "s", confidence: "high" }, AUTHOR);
-    const c = await ingestMilestoneProposal(env.DB, { title: "Beta", target_date: "2026-08-01", status: "upcoming", change_summary: "s", confidence: "high" }, AUTHOR);
-
-    expect(a.outcome).toBe("written");
-    expect(b.outcome).toBe("unchanged");
-    expect(c.outcome).toBe("written");
-    expect((await all<MilestoneProposalRow>(env.DB, `SELECT * FROM milestone_proposals`)).length).toBe(2);
-  });
 });
 
 describe("reconciler — staging stays non-destructive", () => {

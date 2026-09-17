@@ -30,7 +30,9 @@ input, select { font-family: inherit; }
 .cnpy-nav { display:flex; align-items:center; gap:11px; width:100%; padding:9px 11px; border-radius:8px; font-size:13.5px; font-weight:500; position:relative; color:var(--fg-55); text-align:left; }
 .cnpy-nav:hover { color:var(--fg-70); background:var(--hover); }
 [data-collapsed="1"] .cnpy-nav { justify-content:center; padding:9px 0; }
-[data-screen="mywork"] .cnpy-nav.n-mywork, [data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="review"] .cnpy-nav.n-review, [data-screen="maintenance"] .cnpy-nav.n-maintenance, [data-screen="search"] .cnpy-nav.n-search { background:var(--accent-soft); color:var(--accent); }
+/* Active nav item. The three ticket screens all light Tickets; a sprint is a
+   Roadmap child, so it lights Roadmap. */
+[data-screen="mywork"] .cnpy-nav.n-mywork, [data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="review"] .cnpy-nav.n-review, [data-screen="maintenance"] .cnpy-nav.n-maintenance, [data-screen="search"] .cnpy-nav.n-search, [data-screen="tickets"] .cnpy-nav.n-tickets, [data-screen="ticketdetail"] .cnpy-nav.n-tickets, [data-screen="newticket"] .cnpy-nav.n-tickets, [data-screen="sprint"] .cnpy-nav.n-roadmap { background:var(--accent-soft); color:var(--accent); }
 .cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:9px; }
 .cnpy-chip:hover { background:var(--hover); }
 [data-collapsed="1"] .cnpy-chip { justify-content:center; padding:6px 0; }
@@ -76,6 +78,20 @@ input, select { font-family: inherit; }
 .cnpy-card:hover { border-color:var(--border-strong); }
 .cnpy-mw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:1fr; gap:14px; align-items:stretch; }
 @media (max-width:760px) { .cnpy-mw-grid { grid-template-columns:1fr; } }
+/* Tickets: the queue's table rows, and the two-column form/detail layouts that
+   collapse to one column on a narrow viewport. */
+.cnpy-trow { transition:background .12s ease; cursor:pointer; }
+.cnpy-trow:hover { background:var(--hover); }
+/* Design call #6 — "needs attention" (unassigned + Submitted). The faint accent
+   fill lives HERE rather than inline so that :hover (class + pseudo-class, higher
+   specificity) still wins and the row keeps its hover background. It is now the
+   WHOLE marker: the 2px inset left rule that tickets.ts used to add inline was
+   dropped at the owner's request — no box-shadow, no left border here either. */
+.cnpy-attn { background:color-mix(in srgb,var(--accent) 4%,transparent); }
+@media (max-width:860px) {
+  .cnpy-nt-grid, .cnpy-td-grid, .cnpy-sprint-grid { grid-template-columns:1fr !important; }
+  .cnpy-nt-grid > div + div, .cnpy-td-grid > div + div, .cnpy-sprint-grid > div + div { border-left:none !important; padding-left:0 !important; }
+}
 .cnpy-accentbtn { transition:filter .12s ease, transform .12s ease; }
 .cnpy-accentbtn:hover { filter:brightness(1.06); }
 .cnpy-accentbtn:active { transform:translateY(1px); }
@@ -108,6 +124,36 @@ input, select { font-family: inherit; }
 .cnpy-signout { transition:all .12s ease; }
 .cnpy-signout:hover { border-color:var(--red); color:var(--red); }
 .cnpy-mutelink:hover { color:var(--fg-70); }
+
+/* ── ticket & sprint surfaces: menu rows, pick chips, segments, grip ─────────
+   Inline styles cannot express `:hover`, so every dropdown row / chip we added
+   for the ticket screens gets its hover HERE. `--hover` and `--border-strong`
+   are defined by dark, light AND midnight, so one rule covers all three themes.
+
+   These surfaces paint their selected state INLINE (the app's template-string
+   idiom), so a plain class rule loses the cascade to the element's own style
+   attribute: wherever a hover has to repaint a property the inline style
+   already sets, the rule says !important. That is what makes this layer
+   expressible at all — the dc-runtime applied `style-hover` inline, and plain
+   CSS has to outrank it. */
+.cnpy-menurow { transition:background .12s ease; }
+.cnpy-menurow:hover { background:var(--hover); }
+/* The keyboard-active picker row is painted by the SAME declaration as hover, so
+   ↑↓ and the mouse land on an identical-looking row. */
+.cnpy-menurow.is-active { background:var(--hover); }
+/* Single-choice chips (category / sprint / assignee / lead / domain). The picked
+   chip keeps its accent border — only the unpicked ones firm up on hover. */
+.cnpy-pickchip { transition:border-color .12s ease, color .12s ease; }
+.cnpy-pickchip:not(.is-on):hover { border-color:var(--border-strong) !important; color:var(--fg-70) !important; }
+/* Segmented controls (queue segment / priority / urgency): the ON segment owns
+   the `--hover` fill, so an unpicked segment brightens its label instead. */
+.cnpy-segbtn:not(.is-on):hover { color:var(--fg) !important; }
+/* The queue group header's "Open sprint →". */
+.cnpy-grouplink { transition:color .12s ease, background .12s ease; border-radius:6px; }
+.cnpy-grouplink:hover { color:var(--fg) !important; background:var(--hover); }
+/* The comment box's own resize grip (bottom-left). */
+.cnpy-grip { transition:color .12s ease; }
+.cnpy-grip:hover { color:var(--fg-70) !important; }
 
 /* ── rendered markdown (docs reader) ───────────────────────────────────────── */
 /* A typeset technical document: comfortable measure, mono structural spine.

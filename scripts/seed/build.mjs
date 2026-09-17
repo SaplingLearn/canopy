@@ -17,7 +17,8 @@ export const targetsRemote = (argv) => argv.includes("--remote");
 /**
  * Turn parsed fixture objects into standalone, escaped SQL statements (no
  * trailing ";"), reset statements first. FK-safe ordering: events before
- * pr_summaries, milestones before milestone_progress.
+ * pr_summaries, sprints before sprint_progress / sprint_resources / tickets,
+ * tickets before ticket_assignees / _links / _comments / _events.
  */
 export function buildSeedStatements(fx) {
   const s = [...RESET_STATEMENTS];
@@ -67,33 +68,78 @@ export function buildSeedStatements(fx) {
     );
   }
 
-  for (const m of fx.triage?.milestone_proposals ?? []) {
-    s.push(
-      `INSERT INTO milestone_proposals (title, target_date, status, github_ref, change_summary, confidence, staged_status, created_at, created_by) VALUES (` +
-        `${q(m.title)}, ${q(m.target_date)}, ${q(m.status)}, ${q(m.github_ref)}, ${q(m.change_summary)}, ${q(m.confidence)}, ${q(m.staged_status ?? "staged")}, ${q(m.created_at)}, ${q(m.created_by)})`
-    );
-  }
-
   const rm = fx.roadmap;
   if (rm) {
     s.push(
       `UPDATE plan SET narrative = ${q(rm.narrative)}, current_version = ${num(rm.version)}, updated_at = ${q(rm.updated_at)}, updated_by = ${q(rm.updated_by)} WHERE id = 1`
     );
     s.push(
-      `INSERT INTO plan_versions (version, narrative, milestones_json, created_at, created_by) VALUES (` +
-        `${num(rm.version)}, ${q(rm.narrative)}, ${jsonLit(rm.milestones ?? [])}, ${q(rm.updated_at)}, ${q(rm.updated_by)})`
+      `INSERT INTO plan_versions (version, narrative, sprints_json, created_at, created_by) VALUES (` +
+        `${num(rm.version)}, ${q(rm.narrative)}, ${jsonLit(rm.sprints ?? [])}, ${q(rm.updated_at)}, ${q(rm.updated_by)})`
     );
-    for (const m of rm.milestones ?? []) {
+    for (const sp of rm.sprints ?? []) {
       s.push(
-        `INSERT INTO milestones (id, title, description, phase, target_date, status, github_ref, created_at, created_by, updated_at) VALUES (` +
-          `${num(m.id)}, ${q(m.title)}, ${q(m.description)}, ${q(m.phase)}, ${q(m.target_date)}, ${q(m.status)}, ${q(m.github_ref)}, ${q(m.created_at)}, ${q(m.created_by)}, ${q(m.updated_at)})`
+        `INSERT INTO sprints (id, title, description, summary, phase, dates, target_date, status, urgency, lead, domain, github_ref, created_at, created_by, updated_at) VALUES (` +
+          `${num(sp.id)}, ${q(sp.title)}, ${q(sp.description)}, ${q(sp.summary)}, ${q(sp.phase)}, ${q(sp.dates)}, ${q(sp.target_date)}, ${q(sp.status)}, ${q(sp.urgency ?? "normal")}, ${q(sp.lead)}, ${q(sp.domain)}, ${q(sp.github_ref)}, ${q(sp.created_at)}, ${q(sp.created_by)}, ${q(sp.updated_at)})`
       );
-      if (m.progress) {
+      if (sp.progress) {
         s.push(
-          `INSERT INTO milestone_progress (milestone_id, closed, total, source, computed_at) VALUES (` +
-            `${num(m.id)}, ${num(m.progress.closed)}, ${num(m.progress.total)}, ${q(m.progress.source ?? "recompute")}, ${q(m.progress.computed_at)})`
+          `INSERT INTO sprint_progress (sprint_id, closed, total, source, computed_at) VALUES (` +
+            `${num(sp.id)}, ${num(sp.progress.closed)}, ${num(sp.progress.total)}, ${q(sp.progress.source ?? "recompute")}, ${q(sp.progress.computed_at)})`
         );
       }
+      // Sprint resources: the links attached to the sprint itself (parsed shape,
+      // exactly what shared/tickets.ts parseTicketLink would produce for the url).
+      for (const r of sp.resources ?? []) {
+        s.push(
+          `INSERT INTO sprint_resources (sprint_id, url, kind, label, meta) VALUES (` +
+            `${num(sp.id)}, ${q(r.url)}, ${q(r.kind)}, ${q(r.label)}, ${q(r.meta)})`
+        );
+      }
+    }
+  }
+
+  // Tickets (0024) — after the sprints above, so `sprint_id` points at a row that
+  // exists (it is a soft INTEGER ref, but the seed should still read coherently),
+  // and after the person seed in RESET_STATEMENTS (`tickets.requester` FKs
+  // persons(handle)). Explicit ids so the fixture can wire parent/child and so
+  // the children below can name their ticket.
+  //
+  // parent_id is set in a SECOND pass: it references tickets(id), which D1
+  // enforces, so a child listed before its parent would fail the INSERT. The
+  // UPDATE makes the fixture's order irrelevant.
+  for (const t of fx.tickets?.tickets ?? []) {
+    s.push(
+      `INSERT INTO tickets (id, title, body, category, priority, status, requester, parent_id, sprint_id, created_at, updated_at) VALUES (` +
+        `${num(t.id)}, ${q(t.title)}, ${q(t.body)}, ${q(t.category)}, ${q(t.priority)}, ${q(t.status)}, ${q(t.requester)}, NULL, ${num(t.sprint_id)}, ${q(t.created_at)}, ${q(t.updated_at)})`
+    );
+  }
+  for (const t of fx.tickets?.tickets ?? []) {
+    if (t.parent_id !== null && t.parent_id !== undefined) {
+      s.push(`UPDATE tickets SET parent_id = ${num(t.parent_id)} WHERE id = ${num(t.id)}`);
+    }
+    for (const login of t.assignees ?? []) {
+      s.push(`INSERT INTO ticket_assignees (ticket_id, login) VALUES (${num(t.id)}, ${q(login)})`);
+    }
+    // Links carry the parsed shape shared/tickets.ts parseTicketLink would produce.
+    for (const l of t.links ?? []) {
+      s.push(
+        `INSERT INTO ticket_links (ticket_id, url, kind, label, meta, created_by, created_at) VALUES (` +
+          `${num(t.id)}, ${q(l.url)}, ${q(l.kind)}, ${q(l.label)}, ${q(l.meta)}, ${q(l.created_by)}, ${q(l.created_at)})`
+      );
+    }
+    for (const cm of t.comments ?? []) {
+      s.push(
+        `INSERT INTO ticket_comments (ticket_id, author, body, created_at) VALUES (` +
+          `${num(t.id)}, ${q(cm.author)}, ${q(cm.body)}, ${q(cm.created_at)})`
+      );
+    }
+    // The full history, opening row (from_status NULL) included.
+    for (const ev of t.events ?? []) {
+      s.push(
+        `INSERT INTO ticket_events (ticket_id, actor, from_status, to_status, created_at) VALUES (` +
+          `${num(t.id)}, ${q(ev.actor)}, ${q(ev.from_status)}, ${q(ev.to_status)}, ${q(ev.created_at)})`
+      );
     }
   }
 

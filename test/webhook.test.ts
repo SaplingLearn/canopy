@@ -134,9 +134,10 @@ describe("handleGithubWebhook — the third auth class", () => {
     expect(raw.pr.base).toEqual({ ref: "main" });
   });
 
-  it("captures the issue milestone title and due date in raw (Milestone row source)", async () => {
+  it("captures the issue GROUP's number, title and due date in raw (the Sprint row's source)", async () => {
     await postWebhook("issues", issueAssigned, env);
     const rows = await all<EventRow>(env.DB, `SELECT * FROM events WHERE event_type = 'issue'`);
+    // `milestone` is GitHub's own key — not Canopy vocabulary (the stored raw mirrors it).
     const raw = JSON.parse(rows[0].raw) as { issue: { milestone: { number: number; title: string | null; due_on: string | null } } };
     expect(raw.issue.milestone).toMatchObject({ number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" });
   });
@@ -169,6 +170,7 @@ describe("eventsFromDelivery — pure derivation", () => {
     const raw = JSON.parse(e.raw);
     expect(raw.action).toBe("assigned");
     expect(raw.issue.labels).toEqual(["P1", "backend"]); // label objects flattened to names
+    // `milestone` is GitHub's own key — not Canopy vocabulary.
     expect(raw.issue.milestone).toEqual({
       number: 3,
       title: "Reliable event capture",
@@ -190,7 +192,8 @@ describe("eventsFromDelivery — pure derivation", () => {
     expect(e.occurred_at).toBe("2026-07-01T18:24:00Z");
     const raw = JSON.parse(e.raw);
     expect(raw.pr.merged).toBe(true);
-    expect(raw.pr.milestone).toEqual({ number: 3 }); // PR milestone slice is number-only
+    // `milestone` is GitHub's own key — not Canopy vocabulary; the PR slice is number-only.
+    expect(raw.pr.milestone).toEqual({ number: 3 });
   });
 
   it("returns [] for a PR masquerading as an issue and for unknown/unhandled actions", () => {
@@ -203,11 +206,11 @@ describe("eventsFromDelivery — pure derivation", () => {
 });
 
 describe("progressFromIssueEvent — pure derivation", () => {
-  it("reads the milestone counts (total = open + closed)", () => {
-    expect(progressFromIssueEvent(issueClosed)).toEqual({ milestoneNumber: 3, closed: 5, total: 6 });
+  it("reads the issue GROUP's counts (total = open + closed)", () => {
+    expect(progressFromIssueEvent(issueClosed)).toEqual({ groupNumber: 3, closed: 5, total: 6 });
   });
 
-  it("null when there is no milestone on the issue", () => {
+  it("null when the issue belongs to no group", () => {
     expect(progressFromIssueEvent({ issue: { number: 1 } })).toBeNull();
     expect(progressFromIssueEvent(null)).toBeNull();
   });
@@ -232,13 +235,13 @@ describe("webhook → issue summarize wiring", () => {
   });
 
   it("still runs progressSeam for an assigned issue event (both seams fire, not either/or)", async () => {
-    // progressSeam only writes a milestone_progress row for a milestone that
+    // progressSeam only writes a sprint_progress row for a sprint that
     // already exists with a matching github_ref (see test/progress.test.ts's
-    // seedMilestone pattern) — seed one matching issueAssigned's milestone (3)
-    // so the assertion below actually exercises applyEventProgress.
+    // seedSprint pattern) — seed one matching issueAssigned's GitHub group
+    // number (3) so the assertion below actually exercises applyEventProgress.
     await run(
       env.DB,
-      `INSERT INTO milestones (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
       "M",
       "2026-08-01",
       "in_progress",
@@ -248,7 +251,7 @@ describe("webhook → issue summarize wiring", () => {
     );
     const stub: Summarizer<IssueSummary> = { model: "stub", summarize: async () => ({ title: "Humanized", summary: "summary", next_step: null }) };
     await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
-    const progress = await all(env.DB, `SELECT * FROM milestone_progress`);
-    expect(progress.length).toBe(1); // issueAssigned carries a milestone — progressSeam still wrote it
+    const progress = await all(env.DB, `SELECT * FROM sprint_progress`);
+    expect(progress.length).toBe(1); // issueAssigned carries a GitHub group — progressSeam still wrote it
   });
 });

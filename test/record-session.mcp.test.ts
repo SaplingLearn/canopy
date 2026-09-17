@@ -124,7 +124,7 @@ describe("record_session MCP tool — the real bearer-only agent write path", ()
     expect(versionsAfter).toBe(versionsBefore); // nothing new staged on replay
   });
 
-  it("propose_milestone and set_focus are retired: absent from tools/list, and calling them errors", async () => {
+  it("the retired write tools stay retired: no proposal or sprint writer in tools/list, and calling one errors", async () => {
     const raw = await seedUserWithBearer("bearer-agent-narrow");
     const principal = await bearerPrincipal(raw);
 
@@ -136,22 +136,28 @@ describe("record_session MCP tool — the real bearer-only agent write path", ()
     try {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
-      expect(names).not.toContain("propose_milestone");
+      // propose_doc_update is the ONLY agent proposal tool left: the roadmap one
+      // went with its queue (0025), and focus was retired back in 0014.
+      expect(names.filter((n) => n.startsWith("propose_"))).toEqual(["propose_doc_update"]);
       expect(names).not.toContain("set_focus");
+      // Sprints are authored writes on cookie routes — MCP gets no sprint writer.
+      for (const banned of ["propose_sprint", "create_sprint", "complete_sprint", "set_sprint_active"]) {
+        expect(names).not.toContain(banned);
+      }
 
       // An unregistered tool name resolves with isError (SDK -32602 "Tool not found"),
       // rather than rejecting the call promise — assert on that, not a rejection.
-      const proposeMilestoneRes = (await client.callTool({
-        name: "propose_milestone",
+      const proposeSprintRes = (await client.callTool({
+        name: "propose_sprint",
         arguments: {
-          title: "Should not register",
-          target_date: "2026-09-01",
+          label: "Should not register",
+          due: "2026-09-01",
           status: "upcoming",
           change_summary: "narrowing test",
           confidence: "high",
         },
       })) as { isError?: boolean };
-      expect(proposeMilestoneRes.isError).toBe(true);
+      expect(proposeSprintRes.isError).toBe(true);
 
       const setFocusRes = (await client.callTool({
         name: "set_focus",

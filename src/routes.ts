@@ -8,8 +8,22 @@ import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
 import { consume } from "./consumer";
 import { runBackfill } from "./tools/backfill";
-import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_milestone_proposals, list_proposals, list_identity_tasks } from "./tools/reads";
-import { promote_doc, ratify_adr, promote_milestone_proposal, reject_milestone_proposal, complete_milestone, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
+import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
+import {
+  create_ticket, transition_ticket, toggle_assignee, add_ticket_link,
+  set_ticket_sprint, set_ticket_parent, add_ticket_comment,
+  TicketError, TICKET_ERROR_STATUS,
+} from "./tools/tickets";
+import {
+  TicketCreate, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
+  TicketSprintSet, TicketParentSet, TicketCommentAdd, TicketSeg, TicketAssigneeFilter, TicketCategory,
+} from "@shared/tickets";
+import { promote_doc, ratify_adr, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
+import {
+  create_sprint, set_sprint_active, complete_sprint, add_sprint_resource, list_sprints, get_sprint,
+  SprintError, SPRINT_ERROR_STATUS,
+} from "./tools/sprints";
+import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import type { DashboardData } from "@shared/dashboard";
@@ -72,8 +86,8 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "milestone" =>
-        t === "doc" || t === "decision" || t === "feed" || t === "milestone"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "sprint" =>
+        t === "doc" || t === "decision" || t === "feed" || t === "sprint"))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "technical" || spaceRaw === "product" ? spaceRaw : undefined;
@@ -94,8 +108,6 @@ app.get("/search", async (c) => {
 app.get("/needs-triage", async (c) => c.json({ items: await list_needs_triage(c.env.DB) }));
 
 app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.query("status")) }));
-
-app.get("/milestone-proposals", async (c) => c.json({ proposals: await list_milestone_proposals(c.env.DB) }));
 
 // ── Review group (session-cookie only, NEVER MCP): Proposals (staged doc
 // versions) + Decisions (ADR drafts) — GET /proposals, GET /adrs, and their
@@ -255,7 +267,7 @@ app.post("/invites/:email/resend", async (c) => {
   return c.json({ ok: true, email: result });
 });
 
-// Roadmap read (session-gated): admin narrative + milestones in target-date order,
+// Roadmap read (session-gated): admin narrative + sprints in target-date order,
 // merged with cached progress from the plan store. No live GitHub, no per-user token.
 app.get("/roadmap", async (c) => c.json(await get_plan(c.env.DB)));
 
@@ -269,33 +281,8 @@ app.get("/me/dashboard", async (c) => {
     return c.json(data);
   } catch {
     // Absolute backstop: never 500. Anything unexpected (D1) → empty degraded payload.
-    const empty: DashboardData = { person: null, previousActivity: [], todo: [], degraded: true };
+    const empty: DashboardData = { person: null, previousActivity: [], todo: [], tickets: [], degraded: true };
     return c.json(empty);
-  }
-});
-
-// Human confirmation (session-gated): promote a staged milestone proposal into a live milestone.
-app.post("/milestone-proposals/:id/promote", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
-  try {
-    const milestone = await promote_milestone_proposal(c.env.DB, id, c.get("principal").handle);
-    return c.json({ ok: true, milestone });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-  }
-});
-
-// Human write-back (session-gated): reject a staged milestone proposal. Soft flip to
-// 'rejected' so it leaves the milestones queue; the row remains. Idempotent.
-app.post("/milestone-proposals/:id/reject", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
-  try {
-    const res = await reject_milestone_proposal(c.env.DB, id);
-    return c.json({ ok: true, ...res });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
 });
 
@@ -311,13 +298,244 @@ app.post("/admin/backfill", async (c) => {
   return c.json(res);
 });
 
-// Human confirmation (session-gated): flip a live milestone to 'done'.
-app.post("/milestones/:id/complete", async (c) => {
+// ── Tickets (session-cookie only, NEVER MCP): the one queue the whole org files
+// into. Every route below is a DIRECT AUTHORED WRITE in the promote class — no
+// consume(), no gate, no staged state, no proposals. The requester/actor/author
+// is ALWAYS the authenticated principal; a client-supplied one is ignored. ────
+
+/** Map a TicketError onto its status (404 unknown / 409 rule / 400 payload). */
+const ticketFail = (c: Context<AppEnv>, e: unknown): Response => {
+  if (e instanceof TicketError) return c.json({ error: e.message }, TICKET_ERROR_STATUS[e.code]);
+  throw e; // not ours — a real 500
+};
+
+/** The id path param, or null when it is not an integer. */
+const ticketId = (c: Context<AppEnv>): number | null => {
+  const id = Number(c.req.param("id"));
+  return Number.isInteger(id) ? id : null;
+};
+
+/** Every write answers with the freshly re-read detail DTO, so one round-trip repaints. */
+const ticketDetailResponse = async (c: Context<AppEnv>, id: number): Promise<Response> => {
+  const ticket = await get_ticket(c.env.DB, id);
+  if (!ticket) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true, ticket });
+};
+
+app.post("/tickets", async (c) => {
+  const parsed = TicketCreate.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    // The principal is the requester, full stop — parsed.data has no requester field.
+    const id = await create_ticket(c.env.DB, parsed.data, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// The queue list. seg=open|closed|all (open = submitted + in_progress),
+// assignee=anyone|me|unassigned (me = the principal), category = a vocab value
+// ('all'/absent = every category). Sorted updated_at DESC.
+app.get("/tickets", async (c) => {
+  const segRaw = c.req.query("seg");
+  const asgRaw = c.req.query("assignee");
+  const catRaw = c.req.query("category");
+
+  const seg = TicketSeg.safeParse(segRaw ?? "open");
+  if (!seg.success) return c.json({ error: "invalid seg", issues: seg.error.issues }, 400);
+  const assignee = TicketAssigneeFilter.safeParse(asgRaw ?? "anyone");
+  if (!assignee.success) return c.json({ error: "invalid assignee", issues: assignee.error.issues }, 400);
+  let category: TicketCategory | undefined;
+  if (catRaw !== undefined && catRaw !== "" && catRaw !== "all") {
+    const parsed = TicketCategory.safeParse(catRaw);
+    if (!parsed.success) return c.json({ error: "invalid category", issues: parsed.error.issues }, 400);
+    category = parsed.data;
+  }
+
+  const tickets = await list_tickets(c.env.DB, {
+    seg: seg.data,
+    assignee: assignee.data,
+    category,
+    me: c.get("principal").handle,
+  });
+  return c.json({ tickets });
+});
+
+// REGISTERED BEFORE /tickets/:id ON PURPOSE: Hono matches in registration order,
+// so a later ':id' route would otherwise swallow the literal '/tickets/badge'.
+app.get("/tickets/badge", async (c) => c.json({ count: await ticket_badge(c.env.DB) }));
+
+app.get("/tickets/:id", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const ticket = await get_ticket(c.env.DB, id);
+  if (!ticket) return c.json({ error: "not found" }, 404);
+  return c.json(ticket);
+});
+
+// A status move. Legality is decided by the ONE shared transition table; an
+// illegal move is a 409 and writes nothing at all (not even a history row).
+app.post("/tickets/:id/status", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketTransition.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await transition_ticket(c.env.DB, id, parsed.data.to, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// Assignment is immediate and reversible, so it is a toggle with no confirm step.
+app.post("/tickets/:id/assignees", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketAssigneeToggle.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await toggle_assignee(c.env.DB, id, parsed.data.login, parsed.data.on);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+app.post("/tickets/:id/links", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketLinkAdd.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await add_ticket_link(c.env.DB, id, parsed.data.raw, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// sprint_id null = the backlog. An unknown sprint id is a 404, not a silent write.
+app.post("/tickets/:id/sprint", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketSprintSet.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await set_ticket_sprint(c.env.DB, id, parsed.data.sprint_id);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// Nest child_id under :id. Tickets nest ONE level — the four rejections live in
+// set_ticket_parent and come back as 409s with the database untouched.
+app.post("/tickets/:id/parent", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketParentSet.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await set_ticket_parent(c.env.DB, id, parsed.data.child_id);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+app.post("/tickets/:id/comment", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketCommentAdd.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await add_ticket_comment(c.env.DB, id, parsed.data.body, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// ── Sprints (session-cookie only, NEVER MCP): the Roadmap's containers. Direct
+// authored writes in the promote class — no consume(), no gate, no staging. A
+// sprint's TICKETS are set from the Tickets UI (POST /tickets/:id/sprint); its
+// own fields come from here or from the admin plan write. ─────────────────────
+
+/** Map a SprintError onto its status (404 unknown / 409 rule / 400 payload). */
+const sprintFail = (c: Context<AppEnv>, e: unknown): Response => {
+  if (e instanceof SprintError) return c.json({ error: e.message }, SPRINT_ERROR_STATUS[e.code]);
+  throw e; // not ours — a real 500
+};
+
+/** The id path param, or null when it is not an integer. */
+const sprintId = (c: Context<AppEnv>): number | null => {
+  const id = Number(c.req.param("id"));
+  return Number.isInteger(id) ? id : null;
+};
+
+// Created from the Roadmap's New sprint panel: always inactive ('upcoming') and,
+// without a `due`, unscheduled. The creator is the authenticated principal.
+app.post("/sprints", async (c) => {
+  const parsed = SprintCreate.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  const sprint = await create_sprint(c.env.DB, parsed.data, c.get("principal").handle);
+  return c.json({ ok: true, sprint });
+});
+
+// The roadmap's sprint list: each with its tickets-only progress, the separate
+// cached GitHub issue counts, and members.
+// Registered before /sprints/:id (Hono matches in registration order).
+app.get("/sprints", async (c) => c.json({ sprints: await list_sprints(c.env.DB) }));
+
+app.get("/sprints/:id", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const sprint = await get_sprint(c.env.DB, id);
+  if (!sprint) return c.json({ error: "not found" }, 404);
+  return c.json(sprint);
+});
+
+// The In Progress ↔ Upcoming toggle. `active` is derived from status, so this
+// writes status; clearing active on a DONE sprint is a no-op (see set_sprint_active).
+app.post("/sprints/:id/active", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = SprintActiveSet.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    const sprint = await set_sprint_active(c.env.DB, id, parsed.data.active);
+    return c.json({ ok: true, sprint });
+  } catch (e) {
+    return sprintFail(c, e);
+  }
+});
+
+// A resource on the sprint itself, parsed by the SHARED link parser (`#214`
+// resolves the same way it does on a ticket). Answers with the full detail so
+// one round-trip repaints the Resources list.
+app.post("/sprints/:id/resources", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = SprintResourceAdd.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    const sprint = await add_sprint_resource(c.env.DB, id, parsed.data.raw);
+    return c.json({ ok: true, sprint });
+  } catch (e) {
+    return sprintFail(c, e);
+  }
+});
+
+// Human confirmation (session-gated): flip a live sprint to 'done'. Admin action
+// in the promote class — 'done' is never inferred from issues or tickets closing.
+app.post("/sprints/:id/complete", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
   try {
-    const milestone = await complete_milestone(c.env.DB, id);
-    return c.json({ ok: true, milestone });
+    const sprint = await complete_sprint(c.env.DB, id);
+    return c.json({ ok: true, sprint });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }

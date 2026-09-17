@@ -29,9 +29,9 @@ describe("0012 stores", () => {
     ]);
   });
 
-  it("milestones has a phase column and plan/plan_versions exist", async () => {
-    await run(env.DB, `INSERT INTO milestones (title, target_date, status, phase, created_at, created_by) VALUES ('m', '2026-08-01', 'upcoming', 'Phase 1', ?, 'a')`, nowIso());
-    const rows = await all<{ phase: string | null }>(env.DB, `SELECT phase FROM milestones`);
+  it("sprints has a phase column and plan/plan_versions exist", async () => {
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, phase, created_at, created_by) VALUES ('m', '2026-08-01', 'upcoming', 'Phase 1', ?, 'a')`, nowIso());
+    const rows = await all<{ phase: string | null }>(env.DB, `SELECT phase FROM sprints`);
     expect(rows[0].phase).toBe("Phase 1");
     expect(await all(env.DB, `SELECT * FROM plan_versions`)).toEqual([]);
   });

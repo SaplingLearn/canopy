@@ -4,6 +4,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildCanopyMcpServer } from "../src/mcp";
 import { ingestEvent } from "../src/consumer";
+import { create_ticket } from "../src/tools/tickets";
+import { seedPerson } from "./helpers/persons";
 import type { CapturedEvent } from "@shared/contract";
 
 const NOW = new Date().toISOString();
@@ -24,7 +26,7 @@ function prEvent(number: number, login: string): CapturedEvent {
         merged_at: NOW,
         closed_at: NOW,
         user: { login },
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
@@ -49,7 +51,7 @@ function issueEvent(number: number, login: string): CapturedEvent {
         user: { login },
         assignees: [{ login }],
         labels: [],
-        milestone: null,
+        milestone: null, // GitHub's own key — not Canopy vocabulary
       },
     }),
     provenance: "webhook",
@@ -84,6 +86,22 @@ describe("registered MCP get_my_work tool", () => {
     const data = JSON.parse(res.text);
     expect(data.person).toBe("Andres");
     expect(data.previousActivity.map((p: { number: number }) => p.number)).toEqual([101]);
+  });
+
+  it("carries the tickets list — the third My Work surface crosses the MCP seam too", async () => {
+    await seedPerson("meilin", { name: "Meilin Zhao", github: false });
+    await create_ticket(
+      env.DB,
+      { title: "Laptop won't join the VPN", body: "", category: "access", priority: "normal", assignees: ["AndresL230"] },
+      "meilin"
+    );
+
+    const res = await callTool("AndresL230", "get_my_work", {});
+    const data = JSON.parse(res.text);
+    expect(data.tickets).toHaveLength(1);
+    expect(data.tickets[0]).toMatchObject({
+      title: "Laptop won't join the VPN", category: "access", status: "submitted", requester: "meilin", sprint: null,
+    });
   });
 });
 

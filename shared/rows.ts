@@ -1,4 +1,20 @@
 // One type per D1 table — the exact row shape returned by db helpers.
+
+// Tickets (0024) are defined ONCE, as Zod schemas in shared/tickets.ts (the
+// contract the SPA and the Worker share), and re-exported here so `@shared/rows`
+// stays the single index of D1 row shapes. Type-only: no runtime import.
+export type {
+  TicketRow, TicketAssigneeRow, TicketLinkRow, TicketCommentRow, TicketEventRow,
+  TicketCategory, TicketPriority, TicketStatus, TicketLinkKind,
+} from "./tickets";
+
+// Sprints (the table 0025_sprints.sql renamed in place) are defined ONCE, as Zod
+// schemas in shared/sprints.ts, and re-exported here for the same reason.
+export type {
+  SprintRow, SprintResourceRow,
+  SprintStatus, SprintUrgency, SprintDomain, SprintResourceKind,
+} from "./sprints";
+
 export interface SectionRow { name: string; description: string | null; }
 export interface TagRow { tag: string; description: string | null; }
 
@@ -133,39 +149,12 @@ export interface McpTokenRow {
   revoked: number;
 }
 
-export interface MilestoneRow {
-  id: number;
-  title: string;
-  description: string | null;
-  target_date: string;
-  status: "upcoming" | "in_progress" | "done";
-  github_ref: string | null;   // JSON: number (milestone) | number[] (issues)
-  created_at: string;
-  created_by: string;
-  updated_at: string | null;
-  phase: string | null;
-}
-
-export interface MilestoneProposalRow {
-  id: number;
-  title: string;
-  target_date: string;
-  status: string;
-  github_ref: string | null;
-  change_summary: string;
-  confidence: string;
-  staged_status: "staged" | "promoted" | "rejected";
-  created_at: string;
-  created_by: string;
-  content_hash: string | null;   // SHA-256 of the proposed milestone fields — dedupe key (0009)
-}
-
 // The replay ledger (0009). One row per (session_id, item_index) the worker has
 // seen; a re-POST of the same payload hits every row and drops as unchanged.
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "milestone" | "triage" | "event";
+  item_type: "feed" | "doc" | "adr" | "triage" | "event";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;
@@ -213,9 +202,12 @@ export interface IssueSummaryRow {
   next_step: string | null;  // only when the issue states/implies one (0018)
 }
 
-// Absolute per-milestone progress cache (0012).
-export interface MilestoneProgressRow {
-  milestone_id: number;
+// Absolute per-sprint progress cache (added in 0012; the table and its key
+// column were renamed in 0025). Event-derived GitHub issue counts ONLY — they
+// are `SprintView.issues`, never `SprintView.progress`, which is the sprint's
+// tickets counted at read time.
+export interface SprintProgressRow {
+  sprint_id: number;
   closed: number;
   total: number;
   source: "event" | "recompute";
@@ -246,7 +238,7 @@ export interface PlanRow {
 export interface PlanVersionRow {
   version: number;
   narrative: string;
-  milestones_json: string;
+  sprints_json: string;    // full sprints snapshot AFTER this write (SprintRow[])
   created_at: string;
   created_by: string;
 }

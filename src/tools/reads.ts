@@ -1,7 +1,10 @@
-import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, MilestoneProposalRow, MilestoneRow, MilestoneProgressRow, PlanRow, EventRow, IdentityTaskRow } from "@shared/rows";
+import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, PlanRow, EventRow, IdentityTaskRow, TicketRow, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/rows";
 import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
-import { type DB, first, all } from "../db";
-import { getProgress } from "./progress";
+import type { TicketListItem, TicketDetail, TicketRef, TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
+import { type DB, first, all, ph, fanOut } from "../db";
+// The sprint read model lives next to the sprint writers; `query()` borrows its
+// progress RULE so the assembled sprint body and the Roadmap can never disagree.
+import { sprintProgress, ticketCountsBySprint } from "./sprints";
 
 export async function get_doc(
   db: DB,
@@ -115,10 +118,6 @@ export async function list_proposals(db: DB): Promise<ProposalRow[]> {
   );
 }
 
-export async function list_milestone_proposals(db: DB): Promise<MilestoneProposalRow[]> {
-  return all<MilestoneProposalRow>(db, `SELECT * FROM milestone_proposals WHERE staged_status = 'staged' ORDER BY created_at DESC, id DESC`);
-}
-
 // ── Identity triage (Maintenance group) ───────────────────────────────────────
 
 // One sampled event on an identity task: enough for a human to recognize whose
@@ -177,6 +176,156 @@ export async function list_identity_tasks(db: DB): Promise<IdentityTaskWithSampl
   return out;
 }
 
+// ── Tickets (the org-wide queue) ──────────────────────────────────────────────
+//
+// Read-only projections over the 0024 tables. Everything here is a fixed number
+// of round-trips: the rows come back in ONE query, then each derived column
+// (assignees, link counts, sub counts, sprint labels) is a single grouped query
+// keyed by ticket id. No per-row fan-out — the queue renders the whole org.
+
+/** The `seg` filter: Open = not yet resolved by a person. */
+const SEG_STATUSES: Record<TicketSeg, readonly string[]> = {
+  open: ["submitted", "in_progress"],
+  closed: ["done", "declined"],
+  all: ["submitted", "in_progress", "done", "declined"],
+};
+
+export interface TicketListFilter {
+  seg?: TicketSeg;
+  assignee?: TicketAssigneeFilter;
+  category?: TicketCategory;
+  /** The signed-in principal's handle — what `assignee: 'me'` resolves to. */
+  me?: string;
+}
+
+export async function list_tickets(db: DB, filter: TicketListFilter = {}): Promise<TicketListItem[]> {
+  const seg = filter.seg ?? "open";
+  const assignee = filter.assignee ?? "anyone";
+  const statuses = SEG_STATUSES[seg];
+
+  const clauses: string[] = [`t.status IN (${ph(statuses.length)})`];
+  const params: unknown[] = [...statuses];
+  if (filter.category) {
+    clauses.push(`t.category = ?`);
+    params.push(filter.category);
+  }
+  if (assignee === "me") {
+    // An unresolvable `me` (no principal) matches nothing rather than everything.
+    // NOCASE, like `persons.handle` and `getPerson` — a principal spelled with a
+    // different case must not silently match nothing.
+    clauses.push(`EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id AND a.login = ? COLLATE NOCASE)`);
+    params.push(filter.me ?? "");
+  } else if (assignee === "unassigned") {
+    clauses.push(`NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`);
+  }
+
+  const rows = await all<TicketRow>(
+    db,
+    `SELECT t.* FROM tickets t WHERE ${clauses.join(" AND ")} ORDER BY t.updated_at DESC, t.id DESC`,
+    ...params
+  );
+  if (rows.length === 0) return [];
+
+  // The queue is org-wide and unpaginated, so these id lists routinely outgrow
+  // D1's 100-bound-parameter ceiling: every one goes through `fanOut` (src/db.ts).
+  const ids = rows.map((r) => r.id);
+
+  const assigneeRows = await fanOut<{ ticket_id: number; login: string }>(
+    db,
+    ids,
+    (p) => `SELECT ticket_id, login FROM ticket_assignees WHERE ticket_id IN (${p}) ORDER BY login ASC`
+  );
+  const linkRows = await fanOut<{ ticket_id: number; n: number }>(
+    db,
+    ids,
+    (p) => `SELECT ticket_id, COUNT(*) AS n FROM ticket_links WHERE ticket_id IN (${p}) GROUP BY ticket_id`
+  );
+  const subRows = await fanOut<{ parent_id: number; n: number }>(
+    db,
+    ids,
+    (p) => `SELECT parent_id, COUNT(*) AS n FROM tickets WHERE parent_id IN (${p}) GROUP BY parent_id`
+  );
+
+  const sprintIds = [...new Set(rows.map((r) => r.sprint_id).filter((v): v is number => v !== null))];
+  const sprintRows = await fanOut<{ id: number; title: string }>(
+    db,
+    sprintIds,
+    (p) => `SELECT id, title FROM sprints WHERE id IN (${p})`
+  );
+
+  const byTicket = new Map<number, string[]>();
+  for (const a of assigneeRows) {
+    const list = byTicket.get(a.ticket_id) ?? [];
+    list.push(a.login);
+    byTicket.set(a.ticket_id, list);
+  }
+  const links = new Map(linkRows.map((r) => [r.ticket_id, r.n]));
+  const subs = new Map(subRows.map((r) => [r.parent_id, r.n]));
+  const sprintLabels = new Map(sprintRows.map((r) => [r.id, r.title]));
+
+  return rows.map((r) => ({
+    ...r,
+    assignees: byTicket.get(r.id) ?? [],
+    link_count: links.get(r.id) ?? 0,
+    sub_count: subs.get(r.id) ?? 0,
+    sprint_label: r.sprint_id !== null ? sprintLabels.get(r.sprint_id) ?? null : null,
+  }));
+}
+
+/** One ticket, whole: assignees, links, comments, history, parent + children, sprint. */
+export async function get_ticket(db: DB, id: number): Promise<TicketDetail | null> {
+  const t = await first<TicketRow>(db, `SELECT * FROM tickets WHERE id = ?`, id);
+  if (!t) return null;
+
+  const assignees = (
+    await all<{ login: string }>(db, `SELECT login FROM ticket_assignees WHERE ticket_id = ? ORDER BY login ASC`, id)
+  ).map((a) => a.login);
+  const links = await all<TicketLinkRow>(db, `SELECT * FROM ticket_links WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`, id);
+  const comments = await all<TicketCommentRow>(db, `SELECT * FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`, id);
+  const events = await all<TicketEventRow>(db, `SELECT * FROM ticket_events WHERE ticket_id = ? ORDER BY created_at ASC, id ASC`, id);
+  const children = await all<TicketRef>(
+    db,
+    `SELECT id, title, status FROM tickets WHERE parent_id = ? ORDER BY updated_at DESC, id DESC`,
+    id
+  );
+  const parent = t.parent_id !== null
+    ? await first<TicketRef>(db, `SELECT id, title, status FROM tickets WHERE id = ?`, t.parent_id)
+    : null;
+  const sprintRow = t.sprint_id !== null
+    ? await first<{ id: number; title: string }>(db, `SELECT id, title FROM sprints WHERE id = ?`, t.sprint_id)
+    : null;
+
+  return {
+    ...t,
+    assignees,
+    links,
+    comments,
+    events,
+    parent,
+    children,
+    sprint: sprintRow ? { id: sprintRow.id, label: sprintRow.title } : null,
+  };
+}
+
+/** The sidebar badge: active tickets nobody has picked up (unassigned + open). */
+export async function ticket_badge(db: DB): Promise<number> {
+  const row = await first<{ n: number }>(
+    db,
+    `SELECT COUNT(*) AS n FROM tickets t
+      WHERE t.status IN ('submitted', 'in_progress')
+        AND NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`
+  );
+  return row?.n ?? 0;
+}
+
+// ── Sprints (the Roadmap's containers) ────────────────────────────────────────
+//
+// DEFINED in ./sprints.ts, next to the sprint writers and the one progress rule
+// (`sprintProgress`) they share — splitting the read half off would have put the
+// ticket-inclusive math in two files. Re-exported here so every read surface,
+// including MCP, can reach the whole read model from one module.
+export { list_sprints, get_sprint } from "./sprints";
+
 // ── query(): ranked, assembled FTS5 retrieval (Phase 1 read-side brain) ───────
 //
 // One engine. Per requested type, bm25-ranked FTS5 (title/summary weighted above
@@ -189,7 +338,10 @@ export async function list_identity_tasks(db: DB): Promise<IdentityTaskWithSampl
 // RRF (Reciprocal Rank Fusion). The QueryResult envelope is the stable contract;
 // this normalize-bm25-then-global-sort is the FTS-only special case of that merge.
 
-type QueryType = "doc" | "decision" | "feed" | "milestone";
+// NOTE: `ticket` is deliberately NOT a query type. `tickets_fts` stays populated
+// (0024 keeps the table and its three triggers) but tickets are their own
+// surface — the Tickets screen — and never join the /search fan-out.
+type QueryType = "doc" | "decision" | "feed" | "sprint";
 
 // Internal assembled record: a superset carrying everything both a primary
 // (full body) and a pointer (snippet) need, so we hydrate once per candidate.
@@ -214,7 +366,7 @@ interface Assembled {
 // A raw candidate from one type's FTS (or browse) pass, before hydration.
 interface Candidate {
   type: QueryType;
-  key: string;      // doc slug | feed id | adr id (as text) | roadmap ref ('milestone:<id>' | 'plan')
+  key: string;      // doc slug | feed id | adr id | ticket id (as text) | roadmap ref ('sprint:<id>' | 'plan')
   score: number;    // normalized so higher = better
   snippet: string;  // fts5 snippet() or a browse body slice
 }
@@ -244,18 +396,36 @@ function assembleAdrBody(a: AdrRow): string {
   return parts.join("\n\n");
 }
 
-// The hydrated milestone body: description + phase + (when cached) a live progress
-// line. The progress cache is read once per query() call and passed in here.
-function assembleMilestoneBody(m: MilestoneRow, progress: MilestoneProgressRow | undefined): string {
+// The hydrated sprint body: description + summary + phase + a progress line.
+//
+// The progress line obeys the ONE rule (`sprintProgress` in ./sprints.ts): the
+// sprint's OWN TICKETS (done + declined over total) and nothing else. The ticket
+// counts are read once per query() call via one grouped query over the hydrated
+// sprint ids and passed in, so this stays a pure assembly step with no
+// per-result round-trip. A sprint with no tickets carries no line at all: there
+// is nothing to report, and a bare "0/0" would read as a claim.
+//
+// The cached GitHub issue counts are deliberately NOT in this body — they are a
+// separate field on the read DTOs (`SprintView.issues`), shown only in the
+// Roadmap's Narrative spotlight.
+function assembleSprintBody(
+  sp: SprintRow,
+  tickets: { total: number; closed: number } | undefined
+): string {
   const parts: string[] = [];
-  if (m.description) parts.push(m.description);
-  if (m.phase) parts.push(m.phase);
-  if (progress) parts.push(`Progress: ${progress.closed}/${progress.total} closed`);
+  if (sp.description) parts.push(sp.description);
+  if (sp.summary) parts.push(sp.summary);
+  if (sp.phase) parts.push(sp.phase);
+  const progress = sprintProgress({
+    ticketsTotal: tickets?.total ?? 0,
+    ticketsClosed: tickets?.closed ?? 0,
+  });
+  if (progress.total > 0) parts.push(`Progress: ${progress.closed}/${progress.total} closed`);
   return parts.join("\n");
 }
 
 export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
-  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "milestone"];
+  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "sprint"];
   const limit = Math.trunc(Math.min(Math.max(req.limit ?? 6, 0), 50));
   const pointerLimit = Math.trunc(Math.min(Math.max(req.pointer_limit ?? 20, 0), 100));
   const includeStaged = req.include_staged ?? false;
@@ -341,9 +511,9 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
 
-  // Roadmap: one FTS pass over roadmap_fts (plan + milestones, keyed by `ref`).
-  // section/space filters are doc-only, so milestone drops out under docsOnly.
-  if (types.includes("milestone") && !docsOnly) {
+  // Roadmap: one FTS pass over roadmap_fts (plan + sprints, keyed by `ref`).
+  // section/space filters are doc-only, so sprint drops out under docsOnly.
+  if (types.includes("sprint") && !docsOnly) {
     if (match) {
       const rows = await all<{ key: string; rank: number; snip: string }>(
         db,
@@ -352,70 +522,63 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
          FROM roadmap_fts WHERE roadmap_fts MATCH ? ORDER BY rank LIMIT ${fetchCap}`,
         match
       );
-      for (const r of rows) candidates.push({ type: "milestone", key: String(r.key), score: -r.rank, snippet: r.snip });
+      for (const r of rows) candidates.push({ type: "sprint", key: String(r.key), score: -r.rank, snippet: r.snip });
     } else {
       // Browse: the plan row first (only when it carries a narrative), then
-      // milestones by recency (updated_at, then created_at).
+      // sprints by recency (updated_at, then created_at).
       const planRow = await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`);
       if (planRow && planRow.narrative.trim() !== "") {
-        candidates.push({ type: "milestone", key: "plan", score: 0, snippet: "" });
+        candidates.push({ type: "sprint", key: "plan", score: 0, snippet: "" });
       }
       const rows = await all<{ key: number }>(
         db,
-        `SELECT id AS key FROM milestones
+        `SELECT id AS key FROM sprints
          ORDER BY (updated_at IS NULL), updated_at DESC, created_at DESC, id DESC LIMIT ${fetchCap}`
       );
-      for (const r of rows) candidates.push({ type: "milestone", key: `milestone:${r.key}`, score: 0, snippet: "" });
+      for (const r of rows) candidates.push({ type: "sprint", key: `sprint:${r.key}`, score: 0, snippet: "" });
     }
   }
 
-  // 2. Hydrate base rows in bulk (one round-trip per type), then assemble.
+  // 2. Hydrate base rows in bulk (one round-trip per type per CHUNK — `fetchCap`
+  //    reaches 150, so every key list here can outgrow D1's 100-param ceiling),
+  //    then assemble.
   const docKeys = candidates.filter((c) => c.type === "doc").map((c) => c.key);
   const feedKeys = candidates.filter((c) => c.type === "feed").map((c) => Number(c.key));
   const adrKeys = candidates.filter((c) => c.type === "decision").map((c) => Number(c.key));
 
   const docMap = new Map<string, DocRow>();
   const stagedMap = new Map<string, DocVersionRow[]>();
-  if (docKeys.length) {
-    const ph = docKeys.map(() => "?").join(", ");
-    for (const d of await all<DocRow>(db, `SELECT * FROM docs WHERE slug IN (${ph})`, ...docKeys)) docMap.set(d.slug, d);
-    for (const v of await all<DocVersionRow>(
-      db,
-      `SELECT * FROM doc_versions WHERE status = 'staged' AND slug IN (${ph}) ORDER BY version ASC`,
-      ...docKeys
-    )) {
-      const list = stagedMap.get(v.slug) ?? [];
-      list.push(v);
-      stagedMap.set(v.slug, list);
-    }
+  for (const d of await fanOut<DocRow>(db, docKeys, (p) => `SELECT * FROM docs WHERE slug IN (${p})`)) docMap.set(d.slug, d);
+  for (const v of await fanOut<DocVersionRow>(
+    db,
+    docKeys,
+    (p) => `SELECT * FROM doc_versions WHERE status = 'staged' AND slug IN (${p}) ORDER BY version ASC`
+  )) {
+    const list = stagedMap.get(v.slug) ?? [];
+    list.push(v);
+    stagedMap.set(v.slug, list);
   }
 
   const feedMap = new Map<string, FeedRow>();
-  if (feedKeys.length) {
-    const ph = feedKeys.map(() => "?").join(", ");
-    for (const f of await all<FeedRow>(db, `SELECT * FROM feed WHERE id IN (${ph})`, ...feedKeys)) feedMap.set(String(f.id), f);
-  }
+  for (const f of await fanOut<FeedRow>(db, feedKeys, (p) => `SELECT * FROM feed WHERE id IN (${p})`)) feedMap.set(String(f.id), f);
 
   const adrMap = new Map<string, AdrRow>();
-  if (adrKeys.length) {
-    const ph = adrKeys.map(() => "?").join(", ");
-    for (const a of await all<AdrRow>(db, `SELECT * FROM adrs WHERE id IN (${ph})`, ...adrKeys)) adrMap.set(String(a.id), a);
-  }
+  for (const a of await fanOut<AdrRow>(db, adrKeys, (p) => `SELECT * FROM adrs WHERE id IN (${p})`)) adrMap.set(String(a.id), a);
 
-  // Roadmap hydration: milestone ids (from 'milestone:<id>' refs) + the plan flag.
-  const milestoneIds = candidates
-    .filter((c) => c.type === "milestone" && c.key.startsWith("milestone:"))
-    .map((c) => Number(c.key.slice("milestone:".length)));
-  const needPlan = candidates.some((c) => c.type === "milestone" && c.key === "plan");
+  // Roadmap hydration: sprint ids (from 'sprint:<id>' refs) + the plan flag.
+  const sprintIds = candidates
+    .filter((c) => c.type === "sprint" && c.key.startsWith("sprint:"))
+    .map((c) => Number(c.key.slice("sprint:".length)));
+  const needPlan = candidates.some((c) => c.type === "sprint" && c.key === "plan");
 
-  const milestoneMap = new Map<string, MilestoneRow>();
-  if (milestoneIds.length) {
-    const ph = milestoneIds.map(() => "?").join(", ");
-    for (const m of await all<MilestoneRow>(db, `SELECT * FROM milestones WHERE id IN (${ph})`, ...milestoneIds)) {
-      milestoneMap.set(`milestone:${m.id}`, m);
-    }
+  const sprintMap = new Map<string, SprintRow>();
+  for (const sp of await fanOut<SprintRow>(db, sprintIds, (p) => `SELECT * FROM sprints WHERE id IN (${p})`)) {
+    sprintMap.set(`sprint:${sp.id}`, sp);
   }
-  const progressMap = milestoneIds.length ? await getProgress(db) : new Map<number, MilestoneProgressRow>();
+  // The progress line is TICKETS ONLY, for the hydrated sprints only — one
+  // grouped query, sharing `sprintProgress`'s definition of "closed". The
+  // `sprint_progress` cache is deliberately NOT read here.
+  const sprintTicketCounts = await ticketCountsBySprint(db, sprintIds);
   const planRow = needPlan ? await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`) : null;
 
   // Browse mode carries no per-row score, so order is by the merged recency from
@@ -480,24 +643,24 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
         score: c.score, snippet: c.snippet || browseSnippet(body),
       };
     } else {
-      // milestone: either the plan singleton (ref 'plan') or a milestone row.
+      // sprint: either the plan singleton (ref 'plan') or a sprint row.
       // Both are direct/authored writes, so always authority "live".
       if (c.key === "plan") {
         if (!planRow) continue;
         a = {
-          type: "milestone", id: "plan", title: "Roadmap plan", section: null, space: null,
+          type: "sprint", id: "plan", title: "Roadmap plan", section: null, space: null,
           body: planRow.narrative, authority: "live", current_version: null, pending_version: null,
           staged_body: null, confidence: null, updated_at: planRow.updated_at, updated_by: planRow.updated_by,
           score: c.score, snippet: c.snippet || browseSnippet(planRow.narrative),
         };
       } else {
-        const m = milestoneMap.get(c.key);
-        if (!m) continue;
-        const body = assembleMilestoneBody(m, progressMap.get(m.id));
+        const sp = sprintMap.get(c.key);
+        if (!sp) continue;
+        const body = assembleSprintBody(sp, sprintTicketCounts.get(sp.id));
         a = {
-          type: "milestone", id: `milestone:${m.id}`, title: m.title, section: null, space: null,
+          type: "sprint", id: `sprint:${sp.id}`, title: sp.title, section: null, space: null,
           body, authority: "live", current_version: null, pending_version: null,
-          staged_body: null, confidence: null, updated_at: m.updated_at ?? m.created_at, updated_by: m.created_by,
+          staged_body: null, confidence: null, updated_at: sp.updated_at ?? sp.created_at, updated_by: sp.created_by,
           score: c.score, snippet: c.snippet || browseSnippet(body),
         };
       }

@@ -33,6 +33,7 @@ const prEvent = (n: number, login: string, title: string, occurredAt: string): C
   event_type: "pr_merged",
   ref_number: n,
   subject_login: login,
+  // `milestone` below is GitHub's own key — not Canopy vocabulary.
   raw: JSON.stringify({
     pr: { number: n, title, body: "b", html_url: `https://github.com/SaplingLearn/sapling/pull/${n}`, merged: true, merged_at: occurredAt, closed_at: occurredAt, user: { login }, milestone: null },
   }),
@@ -133,7 +134,7 @@ describe("POST /identity-tasks/:login/map", () => {
     // Before mapping: captured but unsurfaced — "mystery-dev" is not (yet) any
     // person's handle or identity, so it resolves to nothing.
     const before = await getMyWork(env.DB, "mystery-dev");
-    expect(before).toEqual({ person: null, previousActivity: [], todo: [], degraded: false });
+    expect(before).toEqual({ person: null, previousActivity: [], todo: [], tickets: [], degraded: false });
 
     expect((await post("/identity-tasks/mystery-dev/map", cookie, { person: "casey" })).status).toBe(200);
 

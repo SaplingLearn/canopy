@@ -3,13 +3,190 @@
   "version": 2,
   "updated_at": "2026-07-05T00:00:00Z",
   "updated_by": "AndresL230",
-  "milestones": [
-    { "id": 1, "title": "MCP write contract — GA", "description": "Typed, staged-only writes for every agent over MCP.", "phase": "Now", "target_date": "2026-04-30", "status": "done", "github_ref": "1", "created_at": "2026-03-01T00:00:00Z", "created_by": "lpcooper-arch", "updated_at": "2026-04-30T00:00:00Z", "progress": { "closed": 6, "total": 6, "source": "recompute", "computed_at": "2026-07-05T00:00:00Z" } },
-    { "id": 2, "title": "Reconciling gate + replay ledger", "description": "Content-hash dedupe, change-typing, and a per-item replay ledger.", "phase": "Now", "target_date": "2026-05-28", "status": "done", "github_ref": "[120,121,122]", "created_at": "2026-04-01T00:00:00Z", "created_by": "Jose-Gael-Cruz-Lopez", "updated_at": "2026-05-28T00:00:00Z", "progress": { "closed": 4, "total": 4, "source": "recompute", "computed_at": "2026-07-05T00:00:00Z" } },
-    { "id": 3, "title": "Token rotation & audit log", "description": "Constant-time comparison, revoke, and a read trail.", "phase": "Weeks 3-4", "target_date": "2026-06-10", "status": "in_progress", "github_ref": "[160,162,175]", "created_at": "2026-05-01T00:00:00Z", "created_by": "AndresL230", "updated_at": null, "progress": { "closed": 2, "total": 3, "source": "recompute", "computed_at": "2026-07-05T00:00:00Z" } },
-    { "id": 4, "title": "Structured My Work summaries", "description": "Capture-time structured PR/issue summaries rendered on the dashboard cards.", "phase": "Weeks 3-4", "target_date": "2026-07-06", "status": "in_progress", "github_ref": "[155,158,162]", "created_at": "2026-06-15T00:00:00Z", "created_by": "AndresL230", "updated_at": null, "progress": { "closed": 3, "total": 4, "source": "recompute", "computed_at": "2026-07-05T00:00:00Z" } },
-    { "id": 5, "title": "Roadmap reads itself against reality", "description": "read-plan checks the authored plan against captured events and progress.", "phase": "Next", "target_date": "2026-07-25", "status": "upcoming", "github_ref": "[170,171]", "created_at": "2026-06-20T00:00:00Z", "created_by": "Darkest-Teddy", "updated_at": null, "progress": { "closed": 0, "total": 2, "source": "recompute", "computed_at": "2026-07-05T00:00:00Z" } },
-    { "id": 6, "title": "Semantic search ranking", "description": "Mixed feed/doc results ordered by meaning, not match, via Vectorize + RRF.", "phase": "Later", "target_date": "2026-09-18", "status": "upcoming", "github_ref": null, "created_at": "2026-06-01T00:00:00Z", "created_by": "Jose-Gael-Cruz-Lopez", "updated_at": null },
-    { "id": 7, "title": "Self-host & deploy guide", "description": "Run the whole store on your own Cloudflare account.", "phase": "Later", "target_date": "2026-10-20", "status": "upcoming", "github_ref": null, "created_at": "2026-06-25T00:00:00Z", "created_by": "lpcooper-arch", "updated_at": null }
+  "sprints": [
+    {
+      "id": 1,
+      "title": "MCP write contract — GA",
+      "summary": "Every agent writes through one typed, staged-only contract.",
+      "description": "Typed, staged-only writes for every agent over MCP.",
+      "phase": "Now",
+      "dates": "Mar 1 – Apr 30",
+      "target_date": "2026-04-30",
+      "status": "done",
+      "urgency": "normal",
+      "lead": "lpcooper-arch",
+      "domain": "gate",
+      "github_ref": "1",
+      "created_at": "2026-03-01T00:00:00Z",
+      "created_by": "lpcooper-arch",
+      "updated_at": "2026-04-30T00:00:00Z",
+      "progress": {
+        "closed": 6,
+        "total": 6,
+        "source": "recompute",
+        "computed_at": "2026-07-05T00:00:00Z"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Reconciling gate + replay ledger",
+      "summary": "Nothing is written twice, and every change is typed before a human sees it.",
+      "description": "Content-hash dedupe, change-typing, and a per-item replay ledger.",
+      "phase": "Now",
+      "dates": "Apr 1 – May 28",
+      "target_date": "2026-05-28",
+      "status": "done",
+      "urgency": "high",
+      "lead": "Jose-Gael-Cruz-Lopez",
+      "domain": "gate",
+      "github_ref": "[120,121,122]",
+      "created_at": "2026-04-01T00:00:00Z",
+      "created_by": "Jose-Gael-Cruz-Lopez",
+      "updated_at": "2026-05-28T00:00:00Z",
+      "progress": {
+        "closed": 4,
+        "total": 4,
+        "source": "recompute",
+        "computed_at": "2026-07-05T00:00:00Z"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Token rotation & audit log",
+      "summary": "Tokens rotate, revoke, and leave a trail.",
+      "description": "Constant-time comparison, revoke, and a read trail.",
+      "phase": "Weeks 3-4",
+      "dates": "May 1 – Jun 10",
+      "target_date": "2026-06-10",
+      "status": "in_progress",
+      "urgency": "high",
+      "lead": "AndresL230",
+      "domain": "infra",
+      "github_ref": "[160,162,175]",
+      "created_at": "2026-05-01T00:00:00Z",
+      "created_by": "AndresL230",
+      "updated_at": null,
+      "progress": {
+        "closed": 2,
+        "total": 3,
+        "source": "recompute",
+        "computed_at": "2026-07-05T00:00:00Z"
+      },
+      "resources": [
+        {
+          "url": "https://github.com/SaplingLearn/sapling/issues/160",
+          "kind": "github",
+          "label": "sapling #160",
+          "meta": "GITHUB · ISSUE"
+        },
+        {
+          "url": "https://www.figma.com/file/canopy-token-settings",
+          "kind": "figma",
+          "label": "Canopy token settings",
+          "meta": "FIGMA · DESIGN"
+        },
+        {
+          "_comment": "Deliberately the SAME url ticket 3 links to — the sprint screen dedupes by url, sprint copy first.",
+          "url": "https://github.com/SaplingLearn/sapling/issues/214",
+          "kind": "github",
+          "label": "sapling #214",
+          "meta": "GITHUB · ISSUE"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Structured My Work summaries",
+      "summary": "My Work cards read like a person wrote them, not a changelog.",
+      "description": "Capture-time structured PR/issue summaries rendered on the dashboard cards.",
+      "phase": "Weeks 3-4",
+      "dates": "Jun 15 – Jul 6",
+      "target_date": "2026-07-06",
+      "status": "in_progress",
+      "urgency": "normal",
+      "lead": "AndresL230",
+      "domain": "notifications",
+      "github_ref": "[155,158,162]",
+      "created_at": "2026-06-15T00:00:00Z",
+      "created_by": "AndresL230",
+      "updated_at": null,
+      "progress": {
+        "closed": 3,
+        "total": 4,
+        "source": "recompute",
+        "computed_at": "2026-07-05T00:00:00Z"
+      },
+      "resources": [
+        {
+          "url": "https://github.com/SaplingLearn/sapling/pull/158",
+          "kind": "github",
+          "label": "sapling #158",
+          "meta": "GITHUB · PULL REQUEST"
+        },
+        {
+          "url": "https://ai.google.dev/gemini-api/docs/structured-output",
+          "kind": "plain",
+          "label": "ai.google.dev",
+          "meta": "LINK"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Roadmap reads itself against reality",
+      "summary": "The plan checks itself against what actually shipped.",
+      "description": "read-plan checks the authored plan against captured events and progress.",
+      "phase": "Next",
+      "dates": "Jun 20 – Jul 25",
+      "target_date": "2026-07-25",
+      "status": "upcoming",
+      "urgency": "normal",
+      "lead": "Darkest-Teddy",
+      "domain": "search",
+      "github_ref": "[170,171]",
+      "created_at": "2026-06-20T00:00:00Z",
+      "created_by": "Darkest-Teddy",
+      "updated_at": null,
+      "progress": {
+        "closed": 0,
+        "total": 2,
+        "source": "recompute",
+        "computed_at": "2026-07-05T00:00:00Z"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Semantic search ranking",
+      "summary": "Results ordered by meaning, not by keyword match.",
+      "description": "Mixed feed/doc results ordered by meaning, not match, via Vectorize + RRF.",
+      "phase": "Later",
+      "dates": "Aug 1 – Sep 18",
+      "target_date": "2026-09-18",
+      "status": "upcoming",
+      "urgency": "low",
+      "lead": "Jose-Gael-Cruz-Lopez",
+      "domain": "search",
+      "github_ref": null,
+      "created_at": "2026-06-01T00:00:00Z",
+      "created_by": "Jose-Gael-Cruz-Lopez",
+      "updated_at": null
+    },
+    {
+      "id": 7,
+      "title": "Self-host & deploy guide",
+      "summary": "One command, your own Cloudflare account, the whole store.",
+      "description": "Run the whole store on your own Cloudflare account.",
+      "phase": "Later",
+      "dates": "Sep 20 – Oct 20",
+      "target_date": "2026-10-20",
+      "status": "upcoming",
+      "urgency": "low",
+      "lead": "lpcooper-arch",
+      "domain": "infra",
+      "github_ref": null,
+      "created_at": "2026-06-25T00:00:00Z",
+      "created_by": "lpcooper-arch",
+      "updated_at": null
+    }
   ]
 }

@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { query } from "../src/tools/reads";
 import { propose_doc_update, promote_doc, append_feed, stage_adr, ratify_adr } from "../src/tools/writes";
-import { run, nowIso } from "../src/db";
+import { create_ticket } from "../src/tools/tickets";
+import { seedPerson } from "./helpers/persons";
+import { run, all, nowIso } from "../src/db";
 
 const AUTHOR = "tester";
 
@@ -134,6 +136,45 @@ describe("query() — FTS5 engine (triggers, ranking, bundle, authority, browse)
     const r = await query(env.DB, { q: "", types: ["feed"] });
     expect(r.primary.map((p) => p.title)).toEqual(["newest", "middle", "oldest"]);
     expect(r.meta.engine).toBe("fts5");
+  });
+
+  it("tickets are NOT in the search fan-out — a ticket title term returns no ticket, though tickets_fts holds the row", async () => {
+    await seedPerson(AUTHOR);
+    // The same term in a ticket TITLE, a doc body and a feed body. The doc and the
+    // feed entry come back; the ticket does NOT — tickets have their own surface.
+    const id = await create_ticket(
+      env.DB,
+      { title: "Gradebook tamarind export fails", body: "over 1,000 rows", category: "bug", priority: "high", assignees: [] },
+      AUTHOR
+    );
+    await stageDoc("tamarind-doc", "Unrelated Guide", "a passing mention of tamarind in the body");
+    await promote_doc(env.DB, "tamarind-doc", 1, AUTHOR);
+    await append_feed(env.DB, { author: AUTHOR, summary: "unrelated entry", body: "tamarind again, in a feed body" });
+
+    // The index IS populated — 0024's triggers still run; only the fan-out dropped it.
+    const indexed = await all<{ ticket_id: number }>(
+      env.DB, `SELECT ticket_id FROM tickets_fts WHERE tickets_fts MATCH 'tamarind'`
+    );
+    expect(indexed.map((r) => Number(r.ticket_id))).toContain(id);
+
+    // Agent-side query (include_staged defaults true here): no ticket anywhere.
+    const r = await query(env.DB, { q: "tamarind" });
+    const ids = [...r.primary, ...r.pointers].map((p) => p.id);
+    expect(ids).not.toContain(`ticket:${id}`);
+    expect(ids.some((x) => x.startsWith("ticket:"))).toBe(false);
+    expect([...r.primary, ...r.pointers].some((p) => (p.type as string) === "ticket")).toBe(false);
+    expect(r.primary.map((p) => p.title)).not.toContain("Gradebook tamarind export fails");
+    // …and the other two types are unaffected.
+    expect(r.primary.map((p) => p.id)).toContain("tamarind-doc");
+    expect(r.primary.map((p) => p.type)).toContain("feed");
+
+    // The HUMAN search (include_staged:false) doesn't get one either.
+    const human = await query(env.DB, { q: "tamarind", include_staged: false });
+    expect([...human.primary, ...human.pointers].some((p) => p.id.startsWith("ticket:"))).toBe(false);
+
+    // An empty-q browse (the recency degrade path) has no ticket branch either.
+    const browse = await query(env.DB, { q: "" });
+    expect([...browse.primary, ...browse.pointers].some((p) => p.id.startsWith("ticket:"))).toBe(false);
   });
 
   it("section filter narrows to docs and excludes feed/decision", async () => {

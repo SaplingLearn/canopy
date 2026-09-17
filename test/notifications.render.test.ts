@@ -46,6 +46,7 @@ function issueEvent(number: number, login: string, state: "open" | "closed", upd
     event_type: "issue",
     ref_number: number,
     subject_login: login,
+    // `milestone` below is GitHub's own key — not Canopy vocabulary.
     raw: JSON.stringify({
       action: state === "open" ? "assigned" : "closed",
       issue: { number, title, html_url: `https://github.com/o/r/issues/${number}`, state, updated_at: updatedAt, user: { login }, assignees: [{ login }], labels: [], milestone: null },
@@ -59,7 +60,7 @@ const stubSummarizer = (s: PrSummary): Summarizer<PrSummary> => ({ model: "stub"
 
 async function tableCounts(): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
-  for (const t of ["events", "pr_summaries", "issue_summaries", "doc_versions", "adrs", "plan_versions", "milestones", "milestone_progress", "needs_triage", "feed"]) {
+  for (const t of ["events", "pr_summaries", "issue_summaries", "doc_versions", "adrs", "plan_versions", "sprints", "sprint_progress", "needs_triage", "feed"]) {
     out[t] = (await first<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${t}`))!.n;
   }
   return out;
@@ -180,23 +181,23 @@ describe("roadmap_plan renderer", () => {
   }
 
   it("returns null when no plan version rows fall in the window", async () => {
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M1", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M1", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
     expect(await kind().render(env.DB, LOGIN, WINDOW)).toBeNull();
   });
 
   it("returns null when only progress rows changed in the window (progress layer excluded)", async () => {
-    const r = await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M1", target_date: "2026-10-01", status: "upcoming", github_ref: 7 }] }, AUTHOR);
+    const r = await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M1", due: "2026-10-01", status: "upcoming", github_ref: 7 }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    await upsertProgress(env.DB, r.milestones[0].id, 3, 5, "event");
-    await run(env.DB, `UPDATE milestone_progress SET computed_at = ?`, IN_WINDOW);
+    await upsertProgress(env.DB, r.sprints[0].id, 3, 5, "event");
+    await run(env.DB, `UPDATE sprint_progress SET computed_at = ?`, IN_WINDOW);
     expect(await kind().render(env.DB, LOGIN, WINDOW)).toBeNull();
   });
 
-  it("reports a milestone added in the window", async () => {
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M1", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+  it("reports a sprint added in the window", async () => {
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M1", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M2 new", target_date: "2026-11-01", status: "upcoming" }] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M2 new", due: "2026-11-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
 
     const before = await tableCounts();
@@ -211,10 +212,10 @@ describe("roadmap_plan renderer", () => {
   });
 
   it("reports title and description changes", async () => {
-    const r = await write_plan(env.DB, { narrative: "n", milestones: [{ title: "Old title", description: "old d", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+    const r = await write_plan(env.DB, { narrative: "n", sprints: [{ label: "Old title", description: "old d", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    const id = r.milestones[0].id;
-    await write_plan(env.DB, { narrative: "n", milestones: [{ id, title: "New title", description: "new d", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+    const id = r.sprints[0].id;
+    await write_plan(env.DB, { narrative: "n", sprints: [{ id, label: "New title", description: "new d", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
@@ -222,14 +223,14 @@ describe("roadmap_plan renderer", () => {
     expect(s!.text).toMatch(/changed\s+New title — description updated/);
   });
 
-  it("reports a reorder when target dates swap the milestone order", async () => {
-    const r = await write_plan(env.DB, { narrative: "n", milestones: [
-      { title: "First", target_date: "2026-10-01", status: "upcoming" },
-      { title: "Second", target_date: "2026-11-01", status: "upcoming" },
+  it("reports a reorder when target dates swap the sprint order", async () => {
+    const r = await write_plan(env.DB, { narrative: "n", sprints: [
+      { label: "First", due: "2026-10-01", status: "upcoming" },
+      { label: "Second", due: "2026-11-01", status: "upcoming" },
     ] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    const first_ = r.milestones.find((m) => m.title === "First")!;
-    await write_plan(env.DB, { narrative: "n", milestones: [{ id: first_.id, title: "First", target_date: "2026-12-01", status: "upcoming" }] }, AUTHOR);
+    const first_ = r.sprints.find((m) => m.title === "First")!;
+    await write_plan(env.DB, { narrative: "n", sprints: [{ id: first_.id, label: "First", due: "2026-12-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
@@ -237,10 +238,10 @@ describe("roadmap_plan renderer", () => {
     expect(s!.text).toContain("First");
   });
 
-  it("reports a milestone confirmed done", async () => {
-    const r = await write_plan(env.DB, { narrative: "n", milestones: [{ title: "Ship it", target_date: "2026-10-01", status: "in_progress" }] }, AUTHOR);
+  it("reports a sprint confirmed done", async () => {
+    const r = await write_plan(env.DB, { narrative: "n", sprints: [{ label: "Ship it", due: "2026-10-01", status: "in_progress" }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    await write_plan(env.DB, { narrative: "n", milestones: [{ id: r.milestones[0].id, title: "Ship it", target_date: "2026-10-01", status: "done" }] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "n", sprints: [{ id: r.sprints[0].id, label: "Ship it", due: "2026-10-01", status: "done" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
@@ -249,11 +250,11 @@ describe("roadmap_plan renderer", () => {
 
   it("diffs the latest in-window version against the last version BEFORE the window, not the previous version", async () => {
     // v1 before window: M1. v2 in window: +M2. v3 in window: +M3. Report both M2 and M3 as added.
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M1", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M1", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M2", target_date: "2026-11-01", status: "upcoming" }] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M2", due: "2026-11-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion("2026-09-10T20:00:00Z");
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M3", target_date: "2026-12-01", status: "upcoming" }] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M3", due: "2026-12-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
 
     const s = await kind().render(env.DB, LOGIN, WINDOW);
@@ -261,16 +262,16 @@ describe("roadmap_plan renderer", () => {
     expect(s!.text).toMatch(/added\s+M3/);
   });
 
-  it("returns null when an in-window version changed nothing at the milestone level", async () => {
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "M1", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+  it("returns null when an in-window version changed nothing at the sprint level", async () => {
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "M1", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(BEFORE_WINDOW);
-    await write_plan(env.DB, { narrative: "narrative only", milestones: [] }, AUTHOR);
+    await write_plan(env.DB, { narrative: "narrative only", sprints: [] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
     expect(await kind().render(env.DB, LOGIN, WINDOW)).toBeNull();
   });
 
-  it("treats every milestone as added when there is no version before the window", async () => {
-    await write_plan(env.DB, { narrative: "n", milestones: [{ title: "Genesis", target_date: "2026-10-01", status: "upcoming" }] }, AUTHOR);
+  it("treats every sprint as added when there is no version before the window", async () => {
+    await write_plan(env.DB, { narrative: "n", sprints: [{ label: "Genesis", due: "2026-10-01", status: "upcoming" }] }, AUTHOR);
     await stampLatestVersion(IN_WINDOW);
     const s = await kind().render(env.DB, LOGIN, WINDOW);
     expect(s!.text).toMatch(/added\s+Genesis/);

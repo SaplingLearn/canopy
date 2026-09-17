@@ -20,7 +20,7 @@ const docs = [
 
 The endpoint lives at /mcp on the same origin as everything else and is bearer-only. Each request carries a personal access token in the Authorization header (Bearer canopy_mcp_…). On a missing or invalid credential the server returns a bare 401 with no WWW-Authenticate header and no OAuth discovery — clients must use the configured token. The token is compared by SHA-256 hash against the store and never logged.
 
-A fresh MCP server instance is constructed per request (the SDK guards against reuse), and the handler is stateless — there is no Durable Object or long-lived agent. The write tools (append_feed, propose_doc_update, propose_milestone) do not write directly: they funnel through the same gate as the HTTP /ingest path, so an agent can never bypass review.`,
+A fresh MCP server instance is constructed per request (the SDK guards against reuse), and the handler is stateless — there is no Durable Object or long-lived agent. The write tools (append_feed, propose_doc_update, record_session) do not write directly: they funnel through the same gate as the HTTP /ingest path, so an agent can never bypass review.`,
     staged: { summary: "Document token rotation + the per-request server lifecycle",
       body:
 `The MCP server is the only write path into Canopy. Coding agents connect over the Model Context Protocol and post the output of a work session through a typed contract; nothing else can mutate the store.
@@ -61,7 +61,7 @@ The endpoint is bearer-only. A missing or invalid token gets a bare 401 with no 
 
 ## 4. Use the tools
 
-Restart your client and the Canopy tools appear in the session. Reads return live data right away: list_docs, get_doc, get_feed, search_context, and get_roadmap. The write tools — append_feed, propose_doc_update, and propose_milestone — never publish directly; they stage a proposal that a human confirms later, and the author is always you, never a value the client supplies.
+Restart your client and the Canopy tools appear in the session. Reads return live data right away: list_docs, get_doc, get_feed, search_context, and get_roadmap. The write tools — append_feed, propose_doc_update, and record_session — never publish directly; they stage a proposal that a human confirms later, and the author is always you, never a value the client supplies.
 
 ## Rotating and revoking
 
@@ -71,7 +71,7 @@ Tokens never expire on their own. If one leaks, or you just want a fresh credent
     body:
 `Every write — from MCP and from the HTTP /ingest path alike — funnels through one set of per-entry gate functions. There is exactly one place that decides write-vs-stage-vs-triage, and adding a new write means adding it here rather than introducing a second surface.
 
-The gate makes three guarantees. First, nothing is guessed: an out-of-vocabulary tag or section, a low-confidence flag, or a milestone marked done is routed to the needs-triage queue instead of being written blindly. Second, the author is always the authenticated principal passed in by the caller; the client-supplied author field is advisory and ignored. Third, agent writes are non-destructive — they land as staged proposals, never as live content.
+The gate makes three guarantees. First, nothing is guessed: an out-of-vocabulary tag or section, or a low-confidence flag on a new page, is routed to the needs-triage queue instead of being written blindly. Second, the author is always the authenticated principal passed in by the caller; the client-supplied author field is advisory and ignored. Third, agent writes are non-destructive — they land as staged proposals, never as live content.
 
 This is the load-bearing invariant of the whole system: because there is a single gated path, the human review guarantee holds no matter which client is talking to Canopy.`},
 
@@ -85,11 +85,11 @@ The org's OAuth token is retained at the callback, AES-GCM-sealed under the cook
 
   { slug: "data-model", section: "reference", title: "Data Model", updated_at: "2026-06-20T12:00:00Z",
     body:
-`Canopy is a single Cloudflare D1 (SQLite) database. The first-class objects are docs, feed entries, decisions (ADRs), and milestones; everything else supports them.
+`Canopy is a single Cloudflare D1 (SQLite) database. The first-class objects are docs, feed entries, decisions (ADRs), tickets, and sprints; everything else supports them.
 
 A doc has exactly one promoted version live at a time (docs.current_version), with its full history in doc_versions — each version carries a status of staged or promoted, a change summary, a confidence flag, and an author. Promotion copies a staged version's body into the live doc and bumps current_version; prior versions are never destroyed. The feed table is an append-only log; tags live in entry_tags keyed by entry type and id. ADRs live in their own table with a draft/ratified status. needs_triage holds unplaceable items awaiting a human.
 
-Identity tables (users, sessions, mcp_tokens) and the roadmap tables (milestones, milestone_proposals) round out the schema. The controlled vocabulary — the sections and tags the gate accepts — lives in its own tables and is the gate's source of truth.`},
+Identity tables (persons, identities, sessions, mcp_tokens) and the roadmap tables (plan, plan_versions, sprints, sprint_progress) round out the schema. The controlled vocabulary — the sections and tags the gate accepts — lives in its own tables and is the gate's source of truth.`},
 
   { slug: "feed", section: "reference", title: "Feed", updated_at: "2026-06-22T08:00:00Z",
     body:
@@ -111,9 +111,9 @@ There are three queues. Proposals are staged doc versions newer than the live pa
 
   { slug: "roadmap", section: "reference", title: "Roadmap", updated_at: "2026-06-18T10:00:00Z",
     body:
-`The Roadmap is a timeline of coarse milestones — the altitude above individual GitHub issues. Each milestone has a title, a target date, and a status of upcoming, in progress, or done.
+`The Roadmap is a timeline of sprints — the altitude above individual GitHub issues. Each sprint has a label, a target date, and a status of upcoming, in progress, or done.
 
-Progress is computed live from GitHub at view time and stored nowhere. A milestone's github_ref is a bare reference — a GitHub milestone number, or a JSON array of issue numbers — resolved against the configured repository using the viewer's stored OAuth token. If the token is absent, expired, or lacks access (for example a private repo read with only read:org scope), the milestone is returned without progress rather than as an error, and the bar renders as unavailable. Completion is never inferred from 100% issue closure: marking a milestone done is always a deliberate human confirm.`},
+Progress is a stored absolute cache of closed/total, written by the webhook as events arrive and by a scheduled recompute, never fetched at render. A sprint's github_ref is a bare reference — a GitHub milestone number, or a JSON array of issue numbers — resolved against the configured repository by those two writers only. A sprint with nothing to count reads 0/0. Completion is never inferred from 100% issue closure: marking a sprint done is always a deliberate human confirm.`},
 
   { slug: "search", section: "reference", title: "Search", updated_at: "2026-06-17T14:00:00Z",
     body:
@@ -123,13 +123,13 @@ A section filter narrows to docs only; without it, feed and ADR matches are incl
 
   { slug: "routes-and-tools", section: "reference", title: "MCP Tools & HTTP Routes", updated_at: "2026-06-25T19:00:00Z",
     body:
-`Reads (HTTP, session-gated): GET /feed, /docs, /doc/:slug, /search, /roadmap, /needs-triage, /adrs, /milestone-proposals, /auth/me.
+`Reads (HTTP, session-gated): GET /feed, /docs, /doc/:slug, /search, /roadmap, /proposals, /needs-triage, /adrs, /auth/me.
 
-Human confirms (HTTP, session-gated — never MCP tools): POST /doc/:slug/promote, /adr/:id/ratify, /milestone-proposals/:id/promote, /milestones/:id/complete.
+Human confirms (HTTP, session-gated — never MCP tools): POST /doc/:slug/promote, /adr/:id/ratify, /sprints/:id/complete.
 
 Auth (HTTP): GET /auth/login and /auth/callback are public; POST /auth/logout and /auth/mcp-token are gated.
 
-Agent writes (MCP tools at /mcp, bearer-only): append_feed, propose_doc_update, propose_milestone, plus the read tools get_doc, list_docs, get_feed, search_context, get_roadmap. Every write tool funnels through the gate — the same code path as /ingest.`},
+Agent writes (MCP tools at /mcp, bearer-only): append_feed, propose_doc_update, and record_session, plus the read tools get_doc, list_docs, get_feed, query, get_roadmap. Every write tool funnels through the gate — the same code path as /ingest. Sprints have no MCP writer at all: the plan write is the admin-only update_plan, and everything else about a sprint is a cookie route.`},
 
   // ── Context ────────────────────────────────────────────────────────────────
   { slug: "product-overview", section: "context", title: "Product Overview", updated_at: "2026-06-15T09:00:00Z",
@@ -177,7 +177,7 @@ Rationale: a single gated path is what makes the human-review guarantee hold reg
     body:
 `Context: letting agents write directly to live content would make the store fast to fill and impossible to trust.
 
-Decision: agents only ever stage. Live changes happen exclusively through authenticated HTTP routes that are never exposed as MCP tools — promote a doc version, ratify an ADR, promote a milestone proposal, complete a milestone. Promotion is non-destructive; prior versions remain.
+Decision: agents only ever stage. Live changes happen exclusively through authenticated HTTP routes that are never exposed as MCP tools — promote a doc version, ratify an ADR, complete a sprint. Promotion is non-destructive; prior versions remain.
 
 Rationale: keeping every agent write non-destructive and staged preserves a human review gate without slowing agents down, and the confidence flag on each write lets reviewers triage quickly.`},
 
@@ -191,11 +191,11 @@ Rationale: the team already lives in GitHub, so org membership is the natural ac
 
   { slug: "adr-004-live-roadmap", section: "decisions", title: "ADR-004 · Roadmap progress is computed live, stored nowhere", updated_at: "2026-05-20T09:00:00Z",
     body:
-`Context: a roadmap whose progress is copied into the store drifts from reality the moment an issue closes.
+`Context: a roadmap whose progress is guessed at render drifts from reality, and a per-viewer GitHub token on the render path makes every page load a network call.
 
-Decision: store only the milestones (title, target, status, a bare github_ref). Compute closed/total from GitHub at read time and never persist it. If the token can't read GitHub, return the milestone without progress rather than an error. Marking a milestone done stays a deliberate human action — never inferred from 100% closure.
+Decision: store the sprints (label, target, status, a bare github_ref) and an ABSOLUTE closed/total cache alongside them, written by the webhook as events arrive and by a scheduled recompute — never at render. A sprint with no cache row reads 0/0. Marking a sprint done stays a deliberate human action — never inferred from 100% closure.
 
-Rationale: observed data can't go stale. The roadmap is the first feature built entirely on read-time data, and it degrades gracefully when GitHub is unavailable.`},
+Rationale: absolute counts make delivery order irrelevant (the last write wins), and keeping GitHub off the render path means the Roadmap loads from D1 alone and degrades to 0/0 rather than to an error.`},
 
   { slug: "adr-005-single-accent", section: "decisions", title: "ADR-005 · Single-accent design system", updated_at: "2026-05-28T09:00:00Z",
     body:
@@ -231,7 +231,7 @@ const VALID_TAGS = new Set(["auth", "architecture", "infra", "api", "ui", "data"
 const meta = JSON.parse(read("sapling-meta.json"));
 const dayMs = 86400000;
 const baseDate = new Date("2026-06-25T18:00:00Z").getTime();
-const milestones = meta.milestones.map((m) => ({ title: m.title, description: m.description, target_date: m.target_date, status: m.status }));
+const sprints = meta.sprints.map((m) => ({ title: m.title, description: m.description, target_date: m.target_date, status: m.status }));
 const feed = meta.feed.map((f) => ({
   author: f.author || AUTHOR, summary: f.summary, body: f.body || "",
   tags: (f.tags || []).filter((t) => VALID_TAGS.has(t)),
@@ -246,7 +246,7 @@ const lines = [];
 lines.push("-- GENERATED by scripts/build-prod-seed.mjs — do not hand-edit; edit the generator.");
 lines.push("-- One-time bootstrap of the production Canopy store. Resets content tables first");
 lines.push("-- (safe ONLY before agents start writing real content via MCP).");
-lines.push("DELETE FROM milestone_proposals; DELETE FROM milestones; DELETE FROM doc_versions; DELETE FROM docs;");
+lines.push("DELETE FROM sprint_resources; DELETE FROM sprints; DELETE FROM doc_versions; DELETE FROM docs;");
 lines.push("DELETE FROM feed; DELETE FROM entry_tags; DELETE FROM adrs; DELETE FROM needs_triage;");
 lines.push("DELETE FROM sqlite_sequence;");
 lines.push("");
@@ -263,8 +263,8 @@ for (const d of allDocs) {
   }
 }
 lines.push("");
-for (const m of milestones) {
-  lines.push(`INSERT INTO milestones (title, description, target_date, status, github_ref, created_at, created_by, updated_at) VALUES (${q(m.title)}, ${q(m.description)}, ${q(m.target_date)}, ${q(m.status)}, NULL, ${q(NOW)}, ${q(AUTHOR)}, ${q(NOW)});`);
+for (const m of sprints) {
+  lines.push(`INSERT INTO sprints (title, description, target_date, status, urgency, github_ref, created_at, created_by, updated_at) VALUES (${q(m.title)}, ${q(m.description)}, ${q(m.target_date)}, ${q(m.status)}, 'normal', NULL, ${q(NOW)}, ${q(AUTHOR)}, ${q(NOW)});`);
 }
 lines.push("");
 feed.forEach((f, i) => {
@@ -283,4 +283,4 @@ for (const t of triage) {
 lines.push("");
 
 writeFileSync(new URL("./seed-prod.sql", import.meta.url), lines.join("\n"));
-console.log(`Wrote seed-prod.sql: ${docs.length} canopy + ${saplingDocs.length} sapling docs, ${milestones.length} milestones, ${feed.length} feed, ${adrs.length} ADR drafts, ${triage.length} triage`);
+console.log(`Wrote seed-prod.sql: ${docs.length} canopy + ${saplingDocs.length} sapling docs, ${sprints.length} sprints, ${feed.length} feed, ${adrs.length} ADR drafts, ${triage.length} triage`);

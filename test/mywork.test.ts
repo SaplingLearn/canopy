@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { all } from "../src/db";
+import { all, run, nowIso } from "../src/db";
 import { ingestEvent } from "../src/consumer";
 import { storePrSummary, storeIssueSummary, type Summarizer, type PrSummary, type IssueSummary } from "../src/tools/summarize";
 import { getMyWork } from "../src/tools/mywork";
+import { create_ticket, transition_ticket } from "../src/tools/tickets";
+import type { TicketCreate } from "@shared/tickets";
 import { seedPerson } from "./helpers/persons";
 import type { EventRow } from "@shared/rows";
 import type { CapturedEvent } from "@shared/contract";
@@ -26,7 +28,7 @@ function prEvent(over: Partial<CapturedEvent> & { number: number; login: string;
       merged_at: merged ? NOW : null,
       closed_at: NOW,
       user: { login },
-      milestone: null,
+      milestone: null, // GitHub's own key — not Canopy vocabulary
       base: baseRef ? { ref: baseRef } : null,
     },
   });
@@ -51,8 +53,10 @@ function issueEvent(over: {
   title?: string;
   labels?: string[];
   assigneeLogin?: string;
+  // GitHub's own key — not Canopy vocabulary (this is a GitHub payload literal).
   milestone?: { title?: string | null; due_on?: string | null; number?: number } | null;
 }): CapturedEvent {
+  // `milestone` is GitHub's own key — not Canopy vocabulary (a payload literal).
   const { number, login, action, state, updatedAt, title = `Issue ${number}`, labels = [], assigneeLogin = login, milestone = null } = over;
   const raw = JSON.stringify({
     action,
@@ -65,7 +69,7 @@ function issueEvent(over: {
       user: { login },
       assignees: [{ login: assigneeLogin }],
       labels,
-      milestone: milestone ?? null,
+      milestone: milestone ?? null, // GitHub's own key — not Canopy vocabulary
     },
   });
   return {
@@ -138,7 +142,7 @@ describe("getMyWork — todo latest-snapshot semantics", () => {
       url: "https://github.com/o/r/issues/7",
       // Not yet populated by capture/summarize — null until the follow-up lands.
       displayTitle: null,
-      milestone: null,
+      sprint: null,
       nextStep: null,
     });
 
@@ -200,7 +204,7 @@ describe("getMyWork — unmapped login", () => {
     await ingestEvent(env.DB, ev, "github-webhook");
 
     const work = await getMyWork(env.DB, "stranger");
-    expect(work).toEqual({ person: null, previousActivity: [], todo: [], degraded: false });
+    expect(work).toEqual({ person: null, previousActivity: [], todo: [], tickets: [], degraded: false });
 
     const rows = await all<EventRow>(env.DB, `SELECT * FROM events`);
     expect(rows).toHaveLength(1); // captured, never dropped
@@ -212,7 +216,7 @@ describe("getMyWork — person with no GitHub identity (e.g. Google-only)", () =
     await seedPerson("priya", { name: "Priya", github: false });
 
     const work = await getMyWork(env.DB, "priya");
-    expect(work).toEqual({ person: "Priya", previousActivity: [], todo: [], degraded: false });
+    expect(work).toEqual({ person: "Priya", previousActivity: [], todo: [], tickets: [], degraded: false });
   });
 });
 
@@ -257,7 +261,7 @@ describe("getMyWork — structured fields", () => {
     });
   });
 
-  it("projects the structured issue summary columns and the milestone into the todo", async () => {
+  it("projects the structured issue summary columns and the SPRINT into the todo", async () => {
     await seedPerson("dev", { name: "Dev" });
     await ingestEvent(
       env.DB,
@@ -276,11 +280,43 @@ describe("getMyWork — structured fields", () => {
       displayTitle: "Humanized nine",
       summary: "What it is.",
       nextStep: "Do the fix.",
-      milestone: { title: "Reliable event capture", dueOn: "2026-07-20T07:00:00Z" },
+      // No sprint claims GitHub group 3, so the group's own title stands in.
+      sprint: { title: "Reliable event capture", dueOn: "2026-07-20T07:00:00Z" },
     });
   });
 
-  it("yields nulls for a legacy raw (no base, milestone without title) and a prose-era summary row", async () => {
+  it("resolves the issue's GitHub group number to the SPRINT whose github_ref is that number", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    // Two sprints; only the second claims GitHub group 3.
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES ('Other sprint', '2026-07-01', 'upcoming', '9', ?, 'dev')`, NOW);
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES ('Sprint 12', '2026-07-20', 'in_progress', '3', ?, 'dev')`, NOW);
+    await ingestEvent(
+      env.DB,
+      issueEvent({ number: 11, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3, title: "Reliable event capture", due_on: "2026-07-20T07:00:00Z" } }),
+      "github-webhook"
+    );
+
+    const work = await getMyWork(env.DB, "dev");
+    // The SPRINT's title wins over the GitHub group's; the due date is still
+    // GitHub's `due_on`.
+    expect(work.todo[0].sprint).toEqual({ title: "Sprint 12", dueOn: "2026-07-20T07:00:00Z" });
+  });
+
+  it("an ARRAY github_ref claims no group number — the GitHub title is the fallback", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    // `[3]` is a list of ISSUE numbers, not a group number: it must not claim 3.
+    await run(env.DB, `INSERT INTO sprints (title, target_date, status, github_ref, created_at, created_by) VALUES ('Issue list sprint', '2026-07-20', 'in_progress', '[3]', ?, 'dev')`, NOW);
+    await ingestEvent(
+      env.DB,
+      issueEvent({ number: 12, login: "dev", action: "assigned", state: "open", updatedAt: NOW, milestone: { number: 3, title: "Reliable event capture", due_on: null } }),
+      "github-webhook"
+    );
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.todo[0].sprint).toEqual({ title: "Reliable event capture", dueOn: null });
+  });
+
+  it("yields nulls for a legacy raw (no base, GitHub group without a title) and a prose-era summary row", async () => {
     await seedPerson("dev", { name: "Dev" });
     await ingestEvent(env.DB, prEvent({ number: 8, login: "dev" }), "github-webhook");
     await ingestEvent(
@@ -290,6 +326,114 @@ describe("getMyWork — structured fields", () => {
     );
     const work = await getMyWork(env.DB, "dev");
     expect(work.previousActivity[0]).toMatchObject({ number: 8, displayTitle: null, what: null, why: null, impact: null, baseRef: null });
-    expect(work.todo[0]).toMatchObject({ number: 10, displayTitle: null, nextStep: null, milestone: null });
+    expect(work.todo[0]).toMatchObject({ number: 10, displayTitle: null, nextStep: null, sprint: null });
+  });
+});
+
+// ── Phase 5b: the third My Work list — tickets assigned to me ────────────────
+// Tickets are D1 rows keyed on a person HANDLE (never a GitHub login), so this
+// block drives the real writers (`create_ticket` / `transition_ticket` /
+// `set_ticket_sprint`) and reads the projection back off `getMyWork`.
+
+describe("getMyWork — tickets assigned to me", () => {
+  async function seedSprintRow(title: string): Promise<number> {
+    const now = nowIso();
+    const res = await run(
+      env.DB,
+      `INSERT INTO sprints (title, target_date, status, created_at, created_by, updated_at) VALUES (?, '2026-09-01', 'in_progress', ?, 'dev', ?)`,
+      title, now, now
+    );
+    return res.meta.last_row_id as number;
+  }
+  const mk = (o: Partial<TicketCreate> & { title: string }): TicketCreate => ({
+    body: "", category: "other", priority: "normal", assignees: [], ...o,
+  });
+
+  it("lists MY open tickets and never anyone else's, with the requester and sprint", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    await seedPerson("meilin", { name: "Meilin Zhao", github: false });
+    const sprintId = await seedSprintRow("Sprint 13 — Tickets");
+
+    const mine = await create_ticket(env.DB, mk({ title: "Mine", body: "Please fix.", priority: "high", category: "bug", assignees: ["dev"], sprint_id: sprintId }), "meilin");
+    await create_ticket(env.DB, mk({ title: "Theirs", assignees: ["meilin"] }), "meilin");
+    await create_ticket(env.DB, mk({ title: "Nobody's" }), "meilin");
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets.map((t) => t.title)).toEqual(["Mine"]);
+    expect(work.tickets[0]).toMatchObject({
+      id: mine, title: "Mine", body: "Please fix.", category: "bug", priority: "high",
+      status: "submitted", requester: "meilin", sprint: { id: sprintId, label: "Sprint 13 — Tickets" },
+    });
+  });
+
+  it("a ticket with no sprint carries sprint: null (Backlog)", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    await create_ticket(env.DB, mk({ title: "Backlogged", assignees: ["dev"] }), "dev");
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets[0].sprint).toBeNull();
+  });
+
+  it("drops a ticket once a person closes it (done AND declined), and never puts tickets in todo", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    const a = await create_ticket(env.DB, mk({ title: "Will be done", assignees: ["dev"] }), "dev");
+    const b = await create_ticket(env.DB, mk({ title: "Will be declined", assignees: ["dev"] }), "dev");
+    const c = await create_ticket(env.DB, mk({ title: "Stays open", assignees: ["dev"] }), "dev");
+
+    await transition_ticket(env.DB, a, "in_progress", "dev");
+    await transition_ticket(env.DB, a, "done", "dev");
+    await transition_ticket(env.DB, b, "declined", "dev");
+
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets.map((t) => t.id)).toEqual([c]);
+    expect(work.todo).toEqual([]); // tickets are NEVER folded into the GitHub-issue list
+  });
+
+  it("orders by updated_at DESC — a touched ticket jumps to the front", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    const first_ = await create_ticket(env.DB, mk({ title: "First", assignees: ["dev"] }), "dev");
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await create_ticket(env.DB, mk({ title: "Second", assignees: ["dev"] }), "dev");
+    expect((await getMyWork(env.DB, "dev")).tickets.map((t) => t.title)).toEqual(["Second", "First"]);
+
+    await new Promise((r) => setTimeout(r, 5));
+    await transition_ticket(env.DB, first_, "in_progress", "dev");
+    expect((await getMyWork(env.DB, "dev")).tickets.map((t) => t.title)).toEqual(["First", "Second"]);
+    expect(second).toBeGreaterThan(first_);
+  });
+
+  it("caps the list at 6, keeping the most recently updated", async () => {
+    await seedPerson("dev", { name: "Dev" });
+    for (let i = 1; i <= 8; i++) {
+      await create_ticket(env.DB, mk({ title: `T${i}`, assignees: ["dev"] }), "dev");
+      await new Promise((r) => setTimeout(r, 3));
+    }
+    const work = await getMyWork(env.DB, "dev");
+    expect(work.tickets).toHaveLength(6);
+    expect(work.tickets.map((t) => t.title)).toEqual(["T8", "T7", "T6", "T5", "T4", "T3"]);
+  });
+
+  it("matches the assignee handle case-INSENSITIVELY, like persons.handle and getPerson", async () => {
+    // `persons.handle` is NOCASE and `getPerson` resolves "caseyq" → "CaseyQ". If
+    // the ticket join stayed case-sensitive the person would be told "No tickets
+    // assigned to you" while holding the whole queue — a silent wrong answer.
+    await seedPerson("CaseyQ", { name: "Casey Quinn" });
+    await create_ticket(env.DB, mk({ title: "Cased", assignees: ["CaseyQ"] }), "CaseyQ");
+
+    const canonical = await getMyWork(env.DB, "CaseyQ");
+    expect(canonical.tickets.map((t) => t.title)).toEqual(["Cased"]);
+
+    const lowered = await getMyWork(env.DB, "caseyq");
+    expect(lowered.person).toBe("Casey Quinn");
+    expect(lowered.tickets.map((t) => t.title)).toEqual(["Cased"]);
+  });
+
+  it("a Google-only person (no github identity) still sees their tickets", async () => {
+    await seedPerson("sanaok", { name: "Sana Okafor", github: false });
+    await create_ticket(env.DB, mk({ title: "Access request", assignees: ["sanaok"] }), "sanaok");
+    const work = await getMyWork(env.DB, "sanaok");
+    expect(work.person).toBe("Sana Okafor");
+    expect(work.tickets.map((t) => t.title)).toEqual(["Access request"]);
+    expect(work.previousActivity).toEqual([]);
+    expect(work.todo).toEqual([]);
   });
 });
