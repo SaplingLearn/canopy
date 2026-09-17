@@ -873,7 +873,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (o.check !== "available" || o.submitting) return;
       o.submitting = true; o.error = null; rerender();
       submitOnboard({ handle: o.handle, name: o.name.trim() || null, color: o.color })
-        .then(() => { window.location.href = "/"; })
+        // A brand-new person lands on Get Started, not My Work: the projection is
+        // empty on day one, and this is the one moment they are guaranteed to be
+        // new. The boot path restores the route from the hash, so #guide is all
+        // it takes. Every later sign-in goes wherever their hash points.
+        .then(() => { window.location.href = "/#guide"; })
         .catch((e) => {
           o.submitting = false;
           if (e instanceof ApiError && e.message === "handle_taken") { o.check = "taken"; }
