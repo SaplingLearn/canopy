@@ -907,6 +907,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.screen = "newticket";
       state.fTitle = ""; state.fCat = null; state.fPrio = "normal";
       state.fDesc = ""; state.fAsgs = []; state.fLink = ""; state.fSpr = null;
+      state.sprMenu = false;          // the form's sprint picker shares the rail's flag
       loadSprintsIfNeeded();
       break;
     // The header breadcrumb's back button — one act, resolved against the screen
@@ -1044,7 +1045,13 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "ntPriority":
       if (arg && (TICKET_PRIORITIES as readonly string[]).includes(arg)) state.fPrio = arg as TicketPriority;
       break;
-    case "ntSprint": state.fSpr = arg ? Number(arg) : null; break;   // "" = Backlog
+    // The form picks a sprint through the SAME menu as the ticket detail rail,
+    // so it toggles the same open flag and closes on a pick.
+    case "ntSprintMenu": state.sprMenu = !state.sprMenu; break;
+    case "ntSprint":
+      state.fSpr = arg ? Number(arg) : null;                         // "" = Backlog
+      state.sprMenu = false;
+      break;
     case "ntAssignee":
       if (arg === null) return;
       if (arg === "") state.fAsgs = [];                              // the "Unassigned" chip clears

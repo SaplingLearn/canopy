@@ -89,7 +89,7 @@ function queueProps(o: Partial<QueueProps> = {}): QueueProps {
 function formProps(o: Partial<NewTicketProps> = {}): NewTicketProps {
   return {
     title: "", category: null, priority: "normal", description: "", assignees: [],
-    link: "", sprintId: null, sprints: [], persons: PERSONS,
+    link: "", sprintId: null, sprints: [], persons: PERSONS, sprMenu: false,
     ...o,
   };
 }
@@ -512,9 +512,9 @@ describe("newTicketView", () => {
     expect(normal).toContain("color:var(--fg);background:var(--hover)");
     const low = html.slice(html.indexOf('data-act="ntPriority" data-arg="low"'), html.indexOf(">Low<"));
     expect(low).toContain("color:var(--fg-55);background:transparent");
-    // Backlog is the selected sprint chip; Unassigned the selected assignee chip.
-    const backlog = html.slice(html.indexOf('data-act="ntSprint" data-arg=""'), html.indexOf(">Backlog<"));
-    expect(backlog).toContain(on);
+    // The sprint picker reads Backlog; Unassigned is the selected assignee chip.
+    expect(html).toContain('data-act="ntSprintMenu"');
+    expect(html).toContain(">Backlog</span>");
     const unassigned = html.slice(html.indexOf('data-act="ntAssignee" data-arg=""'), html.indexOf("Unassigned</button>"));
     expect(unassigned).toContain(on);
   });
@@ -531,12 +531,15 @@ describe("newTicketView", () => {
       sprints: [sprint({ id: 12, label: "Sprint 12" }), sprint({ id: 13, label: "Sprint 13" })],
       sprintId: 13,
       assignees: ["meilin", "sanaok"],
+      sprMenu: true,
     }));
-    expect(html.match(/data-act="ntSprint"/g)?.length).toBe(3);
+    expect(html.match(/data-act="ntSprint" /g)?.length).toBe(3);
     expect(html.match(/data-act="ntAssignee"/g)?.length).toBe(4);
-    const on = "border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft)";
-    const s13 = html.slice(html.indexOf('data-act="ntSprint" data-arg="13"'), html.indexOf(">Sprint 13<"));
-    expect(s13).toContain(on);
+    const from13 = html.slice(html.indexOf('data-act="ntSprint" data-arg="13"'));
+    const s13 = from13.slice(0, from13.indexOf("</button>"));
+    expect(s13).toContain("color:var(--accent)");                   // the tick sits on the pick
+    const from12 = html.slice(html.indexOf('data-act="ntSprint" data-arg="12"'));
+    expect(from12.slice(0, from12.indexOf("</button>"))).toContain("visibility:hidden");
   });
 
   it("echoes the typed values back into the fields", () => {
@@ -544,6 +547,28 @@ describe("newTicketView", () => {
     expect(html).toContain('value="A &amp; B"');
     expect(html).toContain(">line one</textarea>");
     expect(html).toContain('value="#214"');
+  });
+
+  it("picks a sprint through a menu, not a chip per sprint, so a long label can't spill out of the rail", () => {
+    const label = "E2E Chapter 2 — agent explorer (epic #403)";
+    const sprints = [sprint({ id: 12, label }), sprint({ id: 13, label: "Sprint 13" })];
+
+    // Closed: one trigger showing the pick, and no sprint rows at all.
+    const closed = newTicketView(formProps({ sprints, sprintId: 12 }));
+    expect(closed).toContain('data-act="ntSprintMenu"');
+    expect(closed).not.toContain('data-act="ntSprint"');
+    expect(closed).toContain("text-overflow:ellipsis");
+    expect(closed).toContain(`>${label}</span>`);
+
+    // Open: Backlog plus every sprint, the pick ticked, inside the SAME fixed-
+    // width box (with a backdrop) the detail rail's picker uses.
+    const open = newTicketView(formProps({ sprints, sprintId: 12, sprMenu: true }));
+    expect(open.match(/data-act="ntSprint" /g)?.length).toBe(3);
+    expect(open).toContain('data-act="closeTicketMenus"');
+    expect(open).toContain("width:230px");
+    const row = open.slice(open.indexOf('data-act="ntSprint" data-arg="12"'), open.indexOf(">Sprint 13<"));
+    expect(row).toContain("color:var(--accent)");                  // the tick
+    expect(row).toContain("text-overflow:ellipsis");
   });
 
   it("cancels back to the queue with the same act the breadcrumb uses", () => {
@@ -866,8 +891,11 @@ describe("hover classes — menu rows, pick chips, segments", () => {
     expect(html).toContain('data-act="ntCategory" data-arg="access" class="cnpy-pickchip"');
     expect(html).toContain('data-act="ntPriority" data-arg="normal" class="cnpy-segbtn is-on"');
     expect(html).toContain('data-act="ntPriority" data-arg="high" class="cnpy-segbtn"');
-    expect(html).toContain('data-act="ntSprint" data-arg="12" class="cnpy-pickchip is-on"');
-    expect(html).toContain('data-act="ntSprint" data-arg="" class="cnpy-pickchip"');
+    // Sprint is picked from the shared menu now, so its rows carry the menu-row
+    // hover class rather than the chip one.
+    const open = newTicketView(formProps({ category: "bug", sprintId: 12, assignees: ["meilin"], sprints: [s12], sprMenu: true }));
+    expect(open).toContain('data-act="ntSprint" data-arg="12" class="cnpy-menurow"');
+    expect(open).toContain('data-act="ntSprint" data-arg="" class="cnpy-menurow"');
     expect(html).toContain('data-act="ntAssignee" data-arg="meilin" class="cnpy-pickchip is-on"');
     expect(html).toContain('data-act="ntAssignee" data-arg="" class="cnpy-pickchip"');
   });

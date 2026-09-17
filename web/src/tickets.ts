@@ -328,6 +328,9 @@ export interface NewTicketProps {
   sprintId: number | null;
   sprints: SprintView[];
   persons: PersonSummary[];
+  /** Whether the sprint picker is open — the same `sprMenu` flag the detail
+   *  rail's picker uses (the two screens are never mounted together). */
+  sprMenu: boolean;
 }
 
 const FIELD_LABEL = "display:block;font-size:13px;font-weight:500;margin-bottom:8px";
@@ -347,9 +350,16 @@ export function newTicketView(p: NewTicketProps): string {
   const prioSegs = TICKET_PRIORITIES.map((v) =>
     `<button data-act="ntPriority" data-arg="${v}" class="${segClass(p.priority === v)}" style="${segBtnStyle(p.priority === v)}">${v.charAt(0).toUpperCase() + v.slice(1)}</button>`).join("");
 
-  const sprintChips = [`<button data-act="ntSprint" data-arg="" class="${chipClass(p.sprintId === null)}" style="${chipStyle(p.sprintId === null)}">Backlog</button>`]
-    .concat(p.sprints.map((sp) => `<button data-act="ntSprint" data-arg="${sp.id}" class="${chipClass(p.sprintId === sp.id)}" style="${chipStyle(p.sprintId === sp.id)}">${esc(sp.label)}</button>`))
-    .join("");
+  // One picker, not a chip per sprint: the roadmap carries a dozen-plus sprints
+  // with long labels, which crammed the rail and overflowed the card.
+  const pickedSprint = p.sprintId === null ? null : p.sprints.find((sp) => sp.id === p.sprintId) ?? null;
+  const sprintPicker = `<div style="position:relative">
+    <button data-act="ntSprintMenu" class="cnpy-outlinebtn" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:38px;padding:0 11px;border:1px solid var(--border-strong);border-radius:9px;font-size:12.5px;font-weight:500;color:${p.sprintId === null ? "var(--fg-70)" : "var(--fg)"};transition:all .12s ease">
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pickedSprint ? pickedSprint.label : "Backlog")}</span>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;color:var(--fg-40)"><path d="m6 9 6 6 6-6"></path></svg>
+    </button>
+    ${p.sprMenu ? sprintMenuBox(p.sprints, p.sprintId, "ntSprint") : ""}
+  </div>`;
 
   const dashedAvatar = `<span style="width:20px;height:20px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;font-size:8px;font-weight:600;flex:none;color:var(--fg-40)">–</span>`;
   const asgChips = [personChipButton("ntAssignee", "", "Unassigned", p.assignees.length === 0, dashedAvatar)]
@@ -374,7 +384,7 @@ export function newTicketView(p: NewTicketProps): string {
           <label style="${FIELD_LABEL};margin:20px 0 8px">Priority</label>
           <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${prioSegs}</div>
           <label style="${FIELD_LABEL};margin:20px 0 8px">Sprint</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">${sprintChips}</div>
+          ${sprintPicker}
           <label style="${FIELD_LABEL};margin:20px 0 8px">Assignees <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap">${asgChips}</div>
           <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Leave unassigned to let the queue pick it up.</div>
@@ -481,6 +491,28 @@ const ICON_BTN = "width:22px;height:22px;border-radius:6px;display:grid;place-it
 const RAIL_SECTION_HEAD = "display:flex;align-items:center;justify-content:space-between;gap:8px;height:22px;margin-bottom:6px";
 const PROP_ROW = "display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px";
 const PROP_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
+
+/** THE sprint picker — Backlog plus every sprint, the current one ticked. The
+ *  ticket detail rail and the new-ticket form both render this ONE menu (they
+ *  differ only in the act a row fires), so a sprint is picked the same way
+ *  before and after the ticket exists. A menu is also what keeps a long,
+ *  authored sprint label in bounds: the box is bounded in both axes and each
+ *  row ellipsises, where the chip-per-sprint stack this replaced in the form
+ *  put a nowrap chip wider than the rail column and spilled out of the card. */
+function sprintMenuBox(sprints: SprintView[], current: number | null, act: string): string {
+  const options: { id: number | null; label: string }[] = [
+    { id: null, label: "Backlog" },
+    ...sprints.map((s) => ({ id: s.id, label: s.label })),
+  ];
+  const rows = options.map((o) => {
+    const on = current === o.id;
+    return `<button data-act="${attr(act)}" data-arg="${o.id ?? ""}" class="${MENU_ROW_CLASS}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-70)"}"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(o.label)}</span>${checkMark(on)}</button>`;
+  }).join("");
+  // 230px, or the trigger's own width when that is wider (the form's picker is a
+  // full-width control, the rail's is a 22px icon button) — one expression, so
+  // both screens really are the same menu.
+  return `${MENU_BACKDROP}<div style="${MENU_BOX};width:230px;min-width:100%;max-height:298px;overflow-y:auto">${rows}</div>`;
+}
 
 function transitionButtons(status: TicketStatus): string {
   const moves = legalMoves(status);
@@ -657,16 +689,7 @@ function assigneeRail(p: TicketDetailProps): string {
 function sprintRail(p: TicketDetailProps): string {
   const cur = p.ticket.sprint;
   const curSprint = cur ? p.sprints.find((s) => s.id === cur.id) ?? null : null;
-  const options: { id: number | null; label: string }[] = [
-    { id: null, label: "Backlog" },
-    ...p.sprints.map((s) => ({ id: s.id, label: s.label })),
-  ];
-  const menu = p.sprMenu
-    ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:230px">${options.map((o) => {
-        const on = (cur?.id ?? null) === o.id;
-        return `<button data-act="ticketSprintSet" data-arg="${o.id ?? ""}" class="${MENU_ROW_CLASS}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-70)"}"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(o.label)}</span>${checkMark(on)}</button>`;
-      }).join("")}</div>`
-    : "";
+  const menu = p.sprMenu ? sprintMenuBox(p.sprints, cur?.id ?? null, "ticketSprintSet") : "";
   const openAttr = cur ? ` data-act="openSprint" data-arg="${cur.id}"` : "";
   return `<div>
     <div style="${RAIL_SECTION_HEAD}">

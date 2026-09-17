@@ -1658,6 +1658,7 @@ function newTicketScreen(s: AppState): string {
     sprintId: s.fSpr,
     sprints: s.sprints.data,
     persons: s.persons.data,
+    sprMenu: s.sprMenu,
   });
 }
 
