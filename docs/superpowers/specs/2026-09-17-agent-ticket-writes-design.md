@@ -24,7 +24,7 @@ worth re-reading before implementation starts — they are the ones a reasonable
 | **D1** | How much of the ticket screen becomes agent-reachable | **Full verb parity, including `done` / `declined`** — anything a person can do on the ticket screen, their agent can do over MCP | (a) low-stakes only (create/comment/link); (b) everything except the two resolving moves; (c) keep MCP read-only | The bearer token **is** the person. A token minted by Beatrix, acting on a ticket Beatrix owns, is Beatrix acting — withholding `done` from it withholds it from her, not from a machine | The fourth tickets invariant must be **reworded**, not kept verbatim (§2). An agent can close a ticket assigned to its principal | `src/mcp.ts` registrations |
 | **D2** | What bounds that parity | **Assignee scope.** Every write verb but `create_ticket` requires the bearer to be in `ticket_assignees` for that ticket; otherwise a typed `forbidden` (403-class) error and **nothing is written** | (a) verb-scoping (ban resolving moves for everyone); (b) requester-scope (the filer, not the assignee); (c) no scope | Assignment is the queue's existing statement of "this is yours". Scoping to it needs no new concept, no new column and no new UI — the boundary is data the team already curates by hand | An agent cannot triage the org-wide queue, comment on a colleague's ticket, or pick work up off the unassigned pile. Picking work up stays a human act (D8) | `assertAssignee` in `src/tools/tickets-agent.ts` |
 | **D3** | Whether assignment itself is agent-reachable | **Only at creation.** `create_ticket` accepts `assignees[]`; there is **no** `toggle_assignee` MCP tool, now or later | expose the toggle under assignee scope | Who owns what is the one field the scope rule is *built on*. An agent that can edit the assignee list can edit its own permissions | Re-assigning, unassigning and handing work over are web-only. An agent asked to "put Sana on this" reports that it cannot, and says why | tool absent from `src/mcp.ts`; asserted absent in tests |
-| **D4** | Marking a write that arrived over MCP | **No provenance.** No `via` column on `ticket_events` / `ticket_comments` / `tickets`, no chip in the SPA | (a) `via` column + an "agent" marker on the history row; (b) column now, UI later | An agent's write under a person's token *is* that person's write (D1) — a marker would imply a distinction the authority model does not make | **Irreversible for the interim.** `ticket_events.actor` and `ticket_comments.author` carry the handle and nothing else, so history can never separate a person's transition from their agent's. Adding the column later defaults old rows to `'web'`, which will be **wrong** for every MCP write made before it lands. Accepted deliberately | — (nothing to build) |
+| **D4** | Marking a write that arrived over MCP | **No provenance.** No `via` column on `ticket_events` / `ticket_comments` / `tickets`, no chip in the SPA | (a) `via` column + an "agent" marker on the history row; (b) column now, UI later | Two reasons, and the second is the load-bearing one. Mechanically, an agent's write under a person's token *is* that person's write (D1), so a marker would imply a distinction the authority model does not make. **Product-level: Canopy exists to be the connecting layer between agent and human knowledge.** A store that tagged every agent-touched row would be building the seam it was made to remove — a two-tier history where one tier is quietly trusted less. Confirmed by the product owner 2026-09-17 | **Irreversible for the interim.** `ticket_events.actor` and `ticket_comments.author` carry the handle and nothing else, so history can never separate a person's transition from their agent's. Adding the column later defaults old rows to `'web'`, which will be **wrong** for every MCP write made before it lands. Accepted deliberately | — (nothing to build) |
 | **D5** | Sprint writes over MCP | **Admin-only**, conditionally registered exactly like `update_plan` — a non-admin principal does not see the four tools in `tools/list` at all | expose to every principal, matching the cookie routes | Sprints are the roadmap's shape; the admin plan write already owns them | **A deliberate delta from the web:** `POST /sprints/:id/complete` sits under the blanket `sessionGate` with *no* `adminGate`, so any signed-in member can complete a sprint from the UI — over MCP, `complete_sprint` is admin-only. The surfaces disagree on purpose, and §3 says so out loud | `isAdmin(env, principal.handle)` guard around the block |
 | **D6** | Can an admin move **someone else's** ticket into a sprint over MCP | **Yes — `set_ticket_sprint` only.** The single exception to D2: admin ⇒ scope satisfied, for that one verb | (a) no exceptions, admins are agents too; (b) admin bypasses scope on every ticket verb | Composing a sprint *is* sprint management. Without it "edit sprints over MCP" is half a feature: an admin could create the container and never fill it | One verb where the lane rule does not hold. It is a `sprint_id` move — it re-homes a ticket, never resolves, comments on, or re-assigns it. **Flip point:** deleting the exception is a one-line change in `tickets-agent.ts` | `assertTicketWritable` admin branch |
 | **D7** | MCP tool names | **Mirror the writer function names** — `create_ticket`, `transition_ticket`, `add_ticket_comment`, `add_ticket_link`, `set_ticket_sprint`, `set_ticket_parent` | the issue's sketch (`comment_ticket`, `assign_ticket`) | One vocabulary across `src/tools/tickets.ts`, the MCP surface and the skill. The existing `BANNED_WRITE_TOOLS` list in `test/mcp.tickets.test.ts` flips to a `WRITE_TOOLS` list with the **same strings** | `toggle_assignee` stays in the banned list (D3) — the list does not empty, it splits | `src/mcp.ts` |
@@ -249,15 +249,21 @@ updated by hand, as it always has been.
 
 ---
 
-## 8. Open for a reviewer
+## 8. Reviewer calls — all three confirmed (2026-09-17)
 
-Three, ranked by how much a "no" would cost:
+The three decisions a reasonable person could have flipped were put to the product owner before
+implementation and confirmed as built. Kept here with their flip points, because the next reader's
+question will be "could this have gone another way, and how would I change it".
 
-1. **D6** (admin moves others' tickets between sprints) — deleting it is one line and costs an admin
-   agent the ability to compose a sprint it did not staff.
-2. **D10** (self-assignment at creation, made invisible by D4) — `self_assign_on_create: false` in the
-   team config blunts it for skill-driven agents, but only the server rejecting the bearer's own handle
-   in `create_ticket.assignees` actually closes it.
-3. **D4** (no provenance) — the one decision here with an **irreversible window**. Every MCP write made
-   before a `via` column exists is indistinguishable from a web write, forever. If that history matters
-   even slightly, the cheap move is the column now with no UI, and the marker later.
+1. **D6 — an admin may move someone else's ticket between sprints.** Confirmed. Flip point: delete the
+   one `if` in `assertTicketWritable`. Cost of flipping: an admin agent can create a sprint but not
+   staff it.
+2. **D10 — an agent may self-assign at creation**, and so may later resolve a ticket it filed.
+   Confirmed. Two levers, in increasing strength: `self_assign_on_create: false` in a team's
+   `tickets.config.md` (binds only agents that honour the skill), or the server rejecting the bearer's
+   own handle in `create_ticket.assignees` (binds everyone).
+3. **D4 — no provenance.** Confirmed, with the product rationale now recorded in the ledger above: the
+   store is the connecting layer between agent and human knowledge, and a `via` tag would rebuild the
+   seam it exists to remove. This one had a closing window and it is now closed by choice — writes made
+   from here on are indistinguishable from clicks, and a column added later would default them to
+   `'web'`. That is the accepted state, not an oversight to fix.
