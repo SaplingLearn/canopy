@@ -23,7 +23,7 @@ const EXPECTED_TRANSITIONS: ReadonlyArray<readonly [TicketStatus, TicketStatus, 
   ["in_progress", "submitted", true],   // Back
   ["in_progress", "in_progress", false],
   ["in_progress", "done", true],        // Done
-  ["in_progress", "declined", false],   // decline goes through Back first
+  ["in_progress", "declined", true],    // declined straight from in progress
   ["done", "submitted", false],         // terminal
   ["done", "in_progress", false],
   ["done", "done", false],
@@ -51,9 +51,9 @@ describe("ticket status machine", () => {
     }
   });
 
-  it("legalMoves returns exactly the allowed targets per status, in the design's button order", () => {
+  it("legalMoves returns exactly the allowed targets per status, in pipeline order", () => {
     expect(legalMoves("submitted")).toEqual(["in_progress", "declined"]);
-    expect(legalMoves("in_progress")).toEqual(["done", "submitted"]);
+    expect(legalMoves("in_progress")).toEqual(["done", "declined", "submitted"]);
     expect(legalMoves("done")).toEqual([]);
     expect(legalMoves("declined")).toEqual([]);
   });
@@ -73,9 +73,9 @@ describe("ticket status machine", () => {
     expect(isOpenStatus("declined")).toBe(false);
   });
 
-  it("TICKET_STATUS_LABEL is the design's display vocabulary", () => {
+  it("TICKET_STATUS_LABEL is the design's display vocabulary — `submitted` reads Triage", () => {
     expect(TICKET_STATUS_LABEL).toEqual({
-      submitted: "Submitted",
+      submitted: "Triage",
       in_progress: "In progress",
       done: "Done",
       declined: "Declined",

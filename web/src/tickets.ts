@@ -14,13 +14,13 @@
 // whole of zod into the browser bundle. Types still come from @shared/tickets.)
 
 import {
-  legalMoves, isOpenStatus, TICKET_STATUS_LABEL, TICKET_CATEGORIES, TICKET_PRIORITIES,
+  legalMoves, isOpenStatus, TICKET_STATUSES, TICKET_STATUS_LABEL, TICKET_CATEGORIES, TICKET_PRIORITIES,
   type TicketStatus, type TicketCategory, type TicketPriority,
 } from "@shared/tickets-core";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "./api";
-import { esc, attr, relTime, primaryBtn } from "./ui";
+import { esc, attr, relTime, primaryBtn, WORK_SHELL } from "./ui";
 import { personChip } from "./people";
 import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 
@@ -30,7 +30,7 @@ import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 const CHIP_BASE =
   "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none;";
 
-/** Tinted pill styling for one status — design call #5: Submitted blue,
+/** Tinted pill styling for one status — design call #5: Triage blue,
  *  In progress green (accent), Done muted, Declined red at reduced opacity. */
 function ticketPillStyle(status: TicketStatus): string {
   const tint = (c: string) =>
@@ -108,7 +108,7 @@ export const SEG_STATUSES: Record<TicketSeg, TicketStatus[]> = {
   all: ["submitted", "in_progress", "done", "declined"],
 };
 
-/** Design call #6 — "needs attention" = unassigned AND Submitted. Rendered as the
+/** Design call #6 — "needs attention" = unassigned AND `submitted` (Triage). Rendered as the
  *  selected-card idiom (2px inset left rule + faint fill), never a new color. */
 export function needsAttention(t: { assignees: string[]; status: TicketStatus }): boolean {
   return t.assignees.length === 0 && t.status === "submitted";
@@ -307,7 +307,7 @@ function boardView(p: QueueProps): string {
 
 /** The whole queue screen: filter row + Table or Board. */
 export function queueView(p: QueueProps): string {
-  return `<div style="max-width:1080px;margin:0 auto;padding:26px 32px 100px">
+  return `<div style="${WORK_SHELL}">
     ${filterRow(p)}
     ${p.view === "board" ? boardView(p) : tableView(p)}
   </div>`;
@@ -328,7 +328,16 @@ export interface NewTicketProps {
   sprintId: number | null;
   sprints: SprintView[];
   persons: PersonSummary[];
+  /** Whether the sprint picker is open — the same `sprMenu` flag the detail
+   *  rail's picker uses (the two screens are never mounted together). */
+  sprMenu: boolean;
 }
+
+/** How tall a ticket screen's body runs: the window, less the header, the
+ *  shell's own padding and a bottom breath. The form's card and the detail's
+ *  two columns both take it, so a ticket screen fills the window it is in
+ *  rather than floating in the top third of a large one. */
+const CARD_MIN_H = "calc(100vh - 210px)";
 
 const FIELD_LABEL = "display:block;font-size:13px;font-weight:500;margin-bottom:8px";
 const TEXT_INPUT =
@@ -347,9 +356,16 @@ export function newTicketView(p: NewTicketProps): string {
   const prioSegs = TICKET_PRIORITIES.map((v) =>
     `<button data-act="ntPriority" data-arg="${v}" class="${segClass(p.priority === v)}" style="${segBtnStyle(p.priority === v)}">${v.charAt(0).toUpperCase() + v.slice(1)}</button>`).join("");
 
-  const sprintChips = [`<button data-act="ntSprint" data-arg="" class="${chipClass(p.sprintId === null)}" style="${chipStyle(p.sprintId === null)}">Backlog</button>`]
-    .concat(p.sprints.map((sp) => `<button data-act="ntSprint" data-arg="${sp.id}" class="${chipClass(p.sprintId === sp.id)}" style="${chipStyle(p.sprintId === sp.id)}">${esc(sp.label)}</button>`))
-    .join("");
+  // One picker, not a chip per sprint: the roadmap carries a dozen-plus sprints
+  // with long labels, which crammed the rail and overflowed the card.
+  const pickedSprint = p.sprintId === null ? null : p.sprints.find((sp) => sp.id === p.sprintId) ?? null;
+  const sprintPicker = `<div style="position:relative">
+    <button data-act="ntSprintMenu" class="cnpy-outlinebtn" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:38px;padding:0 11px;border:1px solid var(--border-strong);border-radius:9px;font-size:12.5px;font-weight:500;color:${p.sprintId === null ? "var(--fg-70)" : "var(--fg)"};transition:all .12s ease">
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pickedSprint ? pickedSprint.label : "Backlog")}</span>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;color:var(--fg-40)"><path d="m6 9 6 6 6-6"></path></svg>
+    </button>
+    ${p.sprMenu ? sprintMenuBox(p.sprints, p.sprintId, "ntSprint") : ""}
+  </div>`;
 
   const dashedAvatar = `<span style="width:20px;height:20px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;font-size:8px;font-weight:600;flex:none;color:var(--fg-40)">–</span>`;
   const asgChips = [personChipButton("ntAssignee", "", "Unassigned", p.assignees.length === 0, dashedAvatar)]
@@ -357,14 +373,14 @@ export function newTicketView(p: NewTicketProps): string {
       personChipButton("ntAssignee", pp.handle, pp.name || pp.handle, p.assignees.includes(pp.handle), personChip(pp, 20, pp.handle))))
     .join("");
 
-  return `<div style="max-width:960px;margin:0 auto;padding:28px 32px 100px">
-    <div style="border:1px solid var(--border);border-radius:13px;padding:26px 28px">
-      <div class="cnpy-nt-grid" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:28px">
-        <div style="min-width:0">
+  return `<div style="${WORK_SHELL}">
+    <div style="border:1px solid var(--border);border-radius:13px;padding:26px 28px;display:flex;flex-direction:column;min-height:${CARD_MIN_H}">
+      <div class="cnpy-nt-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 288px;gap:32px;flex:1;min-height:0">
+        <div style="min-width:0;display:flex;flex-direction:column">
           <label style="${FIELD_LABEL}">Title</label>
           <input data-act="ntTitle" data-field="ntTitle" value="${attr(p.title)}" placeholder="One line: what do you need?" style="${TEXT_INPUT}" />
           <label style="${FIELD_LABEL};margin:20px 0 8px">Description</label>
-          <textarea data-act="ntDescription" data-field="ntDescription" placeholder="What's happening, and what would good look like?" style="width:100%;min-height:190px;padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;outline:none;resize:vertical">${esc(p.description)}</textarea>
+          <textarea data-act="ntDescription" data-field="ntDescription" placeholder="What's happening, and what would good look like?" style="width:100%;flex:1;min-height:190px;padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;outline:none;resize:vertical">${esc(p.description)}</textarea>
           <label style="${FIELD_LABEL};margin:20px 0 8px">Linked work <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
           <input data-act="ntLink" data-field="ntLink" value="${attr(p.link)}" placeholder="GitHub or Figma URL, or #issue-number" style="${TEXT_INPUT};height:38px;font-size:12.5px;font-family:var(--mono)" />
         </div>
@@ -374,7 +390,7 @@ export function newTicketView(p: NewTicketProps): string {
           <label style="${FIELD_LABEL};margin:20px 0 8px">Priority</label>
           <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${prioSegs}</div>
           <label style="${FIELD_LABEL};margin:20px 0 8px">Sprint</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">${sprintChips}</div>
+          ${sprintPicker}
           <label style="${FIELD_LABEL};margin:20px 0 8px">Assignees <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap">${asgChips}</div>
           <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Leave unassigned to let the queue pick it up.</div>
@@ -403,6 +419,8 @@ export interface TicketDetailProps {
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /** Which status control has its menu open (null = neither). */
+  stMenu: StatusMenuAnchor | null;
   /**
    * The open @mention token in the comment box (main.ts computes it from the
    * textarea's value + caret). null = the picker is closed. Candidates are
@@ -431,14 +449,6 @@ export function relCandidates(
     x.sub_count === 0 &&
     isOpenStatus(x.status));
 }
-
-/** Legal-move button copy. `submitted` as a TARGET is the "Back" move. */
-const MOVE_LABEL: Record<TicketStatus, string> = {
-  in_progress: "Start",
-  declined: "Decline",
-  done: "Done",
-  submitted: "Back to submitted",
-};
 
 /** Escape, then paint `@mentions` that resolve to a person (design's `mention()`). */
 function mentionize(text: string, persons: PersonSummary[]): string {
@@ -482,14 +492,60 @@ const RAIL_SECTION_HEAD = "display:flex;align-items:center;justify-content:space
 const PROP_ROW = "display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px";
 const PROP_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
 
-function transitionButtons(status: TicketStatus): string {
+/** THE sprint picker — Backlog plus every sprint, the current one ticked. The
+ *  ticket detail rail and the new-ticket form both render this ONE menu (they
+ *  differ only in the act a row fires), so a sprint is picked the same way
+ *  before and after the ticket exists. A menu is also what keeps a long,
+ *  authored sprint label in bounds: the box is bounded in both axes and each
+ *  row ellipsises, where the chip-per-sprint stack this replaced in the form
+ *  put a nowrap chip wider than the rail column and spilled out of the card. */
+function sprintMenuBox(sprints: SprintView[], current: number | null, act: string): string {
+  const options: { id: number | null; label: string }[] = [
+    { id: null, label: "Backlog" },
+    ...sprints.map((s) => ({ id: s.id, label: s.label })),
+  ];
+  const rows = options.map((o) => {
+    const on = current === o.id;
+    return `<button data-act="${attr(act)}" data-arg="${o.id ?? ""}" class="${MENU_ROW_CLASS}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-70)"}"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(o.label)}</span>${checkMark(on)}</button>`;
+  }).join("");
+  // 230px, or the trigger's own width when that is wider (the form's picker is a
+  // full-width control, the rail's is a 22px icon button) — one expression, so
+  // both screens really are the same menu.
+  return `${MENU_BACKDROP}<div style="${MENU_BOX};width:230px;min-width:100%;max-height:298px;overflow-y:auto">${rows}</div>`;
+}
+
+/** Which anchor has the status menu open — the header control or the rail's
+ *  STATUS row. Both render the same menu, so one flag naming the anchor keeps
+ *  exactly one of them open. */
+export type StatusMenuAnchor = "header" | "rail";
+
+/** THE status control. A status is a property a person SETS, so it is rendered
+ *  as the pill you click, not as a row of action buttons: the old "Start" +
+ *  "Decline" pair read as an accept/reject gate on the assignment, which is not
+ *  what a status is (and assignment never gated anything — `toggle_assignee`
+ *  does not touch status). The menu lists the statuses in pipeline order with
+ *  the current one ticked; only the moves `TICKET_TRANSITIONS` allows are
+ *  clickable, so the control can never offer what the route would 409. A
+ *  terminal status has no moves and renders as a plain pill. */
+function statusControl(status: TicketStatus, open: boolean, anchor: StatusMenuAnchor): string {
   const moves = legalMoves(status);
-  if (moves.length === 0) return "";
-  const [primary, ...rest] = moves;
-  const secondary = rest.map((to) =>
-    `<button data-act="ticketStatus" data-arg="${to}" class="cnpy-outlinebtn" style="background:transparent;border:1px solid var(--border-strong);border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;transition:all .12s ease">${MOVE_LABEL[to]}</button>`).join("");
-  const prim = `<button data-act="ticketStatus" data-arg="${primary}" class="cnpy-accentbtn" style="background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:9px 17px;font-size:13px;font-weight:600;white-space:nowrap;transition:filter .12s ease">${MOVE_LABEL[primary]}</button>`;
-  return `${secondary}${prim}`;
+  if (moves.length === 0) return ticketPill(status);
+  // A row is the PILL itself — `ticketPill` already spells the status out, so a
+  // label beside it would just say it twice.
+  const rows = TICKET_STATUSES.filter((s) => s === status || moves.includes(s)).map((s) => {
+    const on = s === status;
+    const row = "display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;white-space:nowrap";
+    return on
+      ? `<div style="${row}">${ticketPill(s)}${checkMark(true)}</div>`
+      : `<button data-act="ticketStatus" data-arg="${s}" class="${MENU_ROW_CLASS}" style="${row}">${ticketPill(s)}${checkMark(false)}</button>`;
+  }).join("");
+  const menu = open ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:172px;min-width:100%">${rows}</div>` : "";
+  return `<div style="position:relative">
+    <button data-act="ticketStatusMenu" data-arg="${anchor}" title="Set status" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:5px 9px 5px 7px;border-radius:9px;border:1px solid var(--border-strong);transition:all .12s ease">
+      ${ticketPill(status)}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;color:var(--fg-40)"><path d="m6 9 6 6 6-6"></path></svg>
+    </button>${menu}
+  </div>`;
 }
 
 function linkedWorkBlock(p: TicketDetailProps): string {
@@ -611,19 +667,24 @@ function threadBlock(p: TicketDetailProps): string {
   // of text from running under the button.
   const boxHeight = Math.max(p.commentHeight ?? COMMENT_BOX.height, COMMENT_BOX.minHeight);
   const textarea = `<textarea data-act="ticketComment" data-field="ticketComment" placeholder="Write a comment — @mention to loop someone in…" style="display:block;width:100%;height:${boxHeight}px;min-height:${COMMENT_BOX.minHeight}px;padding:${COMMENT_BOX.padTop}px 0 ${COMMENT_BOX.padBottom}px;border:none;outline:none;background:transparent;color:var(--fg);font-size:${COMMENT_BOX.fontSize}px;line-height:${COMMENT_BOX.lineRatio};resize:none">${esc(p.commentDraft)}</textarea>`;
-  return `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:30px;padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
+  // The thread is what absorbs the column's leftover height (the screen is as
+  // tall as it is wide-ish now): the rows grow, so the composer sits at the
+  // bottom of the window rather than halfway up an empty column.
+  return `<div style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:30px;padding-bottom:9px;border-bottom:1px solid var(--border-strong);flex:none">
       <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">THREAD</div>
       <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${t.comments.length} ${t.comments.length === 1 ? "comment" : "comments"}</div>
     </div>
-    ${rows.map((r) => r.html).join("")}
-    <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px">
+    <div style="flex:1;min-height:0">${rows.map((r) => r.html).join("")}</div>
+    <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px;flex:none">
       <div style="position:relative">
         ${textarea}
         ${mentionPicker(p, boxHeight)}
       </div>
       ${COMMENT_GRIP}
       ${primaryBtn("Comment", canPost, "ticketCommentPost", "", "position:absolute;right:8px;bottom:8px")}
-    </div>`;
+    </div>
+  </div>`;
 }
 
 function assigneeRail(p: TicketDetailProps): string {
@@ -657,16 +718,7 @@ function assigneeRail(p: TicketDetailProps): string {
 function sprintRail(p: TicketDetailProps): string {
   const cur = p.ticket.sprint;
   const curSprint = cur ? p.sprints.find((s) => s.id === cur.id) ?? null : null;
-  const options: { id: number | null; label: string }[] = [
-    { id: null, label: "Backlog" },
-    ...p.sprints.map((s) => ({ id: s.id, label: s.label })),
-  ];
-  const menu = p.sprMenu
-    ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:230px">${options.map((o) => {
-        const on = (cur?.id ?? null) === o.id;
-        return `<button data-act="ticketSprintSet" data-arg="${o.id ?? ""}" class="${MENU_ROW_CLASS}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-70)"}"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(o.label)}</span>${checkMark(on)}</button>`;
-      }).join("")}</div>`
-    : "";
+  const menu = p.sprMenu ? sprintMenuBox(p.sprints, cur?.id ?? null, "ticketSprintSet") : "";
   const openAttr = cur ? ` data-act="openSprint" data-arg="${cur.id}"` : "";
   return `<div>
     <div style="${RAIL_SECTION_HEAD}">
@@ -730,7 +782,7 @@ function relationsRail(p: TicketDetailProps): string {
 
 export function ticketDetailView(p: TicketDetailProps): string {
   const t = p.ticket;
-  return `<div style="max-width:1000px;margin:0 auto;padding:26px 32px 100px">
+  return `<div style="${WORK_SHELL}">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
       <div style="flex:1;min-width:0">
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
@@ -739,10 +791,10 @@ export function ticketDetailView(p: TicketDetailProps): string {
           <span style="color:var(--fg-40);white-space:nowrap">&middot; opened ${esc(relTime(t.created_at))}</span>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${transitionButtons(t.status)}</div>
+      <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${statusControl(t.status, p.stMenu === "header", "header")}</div>
     </div>
-    <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px">
-      <div style="min-width:0">
+    <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px;min-height:calc(${CARD_MIN_H} - 92px)">
+      <div style="min-width:0;display:flex;flex-direction:column">
         <div style="font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap;max-width:640px">${esc(t.body)}</div>
         ${linkedWorkBlock(p)}
         ${threadBlock(p)}
@@ -750,7 +802,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
       <div style="border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
         <div>
           <div style="${RAIL_SECTION_HEAD}"><div style="${MONO_EYEBROW}">Properties</div></div>
-          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">STATUS</div><div>${ticketPill(t.status)}</div></div>
+          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">STATUS</div><div style="min-width:0">${statusControl(t.status, p.stMenu === "rail", "rail")}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">CATEGORY</div><div>${categoryChip(t.category)}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">PRIORITY</div><div>${priorityChip(t.priority)}</div></div>
         </div>

@@ -873,7 +873,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (o.check !== "available" || o.submitting) return;
       o.submitting = true; o.error = null; rerender();
       submitOnboard({ handle: o.handle, name: o.name.trim() || null, color: o.color })
-        .then(() => { window.location.href = "/"; })
+        // A brand-new person lands on Get Started, not My Work: the projection is
+        // empty on day one, and this is the one moment they are guaranteed to be
+        // new. The boot path restores the route from the hash, so #guide is all
+        // it takes. Every later sign-in goes wherever their hash points.
+        .then(() => { window.location.href = "/#guide"; })
         .catch((e) => {
           o.submitting = false;
           if (e instanceof ApiError && e.message === "handle_taken") { o.check = "taken"; }
@@ -907,6 +911,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.screen = "newticket";
       state.fTitle = ""; state.fCat = null; state.fPrio = "normal";
       state.fDesc = ""; state.fAsgs = []; state.fLink = ""; state.fSpr = null;
+      state.sprMenu = false;          // the form's sprint picker shares the rail's flag
       loadSprintsIfNeeded();
       break;
     // The header breadcrumb's back button — one act, resolved against the screen
@@ -921,7 +926,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.screen = "ticketdetail";
       state.ticketId = id;
       state.commentDraft = ""; state.mention = null; state.commentHeight = null; state.linkDraft = "";
-      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
+      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null;
       loadSprintsIfNeeded();
       loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
       loadTicketDetail(id);
@@ -1044,7 +1049,13 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "ntPriority":
       if (arg && (TICKET_PRIORITIES as readonly string[]).includes(arg)) state.fPrio = arg as TicketPriority;
       break;
-    case "ntSprint": state.fSpr = arg ? Number(arg) : null; break;   // "" = Backlog
+    // The form picks a sprint through the SAME menu as the ticket detail rail,
+    // so it toggles the same open flag and closes on a pick.
+    case "ntSprintMenu": state.sprMenu = !state.sprMenu; break;
+    case "ntSprint":
+      state.fSpr = arg ? Number(arg) : null;                         // "" = Backlog
+      state.sprMenu = false;
+      break;
     case "ntAssignee":
       if (arg === null) return;
       if (arg === "") state.fAsgs = [];                              // the "Unassigned" chip clears
@@ -1072,7 +1083,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
           loadTicketBadge();
           flash(assigned.length
             ? `Ticket submitted — assigned to ${assigned.join(", ")}`
-            : "Ticket submitted — it's in the queue as Submitted");
+            : "Ticket submitted — it's in the queue for triage");
         })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
@@ -1082,20 +1093,27 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Tickets: the detail screen ───────────────────────────────────────────
+    // The status control: the pill opens its menu, a row sets the status. Two
+    // anchors (the header and the rail's STATUS row) share one flag, so opening
+    // either closes the other — and closes the assignee/sprint/relation menus.
+    case "ticketStatusMenu":
+      state.stMenu = state.stMenu === arg ? null : (arg === "rail" ? "rail" : "header");
+      state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
+      break;
     case "ticketStatus": {
       const id = state.ticketId;
+      state.stMenu = null;
       if (id === null || !arg || !(TICKET_STATUSES as readonly string[]).includes(arg)) return;
       const to = arg as TicketStatus;
-      // "Back" is the only move whose button copy differs from the status label.
-      const label = to === "submitted" ? "Back to submitted" : TICKET_STATUS_LABEL[to];
+      const label = TICKET_STATUS_LABEL[to];
       const seq = claimTicketDetail();
       transitionTicket(id, to).then((t) => applyTicketWrite(t, `Status: ${label}`, seq)).catch(ticketErr);
       return;
     }
-    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; break;
-    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; break;
-    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; break;
-    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; break;
+    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; state.stMenu = null; break;
+    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; state.stMenu = null; break;
+    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; state.stMenu = null; break;
+    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null; break;
     // Assignment is immediate and reversible — no confirm step (design call #7).
     case "ticketAsgAdd": {
       const id = state.ticketId;

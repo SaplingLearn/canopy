@@ -311,6 +311,13 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 - **Invite email** (`src/notifications/invite.ts`): one transactional message per invite/resend through
   `deliveryFor`; not a kind — no cadence, prefs, or window. Outcome lands on `invites.email_*`. No
   `List-Unsubscribe` headers (they are optional on `OutboundMessage` now, omitted for invites).
+- **Welcome email** (`src/notifications/welcome.ts`): the second transactional message — sent from
+  `POST /auth/onboard` once the person row and session exist, linking Get Started (`/#guide`, where a
+  fresh sign-in lands). Also not a kind. It fires THERE and not when someone joins the GitHub org
+  because the address comes from the person's OWN OAuth token (`getPrimaryEmail`), which does not
+  exist until they sign in — nothing Canopy holds can reach a new org member before that. No outcome
+  column and the result is ignored at the call site: `sendWelcome` never throws, and a mailer problem
+  must never cost somebody their sign-up. No address from the provider = no mail.
 - **Deferred:** the digest's ledger layout (`EMAIL_CARD.item`) has no avatar chips today, so a person's
   color does not appear in email yet. When a chip is added there, take the color from `persons.color`
   via the light hex set documented in §7 of the identity design doc.

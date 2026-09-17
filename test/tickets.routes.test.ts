@@ -334,8 +334,9 @@ describe("POST /tickets/:id/status", () => {
 
     const legal: Array<[TicketStatus, TicketStatus]> = [];
     for (const from of TICKET_STATUSES) for (const to of TICKET_TRANSITIONS[from]) legal.push([from, to]);
-    // submitted→in_progress, submitted→declined, in_progress→done, in_progress→submitted
-    expect(legal.length).toBe(4);
+    // submitted→in_progress, submitted→declined, in_progress→done,
+    // in_progress→declined, in_progress→submitted
+    expect(legal.length).toBe(5);
 
     for (const [from, to] of legal) {
       const t = await createTicket(cookie, { title: `${from} to ${to}` });
@@ -366,8 +367,8 @@ describe("POST /tickets/:id/status", () => {
         if (!TICKET_TRANSITIONS[from].includes(to)) illegal.push([from, to]);
       }
     }
-    // 16 pairs minus the 4 legal ones — and every status contributes at least one.
-    expect(illegal.length).toBe(12);
+    // 16 pairs minus the 5 legal ones — and every status contributes at least one.
+    expect(illegal.length).toBe(11);
     for (const status of TICKET_STATUSES) expect(illegal.some(([f]) => f === status)).toBe(true);
 
     for (const [from, to] of illegal) {

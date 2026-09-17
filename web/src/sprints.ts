@@ -20,7 +20,7 @@ import type {
 } from "@shared/sprints";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS } from "@shared/sprints-core";
 import type { PersonSummary } from "./api";
-import { esc, attr } from "./ui";
+import { esc, attr, WORK_SHELL } from "./ui";
 import { personChip } from "./people";
 import { renderMarkdown } from "./markdown";
 import { ticketPill, priorityChip, age, avatarStack } from "./tickets";
@@ -343,7 +343,7 @@ export function sprintScreen(p: SprintScreenProps): string {
   const prop = (label: string, cell: string) =>
     `<div style="${PROP_ROW}"><div style="${PROP_LABEL}">${label}</div><div>${cell}</div></div>`;
 
-  return `<div style="max-width:1000px;margin:0 auto;padding:26px 32px 100px">
+  return `<div style="${WORK_SHELL}">
     <div class="cnpy-sprint-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:28px">
       <div style="min-width:0">
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(sp.label)}</h2>

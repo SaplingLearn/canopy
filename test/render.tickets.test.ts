@@ -20,8 +20,10 @@ import {
   type QueueProps, type NewTicketProps, type TicketDetailProps,
 } from "../web/src/tickets";
 import type { TicketListItem, TicketDetail, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/tickets";
+import { TICKET_STATUS_LABEL, type TicketStatus } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "../web/src/api";
+import { WORK_SHELL } from "../web/src/ui";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +91,7 @@ function queueProps(o: Partial<QueueProps> = {}): QueueProps {
 function formProps(o: Partial<NewTicketProps> = {}): NewTicketProps {
   return {
     title: "", category: null, priority: "normal", description: "", assignees: [],
-    link: "", sprintId: null, sprints: [], persons: PERSONS,
+    link: "", sprintId: null, sprints: [], persons: PERSONS, sprMenu: false,
     ...o,
   };
 }
@@ -97,7 +99,7 @@ function detailProps(t: TicketDetail, o: Partial<TicketDetailProps> = {}): Ticke
   return {
     ticket: t, allTickets: [], sprints: [], persons: PERSONS,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "", linkOpen: false,
-    asgMenu: false, sprMenu: false, relMenu: false,
+    asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
     ...o,
   };
 }
@@ -114,9 +116,9 @@ function appState(o: Partial<AppState> = {}): AppState {
 // ── atoms ────────────────────────────────────────────────────────────────────
 
 describe("ticketPill / priorityChip / age (design call #5)", () => {
-  it("tints Submitted blue, In progress accent, Done muted, Declined red at reduced opacity", () => {
+  it("tints Triage blue, In progress accent, Done muted, Declined red at reduced opacity", () => {
     expect(ticketPill("submitted")).toContain("var(--blue)");
-    expect(ticketPill("submitted")).toContain("SUBMITTED");
+    expect(ticketPill("submitted")).toContain("TRIAGE");
     expect(ticketPill("in_progress")).toContain("var(--accent)");
     expect(ticketPill("in_progress")).toContain("IN PROGRESS");
     expect(ticketPill("done")).toContain("color:var(--fg-55);border:1px solid var(--border-strong)");
@@ -413,9 +415,9 @@ describe("queueView — board columns follow the segment", () => {
     (html.match(/letter-spacing:\.08em;white-space:nowrap;color:var\(--(?:accent|blue|fg-40)\)">([A-Z ]+)</g) ?? [])
       .map((m) => m.replace(/.*">/, "").replace(/<$/, ""));
 
-  it("open → SUBMITTED + IN PROGRESS", () => {
+  it("open → TRIAGE + IN PROGRESS", () => {
     const html = queueView(queueProps({ tickets: rows, view: "board", seg: "open" }));
-    expect(columnLabels(html)).toEqual(["SUBMITTED", "IN PROGRESS"]);
+    expect(columnLabels(html)).toEqual(["TRIAGE", "IN PROGRESS"]);
     expect(SEG_STATUSES.open).toEqual(["submitted", "in_progress"]);
   });
 
@@ -426,13 +428,13 @@ describe("queueView — board columns follow the segment", () => {
 
   it("all → four columns in status order", () => {
     const html = queueView(queueProps({ tickets: rows, view: "board", seg: "all" }));
-    expect(columnLabels(html)).toEqual(["SUBMITTED", "IN PROGRESS", "DONE", "DECLINED"]);
+    expect(columnLabels(html)).toEqual(["TRIAGE", "IN PROGRESS", "DONE", "DECLINED"]);
     expect(html).toContain("grid-template-columns:repeat(4,minmax(0,1fr))");
   });
 
   it("colors the headers per the design and shows a dashed placeholder for an empty column", () => {
     const html = queueView(queueProps({ tickets: [rows[0]], view: "board", seg: "open" }));
-    expect(html).toContain("color:var(--blue)\">SUBMITTED");
+    expect(html).toContain("color:var(--blue)\">TRIAGE");
     expect(html).toContain("color:var(--accent)\">IN PROGRESS");
     expect(html).toContain("border:1px dashed var(--border)");
     expect(html).toContain("Nothing here");
@@ -487,6 +489,43 @@ describe("queueView — the row", () => {
 
 // ── new ticket ───────────────────────────────────────────────────────────────
 
+describe("the ticket screens' frame", () => {
+  it("gives the queue, the form and the detail the SAME full-width work shell", () => {
+    const shells = [
+      queueView(queueProps()),
+      newTicketView(formProps()),
+      ticketDetailView(detailProps(detail({ id: 1, title: "T" }))),
+    ];
+    for (const html of shells) {
+      expect(html).toContain(WORK_SHELL);
+      // None of them is capped at the old narrow measures.
+      expect(html).not.toContain("max-width:960px");
+      expect(html).not.toContain("max-width:1000px");
+      expect(html).not.toContain("max-width:1080px");
+    }
+  });
+
+  it("keeps the form's rail a rail — fixed, so a wide window grows the fields", () => {
+    expect(newTicketView(formProps())).toContain("grid-template-columns:minmax(0,1fr) 288px");
+  });
+
+  it("lets the thread absorb the leftover height so the composer rides the bottom", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T" })));
+    // The main column is a flex column whose thread block grows...
+    expect(html).toContain("min-width:0;display:flex;flex-direction:column");
+    expect(html).toContain("display:flex;flex-direction:column;flex:1;min-height:0");
+    // ...and the composer is the one part that does not.
+    const box = html.slice(html.indexOf('data-act="ticketComment"'));
+    expect(html.slice(0, html.indexOf('data-act="ticketComment"'))).toContain("border-radius:11px;padding:12px;margin-top:16px;flex:none");
+    expect(box).toContain('data-act="ticketCommentPost"');
+  });
+
+  it("runs the form's card and the detail's columns down the window", () => {
+    expect(newTicketView(formProps())).toContain("min-height:calc(100vh - 210px)");
+    expect(ticketDetailView(detailProps(detail({ id: 1, title: "T" })))).toContain("min-height:calc(calc(100vh - 210px) - 92px)");
+  });
+});
+
 describe("newTicketView", () => {
   it("keeps Submit inert until the title is non-empty", () => {
     const empty = newTicketView(formProps({ title: "   " }));
@@ -512,9 +551,9 @@ describe("newTicketView", () => {
     expect(normal).toContain("color:var(--fg);background:var(--hover)");
     const low = html.slice(html.indexOf('data-act="ntPriority" data-arg="low"'), html.indexOf(">Low<"));
     expect(low).toContain("color:var(--fg-55);background:transparent");
-    // Backlog is the selected sprint chip; Unassigned the selected assignee chip.
-    const backlog = html.slice(html.indexOf('data-act="ntSprint" data-arg=""'), html.indexOf(">Backlog<"));
-    expect(backlog).toContain(on);
+    // The sprint picker reads Backlog; Unassigned is the selected assignee chip.
+    expect(html).toContain('data-act="ntSprintMenu"');
+    expect(html).toContain(">Backlog</span>");
     const unassigned = html.slice(html.indexOf('data-act="ntAssignee" data-arg=""'), html.indexOf("Unassigned</button>"));
     expect(unassigned).toContain(on);
   });
@@ -531,12 +570,15 @@ describe("newTicketView", () => {
       sprints: [sprint({ id: 12, label: "Sprint 12" }), sprint({ id: 13, label: "Sprint 13" })],
       sprintId: 13,
       assignees: ["meilin", "sanaok"],
+      sprMenu: true,
     }));
-    expect(html.match(/data-act="ntSprint"/g)?.length).toBe(3);
+    expect(html.match(/data-act="ntSprint" /g)?.length).toBe(3);
     expect(html.match(/data-act="ntAssignee"/g)?.length).toBe(4);
-    const on = "border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft)";
-    const s13 = html.slice(html.indexOf('data-act="ntSprint" data-arg="13"'), html.indexOf(">Sprint 13<"));
-    expect(s13).toContain(on);
+    const from13 = html.slice(html.indexOf('data-act="ntSprint" data-arg="13"'));
+    const s13 = from13.slice(0, from13.indexOf("</button>"));
+    expect(s13).toContain("color:var(--accent)");                   // the tick sits on the pick
+    const from12 = html.slice(html.indexOf('data-act="ntSprint" data-arg="12"'));
+    expect(from12.slice(0, from12.indexOf("</button>"))).toContain("visibility:hidden");
   });
 
   it("echoes the typed values back into the fields", () => {
@@ -546,6 +588,28 @@ describe("newTicketView", () => {
     expect(html).toContain('value="#214"');
   });
 
+  it("picks a sprint through a menu, not a chip per sprint, so a long label can't spill out of the rail", () => {
+    const label = "E2E Chapter 2 — agent explorer (epic #403)";
+    const sprints = [sprint({ id: 12, label }), sprint({ id: 13, label: "Sprint 13" })];
+
+    // Closed: one trigger showing the pick, and no sprint rows at all.
+    const closed = newTicketView(formProps({ sprints, sprintId: 12 }));
+    expect(closed).toContain('data-act="ntSprintMenu"');
+    expect(closed).not.toContain('data-act="ntSprint"');
+    expect(closed).toContain("text-overflow:ellipsis");
+    expect(closed).toContain(`>${label}</span>`);
+
+    // Open: Backlog plus every sprint, the pick ticked, inside the SAME fixed-
+    // width box (with a backdrop) the detail rail's picker uses.
+    const open = newTicketView(formProps({ sprints, sprintId: 12, sprMenu: true }));
+    expect(open.match(/data-act="ntSprint" /g)?.length).toBe(3);
+    expect(open).toContain('data-act="closeTicketMenus"');
+    expect(open).toContain("width:230px");
+    const row = open.slice(open.indexOf('data-act="ntSprint" data-arg="12"'), open.indexOf(">Sprint 13<"));
+    expect(row).toContain("color:var(--accent)");                  // the tick
+    expect(row).toContain("text-overflow:ellipsis");
+  });
+
   it("cancels back to the queue with the same act the breadcrumb uses", () => {
     expect(newTicketView(formProps())).toContain('data-act="ticketsBack"');
   });
@@ -553,32 +617,54 @@ describe("newTicketView", () => {
 
 // ── ticket detail ────────────────────────────────────────────────────────────
 
-describe("ticketDetailView — transitions (design call #7)", () => {
-  it("submitted offers Start + Decline only", () => {
-    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" })));
+describe("ticketDetailView — the status control (design call #7)", () => {
+  const props = (status: TicketStatus, stMenu: "header" | "rail" | null = null) =>
+    detailProps(detail({ id: 1, title: "T", status }), { stMenu });
+
+  it("shows the status as a pill you click — no accept/reject action buttons", () => {
+    const html = ticketDetailView(props("submitted"));
+    // Two controls: the header's and the rail's STATUS row.
+    expect(html.match(/data-act="ticketStatusMenu"/g)?.length).toBe(2);
+    expect(html).toContain('data-act="ticketStatusMenu" data-arg="header"');
+    expect(html).toContain('data-act="ticketStatusMenu" data-arg="rail"');
+    // Nothing is settable until a menu is open, and the old copy is gone.
+    expect(html).not.toContain('data-act="ticketStatus"');
+    expect(html).not.toContain(">Start<");
+    expect(html).not.toContain(">Decline<");
+    expect(html).not.toContain("Back to submitted");
+  });
+
+  it("offers submitted → in progress | declined, with the current status ticked", () => {
+    const html = ticketDetailView(props("submitted", "header"));
     expect(html).toContain('data-act="ticketStatus" data-arg="in_progress"');
-    expect(html).toContain(">Start<");
     expect(html).toContain('data-act="ticketStatus" data-arg="declined"');
-    expect(html).toContain(">Decline<");
-    expect(html).not.toContain('data-arg="done"');
-    expect(html.match(/data-act="ticketStatus"/g)?.length).toBe(2);
+    expect(html).not.toContain('data-act="ticketStatus" data-arg="done"');
+    // The current status is listed but inert (a ticked row, not a button).
+    expect(html).not.toContain('data-act="ticketStatus" data-arg="submitted"');
+    expect(html).toContain("color:var(--accent)");
+    // One menu opens at a time — the rail's control stays closed.
+    expect(html.match(/data-act="ticketStatus" /g)?.length).toBe(2);
   });
 
-  it("in_progress offers Done + Back only", () => {
-    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "in_progress" })));
+  it("offers in progress → done | declined | submitted — declining no longer needs a trip back", () => {
+    const html = ticketDetailView(props("in_progress", "rail"));
     expect(html).toContain('data-act="ticketStatus" data-arg="done"');
-    expect(html).toContain(">Done<");
+    expect(html).toContain('data-act="ticketStatus" data-arg="declined"');
     expect(html).toContain('data-act="ticketStatus" data-arg="submitted"');
-    expect(html).toContain(">Back to submitted<");
-    expect(html).not.toContain('data-arg="declined"');
-    expect(html.match(/data-act="ticketStatus"/g)?.length).toBe(2);
+    expect(html.match(/data-act="ticketStatus" /g)?.length).toBe(3);
   });
 
-  it("offers nothing from a terminal status", () => {
+  it("renders a terminal status as a plain pill — no control, nothing to set", () => {
     for (const status of ["done", "declined"] as const) {
-      const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status })));
+      const html = ticketDetailView(props(status, "header"));
+      expect(html).not.toContain('data-act="ticketStatusMenu"');
       expect(html).not.toContain('data-act="ticketStatus"');
+      expect(html).toContain(TICKET_STATUS_LABEL[status].toUpperCase());
     }
+  });
+
+  it("dismisses the open menu with the shared backdrop", () => {
+    expect(ticketDetailView(props("submitted", "header"))).toContain('data-act="closeTicketMenus"');
   });
 });
 
@@ -659,7 +745,7 @@ describe("relCandidates — the sub-ticket add menu's filter", () => {
     })));
     expect(withRel).toContain("PARENT TICKET");
     expect(withRel).toContain("Parent ticket");
-    expect(withRel).toContain("SUB-TICKET · SUBMITTED");
+    expect(withRel).toContain("SUB-TICKET · TRIAGE");
     expect(withRel).toContain('data-act="openTicket" data-arg="4"');
     expect(withRel).toContain('data-act="openTicket" data-arg="5"');
     expect(withRel).not.toContain("No linked tickets");
@@ -678,9 +764,9 @@ describe("ticketDetailView — the thread", () => {
       ],
     })));
     expect(html).toContain("opened this ticket");
-    expect(html).not.toContain("opened · SUBMITTED");
-    expect(html).toContain("Submitted → In progress");
-    expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("Submitted → In progress"));
+    expect(html).not.toContain("opened · TRIAGE");
+    expect(html).toContain("Triage → In progress");
+    expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("Triage → In progress"));
   });
 
   it("merges comments and history ascending by time", () => {
@@ -693,7 +779,7 @@ describe("ticketDetailView — the thread", () => {
       ],
     })));
     expect(html.indexOf("opened this ticket")).toBeLessThan(html.indexOf("SECOND"));
-    expect(html.indexOf("SECOND")).toBeLessThan(html.indexOf("Submitted → In progress"));
+    expect(html.indexOf("SECOND")).toBeLessThan(html.indexOf("Triage → In progress"));
     expect(html).toContain("1 comment<");
   });
 
@@ -866,8 +952,11 @@ describe("hover classes — menu rows, pick chips, segments", () => {
     expect(html).toContain('data-act="ntCategory" data-arg="access" class="cnpy-pickchip"');
     expect(html).toContain('data-act="ntPriority" data-arg="normal" class="cnpy-segbtn is-on"');
     expect(html).toContain('data-act="ntPriority" data-arg="high" class="cnpy-segbtn"');
-    expect(html).toContain('data-act="ntSprint" data-arg="12" class="cnpy-pickchip is-on"');
-    expect(html).toContain('data-act="ntSprint" data-arg="" class="cnpy-pickchip"');
+    // Sprint is picked from the shared menu now, so its rows carry the menu-row
+    // hover class rather than the chip one.
+    const open = newTicketView(formProps({ category: "bug", sprintId: 12, assignees: ["meilin"], sprints: [s12], sprMenu: true }));
+    expect(open).toContain('data-act="ntSprint" data-arg="12" class="cnpy-menurow"');
+    expect(open).toContain('data-act="ntSprint" data-arg="" class="cnpy-menurow"');
     expect(html).toContain('data-act="ntAssignee" data-arg="meilin" class="cnpy-pickchip is-on"');
     expect(html).toContain('data-act="ntAssignee" data-arg="" class="cnpy-pickchip"');
   });
