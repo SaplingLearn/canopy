@@ -148,6 +148,26 @@ describe("complete_sprint", () => {
     expect((await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, seeded.id))!.status).toBe("done");
   });
 
+  it("two concurrent completions: exactly one wins, the other conflicts", async () => {
+    await seedPerson(ADMIN);
+    const seeded = await seedSprint("Contested");
+
+    // The guard is in the UPDATE's WHERE, not a prior read, so the loser cannot
+    // slip through the window between a status check and the write. Without that,
+    // both callers report success for the one sprint.
+    const [a, b] = await Promise.all([
+      callTool(ADMIN, "complete_sprint", { id: seeded.id }),
+      callTool(ADMIN, "complete_sprint", { id: seeded.id }),
+    ]);
+    const outcomes = [a, b].map((r) => (r.isError ? "conflict" : "ok"));
+    expect(outcomes.sort()).toEqual(["conflict", "ok"]);
+
+    const loser = [a, b].find((r) => r.isError)!;
+    expect(failed(loser).code).toBe("conflict");
+    // …and the sprint is done exactly once, whichever call won.
+    expect((await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, seeded.id))!.status).toBe("done");
+  });
+
   it("answers in the DTO vocabulary, like its three neighbours", async () => {
     // The seam (shared/sprints.ts): the DB keeps its column names, every DTO
     // speaks the product's words. An agent is told to read the new state back
