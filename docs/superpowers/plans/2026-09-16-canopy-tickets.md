@@ -14,6 +14,14 @@ behavioral spec wherever this brief is silent. Read the template markup for the 
 
 ## A. The brief (verbatim, from the product owner)
 
+> **Superseded in part (2026-09-17).** §A's invariant *"MCP gets read tools only"* was NARROWED by
+> `docs/superpowers/specs/2026-09-17-agent-ticket-writes-design.md`: agents now write tickets inside
+> their own lane (a ticket already assigned to the bearer) and admins write sprints, both over MCP.
+> The quote below is kept verbatim as the historical record — read §2 of that spec for what each of
+> the four invariants says today. The fourth one — *Done and Declined are set by a person, nothing
+> infers them* — is unchanged and still absolute.
+
+
 > One ticket queue the whole org files into. Non-engineering staff are the main filers, but every
 > org member sees every screen and anyone can be assigned. There is no role concept and no
 > requester shell. Sign-in is unchanged: GitHub OAuth, active org membership required.

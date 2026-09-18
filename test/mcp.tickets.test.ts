@@ -17,27 +17,32 @@ import { create_sprint, set_sprint_active, add_sprint_resource } from "../src/to
 import { upsertProgress } from "../src/tools/progress";
 import { seedPerson } from "./helpers/persons";
 
-// Phase 4: the ONLY ticket/sprint MCP surface is these four READ tools. Every
-// test here drives the REAL registered closures over an in-memory transport
-// (the same ones production builds per request), never the read functions
-// directly — so a missing/renamed registration is a failure, not a green.
+// The ticket/sprint MCP READ surface. Every test here drives the REAL registered
+// closures over an in-memory transport (the same ones production builds per
+// request), never the read functions directly — so a missing/renamed registration
+// is a failure, not a green.
 const READ_TOOLS = ["list_tickets", "get_ticket", "list_sprints", "get_sprint"] as const;
 
-// Every ticket/sprint WRITE, named explicitly. These are session-cookie routes
-// and must never appear as MCP tools (§A Invariants: "MCP gets read tools only").
-const BANNED_WRITE_TOOLS = [
+// The ticket WRITE surface, for EVERY principal — scoped at call time to the
+// bearer's own lane rather than withheld from the tools/list (the scope depends on
+// the ticket, which a listing cannot know). Behavior: test/mcp.tickets.writes.test.ts.
+const WRITE_TOOLS = [
   "create_ticket",
   "transition_ticket",
-  "toggle_assignee",
+  "add_ticket_comment",
   "add_ticket_link",
   "set_ticket_sprint",
   "set_ticket_parent",
-  "add_ticket_comment",
-  "create_sprint",
-  "set_sprint_active",
-  "add_sprint_resource",
-  "complete_sprint",
 ] as const;
+
+// The sprint writes: ADMIN-ONLY, conditionally registered like update_plan, so a
+// non-admin does not see them at all. Behavior: test/mcp.sprints.writes.test.ts.
+const ADMIN_WRITE_TOOLS = ["create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource"] as const;
+
+// Assignment is the data the lane rule is built on: an agent that could edit the
+// assignee list could edit its own permissions. `toggle_assignee` is web-only,
+// forever, and this list must never empty out.
+const BANNED_WRITE_TOOLS = ["toggle_assignee"] as const;
 
 // ADMIN_LOGINS binds ONLY "admin-user" in vitest.config.ts, so every handle used
 // below is a plain, non-admin principal.
@@ -157,32 +162,56 @@ async function seedQueue(): Promise<Queue> {
   return { sprintA: a.id, sprintB: b.id, loginBug, loginChild, csvDone, vpn, declined, question };
 }
 
-describe("MCP ticket/sprint surface is READ-ONLY", () => {
-  it("tools/list carries exactly the four read tools and NOT ONE ticket/sprint write tool", async () => {
+describe("the MCP ticket/sprint surface", () => {
+  it("tools/list carries exactly the reads + the six scoped ticket writes, and NOT toggle_assignee", async () => {
     const names = await toolNames("andres");
     for (const t of READ_TOOLS) expect(names).toContain(t);
+    for (const t of WRITE_TOOLS) expect(names).toContain(t);
     for (const banned of BANNED_WRITE_TOOLS) expect(names).not.toContain(banned);
-    // "exactly the four": nothing else on the tickets/sprints surface exists.
-    expect(names.filter((n) => /ticket|sprint/.test(n)).sort()).toEqual([...READ_TOOLS].sort());
+    // "exactly these": nothing else on the tickets/sprints surface exists for a
+    // non-admin. Kept exhaustive on purpose — this list IS the surface's contract.
+    expect(names.filter((n) => /ticket|sprint/.test(n)).sort()).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
   });
 
-  it("a NON-ADMIN principal sees all four — they are not admin-gated like update_plan", async () => {
+  it("a NON-ADMIN sees every read and every ticket write — but no sprint write", async () => {
     const names = await toolNames("beatrix");
     // beatrix is genuinely non-admin: the admin-only plan write is absent for her.
     expect(names).not.toContain("update_plan");
     for (const t of READ_TOOLS) expect(names).toContain(t);
-    // …and the admin does NOT get extra ticket/sprint tools either.
-    expect((await toolNames("admin-user")).filter((n) => /ticket|sprint/.test(n)).sort()).toEqual([...READ_TOOLS].sort());
+    for (const t of WRITE_TOOLS) expect(names).toContain(t);
+    for (const t of ADMIN_WRITE_TOOLS) expect(names).not.toContain(t);
   });
 
-  it("every description says read-only, and the ticket tools say writes are human-only", async () => {
+  it("an ADMIN gets the four sprint writes on top, and no extra TICKET tool", async () => {
+    const names = await toolNames("admin-user");
+    for (const t of ADMIN_WRITE_TOOLS) expect(names).toContain(t);
+    expect(names).toContain("update_plan");
+    // The admin's ticket surface is the same as everyone's: the D6 exception is a
+    // call-time scope relaxation on set_ticket_sprint, NOT an extra tool.
+    expect(names.filter((n) => /ticket/.test(n)).sort()).toEqual(
+      [...READ_TOOLS, ...WRITE_TOOLS].filter((n) => /ticket/.test(n)).sort()
+    );
+    for (const banned of BANNED_WRITE_TOOLS) expect(names).not.toContain(banned);
+  });
+
+  it("descriptions state the read/write split: reads unscoped, writes scoped to your lane", async () => {
     const desc = await toolDescriptions("andres");
     for (const t of READ_TOOLS) expect(desc.get(t) ?? "").toMatch(/read-only/i);
     // ADR-007: a ticket is a D1 row, never a GitHub issue.
     expect(desc.get("list_tickets")!).toMatch(/never GitHub issues/i);
-    for (const t of ["list_tickets", "get_ticket", "list_sprints", "get_sprint"]) {
-      expect(desc.get(t)!).toMatch(/human-only|no MCP write path/i);
+    // The stale "there is no MCP write path" claim must be gone from every one.
+    for (const t of READ_TOOLS) expect(desc.get(t)!).not.toMatch(/no MCP write path|human-only/i);
+
+    // Every scoped write says so; create_ticket says it is the exception.
+    for (const t of WRITE_TOOLS.filter((n) => n !== "create_ticket")) {
+      expect(desc.get(t)!, t).toMatch(/scoped/i);
     }
+    expect(desc.get("create_ticket")!).toMatch(/unscoped/i);
+    // …and that assignment cannot be changed after filing.
+    expect(desc.get("create_ticket")!).toMatch(/assignment is web-only|only place an agent can assign/i);
+    // Sprint writes are named as admin-only in the sprint READ descriptions, so a
+    // non-admin agent learns why it cannot see them.
+    expect(desc.get("list_sprints")!).toMatch(/admin-only/i);
   });
 });
 

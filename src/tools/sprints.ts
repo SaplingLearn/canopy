@@ -360,13 +360,33 @@ export async function set_sprint_active(db: DB, id: number, active: boolean): Pr
  * (with the other sprint writers) and is re-exported from writes.ts so the older
  * import path keeps working.
  */
-export async function complete_sprint(db: DB, id: number): Promise<SprintRow> {
-  const sp = await first<SprintRow>(db, `SELECT * FROM sprints WHERE id = ?`, id);
-  if (!sp) throw new Error(`no such sprint: ${id}`);
-  if (sp.status === "done") throw new Error(`sprint already done: ${id}`);
-  const updated_at = nowIso();
-  await run(db, `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
-  return { ...sp, status: "done", updated_at };
+export async function complete_sprint(db: DB, id: number): Promise<SprintView> {
+  const sp = await first<{ id: number }>(db, `SELECT id FROM sprints WHERE id = ?`, id);
+  // Typed like every other writer in this file: the MCP adapter surfaces `code`
+  // to the caller, and "no such sprint" vs "already done" are different answers
+  // for an agent (retry with a real id, versus nothing to do). The cookie route
+  // catches both into the same 400 it always did, so the web path is unchanged.
+  if (!sp) throw new SprintError("not_found", `no such sprint: ${id}`);
+
+  // COMPARE-AND-SET, not check-then-act. The "already done" guard lives in the
+  // UPDATE's own WHERE, so the read and the write are one statement: D1 has no
+  // interactive transaction, and a separate status read leaves a window where a
+  // second completion passes the check after the first has already written —
+  // both would then report success for the one sprint. `changes === 0` means
+  // some other caller got there first, which is exactly the conflict.
+  const res = await run(
+    db,
+    `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ? AND status != 'done'`,
+    nowIso(),
+    id
+  );
+  if (!res.meta.changes) throw new SprintError("conflict", `sprint already done: ${id}`);
+  // Answers with the VIEW, like create_sprint and set_sprint_active — column
+  // names never leave this file (see the header). The agent skill tells a caller
+  // to read the new state off the write response, and a raw row would hand it
+  // `label: undefined` and no `active`. The cookie route's body changes shape
+  // with it; web/src/api.ts types that call `Promise<{ok:true}>` and drops it.
+  return viewFor(db, id);
 }
 
 /**

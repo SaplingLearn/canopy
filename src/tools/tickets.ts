@@ -28,16 +28,23 @@ import { getPerson } from "../auth/persons";
  *   not_found   → 404 (unknown ticket / sprint / …)
  *   conflict    → 409 (an illegal status move, a nesting rule)
  *   bad_request → 400 (an unknown assignee handle, an unusable link, an empty comment)
+ *   forbidden   → 403 (the write is outside the writer's lane — see tickets-agent.ts)
  * Everything else is a real 500.
+ *
+ * `forbidden` is raised ONLY by the MCP write surface (`tickets-agent.ts`), which
+ * scopes an agent to the tickets its principal is already assigned to. The cookie
+ * routes never pass a scope and so can never produce it — a signed-in human on the
+ * web is not assignee-scoped and never was. The status mapping is here anyway so a
+ * future cookie caller gets the right code for free.
  */
 export class TicketError extends Error {
-  constructor(readonly code: "not_found" | "conflict" | "bad_request", message: string) {
+  constructor(readonly code: "not_found" | "conflict" | "bad_request" | "forbidden", message: string) {
     super(message);
     this.name = "TicketError";
   }
 }
 
-export const TICKET_ERROR_STATUS = { not_found: 404, conflict: 409, bad_request: 400 } as const;
+export const TICKET_ERROR_STATUS = { not_found: 404, conflict: 409, bad_request: 400, forbidden: 403 } as const;
 
 const getTicketRow = async (db: DB, id: number): Promise<TicketRow> => {
   const t = await first<TicketRow>(db, `SELECT * FROM tickets WHERE id = ?`, id);

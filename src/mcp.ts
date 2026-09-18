@@ -5,7 +5,19 @@ import type { Env } from "./env";
 import type { Principal } from "./auth/principal";
 import { isAdmin } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query, list_tickets, get_ticket, list_sprints, get_sprint } from "./tools/reads";
-import { TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
+import {
+  TicketSeg, TicketAssigneeFilter, TicketCategory,
+  TicketCreate, TicketTransition, TicketCommentAdd, TicketLinkAdd, TicketSprintSet, TicketParentSet,
+} from "@shared/tickets";
+import { TicketError } from "./tools/tickets";
+import {
+  SprintError, create_sprint, set_sprint_active, complete_sprint, add_sprint_resource,
+} from "./tools/sprints";
+import { SprintCreate } from "@shared/sprints";
+import {
+  agentCreateTicket, agentTransitionTicket, agentAddTicketComment,
+  agentAddTicketLink, agentSetTicketSprint, agentSetTicketParent,
+} from "./tools/tickets-agent";
 import { getMyWork, list_events } from "./tools/mywork";
 import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
@@ -24,8 +36,15 @@ async function runTool(fn: () => Promise<unknown>) {
   try {
     return asText(await fn());
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // A TicketError's CODE is the actionable half for an agent, so it travels with
+    // the message: `forbidden` means "outside your lane — a person has to do this",
+    // `conflict` means "the shared rule says no" (an illegal move, a nesting break),
+    // `bad_request` means "your input is wrong". The cookie routes map the same
+    // codes onto HTTP statuses; this is the MCP spelling of it.
+    const code = err instanceof TicketError || err instanceof SprintError ? err.code : undefined;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }) }],
+      content: [{ type: "text" as const, text: JSON.stringify(code ? { error: message, code } : { error: message }) }],
       isError: true as const,
     };
   }
@@ -122,17 +141,14 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     async () => runTool(() => get_plan(env.DB))
   );
 
-  // ── Tickets + sprints: READ ONLY, for every principal ──────────────────────
+  // ── Tickets + sprints: READS, for every principal ──────────────────────────
   //
-  // These four are the whole ticket/sprint MCP surface. There is deliberately NO
-  // write counterpart: every ticket and sprint write is a human authored write
-  // over a session-cookie route in the web app (§A Invariants — "MCP gets read
-  // tools only"), so an agent can see what has been asked for and what is in a
-  // sprint but can never file, assign, resolve or re-home any of it. They are
-  // NOT admin-gated — every bearer principal gets all four.
+  // Not admin-gated — every bearer principal gets all four. The write counterpart
+  // below is scoped (see the note there); these reads are not, because seeing the
+  // org's queue is how an agent orients before it does anything.
   server.tool(
     "list_tickets",
-    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into — never GitHub issues (ADR-007); a ticket may LINK to GitHub or Figma work, it never is that work. Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Ticket WRITES are human-only in the web UI — there is no MCP write path, and done/declined are set by a person, never inferred.",
+    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into — never GitHub issues (ADR-007); a ticket may LINK to GitHub or Figma work, it never is that work. Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Reading is unscoped: you see the whole org's queue. WRITING is scoped to your own lane — see create_ticket and transition_ticket.",
     {
       seg: TicketSeg.optional(),
       assignee: TicketAssigneeFilter.optional(),
@@ -145,7 +161,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "get_ticket",
-    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, and its sprint. A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Ticket WRITES are human-only in the web UI — there is no MCP write path.",
+    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, and its sprint. A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {
@@ -157,14 +173,14 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "list_sprints",
-    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its `progress` is its TICKETS only (closed/total/pct, where closed = done + declined). The GitHub issues behind a sprint are a separate `issues` field, the cached closed/total from its github_ref (null when it has no cache row); no live GitHub at read time. Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint WRITES are human-only in the web UI — there is no MCP write path (the admin plan write, update_plan, is the one exception and is admin-gated).",
+    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its `progress` is its TICKETS only (closed/total/pct, where closed = done + declined). The GitHub issues behind a sprint are a separate `issues` field, the cached closed/total from its github_ref (null when it has no cache row); no live GitHub at read time. Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint WRITES are ADMIN-ONLY over MCP (create_sprint / set_sprint_active / complete_sprint / add_sprint_resource, plus the bulk plan write update_plan); a non-admin principal does not see those tools at all.",
     {},
     async () => runTool(() => list_sprints(env.DB)),
   );
 
   server.tool(
     "get_sprint",
-    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the tickets-only `progress` and the separate cached `issues` counts. Sprint WRITES are human-only in the web UI — there is no MCP write path; a sprint is completed by an admin, never inferred from tickets resolving.",
+    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the tickets-only `progress` and the separate cached `issues` counts. Sprint WRITES are ADMIN-ONLY over MCP; a sprint is completed by a person (complete_sprint), never inferred from its tickets resolving.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {
@@ -172,6 +188,88 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
         if (!sprint) throw new Error(`no such sprint: ${id}`);
         return sprint;
       }),
+  );
+
+  // ── Tickets: WRITES, scoped to the bearer's own lane ───────────────────────
+  //
+  // Every tool below is a thin adapter over src/tools/tickets-agent.ts, which is
+  // the ONE place the lane rule is drawn: a ticket write is permitted exactly when
+  // the bearer principal is already an assignee of that ticket. Filing (create_ticket)
+  // is the one unscoped write. The actor is ALWAYS `principal.handle` — there is no
+  // client-supplied writer, exactly as with /ingest's advisory session.author.
+  //
+  // These are DIRECT AUTHORED WRITES in the promote class, the same class the cookie
+  // routes write in: no consume(), no gate, no staging, no proposals. The bearer token
+  // IS the person, so inside the lane the parity with the ticket screen is total —
+  // `done` and `declined` included. Nothing here INFERS a resolution; a person, through
+  // their own token, asks for it.
+  //
+  // There is deliberately NO toggle_assignee tool. Assignment is the data the lane rule
+  // is built on, so an agent that could edit it could edit its own permissions: after a
+  // ticket is filed, assigning and unassigning are web-only, forever.
+
+  /** Every write returns the whole ticket, exactly like the cookie routes do. */
+  const ticketDetail = async (id: number) => {
+    const ticket = await get_ticket(env.DB, id);
+    if (!ticket) throw new TicketError("not_found", `no such ticket: ${id}`);
+    return ticket;
+  };
+
+  server.tool(
+    "create_ticket",
+    "File a ticket. THE ONE UNSCOPED WRITE — you may file freely; every other ticket write requires the ticket to be assigned to you already. The requester is YOU (the bearer principal); a client-supplied requester is ignored. `assignees` (person handles) is the ONLY place an agent can assign anyone — after filing, assignment is web-only, so there is no tool to add or remove an assignee later. Optional `link` takes a bare issue number ('#214'), a GitHub/Figma URL, or any URL. `sprint_id` omitted = the backlog. Returns the whole ticket. Confirm the exact fields with the person before calling — a ticket is org-visible the moment it exists.",
+    TicketCreate.shape,
+    async (input) => runTool(async () => ticketDetail(await agentCreateTicket(env.DB, TicketCreate.parse(input), principal.handle))),
+  );
+
+  server.tool(
+    "transition_ticket",
+    "Move a ticket's status. SCOPED: only on a ticket already assigned to you, else `forbidden` and nothing is written. Legal moves are the one shared table — submitted → in_progress | declined; in_progress → done | declined | submitted; done and declined are TERMINAL (an illegal move is `conflict`, and writes nothing, not even history). `done`/`declined` resolve the ticket for the whole org and cannot be undone, so confirm with the person first. Appends a ticket_events row attributed to you.",
+    { id: z.number(), ...TicketTransition.shape },
+    async ({ id, to }) => runTool(async () => {
+      await agentTransitionTicket(env.DB, env, id, to, principal.handle);
+      return ticketDetail(id);
+    }),
+  );
+
+  server.tool(
+    "add_ticket_comment",
+    "Append a comment to a ticket. SCOPED: only on a ticket already assigned to you. Raw text — mentions are a rendering concern, not a write one. Bumps the ticket's updated_at (the queue's sort key), and is attributed to you with nothing marking it as agent-written, so say so in the text if the team wants that.",
+    { id: z.number(), ...TicketCommentAdd.shape },
+    async ({ id, body }) => runTool(async () => {
+      await agentAddTicketComment(env.DB, env, id, body, principal.handle);
+      return ticketDetail(id);
+    }),
+  );
+
+  server.tool(
+    "add_ticket_link",
+    "Attach linked work to a ticket (GitHub issue/PR, Figma file, or any URL). SCOPED: only on a ticket already assigned to you. `raw` is parsed by the same parser the web UI uses: a bare '#214' or '214' resolves against the default repo, github.com and figma.com URLs are labelled by kind, anything else is a plain link. An unusable input is `bad_request`.",
+    { id: z.number(), ...TicketLinkAdd.shape },
+    async ({ id, raw }) => runTool(async () => {
+      await agentAddTicketLink(env.DB, env, id, raw, principal.handle);
+      return ticketDetail(id);
+    }),
+  );
+
+  server.tool(
+    "set_ticket_sprint",
+    "Move a ticket into a sprint, or back to the backlog with sprint_id null. SCOPED to a ticket assigned to you — with ONE exception: an ADMIN may re-home any ticket, because composing a sprint is sprint management. This is the only ticket verb an admin may use outside their own lane; it moves the ticket and nothing else. An unknown sprint is `not_found`, and nothing is written.",
+    { id: z.number(), ...TicketSprintSet.shape },
+    async ({ id, sprint_id }) => runTool(async () => {
+      await agentSetTicketSprint(env.DB, env, id, sprint_id, principal.handle);
+      return ticketDetail(id);
+    }),
+  );
+
+  server.tool(
+    "set_ticket_parent",
+    "Nest `child_id` under ticket `id`. SCOPED on BOTH tickets — the call re-homes the child and changes the parent's shape, so both must already be assigned to you. Tickets nest EXACTLY ONE level: it is a `conflict` (writing nothing) if the parent already has a parent, the child already has a parent, the child is done/declined, or the child has sub-tickets of its own.",
+    { id: z.number(), ...TicketParentSet.shape },
+    async ({ id, child_id }) => runTool(async () => {
+      await agentSetTicketParent(env.DB, env, id, child_id, principal.handle);
+      return ticketDetail(id);
+    }),
   );
 
   server.tool(
@@ -204,6 +302,48 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   // name errors tool-not-found, since a fresh server is built per request with the
   // principal already in scope).
   if (isAdmin(env, principal.handle)) {
+    // ── Sprints: WRITES, admin-only ──────────────────────────────────────────
+    //
+    // Thin adapters over the same writers the Roadmap's cookie routes call —
+    // direct promote-class writes, never the ingestion gate, nothing staged.
+    //
+    // ONE deliberate delta from the web: POST /sprints/:id/complete sits under the
+    // blanket sessionGate with no adminGate, so any signed-in member can complete a
+    // sprint from the UI — over MCP, complete_sprint is admin-only like its three
+    // neighbours. The surfaces disagree on purpose: a person clicking Confirm done
+    // has seen the sprint; an agent holding a token has not.
+    //
+    // Inputs speak the DTO vocabulary (`label` / `due` / `active`), never the column
+    // names (`title` / `target_date` / `status`) — only src/tools/ speaks columns.
+
+    server.tool(
+      "create_sprint",
+      "ADMIN: create a sprint. It lands INACTIVE and unscheduled — status 'upcoming', phase 'Unscheduled' unless you pass one, and no `due` stores an empty target date that reads back as due: null (those sort last on the Roadmap). `label` is the sprint name; `lead` is a person handle. Which TICKETS are in the sprint is not set here — that is set_ticket_sprint. Direct promote-class write, not staged.",
+      SprintCreate.shape,
+      async (input) => runTool(() => create_sprint(env.DB, SprintCreate.parse(input), principal.handle)),
+    );
+
+    server.tool(
+      "set_sprint_active",
+      "ADMIN: move a sprint between the Roadmap's In Progress and Upcoming groups. `active` is DERIVED from status, never stored: true → 'in_progress' (from ANY status, including 'done' — that is re-opening a sprint that turned out not to be finished); false → 'upcoming', EXCEPT on a done sprint where it is a NO-OP, because clearing 'active' must never un-finish a sprint.",
+      { id: z.number(), active: z.boolean() },
+      async ({ id, active }) => runTool(() => set_sprint_active(env.DB, id, active)),
+    );
+
+    server.tool(
+      "complete_sprint",
+      "ADMIN: flip a sprint to 'done'. A sprint is completed by a PERSON — 'done' is NEVER inferred from its tickets resolving or its GitHub issues closing, not by the cron, not by the webhook, not by this tool being available. Confirm with the admin before calling: it is how the Roadmap reports the sprint finished. Already-done is an error, not a silent no-op.",
+      { id: z.number() },
+      async ({ id }) => runTool(() => complete_sprint(env.DB, id)),
+    );
+
+    server.tool(
+      "add_sprint_resource",
+      "ADMIN: attach a resource link to the sprint itself (as opposed to one of its tickets). `raw` goes through the SAME parser as ticket links, so '#214' means the same thing wherever it is typed. Idempotent on url. The sprint's read model merges these with its tickets' links, deduped by url.",
+      { id: z.number(), raw: z.string().min(1) },
+      async ({ id, raw }) => runTool(() => add_sprint_resource(env.DB, id, raw)),
+    );
+
     server.tool(
       "update_plan",
       "ADMIN plan write: replace the roadmap narrative and create/update sprints (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Sprints not listed are untouched. `label` is the sprint name and `due` its target date. Which tickets are IN a sprint is set from the Tickets UI, not here. Use via the update-plan skill.",

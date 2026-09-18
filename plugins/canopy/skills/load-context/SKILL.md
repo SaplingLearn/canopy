@@ -56,7 +56,9 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
    `{ assignee: "me" }` for what's on the caller's plate, or `{ category: "bug" }` for what the org has
    reported about the area) and `mcp__canopy__get_sprint <id>` (the sprint's tickets, resources and
    ticket-inclusive progress — the id comes from a `sprint`-typed `query` hit or `get_roadmap`). Both
-   are read-only: **tickets and sprints have no MCP write path at all**, so this can only ever report.
+   calls are reads, and **orientation stays a read**: ticket and sprint write tools DO exist over MCP
+   now, but they are never this skill's to call. Report what the queue says; if a write is warranted,
+   that is the explicit-only `tickets` skill, asked for by a person.
 
 ## Hard rules
 

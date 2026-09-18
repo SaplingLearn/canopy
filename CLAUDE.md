@@ -23,6 +23,12 @@ stays living** (orient → work → record), not a side feature. The core loop i
   the `record_session` MCP tool (feed / doc / ADR / triage / event items — a bearer-reachable batch over
   the same gate as `/ingest`).
 
+**Tickets from Claude Code** — **`tickets`** (explicit only, never auto-fires) works the ticket queue and,
+for an admin, the sprints, over the scoped MCP write tools. It orients with a read, checks the lane before
+proposing anything, shows a one-line diff, then makes ONE call and reports the real new state. Per-team
+defaults live in a `tickets.config.md` it reads (`references/config.md`) — advisory taste on top of the
+Worker's hard rules, never a permission system. Reading the queue needs no skill.
+
 Three more skills cover the roadmap/my-work surfaces:
 
 - **`read-plan`** (admin, read-only) — read the current plan and check it against captured reality.
@@ -84,8 +90,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `web/src/notifications.ts` holds the Settings › Email notifications and Maintenance › Notifications views;
   `web/src/tickets.ts` + `web/src/sprints.ts` are the (purely presentational) tickets/sprint components, and
   `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`).
-- `.claude/skills/` — Claude Code skills: `canopy`, `load-context`, `record-session`, and the roadmap/
-  my-work skills `read-plan`, `update-plan`, `my-work`. Described in the Working memory section above.
+- `.claude/skills/` — Claude Code skills: `canopy`, `load-context`, `record-session`, `tickets`, and the
+  roadmap/my-work skills `read-plan`, `update-plan`, `my-work`. Described in the Working memory section
+  above. (Symlinks into `plugins/canopy/skills/` — one source of truth.)
 
 ## Core invariant — ingested content is gated; authored & computed writes are direct
 
@@ -123,13 +130,21 @@ like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan
 stay direct in the promote class.
 
 **Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, ten session-cookie routes in
-`routes.ts`, NEVER MCP tools): `create_ticket` (opening `ticket_events` row) / `transition_ticket` /
-`toggle_assignee` / `add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`.
-A ticket is filed by a signed-in human, so there is no vocab gate, no confidence, no staged state — and
-`done` / `declined` are set by a person, never inferred from a PR merging. Every write bumps
-`tickets.updated_at` (the queue's sort key); the status machine is `canTransition` in
-`shared/tickets-core.ts` (re-exported by `shared/tickets.ts`) and is never re-declared server-side; an illegal move or a nesting-rule break is a 409 that writes
-nothing; tickets nest exactly ONE level (`set_ticket_parent`'s four rejections).
+`routes.ts`): `create_ticket` (opening `ticket_events` row) / `transition_ticket` / `toggle_assignee` /
+`add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`. There is no vocab
+gate, no confidence, no staged state. Every write bumps `tickets.updated_at` (the queue's sort key); the
+status machine is `canTransition` in `shared/tickets-core.ts` (re-exported by `shared/tickets.ts`) and is
+never re-declared server-side; an illegal move or a nesting-rule break is a 409 that writes nothing;
+tickets nest exactly ONE level (`set_ticket_parent`'s four rejections).
+
+**The writer is a PERSON — over a cookie, or over their own bearer token.** Six of those writers are also
+MCP tools (`src/tools/tickets-agent.ts`, the read side below), scoped so an agent writes only inside its
+principal's lane. That is a narrowing of the old "ticket writes are cookie-only" rule, not of the
+invariant underneath it: **nothing INFERS a resolution.** `done` / `declined` are never set by a PR
+merging, an issue closing, the webhook, or `scheduled()` — a person asks for them, and an agent holding
+that person's token asking is that person asking. `toggle_assignee` is the one writer with NO MCP
+counterpart (design D3): assignment is the data the lane rule is built on, so after filing it is
+cookie-only, forever.
 
 ## Read side — FTS5 query engine
 
@@ -145,11 +160,25 @@ standalone `roadmap_fts` over the plan narrative + sprints (refs `plan` / `sprin
 assembled `sprint` body's `Progress: closed/total` line uses the SAME `sprintProgress` rule as the
 Roadmap (tickets + cache), never the cache alone.
 
-**MCP gets read tools only for tickets and sprints** — `src/mcp.ts` registers `list_tickets`
+**MCP ticket/sprint reads are unscoped; the writes are not** — `src/mcp.ts` registers `list_tickets`
 (`seg` / `assignee` where `me` = the bearer principal / `category`), `get_ticket`, `list_sprints` and
-`get_sprint` for EVERY principal (not admin-gated). There is no `create_ticket` / `transition_ticket` /
-`create_sprint` / `set_sprint_active` MCP tool and never will be: every ticket and sprint write is a
-human authored write over a session-cookie route.
+`get_sprint` for EVERY principal (not admin-gated): seeing the org's queue is how an agent orients.
+
+**The write surface is `src/tools/tickets-agent.ts` — the ONE place the lane rule is drawn** (spec:
+`docs/superpowers/specs/2026-09-17-agent-ticket-writes-design.md`). A ticket write over MCP is permitted
+exactly when the bearer principal is ALREADY an assignee of that ticket, else `TicketError('forbidden')`
+(403) with NOTHING written; an unknown id is `not_found` FIRST, so the check is never an existence
+oracle. Each of the six tools (`create_ticket` / `transition_ticket` / `add_ticket_comment` /
+`add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent`) asserts, then delegates to the UNTOUCHED
+writer in `tools/tickets.ts` — the transition table, nesting rules and audit rows stay shared with the
+cookie routes, which are NOT assignee-scoped and did not change. `create_ticket` is the one unscoped
+write (filing is how work enters the queue) and its `assignees` is the only agent-reachable assignment;
+`set_ticket_parent` needs the lane on BOTH ids. ONE exception: an **admin** may `set_ticket_sprint` on any
+ticket (composing a sprint is sprint management) — it spreads to no other verb. **Sprint writes are
+admin-only** (`create_sprint` / `set_sprint_active` / `complete_sprint` / `add_sprint_resource`),
+conditionally registered like `update_plan` so a non-admin cannot see them — a deliberate delta from the
+web, where `POST /sprints/:id/complete` is open to any member. **No provenance is stored** (design D4): an
+MCP write is recorded as the person, indistinguishable from a click.
 
 - **MCP `query`** defaults `include_staged: true` — agents see staged/unpromoted context (authority-flagged).
 - **`GET /search`** (human UI) defaults `include_staged: false` — shows only settled (`live`) content.
@@ -172,8 +201,8 @@ Agents only ever stage; humans confirm via **authenticated HTTP routes that are 
   `POST /sprints` (created `upcoming`, `phase` `'Unscheduled'`, no `due` → `target_date` `''` which the
   DTO shows as `due: null`), `POST /sprints/:id/active` (`true` → `in_progress`, `false` → `upcoming`;
   on a `done` sprint `false` is a NO-OP and `true` re-opens it), `POST /sprints/:id/resources`, and
-  `POST /sprints/:id/complete` which flips status to `done`. All direct promote-class writes, NEVER MCP
-  tools. `'done'` is NEVER set by the worker and NEVER inferred from issue closure or from every ticket
+  `POST /sprints/:id/complete` which flips status to `done`. All direct promote-class writes; the same four
+  are ADMIN-ONLY MCP tools (read side above). `'done'` is NEVER set by the worker and NEVER inferred from issue closure or from every ticket
   in the sprint being resolved — a sprint is completed by a PERSON: `POST /sprints/:id/complete` sits under
   the blanket `sessionGate` with no `adminGate`, so any signed-in org member can do it from the web UI;
   the plan write is the admin path. The
