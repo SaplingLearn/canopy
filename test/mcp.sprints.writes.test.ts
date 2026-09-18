@@ -148,6 +148,27 @@ describe("complete_sprint", () => {
     expect((await first<SprintRow>(env.DB, `SELECT * FROM sprints WHERE id = ?`, seeded.id))!.status).toBe("done");
   });
 
+  it("answers in the DTO vocabulary, like its three neighbours", async () => {
+    // The seam (shared/sprints.ts): the DB keeps its column names, every DTO
+    // speaks the product's words. An agent is told to read the new state back
+    // off the write response, so a writer that answers with a raw row hands it
+    // `label: undefined` and no `active` at all — and this is the one tool of
+    // the four that used to. Asserted against a sibling so the two cannot drift.
+    await seedPerson(ADMIN);
+    const seeded = await seedSprint("Speaks the DTO");
+    const done = ok<SprintView>(await callTool(ADMIN, "complete_sprint", { id: seeded.id }));
+
+    expect(done.label).toBe("Speaks the DTO");
+    expect(done.due).toBe("2026-09-01");
+    expect(done.status).toBe("done");
+    expect(done.active).toBe(false);
+    expect(done).not.toHaveProperty("title");
+    expect(done).not.toHaveProperty("target_date");
+
+    const reopened = ok<SprintView>(await callTool(ADMIN, "set_sprint_active", { id: seeded.id, active: true }));
+    expect(Object.keys(done).sort()).toEqual(Object.keys(reopened).sort());
+  });
+
   it("refuses an unknown sprint and a second completion, with TYPED codes", async () => {
     await seedPerson(ADMIN);
     // The two refusals are different answers for an agent — retry with a real id,

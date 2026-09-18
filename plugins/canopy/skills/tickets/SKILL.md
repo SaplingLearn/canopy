@@ -93,9 +93,9 @@ Report what the response actually says, not what you intended to happen. The two
 different shapes, so do not go looking for ticket fields after a sprint write:
 
 - **Ticket writes** return the whole ticket — read `status`, `assignees` and `sprint` back off it.
-- **Sprint writes** return sprint data and no ticket at all: `create_sprint` and `set_sprint_active`
-  return the sprint view (`label`, `due`, `status`/`active`, progress), `add_sprint_resource` returns
-  the sprint with its tickets and merged resources, `complete_sprint` returns the raw sprint row.
+- **Sprint writes** return sprint data and no ticket at all: `create_sprint`, `set_sprint_active` and
+  `complete_sprint` return the sprint view (`label`, `due`, `status`/`active`, progress), and
+  `add_sprint_resource` returns that view plus the sprint's tickets and merged resources.
 
 If the call came back with a `code`, say what it means and what the person should do:
 

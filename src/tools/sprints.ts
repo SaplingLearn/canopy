@@ -360,7 +360,7 @@ export async function set_sprint_active(db: DB, id: number, active: boolean): Pr
  * (with the other sprint writers) and is re-exported from writes.ts so the older
  * import path keeps working.
  */
-export async function complete_sprint(db: DB, id: number): Promise<SprintRow> {
+export async function complete_sprint(db: DB, id: number): Promise<SprintView> {
   const sp = await first<SprintRow>(db, `SELECT * FROM sprints WHERE id = ?`, id);
   // Typed like every other writer in this file: the MCP adapter surfaces `code`
   // to the caller, and "no such sprint" vs "already done" are different answers
@@ -368,9 +368,13 @@ export async function complete_sprint(db: DB, id: number): Promise<SprintRow> {
   // catches both into the same 400 it always did, so the web path is unchanged.
   if (!sp) throw new SprintError("not_found", `no such sprint: ${id}`);
   if (sp.status === "done") throw new SprintError("conflict", `sprint already done: ${id}`);
-  const updated_at = nowIso();
-  await run(db, `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ?`, updated_at, id);
-  return { ...sp, status: "done", updated_at };
+  await run(db, `UPDATE sprints SET status = 'done', updated_at = ? WHERE id = ?`, nowIso(), id);
+  // Answers with the VIEW, like create_sprint and set_sprint_active — column
+  // names never leave this file (see the header). The agent skill tells a caller
+  // to read the new state off the write response, and a raw row would hand it
+  // `label: undefined` and no `active`. The cookie route's body changes shape
+  // with it; web/src/api.ts types that call `Promise<{ok:true}>` and drops it.
+  return viewFor(db, id);
 }
 
 /**
