@@ -14,6 +14,7 @@ import {
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
+  listMcpTokens, revokeMcpToken,
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
   addTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
@@ -73,7 +74,8 @@ function rerender(): void {
   const scroll = captureScroll(mount, state.screen);
   mount.innerHTML = render(state);
   restoreScroll(mount, scroll, state.screen);
-  if (state.view === "auth" && state.authStep === "login") mountLandingMotion(mount, state.landingSeen);
+  const onLanding = state.view === "auth" ? state.authStep === "login" : state.screen === "site";
+  if (onLanding) mountLandingMotion(mount, state.landingSeen);
   else unmountLandingMotion();
   if (field) {
     const el = mount.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-field="${field}"]`);
@@ -189,7 +191,7 @@ function loadForScreen(screen: Screen): void {
     case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); break;
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
-    case "settings": loadNotifPrefsIfNeeded(); break;
+    case "settings": loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); break;
     case "unsubscribe": runUnsubscribe(); break;
     // The queue's sprint group headers and the form/rail menus all read `sprints`.
     case "tickets": loadSprintsIfNeeded(); loadTicketsIfNeeded(); break;
@@ -263,6 +265,21 @@ function loadNotifPrefs(): void {
       state.notifPrefs = { status: "error", data: null, error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
+}
+// Settings › MCP access tokens. No rerender of its own on entry: every caller follows
+// with loadNotifPrefsIfNeeded, which does.
+function loadTokens(): void {
+  state.tokens = { status: "loading", data: state.tokens.data };
+  listMcpTokens()
+    .then((data) => { state.tokens = { status: "ok", data }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.tokens = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadTokensIfNeeded(): void {
+  if (state.tokens.status === "idle") loadTokens();
 }
 function loadNotifPrefsIfNeeded(): void {
   if (state.notifPrefs.status === "idle") loadNotifPrefs();
@@ -854,11 +871,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "signIn":
       // Return-to: the hash never reaches the server, so stash it for the boot
       // after /auth/callback lands on "/" (an email deep link survives sign-in).
-      try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
+      // Not #site: that IS the landing page, and returning to it strands them outside the app.
+      try { if (location.hash && location.hash !== "#site") sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
       window.location.href = "/auth/login";
       return;
     case "signInGoogle":
-      try { if (location.hash) sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
+      try { if (location.hash && location.hash !== "#site") sessionStorage.setItem("canopy.returnHash", location.hash); } catch { /* ignore */ }
       window.location.href = "/auth/google/login";
       return;
     case "signInGoogleSwitch": window.location.href = "/auth/google/login?prompt=select_account"; return;
@@ -911,11 +929,34 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.authStep = "login";
       history.replaceState({}, "", "/");
       break;
-    case "signOut":
-      logout()
-        .then(() => { state.me = null; state.view = "auth"; state.authStep = "login"; rerender(); })
-        .catch(() => { state.view = "auth"; state.authStep = "login"; rerender(); });
+    case "signOut": {
+      // A deliberate exit lands on the bare landing page: drop the route hash, or the
+      // URL stays /#settings and the next sign-in would treat it as a return-to.
+      const leave = () => {
+        state.view = "auth"; state.authStep = "login";
+        history.replaceState(null, "", "/");
+        rerender();
+        window.scrollTo(0, 0);
+      };
+      logout().then(() => { state.me = null; leave(); }).catch(leave);
       return;
+    }
+
+    // The sidebar logo reopens the landing page (#site); its nav button comes back to
+    // wherever the logo was clicked from (My Work after a reload straight onto #site).
+    case "goSite":
+      state.siteReturn = currentRoute();
+      state.screen = "site";
+      rerender();
+      window.scrollTo(0, 0);
+      return;
+    case "siteBack": {
+      const back = state.siteReturn ?? parseHash("");
+      state.siteReturn = null;
+      applyRoute(back);
+      loadForScreen(back.screen);
+      return;
+    }
 
     // primary navigation
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
@@ -1240,7 +1281,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
     case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
-    case "goSettings": state.screen = "settings"; state.unsub.preview = false; loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
+    case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
     // chrome: theme + sidebar
@@ -1495,7 +1536,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       return;
     }
     case "previewUnsub": state.unsub = { pending: false, error: null, preview: true }; state.screen = "unsubscribe"; break;
-    case "unsubGoSettings": state.screen = "settings"; state.unsub = { pending: false, error: null, preview: false }; loadNotifPrefsIfNeeded(); return;
+    case "unsubGoSettings": state.screen = "settings"; state.unsub = { pending: false, error: null, preview: false }; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); return;
 
     // ── Maintenance › Notifications (admin) ──────────────────────────────────
     case "policyToggle": {
@@ -1541,7 +1582,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; rerender(); })
+        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; loadTokens(); rerender(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Could not mint token");
@@ -1560,8 +1601,24 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       return;
     }
     case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
-    // INERT — no backend route for revoking tokens
-    case "revokeToken": return;
+    // Revoke is two clicks: the first arms the row, the second revokes.
+    case "revokeTokenArm": state.tokenRevokeArm = Number(arg); break;
+    case "revokeTokenCancel": state.tokenRevokeArm = null; break;
+    case "revokeToken": {
+      const id = Number(arg);
+      revokeMcpToken(id)
+        .then(() => {
+          state.tokens = { status: "ok", data: state.tokens.data.filter((t) => t.id !== id) };
+          state.tokenRevokeArm = null;
+          flash("Token revoked");
+          rerender();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not revoke token");
+        });
+      return;
+    }
 
     // ── Settings › Profile (display name, color, link/unlink) ───────────────
     case "saveProfile": {

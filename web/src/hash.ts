@@ -7,6 +7,7 @@
 //   #tickets/<id>     → one ticket's detail
 //   #sprints/<id>     → one sprint's screen
 //   #<screen>         → every other screen, named exactly as the Screen union
+//                       (`#site` is the landing page, reopened from inside the app)
 // Anything unrecognised falls back to My Work — the same rule the app has always
 // had for a junk hash.
 
@@ -16,7 +17,7 @@ import type { Screen } from "./render";
  *  sprint routes are parsed separately below. */
 const PLAIN_SCREENS: Screen[] = [
   "mywork", "feed", "docs", "roadmap", "review", "maintenance",
-  "search", "settings", "guide", "unsubscribe", "tickets",
+  "search", "settings", "guide", "unsubscribe", "tickets", "site",
 ];
 
 export interface Route {

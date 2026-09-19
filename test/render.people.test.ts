@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { peopleSection } from "../web/src/maintenance";
-import { profileSection, initialState } from "../web/src/render";
+import { profileSection, accountSection, tokenListBody, initialState } from "../web/src/render";
 import { peopleFromPersons } from "../web/src/triage-map";
 import { handleTag } from "../web/src/people";
 
@@ -35,19 +35,14 @@ describe("peopleSection", () => {
 });
 
 describe("profileSection", () => {
-  it("shows handle read-only, ten swatches with mine selected, and link/unlink per provider", () => {
+  it("shows handle read-only and ten swatches with mine selected; sign-in methods live in Account, not here", () => {
     const s = initialState();
     s.me = { handle: "AndresL230", name: "Andres", avatar_url: null, color: "moss", identities: [{ provider: "github", label: "AndresL230", linked_at: "t" }], org: "SaplingLearn", admin: false };
     s.displayName = "Andres";
     const html = profileSection(s);
     expect(html).toContain("@AndresL230");
     expect(html).toContain('data-arg="moss" class="cnpy-sw is-on compact"');
-    expect(html).toContain('data-act="linkProvider" data-arg="google"');
-    expect(html).toMatch(/data-act="unlinkProvider" data-arg="github"[^>]*disabled/); // last identity
-    s.me.identities.push({ provider: "google", label: "a@b.c", linked_at: "t" });
-    const both = profileSection(s);
-    expect(both).not.toMatch(/data-act="unlinkProvider" data-arg="github"[^>]*disabled/);
-    expect(both).toContain('data-act="unlinkProvider" data-arg="google"');
+    expect(html).not.toContain("linkProvider");
   });
 
   it("handle editor: shows the draft input + warning with an enabled Save when available, disabled when taken", () => {
@@ -65,6 +60,56 @@ describe("profileSection", () => {
     s.handleCheck = "taken";
     const taken = profileSection(s);
     expect(taken).toMatch(/data-act="handleSave"[^>]*disabled/);
+  });
+});
+
+describe("accountSection", () => {
+  it("membership + Sign out, and link/unlink per provider with the last identity locked", () => {
+    const s = initialState();
+    s.me = { handle: "AndresL230", name: "Andres", avatar_url: null, color: "moss", identities: [{ provider: "github", label: "AndresL230", linked_at: "t" }], org: "SaplingLearn", admin: false };
+    const html = accountSection(s);
+    expect(html).toContain("Member of <b>SaplingLearn</b>");
+    expect(html).toContain('data-act="signOut"');
+    expect(html).toContain('data-act="linkProvider" data-arg="google"');
+    expect(html).toMatch(/data-act="unlinkProvider" data-arg="github"[^>]*disabled/); // last identity
+    s.me.identities.push({ provider: "google", label: "a@b.c", linked_at: "t" });
+    const both = accountSection(s);
+    expect(both).not.toMatch(/data-act="unlinkProvider" data-arg="github"[^>]*disabled/);
+    expect(both).toContain('data-act="unlinkProvider" data-arg="google"');
+  });
+
+  it("a Google-only person reads 'Signed in with Google'", () => {
+    const s = initialState();
+    s.me = { handle: "meilin", name: "Mei Lin", avatar_url: null, color: "plum", identities: [{ provider: "google", label: "m@x.io", linked_at: "t" }], org: "SaplingLearn", admin: false };
+    expect(accountSection(s)).toContain("Signed in with Google");
+  });
+});
+
+describe("tokenListBody", () => {
+  const tk = (id: number, hint: string | null, last: string | null = null) => ({ id, hint, created_at: "2026-09-01T00:00:00.000Z", last_used_at: last });
+
+  it("lists each token by its hint with a Revoke that must be armed first", () => {
+    const html = tokenListBody({ tokens: { status: "ok", data: [tk(7, "ab12", "2026-09-02T00:00:00.000Z"), tk(8, null)] }, tokenRevokeArm: null });
+    expect(html).toContain("canopy_mcp_ab12");
+    expect(html).toContain("last used");
+    expect(html).toContain("never used");
+    expect(html).toContain('data-act="revokeTokenArm" data-arg="7"');
+    expect(html).not.toContain('data-act="revokeToken"');
+  });
+
+  it("an armed row swaps in the real Revoke + Keep and says what revoking does; other rows stay unarmed", () => {
+    const html = tokenListBody({ tokens: { status: "ok", data: [tk(7, "ab12"), tk(8, "cd34")] }, tokenRevokeArm: 7 });
+    expect(html).toContain('data-act="revokeToken" data-arg="7"');
+    expect(html).toContain('data-act="revokeTokenCancel"');
+    expect(html).toContain("Any agent using it stops working.");
+    expect(html).toContain('data-act="revokeTokenArm" data-arg="8"');
+  });
+
+  it("loading, empty and error states; a hostile hint is escaped", () => {
+    expect(tokenListBody({ tokens: { status: "loading", data: [] }, tokenRevokeArm: null })).toContain("Loading tokens");
+    expect(tokenListBody({ tokens: { status: "ok", data: [] }, tokenRevokeArm: null })).toContain("No tokens yet");
+    expect(tokenListBody({ tokens: { status: "error", data: [], error: "boom" }, tokenRevokeArm: null })).toContain("boom");
+    expect(tokenListBody({ tokens: { status: "ok", data: [tk(1, "<b>x")] }, tokenRevokeArm: null })).not.toContain("<b>x");
   });
 });
 

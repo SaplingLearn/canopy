@@ -36,13 +36,17 @@ export interface NotifSettingsProps {
   emailDraft: string;
 }
 
-function emailCard(p: NotifSettingsProps, email: string | null): string {
+// One tile, hairline-separated rows (address / unsubscribe / one per kind) — no
+// cards inside the card.
+const TILE_ROW = "padding:14px 0;border-top:1px solid var(--border)";
+
+function emailRow(p: NotifSettingsProps, email: string | null): string {
   if (email === null) {
-    return `<div style="border:1px solid var(--border-strong);border-radius:13px;padding:20px 22px;margin-bottom:12px">
+    return `<div style="${TILE_ROW}">
       <div style="font-size:13.5px;font-weight:600">No email on file</div>
       <div style="font-size:12.5px;color:var(--fg-55);margin-top:4px;line-height:1.55">The digests below stay configured, but nothing sends until an address is on file.</div>
       <div style="display:flex;gap:10px;margin-top:14px">
-        <input data-act="setEmailDraft" data-field="emailDraft" value="${attr(p.emailDraft)}" placeholder="you@sapling.dev" class="cnpy-input" style="flex:1;${INPUT}" />
+        <input data-act="setEmailDraft" data-field="emailDraft" value="${attr(p.emailDraft)}" placeholder="you@sapling.dev" class="cnpy-input" style="flex:1;min-width:0;${INPUT}" />
         <button data-act="emailSave" class="cnpy-accentbtn" style="${ACCENT_BTN}">Save address</button>
       </div>
     </div>`;
@@ -51,7 +55,7 @@ function emailCard(p: NotifSettingsProps, email: string | null): string {
     ? `<div>
         <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Digest address</label>
         <div style="display:flex;gap:10px">
-          <input data-act="setEmailDraft" data-field="emailDraft" value="${attr(p.emailDraft)}" class="cnpy-input" style="flex:1;${INPUT}" />
+          <input data-act="setEmailDraft" data-field="emailDraft" value="${attr(p.emailDraft)}" class="cnpy-input" style="flex:1;min-width:0;${INPUT}" />
           <button data-act="emailSave" class="cnpy-accentbtn" style="${ACCENT_BTN}">Save</button>
           <button data-act="emailCancel" class="cnpy-ghostbtn" style="padding:0 14px;${GHOST_BTN}">Cancel</button>
         </div>
@@ -59,12 +63,12 @@ function emailCard(p: NotifSettingsProps, email: string | null): string {
       </div>`
     : `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px">
         <div style="min-width:0">
-          <div style="font-size:13px;font-weight:500">Digest address</div>
-          <div style="font-size:13px;color:var(--fg-70);${MONO};margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(email)}</div>
+          <div style="font-size:13.5px;font-weight:500">Digest address</div>
+          <div style="font-size:13px;color:var(--fg-70);${MONO};margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(email)}</div>
         </div>
         <button data-act="emailStartEdit" class="cnpy-ghostbtn" style="flex:none;padding:7px 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Edit</button>
       </div>`;
-  return `<div style="border:1px solid var(--border);border-radius:13px;padding:16px 20px;margin-bottom:12px">${inner}</div>`;
+  return `<div style="${TILE_ROW}">${inner}</div>`;
 }
 
 function kindRow(k: PrefsView["kinds"][number]): string {
@@ -74,14 +78,14 @@ function kindRow(k: PrefsView["kinds"][number]): string {
   const marker = k.inherited
     ? `<span style="font-size:10px;font-weight:600;${MONO};letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">ORG DEFAULT</span>`
     : `<button data-act="resetKind" data-arg="${attr(k.id)}" style="font-size:11.5px;font-weight:500;color:var(--accent);text-decoration:underline;text-underline-offset:3px;padding:0">Reset to default</button>`;
-  return `<div style="display:flex;align-items:center;gap:18px;padding:15px 20px;border-bottom:1px solid var(--border)">
+  return `<div style="display:flex;align-items:center;gap:18px;${TILE_ROW}">
     <div style="flex:1;min-width:0">
       <div style="font-size:13.5px;font-weight:500">${esc(k.label)}</div>
       <div style="font-size:12px;color:var(--fg-55);margin-top:3px;line-height:1.5">${esc(k.description)}</div>
     </div>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:none">
-      <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${segs}</div>
+    <div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap-reverse;gap:7px 12px;flex:none;max-width:60%">
       ${marker}
+      <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${segs}</div>
     </div>
   </div>`;
 }
@@ -92,27 +96,28 @@ export function emailNotificationsSection(p: NotifSettingsProps): string {
     const body = p.loading
       ? `Loading email settings&hellip;`
       : `Couldn't load email settings${p.error ? ` &mdash; ${esc(p.error)}` : ""}.`;
-    return `<section style="margin-bottom:14px;margin-top:34px">${head}<div style="border:1px dashed var(--border);border-radius:13px;padding:20px 22px;font-size:12.5px;color:var(--fg-40)">${body}</div></section>`;
+    return `<section class="cnpy-tile cnpy-set-full">${head}<div style="${TILE_ROW};font-size:12.5px;color:var(--fg-40)">${body}</div></section>`;
   }
   const v = p.prefs;
   const rows = v.kinds.map(kindRow).join("");
   const listStyle = `opacity:${v.unsubscribed ? ".45" : "1"};pointer-events:${v.unsubscribed ? "none" : "auto"};transition:opacity .15s ease`;
-  return `<section style="margin-bottom:14px;margin-top:34px">
+  // Full-width tile, two columns inside: address beside the all-off switch, then the
+  // kinds two-up — half the height of one long list (canopy.css folds it to one column).
+  return `<section class="cnpy-tile cnpy-set-full">
     ${head}
-    ${emailCard(p, v.email)}
-    <div style="${listStyle}">
-      <div style="border:1px solid var(--border);border-radius:13px;overflow:hidden">${rows || `<div style="padding:18px 20px;font-size:12.5px;color:var(--fg-40)">No digests are enabled org-wide right now.</div>`}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">Cadence options vary per digest. Kinds turned off org-wide don't appear here at all.</div>
-    </div>
-    <div style="border:1px solid var(--border-strong);border-radius:13px;padding:18px 20px;margin-top:26px;display:flex;align-items:center;justify-content:space-between;gap:16px">
-      <div style="min-width:0">
-        <div style="font-size:13.5px;font-weight:600">Unsubscribe from all email</div>
-        <div style="font-size:12px;color:var(--fg-55);margin-top:3px;line-height:1.5">Overrides every setting above &mdash; no digest of any kind sends while this is on.</div>
+    <div class="cnpy-set-pairs">
+      ${emailRow(p, v.email)}
+      <div style="${TILE_ROW};display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+        <div style="min-width:0">
+          <div style="font-size:13.5px;font-weight:600">Unsubscribe from all email</div>
+          <div style="font-size:12px;color:var(--fg-55);margin-top:3px;line-height:1.5">Overrides every digest below &mdash; nothing of any kind sends while this is on.</div>
+        </div>
+        ${switchBtn("toggleAllOff", null, v.unsubscribed)}
       </div>
-      ${switchBtn("toggleAllOff", null, v.unsubscribed)}
     </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px">
-      <div style="font-size:11.5px;color:var(--fg-40)">Digests send once per window, at the org's send hour.</div>
+    <div class="cnpy-set-pairs" style="${listStyle}">${rows || `<div style="${TILE_ROW};font-size:12.5px;color:var(--fg-40)">No digests are enabled org-wide right now.</div>`}</div>
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:11.5px;color:var(--fg-40);line-height:1.5">Digests send once per window, at the org's send hour. Cadence options vary per digest. Kinds turned off org-wide don't appear here at all.</div>
       <button data-act="previewUnsub" style="flex:none;font-size:11.5px;color:var(--fg-40);text-decoration:underline;text-underline-offset:3px">Preview the unsubscribe page</button>
     </div>
   </section>`;
