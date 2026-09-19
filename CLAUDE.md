@@ -90,6 +90,10 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `web/src/notifications.ts` holds the Settings › Email notifications and Maintenance › Notifications views;
   `web/src/tickets.ts` + `web/src/sprints.ts` are the (purely presentational) tickets/sprint components, and
   `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`).
+  Signed out, the app renders the **landing page** (`web/src/landing.ts`, ported from the Claude Design
+  `Canopy Site.dc.html`); its nav's Sign in opens the GitHub/Google dialog, and its in-page links scroll
+  rather than set the hash (the hash is the route and the sign-in return-to). `web/src/landing-motion.ts`
+  plays its scroll reveals; played keys live in `state.landingSeen` so a rerender never replays them.
 - `.claude/skills/` — Claude Code skills: `canopy`, `load-context`, `record-session`, `tickets`, and the
   roadmap/my-work skills `read-plan`, `update-plan`, `my-work`. Described in the Working memory section
   above. (Symlinks into `plugins/canopy/skills/` — one source of truth.)
