@@ -222,3 +222,114 @@ input, select { font-family: inherit; }
 .cnpy-sw.is-on i { box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--c); }
 .cnpy-sw.is-on span { color:var(--fg); }
 .cnpy-sw.compact { padding:6px 2px; } .cnpy-sw.compact i { width:22px; height:22px; } .cnpy-sw.compact span { display:none; }
+
+/* ── landing (signed-out screen, web/src/landing.ts) ──────────────────────────
+   Ported from Canopy Site.dc.html. The page rides the app's three themes; these
+   are the tokens the site needs that the app themes don't carry, plus the
+   dc-runtime `style-hover` pseudo-props as real rules. */
+.cnpy-site { font-size:16px; line-height:normal; text-rendering:optimizeLegibility; }
+[data-cnpy-theme="light"] { --shadow:0 32px 64px -24px rgba(42,39,31,0.18), 0 4px 12px -4px rgba(42,39,31,0.08); --term:#1c1a16; --term-fg:#ede9e2; }
+[data-cnpy-theme="dark"] { --shadow:0 32px 64px -24px rgba(0,0,0,0.55), 0 4px 12px -4px rgba(0,0,0,0.3); --term:#131210; --term-fg:#ede9e2; }
+[data-cnpy-theme="midnight"] { --shadow:0 32px 64px -24px rgba(0,0,0,0.7), 0 4px 12px -4px rgba(0,0,0,0.4); --term:#0e0e0e; --term-fg:#ede9e2; }
+/* :where keeps this at element specificity so the button-like links below win. */
+:where(.cnpy-site) a { color:var(--accent); text-decoration:none; }
+:where(.cnpy-site) a:hover { text-decoration:underline; text-underline-offset:3px; }
+.site-navlink { color:var(--fg-55); font-size:13.5px; font-weight:500; padding:6px 10px; border-radius:7px; transition:color .12s ease, background .12s ease; }
+.site-navlink:hover { color:var(--fg); background:var(--hover); }
+.site-iconbtn { display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:var(--fg-55); transition:color .12s ease, background .12s ease; }
+.site-iconbtn:hover { background:var(--hover); color:var(--fg); text-decoration:none; }
+.site-btn { display:inline-flex; align-items:center; gap:8px; font-size:14px; font-weight:600; padding:11px 22px; border-radius:9px; text-decoration:none; transition:filter .12s ease, background .12s ease, scale .12s ease; }
+.site-btn:hover { text-decoration:none; }
+.site-btn:active { scale:.97; }
+.site-btn-solid { background:var(--fg); color:var(--bg); }
+.site-btn-solid:hover { filter:brightness(1.12); color:var(--bg); }
+.site-btn-outline { border:1px solid var(--border-strong); color:var(--fg); }
+.site-btn-outline:hover { background:var(--hover); color:var(--fg); }
+@media (max-width:900px) { .site-hide-sm { display:none !important; } }
+
+/* ── landing motion ───────────────────────────────────────────────────────────
+   The choreography for landing.ts. An element with `data-rv` renders hidden;
+   landing-motion.ts adds `is-play` when it scrolls into view, and every step
+   inside it starts at its own `--d` (ms after that reveal). An element that has
+   already played re-renders `is-done`: its settled state, with nothing to
+   transition from, so a rerender never replays it. Only transform-family
+   properties, opacity and clip-path move. Reduced motion: landing-motion.ts
+   settles everything up front; the media block at the end is the CSS backstop. */
+.cnpy-site { overflow-x:clip; --ease-out:cubic-bezier(0.22, 1, 0.36, 1); --ease-expo:cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* reveal: the section (`site-rv`) and its staggered children (`site-st`) */
+.site-rv { opacity:0; --from:0 22px; translate:var(--from); }
+.site-rv.rv-l { --from:-36px 0; }
+.site-rv.rv-r { --from:36px 0; }
+.site-rv.rv-lift { --from:0 56px; scale:.975; }
+.site-rv.rv-static { opacity:1; translate:none; }
+.site-st { opacity:0; --from:0 12px; translate:var(--from); }
+.site-st.st-l { --from:-12px 0; }
+.site-st.st-word { display:inline-block; --from:0 .45em; }
+.site-st.st-pop { --from:0 4px; scale:.9; }
+.site-rv.is-play, .site-rv.is-done, .is-play .site-st, .is-done .site-st { opacity:1; translate:none; scale:none; }
+.site-rv.is-play, .is-play .site-st {
+  transition: opacity .7s var(--ease-out) var(--d, 0ms), translate 1s var(--ease-expo) var(--d, 0ms), scale 1s var(--ease-expo) var(--d, 0ms),
+              transform .3s var(--ease-out), box-shadow .3s ease;
+}
+
+/* hover: cards and mockups rise a little (transform, so it composes with the reveal's translate) */
+.site-card, .site-lift { transition:transform .3s var(--ease-out), box-shadow .3s ease; }
+.site-card:hover { transform:translateY(-3px); box-shadow:var(--shadow); }
+.site-lift:hover { transform:translateY(-4px); }
+
+/* text that types itself in: one clip step per character (mono) */
+.site-type { display:inline-block; clip-path:inset(0 100% 0 0); }
+.is-play .site-type, .is-done .site-type { clip-path:inset(0); }
+.is-play .site-type { transition:clip-path var(--t, .8s) steps(var(--n, 20), end) var(--d, 0ms); }
+.site-caret { display:inline-block; opacity:0; }
+.is-play .site-caret, .is-done .site-caret { opacity:1; }
+.is-play .site-caret { transition:opacity .15s linear var(--d, 0ms); }
+.site-caret::after { content:""; display:inline-block; width:.5em; height:1.05em; margin-left:3px; vertical-align:-.2em; background:currentColor; animation:site-blink 1.1s steps(1) infinite; }
+@keyframes site-blink { 50% { opacity:0; } }
+
+/* diff rows: the highlight washes in under the text */
+.site-hl { position:relative; }
+.site-hl > * { position:relative; }
+.site-hl::before { content:""; position:absolute; inset:0; opacity:0; background:var(--hl-bg); box-shadow:var(--hl-edge, none); }
+.site-hl.hl-add { --hl-bg:color-mix(in srgb, var(--green) 11%, transparent); --hl-edge:inset 2px 0 0 var(--green); }
+.site-hl.hl-del { --hl-bg:color-mix(in srgb, var(--red) 10%, transparent); }
+.is-play .site-hl, .is-done .site-hl { color:var(--fg); }
+.is-play .site-hl::before, .is-done .site-hl::before { opacity:1; }
+.is-play .site-hl { transition:color .45s ease var(--d, 0ms); }
+.is-play .site-hl::before { transition:opacity .45s ease var(--d, 0ms); }
+
+/* checks draw on; progress bars fill from the left */
+.site-check path { stroke-dasharray:24; stroke-dashoffset:24; }
+.is-play .site-check path, .is-done .site-check path { stroke-dashoffset:0; }
+.is-play .site-check path { transition:stroke-dashoffset .5s var(--ease-out) var(--d, 0ms); }
+.site-bar { transform-origin:left center; scale:0 1; }
+.is-play .site-bar, .is-done .site-bar { scale:none; }
+.is-play .site-bar { transition:scale 1.4s var(--ease-expo) var(--d, 0ms); }
+
+/* the hero's verdict: Promote draws the eye, is pressed, becomes "Promoted";
+   Reject steps back, the Review badge counts down, a toast confirms */
+.site-swap { display:inline-grid; }
+.site-swap > * { grid-area:1 / 1; text-align:center; }
+.site-swap > :last-child { opacity:0; translate:0 6px; }
+.is-play .site-swap > :first-child, .is-done .site-swap > :first-child { opacity:0; translate:0 -6px; }
+.is-play .site-swap > :last-child, .is-done .site-swap > :last-child { opacity:1; translate:none; }
+.is-play .site-swap > * { transition:opacity .25s ease var(--d, 0ms), translate .4s var(--ease-out) var(--d, 0ms); }
+.is-play .site-dim, .is-done .site-dim { opacity:.4; }
+.is-play .site-dim { transition:opacity .4s ease var(--d, 0ms); }
+.is-play .site-ring { animation:site-ring 1.1s var(--ease-out) var(--ring, 0ms) 2; }
+.is-play .site-ring.site-press { animation:site-ring 1.1s var(--ease-out) var(--ring, 0ms) 2, site-press .32s var(--ease-out) var(--press, 0ms); }
+@keyframes site-ring { from { box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } to { box-shadow:0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent); } }
+@keyframes site-press { 45% { scale:.92; } }
+.site-toast { opacity:0; pointer-events:none; }
+.is-play .site-toast { animation:site-toast 4.6s var(--ease-out) var(--d, 0ms) both; }
+@keyframes site-toast { 0% { opacity:0; translate:0 14px; } 8%, 86% { opacity:1; translate:none; } 100% { opacity:0; translate:0 6px; } }
+
+/* nav: a hairline and soft shadow once the page scrolls under it */
+.site-nav { border-bottom:1px solid transparent; transition:border-color .3s ease, box-shadow .3s ease; }
+.site-nav[data-scrolled] { border-bottom-color:var(--border); box-shadow:0 12px 32px -24px rgba(0,0,0,.4); }
+
+@media (prefers-reduced-motion: reduce) {
+  .site-rv, .site-st { opacity:1 !important; translate:none !important; scale:none !important; }
+  .cnpy-site *, .cnpy-site *::before, .cnpy-site *::after { transition:none !important; animation:none !important; }
+}

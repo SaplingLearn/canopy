@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
 import { parseHash, hashForRoute, type Route } from "./hash";
+import { mountLandingMotion, unmountLandingMotion } from "./landing-motion";
 import {
   TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUS_LABEL, TICKET_STATUSES,
   type TicketCategory, type TicketPriority, type TicketStatus,
@@ -72,6 +73,8 @@ function rerender(): void {
   const scroll = captureScroll(mount, state.screen);
   mount.innerHTML = render(state);
   restoreScroll(mount, scroll, state.screen);
+  if (state.view === "auth" && state.authStep === "login") mountLandingMotion(mount, state.landingSeen);
+  else unmountLandingMotion();
   if (field) {
     const el = mount.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-field="${field}"]`);
     if (el) {
@@ -888,7 +891,22 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         });
       return;
     }
-    case "previewNonMember": state.authStep = "nonmember"; break;
+    case "previewNonMember": state.authStep = "nonmember"; state.signInOpen = false; break;
+    // Landing page (signed out): the Sign in dialog, and in-page jumps. The jumps
+    // scroll instead of setting location.hash — the hash is the route and the
+    // sign-in return-to, and must survive a browse of the landing page.
+    case "openSignIn":
+      state.signInOpen = true;
+      rerender();
+      mount.querySelector<HTMLElement>('[role="dialog"] [data-act="signIn"]')?.focus();
+      return;
+    case "closeSignIn": state.signInOpen = false; break;
+    case "siteJump": {
+      const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      if (arg === "top") window.scrollTo({ top: 0, behavior });
+      else document.getElementById(`site-${arg}`)?.scrollIntoView({ behavior, block: "start" });
+      return;
+    }
     case "backToLogin":
       state.authStep = "login";
       history.replaceState({}, "", "/");
@@ -1743,6 +1761,13 @@ mount.addEventListener("keydown", (e) => {
     case "Escape": e.preventDefault(); state.mention = null; rerender(); break;
     default: break;
   }
+});
+
+// Escape closes the landing page's sign-in dialog, wherever focus is.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !state.signInOpen || state.view !== "auth") return;
+  state.signInOpen = false;
+  rerender();
 });
 
 // ── boot: detect session via /auth/me ────────────────────────────────────────

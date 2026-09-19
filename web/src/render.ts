@@ -18,6 +18,7 @@ import { renderMarkdown } from "./markdown";
 import { extractOutline } from "./outline";
 import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
+import { landingView } from "./landing";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
@@ -44,6 +45,10 @@ export interface Loadable<T> {
 export interface AppState {
   view: "auth" | "app";
   authStep: "login" | "verifying" | "nonmember" | "notinvited" | "onboard";
+  /** The landing page's sign-in dialog (authStep "login" only). */
+  signInOpen: boolean;
+  /** Landing reveal keys that already played (landing-motion.ts records them). */
+  landingSeen: Set<string>;
   deniedEmail: string | null;
   onboard: OnboardState;
   persons: Loadable<PersonSummary[]>;
@@ -183,7 +188,7 @@ export type BackfillSyncState =
 
 export function initialState(): AppState {
   return {
-    view: "auth", authStep: "login",
+    view: "auth", authStep: "login", signInOpen: false, landingSeen: new Set(),
     deniedEmail: null,
     onboard: initialOnboard(),
     persons: { status: "idle", data: [] },
@@ -367,37 +372,13 @@ function notice(text: string): string {
 
 // ── auth states ──────────────────────────────────────────────────────────────
 function authView(s: AppState): string {
+  // Signed out → the landing page; its Sign in opens the provider dialog.
+  if (s.authStep === "login") return landingView({ dark: resolved(s) !== "light", signInOpen: s.signInOpen, seen: s.landingSeen });
   return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px">
-    ${s.authStep === "login" ? loginCard() : ""}
     ${s.authStep === "nonmember" ? nonmemberCard() : ""}
     ${s.authStep === "notinvited" ? notInvitedCard(s.deniedEmail) : ""}
     ${s.authStep === "verifying" ? verifyingCard() : ""}
     ${s.authStep === "onboard" ? onboardView(s.onboard) : ""}
-  </div>`;
-}
-
-function loginCard(): string {
-  return `<div style="width:380px">
-    <div style="display:flex;flex-direction:column;align-items:center;gap:0;margin-bottom:40px">
-      <div style="display:flex;align-items:center;gap:11px">
-        ${logo(30)}
-        <span style="font-size:25px;font-weight:600;letter-spacing:-0.02em">Canopy</span>
-      </div>
-    </div>
-    <div style="border:1px solid var(--border);border-radius:14px;padding:30px;display:flex;flex-direction:column;gap:20px;background:var(--bg)">
-      <div style="font-size:14px;color:var(--fg-70);text-align:center;line-height:1.55">Sign in to continue to the Sapling team workspace.</div>
-      <button data-act="signIn" class="cnpy-accentbtn" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 16px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:14px;font-weight:600">
-        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.21 11.16.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.72-4.04-1.61-4.04-1.61-.55-1.38-1.34-1.75-1.34-1.75-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.23 1.84 1.23 1.07 1.83 2.81 1.3 3.49.99.11-.77.42-1.3.76-1.6-2.67-.3-5.47-1.32-5.47-5.87 0-1.3.47-2.36 1.23-3.19-.12-.3-.53-1.51.12-3.15 0 0 1.01-.32 3.3 1.22a11.5 11.5 0 0 1 6 0c2.29-1.54 3.3-1.22 3.3-1.22.65 1.64.24 2.85.12 3.15.77.83 1.23 1.89 1.23 3.19 0 4.56-2.81 5.57-5.49 5.86.43.37.81 1.1.81 2.22 0 1.6-.01 2.89-.01 3.29 0 .32.22.7.83.58A12.01 12.01 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"></path></svg>
-        Sign in with GitHub
-      </button>
-      <div style="display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40)"><span style="flex:1;height:1px;background:var(--border)"></span>or<span style="flex:1;height:1px;background:var(--border)"></span></div>
-      <button data-act="signInGoogle" class="cnpy-outlinebtn" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:14px;font-weight:600;color:var(--fg)">
-        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5c-.3 1.5-1.1 2.7-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.7z"/><path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.2v3.1C3.2 21.3 7.3 24 12 24z"/><path fill="#FBBC05" d="M5.3 14.3c-.5-1.5-.5-3.1 0-4.6V6.6H1.2c-1.6 3.3-1.6 7.3 0 10.6l4.1-2.9z"/><path fill="#EA4335" d="M12 4.7c1.7 0 3.3.6 4.5 1.7l3.4-3.4C17.9 1.1 15.1 0 12 0 7.3 0 3.2 2.7 1.2 6.6l4.1 3.1c.9-2.9 3.6-5 6.7-5z"/></svg>
-        Continue with Google
-      </button>
-    </div>
-    <div style="text-align:center;margin-top:22px;font-size:12.5px;color:var(--fg-40);line-height:1.5">GitHub for engineers. Google for everyone else on the team, by invitation.</div>
-    <div style="text-align:center;margin-top:18px"><button data-act="previewNonMember" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-40);text-decoration:underline;text-underline-offset:3px">Preview the non-member screen</button></div>
   </div>`;
 }
 
