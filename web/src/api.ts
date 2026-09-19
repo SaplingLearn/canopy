@@ -16,7 +16,7 @@ import type {
 } from "@shared/tickets";
 import type { DashboardData } from "@shared/dashboard";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
-import type { NotificationOutboxRow, NotificationSettingsRow } from "@shared/rows";
+import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
 
 export class Unauthorized extends Error {
   constructor() { super("unauthorized"); }
@@ -379,11 +379,17 @@ export function logout(): Promise<{ ok: true }> {
 export function mintMcpToken(): Promise<{ token: string }> {
   return postJson<{ token: string }>("/auth/mcp-token");
 }
+export async function listMcpTokens(): Promise<McpTokenSummary[]> {
+  return (await getJson<{ tokens: McpTokenSummary[] }>("/auth/mcp-tokens")).tokens;
+}
+export function revokeMcpToken(id: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/auth/mcp-tokens/${id}/revoke`);
+}
 
 // Re-export the row types the UI renders, so screens import shapes from one place.
 export type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow };
 export type { SprintView, SprintDetail, SprintCreate };
 export type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate };
 export type { DashboardData };
-export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow };
+export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary };
 export type { InviteRow, PersonColor };

@@ -65,6 +65,7 @@ describe("hashForRoute", () => {
       { screen: "sprint", ticketId: null, sprintId: 3 },
       { screen: "mywork", ticketId: null, sprintId: null },
       { screen: "settings", ticketId: null, sprintId: null },
+      { screen: "site", ticketId: null, sprintId: null }, // the landing page, reopened from the sidebar logo
     ] as const;
     for (const r of routes) expect(parseHash(hashForRoute(r))).toEqual(r);
   });

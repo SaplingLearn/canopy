@@ -22,7 +22,7 @@ import { landingView } from "./landing";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
-import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow } from "./api";
+import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
 // A docs "space" is a free-form top-level grouping shown as a toggle (e.g.
@@ -31,6 +31,8 @@ export type DocSpace = string;
 
 export type Screen =
   | "mywork" | "feed" | "docs" | "roadmap" | "review" | "maintenance" | "search" | "settings" | "guide" | "unsubscribe"
+  // The landing page reopened from inside the app (sidebar logo). Full-screen, no chrome.
+  | "site"
   // Tickets (Phase 5): the queue, one ticket, the new-ticket form, and a sprint.
   // `sprint` is a Roadmap child — the sidebar highlights Roadmap while it is open.
   | "tickets" | "ticketdetail" | "newticket" | "sprint";
@@ -49,6 +51,8 @@ export interface AppState {
   signInOpen: boolean;
   /** Landing reveal keys that already played (landing-motion.ts records them). */
   landingSeen: Set<string>;
+  /** Where "Back to the app" on the #site landing returns to (the route the logo was clicked from). */
+  siteReturn: import("./hash").Route | null;
   deniedEmail: string | null;
   onboard: OnboardState;
   persons: Loadable<PersonSummary[]>;
@@ -98,6 +102,10 @@ export interface AppState {
   displayName: string;
   revealedToken: string | null;
   tokenCopied: boolean;
+  /** Settings › MCP access tokens: the caller's live tokens (hint only, never the value). */
+  tokens: Loadable<McpTokenSummary[]>;
+  /** The token whose Revoke was clicked once — the second click is the one that revokes. */
+  tokenRevokeArm: number | null;
   // Settings › Profile: the handle rename editor.
   handleEdit: boolean;
   handleDraft: string;
@@ -188,7 +196,7 @@ export type BackfillSyncState =
 
 export function initialState(): AppState {
   return {
-    view: "auth", authStep: "login", signInOpen: false, landingSeen: new Set(),
+    view: "auth", authStep: "login", signInOpen: false, landingSeen: new Set(), siteReturn: null,
     deniedEmail: null,
     onboard: initialOnboard(),
     persons: { status: "idle", data: [] },
@@ -224,6 +232,8 @@ export function initialState(): AppState {
     displayName: "",
     revealedToken: null,
     tokenCopied: false,
+    tokens: { status: "idle", data: [] },
+    tokenRevokeArm: null,
     handleEdit: false,
     handleDraft: "",
     handleCheck: "idle",
@@ -468,10 +478,10 @@ function sidebar(s: AppState): string {
 
   return `<aside class="cnpy-aside">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 14px 14px 16px;min-height:58px">
-      <div style="display:flex;align-items:center;gap:10px;overflow:hidden">
+      <button data-act="goSite" title="About Canopy" style="display:flex;align-items:center;gap:10px;overflow:hidden;padding:0;color:inherit">
         ${logo(24)}
         ${expanded ? `<span style="font-size:18px;font-weight:600;letter-spacing:-0.02em;white-space:nowrap">Canopy</span>` : ""}
-      </div>
+      </button>
       ${expanded ? `<button data-act="toggleCollapse" title="Collapse sidebar" class="cnpy-iconbtn" style="flex:none;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--fg-40)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path><path d="M14.5 9.5 12 12l2.5 2.5"></path></svg>
       </button>` : ""}
@@ -524,7 +534,7 @@ function header(s: AppState): string {
   const titles: Record<Screen, string> = {
     mywork: "My Work", feed: "Feed", docs: "Docs", roadmap: "Roadmap", review: "Review",
     maintenance: "Maintenance", search: "Search", settings: "Settings", guide: "Get Started",
-    unsubscribe: "Unsubscribe",
+    unsubscribe: "Unsubscribe", site: "Canopy",
     // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
     tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
   };
@@ -1237,12 +1247,11 @@ function handleStatusText(check: AppState["handleCheck"]): { text: string; color
   }
 }
 
-/** Settings › Profile: display name, color, and per-provider sign-in (link/unlink).
+/** Settings › Profile: display name, handle, and color.
  *  Pure over AppState — exported for the pure render test. */
 export function profileSection(s: AppState): string {
   const me = s.me;
   const handle = me?.handle ?? "";
-  const last = (me?.identities.length ?? 0) <= 1;
   const handleRow = s.handleEdit ? (() => {
     const st = handleStatusText(s.handleCheck);
     const canSave = s.handleCheck === "available" && s.handleDraft.trim().toLowerCase() !== handle.toLowerCase();
@@ -1259,32 +1268,80 @@ export function profileSection(s: AppState): string {
       </div>
     </div>`;
   })() : `<div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle ${me ? handleTag({ handle, color: me.color }, handle, 12) : handleTag(null, handle, 12)} <button data-act="handleEdit" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-55);text-decoration:underline;text-underline-offset:2px;margin-left:6px">Change</button></div>`;
+  const FIELD_LABEL = "display:block;font-size:13px;font-weight:500;margin-bottom:8px";
+  return `<section class="cnpy-tile">
+    <div style="${SECTION_LABEL}">Profile</div>
+    <div style="display:flex;align-items:flex-start;gap:14px">
+      ${personChip(me ? { handle, name: s.displayName || me.name, color: me.color, avatar_url: me.avatar_url } : null, 48, handle || "?")}
+      <div style="flex:1;min-width:0">
+        <label style="${FIELD_LABEL}">Display name</label>
+        <div style="display:flex;gap:10px">
+          <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;min-width:0;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
+          <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 16px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
+        </div>
+        ${handleRow}
+      </div>
+    </div>
+    <div style="margin-top:20px"><label style="${FIELD_LABEL}">Your color</label>${swatches("setMyColor", me?.color ?? "stone", true)}</div>
+  </section>`;
+}
+
+/** Settings › Account: who you are signed in as (no avatar — Profile, beside it, already
+ *  shows it), Sign out, and the sign-in methods
+ *  (link/unlink per provider — the last identity can't be unlinked).
+ *  Pure over AppState — exported for the pure render test. */
+export function accountSection(s: AppState): string {
+  const me = s.me;
+  const last = (me?.identities.length ?? 0) <= 1;
+  const viaGithub = me?.identities.some((i) => i.provider === "github") ?? false;
   const provRow = (p: "github" | "google", label: string) => {
     const id = me?.identities.find((i) => i.provider === p);
     const btn = id
       ? `<button data-act="unlinkProvider" data-arg="${p}" class="cnpy-ghostbtn" ${last ? "disabled " : ""}style="font-size:12px;color:var(--fg-40);padding:4px 10px;border-radius:6px;border:1px solid var(--border);${last ? "opacity:.45;cursor:default" : ""}">Unlink</button>`
       : `<button data-act="linkProvider" data-arg="${p}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-70);padding:4px 10px;border-radius:6px;border:1px solid var(--border-strong)">Link ${label}</button>`;
-    return `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${label}</b><span style="font-family:var(--mono);font-size:11.5px;color:${id ? "var(--fg-55)" : "var(--fg-40)"}">${id ? esc(id.label) : "not linked"}</span></div>${btn}</div>`;
+    return `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--border)"><div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${label}</b><span style="font-family:var(--mono);font-size:11.5px;color:${id ? "var(--fg-55)" : "var(--fg-40)"}">${id ? esc(id.label) : "not linked"}</span></div>${btn}</div>`;
   };
-  return `<section style="margin-bottom:14px">
-    <div style="${SECTION_LABEL}">Profile</div>
-    <div style="border:1px solid var(--border);border-radius:13px;padding:22px">
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px">
-        ${personChip(me ? { handle, name: s.displayName || me.name, color: me.color, avatar_url: me.avatar_url } : null, 56, handle || "?")}
-        <div style="flex:1;min-width:0">
-          <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Display name</label>
-          <div style="display:flex;gap:10px">
-            <input data-act="setDisplayName" data-field="displayName" value="${attr(s.displayName)}" class="cnpy-input" style="flex:1;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:14px;outline:none" />
-            <button data-act="saveProfile" class="cnpy-accentbtn" style="padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600">Save</button>
-          </div>
-          ${handleRow}
-        </div>
+  return `<section class="cnpy-tile" style="display:flex;flex-direction:column">
+    <div style="${SECTION_LABEL}">Account</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div style="min-width:0">
+        <div style="font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Signed in as ${me ? handleTag({ handle: me.handle, color: me.color }, me.handle, 13) : ""}</div>
+        <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:4px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>${viaGithub ? `Member of <b>${esc(me?.org ?? "")}</b>` : "Signed in with Google"}</div>
       </div>
-      <div style="margin-bottom:22px"><label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Your color</label>${swatches("setMyColor", me?.color ?? "stone", true)}</div>
-      <div style="${SECTION_LABEL};margin-bottom:10px">Sign-in methods <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--fg-40)">· at least one stays linked</span></div>
+      <button data-act="signOut" class="cnpy-signout" style="flex:none;padding:7px 13px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Sign out</button>
+    </div>
+    <div style="margin-top:auto;padding-top:20px">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px">Sign-in methods <span style="font-weight:400;color:var(--fg-40)">· at least one stays linked</span></div>
       ${provRow("github", "GitHub")}${provRow("google", "Google")}
     </div>
   </section>`;
+}
+
+/** Settings › MCP access tokens: one hairline row per live token. Only the hint is ever
+ *  known here — the server keeps a hash — so a row is `canopy_mcp_ab12…`, when it was
+ *  minted and last used, and a two-click Revoke (an agent stops working the moment it lands). */
+export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): string {
+  const note = (text: string) => `<div style="padding:12px 0;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-40)">${text}</div>`;
+  const t = s.tokens;
+  if (t.status === "error") return note(`Couldn't load your tokens${t.error ? ` &mdash; ${esc(t.error)}` : ""}.`);
+  if (t.status !== "ok" && !t.data.length) return note("Loading tokens&hellip;");
+  if (!t.data.length) return note("No tokens yet. Mint one to connect an agent.");
+  const rows = t.data.map((tk) => {
+    const armed = s.tokenRevokeArm === tk.id;
+    const btn = "flex:none;padding:4px 10px;border-radius:6px;font-size:12px";
+    const actions = armed
+      ? `<button data-act="revokeToken" data-arg="${tk.id}" class="cnpy-revoke" style="${btn};font-weight:600;color:var(--red);border:1px solid var(--red)">Revoke</button>
+         <button data-act="revokeTokenCancel" class="cnpy-ghostbtn" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Keep</button>`
+      : `<button data-act="revokeTokenArm" data-arg="${tk.id}" class="cnpy-revoke" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Revoke</button>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)">
+      <div style="flex:1;min-width:0;line-height:1.35">
+        <code style="display:block;font-family:var(--mono);font-size:12.5px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">canopy_mcp_${esc(tk.hint ?? "")}<span style="color:var(--fg-40)">&bull;&bull;&bull;&bull;</span></code>
+        <span style="font-size:11.5px;color:var(--fg-40)">${armed ? "Any agent using it stops working." : `Minted ${esc(relTime(tk.created_at))} &middot; ${tk.last_used_at ? `last used ${esc(relTime(tk.last_used_at))}` : "never used"}`}</span>
+      </div>
+      ${actions}
+    </div>`;
+  }).join("");
+  return `<div class="cnpy-scroll cnpy-set-tokens">${rows}</div>`;
 }
 
 function settingsView(s: AppState): string {
@@ -1295,14 +1352,14 @@ function settingsView(s: AppState): string {
     ["system", "System"],
   ].map(([k, label]) => {
     const sel = s.theme === k;
-    const style = `flex:1;display:flex;flex-direction:column;align-items:center;gap:9px;padding:16px 12px;border-radius:11px;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};background:${sel ? "var(--accent-soft)" : "transparent"};color:${sel ? "var(--accent)" : "var(--fg-70)"}`;
+    const style = `display:flex;align-items:center;justify-content:center;gap:9px;padding:13px 8px;border-radius:11px;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};background:${sel ? "var(--accent-soft)" : "transparent"};color:${sel ? "var(--accent)" : "var(--fg-70)"}`;
     const icon = k === "light"
-      ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"></path></svg>`
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"></path></svg>`
       : k === "dark"
-      ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg>`
       : k === "midnight"
-      ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path><path d="M17 3.2l.55 1.55L19.1 5.3l-1.55.55L17 7.4l-.55-1.55L14.9 5.3l1.55-.55z"></path></svg>`
-      : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`;
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path><path d="M17 3.2l.55 1.55L19.1 5.3l-1.55.55L17 7.4l-.55-1.55L14.9 5.3l1.55-.55z"></path></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`;
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
 
@@ -1322,21 +1379,25 @@ function settingsView(s: AppState): string {
       </div>
     </div>` : "";
 
-  // No GET route for existing tokens — list is empty with a note.
-  const tokenListBody = `<div style="display:flex;align-items:center;gap:11px;padding:15px 18px;font-size:12.5px;color:var(--fg-40)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;opacity:.8"><circle cx="8" cy="15" r="4.5"></circle><path d="m11.2 11.8 7.3-7.3M16 5l3 3M18.5 7.5l-2.2 2.2"></path></svg><span>Tokens are shown once when minted and never stored in readable form, so they can't be listed here.</span></div>`;
+  const tokenList = tokenListBody(s);
 
-  const meLogin = s.me?.handle ?? "";
-  const meOrg = s.me?.org ?? "";
-
-  const hasProvider = (p: "github" | "google") => s.me?.identities.some((i) => i.provider === p) ?? false;
-
-  return `<div style="max-width:680px;margin:0 auto;padding:32px 24px 100px">
+  // Bento on three columns: Profile / Account / tokens across the top — the three tiles
+  // whose natural heights match, so none is stretched hollow — then Email and the
+  // Appearance strip at full width. Nothing sits BESIDE the tall tile: whatever does
+  // gets stretched to its height (canopy.css has the folds).
+  return `<div class="cnpy-set-wrap"><div class="cnpy-set">
     ${profileSection(s)}
 
-    <section style="margin-bottom:14px;margin-top:34px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Appearance</div>
-      <div style="display:flex;gap:12px">${themeCards}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
+    ${accountSection(s)}
+
+    <section class="cnpy-tile" style="display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
+        <div style="${SECTION_LABEL};margin-bottom:0">MCP access tokens</div>
+        <button data-act="mintToken" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Mint new token</button>
+      </div>
+      ${reveal}
+      ${tokenList}
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">A token's value is shown once, when minted. Revoking takes effect immediately.</div>
     </section>
 
     ${emailNotificationsSection({
@@ -1347,30 +1408,12 @@ function settingsView(s: AppState): string {
       emailDraft: s.emailDraft,
     })}
 
-    <section style="margin-bottom:14px;margin-top:34px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">MCP access tokens</div>
-        <button data-act="mintToken" class="cnpy-mintbtn" style="display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Mint new token</button>
-      </div>
-      ${reveal}
-      <div style="border:1px solid var(--border);border-radius:13px;overflow:hidden">${tokenListBody}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">Tokens authorize agents to write to Canopy over MCP. Revoking takes effect immediately.</div>
+    <section class="cnpy-tile cnpy-set-appear">
+      <div style="${SECTION_LABEL}">Appearance</div>
+      <div class="cnpy-set-themes">${themeCards}</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
     </section>
-
-    <section style="margin-top:34px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px">Account</div>
-      <div style="border:1px solid var(--border);border-radius:13px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:13px">
-          <div style="width:38px;height:38px;border-radius:50%;${AVATAR};font-size:12px;font-weight:600;flex:none;overflow:hidden">${s.me?.avatar_url ? `<img src="${attr(s.me.avatar_url)}" width="38" height="38" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />` : esc(initialsOf(meLogin || "?"))}</div>
-          <div>
-            <div style="font-size:13.5px;font-weight:500">${esc(meLogin)}</div>
-            <div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--green);margin-top:3px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>${hasProvider("github") ? `Member of <b>${esc(meOrg)}</b>` : "Signed in with Google"}</div>
-          </div>
-        </div>
-        <button data-act="signOut" class="cnpy-signout" style="padding:9px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13px;font-weight:500">Sign out</button>
-      </div>
-    </section>
-  </div>`;
+  </div></div>`;
 }
 
 // ── my work (personal dashboard) ──────────────────────────────────────────────
@@ -1742,7 +1785,7 @@ function backfillSyncModal(sync: BackfillSyncState): string {
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
   return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
-    ${s.view === "auth" ? authView(s) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
+    ${s.view === "auth" ? authView(s) : s.screen === "site" ? landingView({ dark: resolved(s) !== "light", signInOpen: false, signedIn: true, seen: s.landingSeen }) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
   </div>`;

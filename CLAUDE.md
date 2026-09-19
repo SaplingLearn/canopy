@@ -82,7 +82,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0025_sprints` [`milestones`→`sprints` in place (+ `dates`, `summary`, `urgency`, `lead`, `domain`),
   `milestone_progress`→`sprint_progress` (`milestone_id`→`sprint_id`), `plan_versions.milestones_json`
   →`sprints_json`, roadmap_fts re-keyed `milestone:<id>`→`sprint:<id>`, new `sprint_resources`, and
-  `DROP TABLE milestone_proposals` — the whole agent-proposed-roadmap surface goes with it]).
+  `DROP TABLE milestone_proposals` — the whole agent-proposed-roadmap surface goes with it], then
+  `0026_token_hint` [`mcp_tokens.token_hint` — the clear-text label Settings lists a token by]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
   plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
@@ -92,7 +93,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`).
   Signed out, the app renders the **landing page** (`web/src/landing.ts`, ported from the Claude Design
   `Canopy Site.dc.html`); its nav's Sign in opens the GitHub/Google dialog, and its in-page links scroll
-  rather than set the hash (the hash is the route and the sign-in return-to). `web/src/landing-motion.ts`
+  rather than set the hash (the hash is the route and the sign-in return-to). Signed IN, the sidebar logo
+  reopens the same page as the `site` screen (`#site`): its nav swaps Sign in for "Back to the app", which
+  returns to the route the logo was clicked from; `#site` is never stashed as a sign-in return-to. `web/src/landing-motion.ts`
   plays its scroll reveals; played keys live in `state.landingSeen` so a rerender never replays them.
 - `.claude/skills/` — Claude Code skills: `canopy`, `load-context`, `record-session`, `tickets`, and the
   roadmap/my-work skills `read-plan`, `update-plan`, `my-work`. Described in the Working memory section
@@ -233,7 +236,10 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
   with handle + color); else denied. Link mode (`?link=1` with a session) attaches a second provider in
   Settings; the last identity can't be unlinked.
 - **Bearer token** (agents, `/mcp`): per-person tokens stored hashed (`canopy_mcp_` prefix); the principal
-  is resolved from the bearer. `/mcp` is **bearer-only** — on bad/missing creds it returns a bare `401`
+  is resolved from the bearer. Settings lists a person's live tokens by `token_hint` (the first 4 characters
+  of the random part; the value itself is shown once, at mint) via `GET /auth/mcp-tokens`, and
+  `POST /auth/mcp-tokens/:id/revoke` soft-revokes the caller's OWN token — someone else's id is the same
+  404 as an unknown one. Both are session-cookie routes, never MCP tools. `/mcp` is **bearer-only** — on bad/missing creds it returns a bare `401`
   with NO `WWW-Authenticate` and NO OAuth discovery. A fresh `McpServer` is constructed per request
   (SDK ≥1.26 guards against reuse); `createMcpHandler` is stateless (no Durable Object / McpAgent).
 - **GitHub webhook** (`/webhook/github`, `src/webhook.ts`): a delivery authenticates by an HMAC-SHA256
