@@ -144,9 +144,18 @@ export interface McpTokenRow {
   id: number;
   person: string;
   token_hash: string;
+  token_hint: string | null; // 0026 — first characters of the random part; null before it
   created_at: string;
   last_used_at: string | null;
   revoked: number;
+}
+
+/** What Settings lists for a token: enough to recognise it, nothing to authenticate with. */
+export interface McpTokenSummary {
+  id: number;
+  hint: string | null;
+  created_at: string;
+  last_used_at: string | null;
 }
 
 // The replay ledger (0009). One row per (session_id, item_index) the worker has

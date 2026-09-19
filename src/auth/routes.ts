@@ -8,7 +8,7 @@ import { pkce, randomToken, hmacSeal, hmacUnseal } from "./crypto";
 import { buildAuthorizeUrl, exchangeCode, getUser, getPrimaryEmail, isActiveOrgMember, SAPLING_ORG } from "./github";
 import { buildGoogleAuthorizeUrl, exchangeGoogleCode, verifyGoogleIdToken } from "./google";
 import { createSession, setSessionCookie, readSessionCookie, deleteSession, clearSessionCookie } from "./session";
-import { mintToken } from "./tokens";
+import { mintToken, listTokens, revokeToken } from "./tokens";
 import { getPerson, listIdentities, findIdentity, handleAvailable, createPerson, HandleTakenError, linkIdentity, unlinkIdentity, updateProfile, renamePerson } from "./persons";
 import { run } from "../db";
 import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, ONBOARD_TTL_S, type ProviderProfile, type ForkResult } from "./onboard";
@@ -243,6 +243,12 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
   authApp.post("/mcp-token", async (c) => {
     const { raw } = await mintToken(c.env.DB, c.get("principal").handle);
     return c.json({ token: raw });
+  });
+  authApp.get("/mcp-tokens", async (c) => c.json({ tokens: await listTokens(c.env.DB, c.get("principal").handle) }));
+  authApp.post("/mcp-tokens/:id/revoke", async (c) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || !(await revokeToken(c.env.DB, c.get("principal").handle, id))) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
   });
   return authApp;
 }
