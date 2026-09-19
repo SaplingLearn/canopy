@@ -112,3 +112,8 @@ folders. (The single-server manual path still works:
 > skill files live under `plugins/canopy/skills/`; the in-repo `.claude/skills/*` entries are symlinks
 > into that bundle, so there is a single source of truth and the two can never drift — edit the files
 > under `plugins/canopy/skills/`.
+
+## License
+
+Copyright (C) 2026 Andres Lopez. Canopy is licensed under the GNU Affero General Public License
+v3.0 (`AGPL-3.0-only`); see [`LICENSE`](LICENSE).
