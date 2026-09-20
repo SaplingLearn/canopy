@@ -6,6 +6,7 @@ import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer,
 import { applyEventProgress } from "./tools/progress";
 import { repoEventsFromDelivery } from "./repo/capture";
 import { repoEnvironments } from "./repo/config";
+import { fillFailedJob } from "./repo/github";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
@@ -307,9 +308,10 @@ export async function handleGithubWebhook(
   opts?: {
     summarizer?: Summarizer<PrSummary> | null;
     issueSummarizer?: Summarizer<IssueSummary> | null;
-    // Unused today; Tasks 8 and 11 wire these up for the repo-capture
-    // enrichment (fetching PR/check-run detail off GitHub, scheduling it via
-    // waitUntil so the webhook response itself isn't held up).
+    // Live from Task 8: the failed-job lookup below reads fetchImpl and, when
+    // given, schedules itself via waitUntil so the webhook response isn't held
+    // up (GitHub gives a hook 10s). Task 11 adds a second use (branch-drift
+    // snapshot on a push to an environment branch).
     fetchImpl?: typeof fetch;
     waitUntil?: (p: Promise<unknown>) => void;
   }
@@ -361,7 +363,13 @@ export async function handleGithubWebhook(
     try {
       for (const ev of repoEventsFromDelivery(eventName, payload, repoEnvironments(env))) {
         const res = await ingestRepoEvent(env.DB, ev);
-        if (res.outcome === "written") repo.captured++; else repo.unchanged++;
+        if (res.outcome !== "written") { repo.unchanged++; continue; }
+        repo.captured++;
+        if (ev.kind === "run" && ev.state === "failure" && ev.number && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
+          const job = fillFailedJob(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, ev.number, ev.semantic_key);
+          // Off the response path when the runtime allows; GitHub gives a hook 10s.
+          if (opts?.waitUntil) opts.waitUntil(job); else await job;
+        }
       }
     } catch (e) {
       console.error("repo capture failed", eventName, e);

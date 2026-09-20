@@ -1,7 +1,7 @@
 // Service-token reads of the GitHub API for the repo dashboard. NEVER on the
 // render path: called from the webhook handler (event-triggered) and scheduled().
 import type { DB } from "../db";
-import { first } from "../db";
+import { first, run } from "../db";
 import { ingestRepoEvent } from "../consumer";
 import { putSnapshot } from "./store";
 import type { RepoEnvConfig } from "./config";
@@ -75,4 +75,19 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
   });
 
   return out;
+}
+
+interface GhJobs { jobs: { name: string; conclusion: string | null; steps?: { name: string; conclusion: string | null }[] }[] }
+
+/** Enrichment, not capture: the run row already landed. A failure here costs a label, nothing else. */
+export async function fillFailedJob(db: DB, opts: GhOpts, runId: number, semanticKey: string): Promise<void> {
+  try {
+    const { jobs } = await ghJson<GhJobs>(opts, `/actions/runs/${runId}/jobs?filter=latest&per_page=100`);
+    const job = jobs.find((j) => j.conclusion === "failure" || j.conclusion === "timed_out");
+    if (!job) return;
+    const step = job.steps?.find((s) => s.conclusion === "failure")?.name;
+    await run(db, `UPDATE repo_events SET title = ? WHERE semantic_key = ?`, step ? `${job.name} · ${step}` : job.name, semanticKey);
+  } catch (e) {
+    console.error("fillFailedJob", runId, e);
+  }
 }

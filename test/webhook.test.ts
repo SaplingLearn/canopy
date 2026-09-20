@@ -15,6 +15,7 @@ import issueAssigned from "./fixtures/gh-issue-assigned.json";
 import issueClosed from "./fixtures/gh-issue-closed.json";
 import pushFixture from "./fixtures/gh-push.json";
 import prOpened from "./fixtures/gh-pr-opened.json";
+import workflowRun from "./fixtures/gh-workflow-run.json";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { IssueSummaryRow } from "@shared/rows";
 import type { RepoEventRow } from "../src/repo/types";
@@ -43,7 +44,7 @@ async function postWebhook(
   eventName: string,
   payload: unknown,
   e: Env = env,
-  opts?: { summarizer?: Summarizer<PrSummary> | null; issueSummarizer?: Summarizer<IssueSummary> | null }
+  opts?: { summarizer?: Summarizer<PrSummary> | null; issueSummarizer?: Summarizer<IssueSummary> | null; fetchImpl?: typeof fetch }
 ): Promise<Response> {
   const body = JSON.stringify(payload);
   const sig = await sign(SECRET, body);
@@ -293,5 +294,28 @@ describe("handleGithubWebhook — repo capture runs beside the My Work capture",
   it("an unhandled event name is still verified-then-ignored", async () => {
     const res = await postWebhook("star", { action: "created" });
     expect(await res.json()).toEqual({ ok: true, ignored: true });
+  });
+
+  it("a failed workflow_run is enriched with the failing job title (service token + repo present)", async () => {
+    const jobs = { jobs: [
+      { name: "lint", conclusion: "success", steps: [] },
+      { name: "e2e (browser lane)", conclusion: "failure", steps: [{ name: "Checkout", conclusion: "success" }, { name: "Run e2e suite", conclusion: "failure" }] },
+    ] };
+    const fetchImpl = (async (u: RequestInfo | URL) => {
+      expect(String(u)).toBe("https://api.github.com/repos/o/r/actions/runs/35501310333/jobs?filter=latest&per_page=100");
+      return new Response(JSON.stringify(jobs), { status: 200 });
+    }) as typeof fetch;
+    await postWebhook("workflow_run", workflowRun, { ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r" }, { fetchImpl });
+    const row = await all<{ title: string | null }>(env.DB, `SELECT title FROM repo_events WHERE kind = 'run'`);
+    expect(row).toEqual([{ title: "e2e (browser lane) · Run e2e suite" }]);
+  });
+
+  it("without GITHUB_SERVICE_TOKEN, a failed run row lands with no title and no fetch is attempted", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => { calls++; throw new Error("must not be called"); }) as typeof fetch;
+    await postWebhook("workflow_run", workflowRun, env, { fetchImpl });
+    expect(calls).toBe(0);
+    const row = await all<{ title: string | null }>(env.DB, `SELECT title FROM repo_events WHERE kind = 'run'`);
+    expect(row).toEqual([{ title: null }]);
   });
 });
