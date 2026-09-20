@@ -62,6 +62,42 @@ describe("refreshBranches", () => {
     ]);
   });
 
+  // M11: the fresh slice reserved room for `Math.min(3, stale.length)` rows but
+  // appended only the stale-and-UNMERGED ones, so a repo whose stale branches
+  // are all merged lost a fresh row for nothing. Reserve by what is appended.
+  it("fills all eight rows when the stale branches are merged and nothing trails", async () => {
+    const fresh = (i: number) => node(`fresh/${i}`, new Date(NOW - i * 60_000).toISOString(), 0, 1);
+    const pages = [{
+      pageInfo: { hasNextPage: false, endCursor: null },
+      // 9 fresh branches, plus one stale-but-MERGED branch (ahead 0 after the invert).
+      nodes: [...Array.from({ length: 9 }, (_, i) => fresh(i + 1)), node("stale/merged", "2026-08-01T00:00:00Z", 4, 0)],
+    }];
+    let call = 0;
+    const fetchImpl = (async () => new Response(JSON.stringify({ data: { repository: { refs: pages[call++] } } }), { status: 200 })) as typeof fetch;
+
+    await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS, NOW);
+    const snap = (await getSnapshot<RepoBranches>(env.DB, "branches"))!.data;
+    expect(snap).toMatchObject({ active: 9, stale: 1 });
+    expect(snap.rows.map((r) => r.name)).toEqual(["fresh/1", "fresh/2", "fresh/3", "fresh/4", "fresh/5", "fresh/6", "fresh/7", "fresh/8"]);
+  });
+
+  // M10: 5 pages is a ceiling, not a target — a repo past it would silently
+  // report a partial branch list as if it were the whole one. Throw instead, so
+  // the arm lands in reconcileRepo's `failed[]` and the last good snapshot stands.
+  it("throws rather than under-reporting when the refs still have a next page after the last one", async () => {
+    await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl: (async () => new Response(JSON.stringify({ data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node("feature/x", "2026-09-19T00:00:00Z", 0, 1)] } } } }), { status: 200 })) as typeof fetch }, ENVS, NOW);
+    const before = await getSnapshot<RepoBranches>(env.DB, "branches");
+
+    let pages = 0;
+    const endless = (async () => {
+      pages++;
+      return new Response(JSON.stringify({ data: { repository: { refs: { pageInfo: { hasNextPage: true, endCursor: `c${pages}` }, nodes: [node(`feature/p${pages}`, "2026-09-19T00:00:00Z", 0, 1)] } } } }), { status: 200 });
+    }) as typeof fetch;
+    await expect(refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl: endless }, ENVS, NOW)).resolves.toBeUndefined();
+    expect(pages).toBe(5); // the ceiling still bounds the requests
+    expect(await getSnapshot<RepoBranches>(env.DB, "branches")).toEqual(before);
+  });
+
   it("keeps the previous snapshot when the refs query fails, and never throws", async () => {
     await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl: (async () => new Response(JSON.stringify({ data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node("feature/x", "2026-09-19T00:00:00Z", 0, 1)] } } } }), { status: 200 })) as typeof fetch }, ENVS, NOW);
     const before = await getSnapshot<RepoBranches>(env.DB, "branches");

@@ -74,6 +74,11 @@ export async function pushRowsSince(db: DB, sinceIso: string): Promise<RepoEvent
 
 /** How many dots one deploy strip shows. */
 const DEPLOY_HISTORY = 10;
+/** How far back the strip looks. `deploy` rows — and the `check` rows that ARE
+ *  frontend deploys — are deliberately never pruned (src/repo/store.ts), so
+ *  this read needs its own bound or it groups the whole table forever; a deploy
+ *  older than this is not part of "recent deploy history" by any reading. */
+const DEPLOY_HISTORY_DAYS = 90;
 
 /** Only these run conclusions are decisive — a cancelled or skipped run says
  *  nothing about whether CI is healthy, so it is not in the denominator. */
@@ -139,7 +144,8 @@ async function pushersFor(db: DB, shas: string[]): Promise<Map<string, string>> 
  *  `check` rows the capture tagged with an env + `part='frontend'` (a Workers
  *  Builds run on that environment's own branch). Two queries total, however
  *  many environments there are. */
-export async function deployHistories(db: DB, limit: number = DEPLOY_HISTORY): Promise<Map<string, RepoDeploy[]>> {
+export async function deployHistories(db: DB, now: number = Date.now(), limit: number = DEPLOY_HISTORY): Promise<Map<string, RepoDeploy[]>> {
+  const since = new Date(now - DEPLOY_HISTORY_DAYS * 86_400_000).toISOString();
   const rows = await all<{ env: string; part: RepoPart; sha: string | null; states: string; at: string; actor: string | null }>(db,
     // One deployment / check run = several status rows, so fold by `number`
     // FIRST and take the per-strip window over the folded groups.
@@ -149,8 +155,9 @@ export async function deployHistories(db: DB, limit: number = DEPLOY_HISTORY): P
               ROW_NUMBER() OVER (PARTITION BY env, part ORDER BY MIN(occurred_at) DESC) AS rn
          FROM repo_events
         WHERE kind IN ('deploy', 'check') AND env IS NOT NULL AND part IS NOT NULL
+          AND occurred_at > ?
         GROUP BY env, part, number
-     ) WHERE rn <= ? ORDER BY env, part, started ASC`, limit);
+     ) WHERE rn <= ? ORDER BY env, part, started ASC`, since, limit);
   const pushers = await pushersFor(db, rows.map((r) => r.sha ?? ""));
   const out = new Map<string, RepoDeploy[]>();
   for (const r of rows) {

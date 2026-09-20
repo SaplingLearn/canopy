@@ -123,8 +123,16 @@ describe("non-decisive conclusions", () => {
       deploy(1, "stale", "a", 300), deploy(2, "action_required", "b", 200),
       deploy(3, "neutral", "c", 100), deploy(4, "skipped", "d", 50),
     ]);
-    const strips = await deployHistories(env.DB);
+    const strips = await deployHistories(env.DB, NOW);
     expect(strips.get("staging:backend")!.map((d) => [d.sha, d.result])).toEqual([["a", "cancel"], ["b", "cancel"]]);
+  });
+
+  // M14: `deploy` / `check`-as-deploy rows are never pruned, so the strip's
+  // read needs its own bound — 90 days, like `recentPrRows`.
+  it("ignores a deploy older than 90 days", async () => {
+    await put([deploy(1, "success", "old", 91 * 24 * 60), deploy(2, "success", "new", 60)]);
+    const strips = await deployHistories(env.DB, NOW);
+    expect(strips.get("staging:backend")!.map((d) => d.sha)).toEqual(["new"]);
   });
 
   it("neutral and skipped checks are a pass; error joins failure and timed_out as a fail", () => {

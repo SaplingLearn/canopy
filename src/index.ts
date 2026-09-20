@@ -51,10 +51,12 @@ export default {
   // Dispatched by cron expression (see wrangler.toml [triggers]):
   //  • the two notification triggers → the digest runner, gated in code by
   //    notification_settings (send_hour + timezone) at fire time;
-  //  • the repo trigger (every 10 minutes) → handleRepoCron (src/repo/cron.ts):
-  //    environment health pings on every tick, and — every 6th hour — the
-  //    sprint-progress cache backstop, the GitHub reconcile
-  //    (deploys/checks/runs/branches/drift/open-PRs), and the capture prune.
+  //  • the repo trigger (every 10 minutes) → handleRepoCron (src/repo/cron.ts),
+  //    which spreads ONE heavy job per invocation across the ticks: health
+  //    pings every tick; the hourly-polls slot at :00 (empty today); and, every
+  //    6th hour, the sprint-progress cache backstop at :10, the GitHub reconcile
+  //    (deploys/checks/runs/branches/drift/open-PRs) at :20 and the capture
+  //    prune at :30 — see the subrequest budget at that dispatcher.
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     await ensureNotificationPolicySeeded(env.DB).catch(() => undefined);
     if (controller.cron === DAILY_CRON || controller.cron === WEEKLY_CRON) {

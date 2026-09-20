@@ -94,15 +94,18 @@ describe("scheduled() dispatch (local mode)", () => {
     expect(await outbox()).toHaveLength(1);
   });
 
-  it("the repo cron trigger (fired at a 6-hourly tick, its busiest) never runs digests", async () => {
+  it("the repo cron trigger (fired at its reconcile tick, the busiest) never runs digests", async () => {
     await user("AndresL230", "andres@example.com");
     await pendingDecision();
-    // REPO_ENVIRONMENTS unset here: scheduled() dispatches this cron to
-    // handleRepoCron with no fetchImpl seam (the real Worker uses the global
-    // fetch), so an empty env list keeps this test from pinging the real
-    // staging/production URLs — handleRepoCron itself is covered end-to-end,
-    // with an injected fetchImpl, in test/repo-cron.test.ts.
-    await worker.scheduled({ cron: REPO_CRON, scheduledTime: FRI_8_ET.getTime(), noRetry() {} }, { ...localEnv(), REPO_ENVIRONMENTS: undefined }, ctx);
+    // :20 of a 6-hourly hour is the reconcile slot (src/repo/cron.ts) — the
+    // heaviest tick, and the one that shares a wall-clock hour with the daily
+    // digest candidate. REPO_ENVIRONMENTS unset here: scheduled() dispatches
+    // this cron to handleRepoCron with no fetchImpl seam (the real Worker uses
+    // the global fetch), so an empty env list keeps this test from pinging the
+    // real staging/production URLs — handleRepoCron itself is covered
+    // end-to-end, with an injected fetchImpl, in test/repo-cron.test.ts.
+    const reconcileTick = new Date("2026-09-11T12:20:00.000Z").getTime();
+    await worker.scheduled({ cron: REPO_CRON, scheduledTime: reconcileTick, noRetry() {} }, { ...localEnv(), REPO_ENVIRONMENTS: undefined }, ctx);
     expect(await outbox()).toHaveLength(0);
   });
 });

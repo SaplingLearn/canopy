@@ -1,4 +1,4 @@
-// One cron trigger, three cadences, dispatched here by the minute/hour of the
+// One cron trigger, several cadences, dispatched here by the minute/hour of the
 // fire time (cron expressions are static UTC — the cadence lives in code, not
 // in wrangler.toml). This replaced the old "0 */6 * * *" progress-only
 // trigger, so the trigger count stays at three (Cloudflare bills per Worker).
@@ -11,9 +11,34 @@ import { pruneRepoCapture } from "./store";
 
 export const REPO_CRON = "*/10 * * * *";
 
+/**
+ * The repo trigger's dispatcher. REPO_CRON gives six ticks an hour and the jobs
+ * are spread ACROSS them — ONE heavy job per invocation, never stacked.
+ *
+ * Cloudflare caps a Worker invocation at 50 SUBREQUESTS (outbound `fetch`; D1
+ * calls do not count) on the free plan, so the budget, counted from the code:
+ *
+ *   every tick   health pings — 2 per environment (`pingHealth`), 4 today.
+ *   :00          the hourly-polls slot. EMPTY today; Phase 5 fills it, and
+ *                nothing else may run on this tick.
+ *   :10 (h%6)    `recomputeAllProgress` — UNBOUNDED: `fetchGithubRefProgress`
+ *                issues one request per issue number of every array-ref
+ *                sprint, so it gets an invocation to itself.
+ *   :20 (h%6)    `reconcileRepo` — worst case 17 + 2N requests for N
+ *                environments (21 today): 2 PR lists + 1 pre-capture commit
+ *                window + 1 GraphQL deployments + 1 workflow-run list + ≤5 job
+ *                lookups + 5 GraphQL branch pages + 2 drift compares + 2 per
+ *                environment (head commit, head checks).
+ *   :30 (h%6)    `pruneRepoCapture` — D1 only, no subrequests.
+ *
+ * Health (4) + the heaviest of those (21) leaves ample headroom; stacking all
+ * three on one tick did not, and the reconcile is what died.
+ */
 export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?: typeof fetch): Promise<void> {
   const envs = repoEnvironments(env);
   const when = new Date(scheduledTime);
+  const minute = when.getUTCMinutes();
+  const hour = when.getUTCHours();
   const safely = async (label: string, fn: () => Promise<unknown>) => {
     try {
       await fn();
@@ -25,22 +50,30 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
   // Every tick: a dead target or a bad token costs one data point, never the
   // cron — pingHealth itself never throws.
   await safely("health", () => pingHealth(env.DB, envs, scheduledTime, fetchImpl));
-  if (when.getUTCMinutes() !== 0) return;
 
-  // hourly polls land here in a later phase
+  if (minute === 0) {
+    // hourly polls land here in a later phase — and NOTHING else may join this
+    // tick: the slot exists so Phase 5's pollers get an invocation of their own.
+    return;
+  }
 
-  if (when.getUTCHours() % 6 !== 0) return;
-  if (env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
-    const gh = { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl };
-    // The progress backstop this trigger has always run.
-    await safely("progress", () => recomputeAllProgress(env.DB, gh));
-    // reconcileRepo already covers drift and branches as arms (and writes
-    // env_heads) — calling refreshDrift/refreshBranches here too would double
-    // the requests, not add coverage.
+  if (hour % 6 !== 0) return;
+  const gh = env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO
+    ? { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl }
+    : null;
+
+  // The progress backstop this trigger has always run — on its own invocation.
+  if (minute === 10 && gh) await safely("progress", () => recomputeAllProgress(env.DB, gh));
+
+  // reconcileRepo already covers drift and branches as arms (and writes
+  // env_heads) — calling refreshDrift/refreshBranches here too would double
+  // the requests, not add coverage.
+  if (minute === 20 && gh) {
     await safely("reconcile", async () => {
       const res = await reconcileRepo(env.DB, gh, envs, scheduledTime);
       if (res.failed.length) console.error("repo cron reconcile: arms failed", res.failed);
     });
   }
-  await safely("prune", () => pruneRepoCapture(env.DB, scheduledTime));
+
+  if (minute === 30) await safely("prune", () => pruneRepoCapture(env.DB, scheduledTime));
 }

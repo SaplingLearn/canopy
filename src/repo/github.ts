@@ -1,7 +1,7 @@
 // Service-token reads of the GitHub API for the repo dashboard. NEVER on the
 // render path: called from the webhook handler (event-triggered) and scheduled().
 import type { DB } from "../db";
-import { all, first, run } from "../db";
+import { fanOut, first, run } from "../db";
 import { ingestRepoEvent } from "../consumer";
 import { putSnapshot } from "./store";
 import { untitledFailedRuns } from "./reads";
@@ -307,14 +307,15 @@ async function computeDrift(db: DB, opts: GhOpts, envs: RepoEnvConfig[]): Promis
     if (m) byPr.set(Number(m[1]), [...(byPr.get(Number(m[1])) ?? []), c]);
     else direct.push(c);
   }
+  // GitHub's compare returns up to 250 commits, so this id list can far exceed
+  // D1's 100-BOUND-PARAMETER ceiling — past it the statement throws `too many
+  // SQL variables` and the whole drift snapshot is lost. Fan out in chunks like
+  // every sibling id-list read (src/db.ts).
   const numbers = [...byPr.keys()];
-  const titles = numbers.length
-    ? await all<{ number: number; title: string | null; actor_login: string | null }>(
-        db,
-        `SELECT number, MAX(title) AS title, MAX(actor_login) AS actor_login FROM repo_events WHERE kind = 'pr' AND number IN (${numbers.map(() => "?").join(",")}) GROUP BY number`,
-        ...numbers
-      )
-    : [];
+  const titles = await fanOut<{ number: number; title: string | null; actor_login: string | null }>(
+    db, numbers,
+    (p) => `SELECT number, MAX(title) AS title, MAX(actor_login) AS actor_login FROM repo_events WHERE kind = 'pr' AND number IN (${p}) GROUP BY number`
+  );
 
   const groups: RepoDriftGroup[] = [];
   for (const [number, commits] of [...byPr.entries()].sort((a, b) => b[0] - a[0])) {
@@ -332,6 +333,13 @@ async function computeDrift(db: DB, opts: GhOpts, envs: RepoEnvConfig[]): Promis
     groups.push({ tag: "BEHIND", kind: "behind", title: `Only on ${base} — not yet on ${head}`, meta: plural(behind.commits.length, "commit"), commits: newestFirst(behind.commits.map(toCommit)) });
   }
 
+  // `ahead`/`behind` are GitHub's own TOTALS, while `groups` is built from the
+  // commits the compare actually returned — and that list is capped at 250. On
+  // a bigger divergence the strip's header stays TRUTHFUL ("main is 612 commits
+  // ahead") while the expanded breakdown below it covers only the newest 250:
+  // partial, never wrong. Deliberately not reconciled into a smaller header,
+  // which would under-report the real gap; and no DTO change, because nothing
+  // on screen claims the breakdown is exhaustive.
   const drift: RepoDrift = { head, base, ahead: ahead.ahead_by, behind: ahead.behind_by, groups };
   await putSnapshot(db, "drift", drift);
 }
@@ -377,6 +385,8 @@ const STALE_DAYS = 14;
  *  of the stalest-but-unmerged (`ahead > 0`) ones — the ones worth deleting. A
  *  fully-merged stale branch (`ahead: 0`) is not worth a row; it is just gone. */
 const BRANCH_ROWS = 8;
+/** Pages of 100 refs the branches query will walk before giving up (below). */
+const BRANCH_PAGES = 5;
 
 /** Computes and stores the branches snapshot. THROWS on any GitHub failure;
  *  the never-throwing `refreshBranches` wrapper below is what
@@ -387,14 +397,21 @@ async function computeBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now:
   const skip = new Set(envs.map((e) => e.branch));
   const nodes: RefNode[] = [];
   let after: string | null = null;
-  for (let page = 0; page < 5; page++) { // 500 branches is a ceiling, not a target
+  let truncated = false;
+  for (let page = 0; page < BRANCH_PAGES; page++) { // 500 branches is a ceiling, not a target
     const resp: GqlRefs = await ghGraphql<GqlRefs>(opts, REFS_QUERY, { owner, name, head, after });
     const refs = resp?.repository?.refs;
     if (!refs) throw new Error("graphql: no refs");
     nodes.push(...refs.nodes.filter((n): n is RefNode => n !== null));
-    if (!refs.pageInfo.hasNextPage) break;
+    truncated = refs.pageInfo.hasNextPage;
+    if (!truncated) break;
     after = refs.pageInfo.endCursor;
   }
+  // Past the ceiling the counts and the "stalest branches" pick would describe
+  // an arbitrary 500-branch prefix while READING as the whole repo. Throw: the
+  // arm lands in reconcileRepo's `failed[]` and the last good snapshot stands,
+  // which is the same contract every other failure here has.
+  if (truncated) throw new Error(`graphql: more than ${BRANCH_PAGES * 100} branches — refs list truncated`);
   const cutoff = new Date(now - STALE_DAYS * DAY).toISOString();
   const rows = nodes
     .filter((n) => !skip.has(n.name) && n.target?.committedDate)
@@ -414,7 +431,10 @@ async function computeBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now:
   // three OLDEST stale-and-unmerged branches) and reverse it so the single
   // most-overdue branch leads the trailing group.
   const worthDeleting = stale.filter((r) => r.ahead > 0).slice(-3).reverse();
-  const shown = [...fresh.slice(0, BRANCH_ROWS - Math.min(3, stale.length)), ...worthDeleting];
+  // Reserve by what is actually APPENDED, not by how many stale branches exist:
+  // a repo whose stale branches are all merged (`ahead: 0`) appends none of
+  // them, and reserving for them under-filled the list for nothing.
+  const shown = [...fresh.slice(0, BRANCH_ROWS - worthDeleting.length), ...worthDeleting];
   const data: RepoBranches = { active: fresh.length, stale: stale.length, rows: shown };
   await putSnapshot(db, "branches", data);
 }

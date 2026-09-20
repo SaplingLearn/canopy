@@ -34,6 +34,28 @@ describe("refreshDrift", () => {
     expect(snap?.data.groups[0].meta).toBe("lpcooper-arch · 2 commits");
   });
 
+  // F2: the PR-title lookup binds one parameter PER PR NUMBER, and GitHub's
+  // compare returns up to 250 commits — past D1's 100-bound-parameter ceiling
+  // the whole statement throws `too many SQL variables` and the snapshot is
+  // lost. It must fan out (src/db.ts `fanOut`) like every sibling read.
+  it("chunks the PR-title lookup over more than 100 squash merges in one compare", async () => {
+    const numbers = Array.from({ length: 120 }, (_, i) => 100 + i);
+    await ingestRepoEvent(env.DB, { semantic_key: "gh:prs:219:opened:x", kind: "pr", number: 219, state: "merged", title: "The hundred-and-twentieth", actor_login: "meilin", raw: "{}", provenance: "webhook", occurred_at: "2026-09-20T08:00:00Z" });
+    const commits = numbers.map((n, i) => c(`sha${n}`, `change ${n} (#${n})`, new Date(Date.parse("2026-09-20T00:00:00Z") + i * 60_000).toISOString()));
+    const fetchImpl = (async (u: RequestInfo | URL) => {
+      if (String(u).endsWith("/compare/production...main")) return new Response(JSON.stringify({ ahead_by: commits.length, behind_by: 0, commits }), { status: 200 });
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+
+    await refreshDrift(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS);
+    const snap = await getSnapshot<RepoDrift>(env.DB, "drift");
+    expect(snap?.data.groups).toHaveLength(120);
+    // Groups are newest PR number first, and the one PR Canopy knows about
+    // carries its captured title/author — proof every chunk was queried.
+    expect(snap?.data.groups[0]).toMatchObject({ tag: "#219", title: "The hundred-and-twentieth", meta: "meilin · 1 commit" });
+    expect(snap?.data.groups[119]).toMatchObject({ tag: "#100", title: "change 100 (#100)" });
+  });
+
   it("keeps the previous snapshot when GitHub fails", async () => {
     const fetchImpl = (async () => new Response("no", { status: 500 })) as typeof fetch;
     await expect(refreshDrift(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS)).resolves.toBeUndefined();
