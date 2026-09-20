@@ -278,7 +278,10 @@ function codeTab(p: RepoProps): string {
     <div style="display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--fg-40)"><span>${esc(fmt(b.days[0].date))}</span><span>${esc(fmt(mid.date))}</span><span>${esc(fmt(b.days[b.days.length - 1].date))}</span></div>`;
   });
 
-  const prsLive = okData(p, (d) => d.prs) !== null;
+  const prRows = okData(p, (d) => d.prs);
+  const prsLive = prRows !== null;
+  // The header names what's actually shown, not the sample flag — a captured list can include OPEN PRs.
+  const prsOpen = prRows ? prRows.some((r) => r.state !== "merged" && r.state !== "closed") : false;
   const prs = sec(p, (d) => d.prs, { nc: "Pull requests aren't connected.", empty: "No pull requests captured yet.", lines: 4 }, (rows) => rows.map((r) => prRow(r, now)).join(""));
 
   const br = okData(p, (d) => d.branches);
@@ -296,7 +299,7 @@ function codeTab(p: RepoProps): string {
       ${bars}
     </div>
     <div ${rise(2, `display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:13px 20px;${TOP};border-bottom:1px solid var(--border)`)}>
-      <span style="${LABEL}">Pull requests — ${p.repo.data?.sample ? "open &amp; recent" : "recently closed"}</span>
+      <span style="${LABEL}">Pull requests — ${prsOpen ? "open &amp; recent" : "recently closed"}</span>
       <span style="font-size:11px;color:var(--fg-40);white-space:nowrap">sorted by last updated</span>
     </div>
     <div ${rise(3)}>${prsLive ? prs : `<div style="padding:6px 20px;border-bottom:1px solid var(--border)">${prs}</div>`}</div>
@@ -469,7 +472,7 @@ function planningTab(p: RepoProps): string {
   });
   const sprintLive = okData(p, (d) => d.sprint) !== null;
 
-  const contributors = sec(p, (d) => d.contributors, { nc: "Contributors aren't connected.", empty: "No merges or closes this week.", lines: 4 }, (rows) => {
+  const contributors = sec(p, (d) => d.contributors, { nc: "Contributors aren't connected.", empty: "No pushes, merges or reviews this week.", lines: 4 }, (rows) => {
     const max = Math.max(1, ...rows.map((r) => r.pushes + r.merged + r.reviews));
     return rows.map((r, i) => {
       const color = r.person.color ? `var(--p-${r.person.color})` : "var(--fg-40)";

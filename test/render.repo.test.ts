@@ -49,7 +49,7 @@ describe("repoView — section states", () => {
   it("shows 'Nothing here yet' for a connected section with no rows", () => {
     const html = repoView(props({ tab: "planning" }));
     expect(html).toContain("No sprint is active");
-    expect(html).toContain("No merges or closes this week.");
+    expect(html).toContain("No pushes, merges or reviews this week.");
   });
 
   it("first load is skeletons; a failed first load is an error with Retry", () => {
@@ -85,6 +85,18 @@ describe("repoView — live content", () => {
     expect(html).not.toContain("<img src=x");
     expect(html).not.toContain("javascript:");
     expect(html).toContain("MERGED");
+  });
+
+  it("names the PR-list header from what's actually shown, not the sample flag", () => {
+    const prRow = (state: "review" | "merged") => ({
+      number: 1, title: "PR", url: "https://github.com/o/r/pull/1",
+      author: { login: "x", handle: null, name: null, color: null }, branch: "feat/x", state, checks: null, at: new Date().toISOString(),
+    });
+    const open = live({ prs: { status: "ok", data: [prRow("review")] } });
+    expect(repoView(props({ tab: "code", repo: { status: "ok", data: open } }))).toContain("Pull requests — open &amp; recent");
+
+    const closed = live({ prs: { status: "ok", data: [prRow("merged")] } });
+    expect(repoView(props({ tab: "code", repo: { status: "ok", data: closed } }))).toContain("Pull requests — recently closed");
   });
 
   it("draws one bar per day and scales them to the busiest", () => {
