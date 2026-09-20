@@ -43,14 +43,26 @@ describe("snapshots and metrics", () => {
     expect(await getSnapshot(env.DB, "nope")).toBeNull();
   });
 
-  it("a metric point is unique per (metric, env, part, at)", async () => {
+  // M9: `at` is compared as a RAW STRING by every read (`ORDER BY at`,
+  // `at >= ?`), so the write seam normalises it — one `toISOString()` shape for
+  // every writer, present and future.
+  it("a metric point is unique per (metric, env, part, at), stored in one normalised format", async () => {
     const m = { metric: "health_ms", env: "staging", part: "backend", value: 212, at: "2026-09-20T10:00:00Z" };
     await putMetric(env.DB, m);
     await putMetric(env.DB, { ...m, value: 999 }); // a double-fired cron: first write stands
     await putMetric(env.DB, { ...m, at: "2026-09-20T10:10:00Z", value: 148 });
     expect(await metricSeries(env.DB, "health_ms", "staging", "backend", "2026-09-20T00:00:00Z"))
-      .toEqual([{ at: "2026-09-20T10:00:00Z", value: 212 }, { at: "2026-09-20T10:10:00Z", value: 148 }]);
-    expect(await latestMetric(env.DB, "health_ms", "staging", "backend")).toEqual({ at: "2026-09-20T10:10:00Z", value: 148 });
+      .toEqual([{ at: "2026-09-20T10:00:00.000Z", value: 212 }, { at: "2026-09-20T10:10:00.000Z", value: 148 }]);
+    expect(await latestMetric(env.DB, "health_ms", "staging", "backend")).toEqual({ at: "2026-09-20T10:10:00.000Z", value: 148 });
+  });
+
+  it("the same instant written in two formats is ONE row, and an unparseable `at` is skipped", async () => {
+    const m = { metric: "health_up", env: "staging", part: "backend", value: 1 };
+    await putMetric(env.DB, { ...m, at: "2026-09-20T10:00:00Z" });
+    await putMetric(env.DB, { ...m, at: "2026-09-20T10:00:00.000Z" });
+    await putMetric(env.DB, { ...m, at: "2026-09-20T12:00:00+02:00" }); // the same instant again
+    await putMetric(env.DB, { ...m, at: "not a date" });
+    expect(await all<{ at: string }>(env.DB, `SELECT at FROM repo_metrics`)).toEqual([{ at: "2026-09-20T10:00:00.000Z" }]);
   });
 
   it("prune drops old pings and check runs, keeps slow metrics and deploys", async () => {
@@ -63,5 +75,20 @@ describe("snapshots and metrics", () => {
     await pruneRepoCapture(env.DB, now);
     expect((await all<{ metric: string }>(env.DB, `SELECT metric FROM repo_metrics`)).map((r) => r.metric)).toEqual(["coverage"]);
     expect((await all<{ kind: string }>(env.DB, `SELECT kind FROM repo_events`)).map((r) => r.kind)).toEqual(["deploy"]);
+  });
+
+  // P2 (Task 13 parked finding): a FRONTEND DEPLOY is a `check` row carrying
+  // `part = 'frontend'` (a Workers Builds check run), while backend deploys are
+  // `deploy` rows kept forever. Pruning every old `check` row regardless of
+  // `part` would age out the frontend dot strip asymmetrically — only a
+  // `part IS NULL` (a plain CI check, not a deploy record) may be pruned.
+  it("keeps an old frontend-deploy check row (part='frontend'), prunes a plain CI check (part=null)", async () => {
+    const now = Date.parse("2026-09-20T12:00:00Z");
+    const old = "2026-07-01T00:00:00Z";
+    await ingestRepoEvent(env.DB, push({ semantic_key: "plain-ci", kind: "check", part: null, occurred_at: old }));
+    await ingestRepoEvent(env.DB, push({ semantic_key: "frontend-deploy", kind: "check", env: "staging", part: "frontend", occurred_at: old }));
+    await pruneRepoCapture(env.DB, now);
+    const kept = await all<{ semantic_key: string }>(env.DB, `SELECT semantic_key FROM repo_events`);
+    expect(kept.map((r) => r.semantic_key)).toEqual(["frontend-deploy"]);
   });
 });

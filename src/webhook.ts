@@ -6,7 +6,7 @@ import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer,
 import { applyEventProgress } from "./tools/progress";
 import { repoEventsFromDelivery } from "./repo/capture";
 import { repoEnvironments } from "./repo/config";
-import { fillFailedJob } from "./repo/github";
+import { fillFailedJob, refreshDrift } from "./repo/github";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
@@ -310,8 +310,8 @@ export async function handleGithubWebhook(
     issueSummarizer?: Summarizer<IssueSummary> | null;
     // Live from Task 8: the failed-job lookup below reads fetchImpl and, when
     // given, schedules itself via waitUntil so the webhook response isn't held
-    // up (GitHub gives a hook 10s). Task 11 adds a second use (branch-drift
-    // snapshot on a push to an environment branch).
+    // up (GitHub gives a hook 10s). Task 11 adds a second use: the branch-drift
+    // snapshot refresh on a push to an environment branch.
     fetchImpl?: typeof fetch;
     waitUntil?: (p: Promise<unknown>) => void;
   }
@@ -360,8 +360,11 @@ export async function handleGithubWebhook(
   // verified delivery. A failure here must never cost the My Work capture above.
   const repo = { captured: 0, unchanged: 0 };
   if (forRepo) {
+    // Computed once per delivery, not per event — reused below for the
+    // drift-refresh trigger as well as the event derivation itself.
+    const cfgs = repoEnvironments(env);
     try {
-      for (const ev of repoEventsFromDelivery(eventName, payload, repoEnvironments(env))) {
+      for (const ev of repoEventsFromDelivery(eventName, payload, cfgs)) {
         const res = await ingestRepoEvent(env.DB, ev);
         if (res.outcome !== "written") { repo.unchanged++; continue; }
         repo.captured++;
@@ -369,6 +372,10 @@ export async function handleGithubWebhook(
           const job = fillFailedJob(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, ev.number, ev.semantic_key);
           // Off the response path when the runtime allows; GitHub gives a hook 10s.
           if (opts?.waitUntil) opts.waitUntil(job); else await job;
+        }
+        if (ev.kind === "push" && cfgs.some((c) => c.branch === ev.ref) && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
+          const drift = refreshDrift(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, cfgs);
+          if (opts?.waitUntil) opts.waitUntil(drift); else await drift;
         }
       }
     } catch (e) {

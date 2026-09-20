@@ -10,6 +10,7 @@ import worker from "../src/index";
 import { all, first, run } from "../src/db";
 import { ingestAdrDraft } from "../src/consumer";
 import { DAILY_CRON, WEEKLY_CRON, dueCadence } from "../src/notifications/cron";
+import { REPO_CRON } from "../src/repo/cron";
 import { retryFailed } from "../src/notifications/retry";
 import { localDelivery } from "../src/notifications/delivery";
 import { unsubscribeToken, verifyUnsubscribeToken, unsubscribeUrl } from "../src/notifications/unsubscribe";
@@ -93,10 +94,18 @@ describe("scheduled() dispatch (local mode)", () => {
     expect(await outbox()).toHaveLength(1);
   });
 
-  it("the legacy 6-hourly trigger no longer runs digests", async () => {
+  it("the repo cron trigger (fired at its reconcile tick, the busiest) never runs digests", async () => {
     await user("AndresL230", "andres@example.com");
     await pendingDecision();
-    await worker.scheduled({ cron: "0 */6 * * *", scheduledTime: FRI_8_ET.getTime(), noRetry() {} }, localEnv(), ctx);
+    // :20 of a 6-hourly hour is the reconcile slot (src/repo/cron.ts) — the
+    // heaviest tick, and the one that shares a wall-clock hour with the daily
+    // digest candidate. REPO_ENVIRONMENTS unset here: scheduled() dispatches
+    // this cron to handleRepoCron with no fetchImpl seam (the real Worker uses
+    // the global fetch), so an empty env list keeps this test from pinging the
+    // real staging/production URLs — handleRepoCron itself is covered
+    // end-to-end, with an injected fetchImpl, in test/repo-cron.test.ts.
+    const reconcileTick = new Date("2026-09-11T12:20:00.000Z").getTime();
+    await worker.scheduled({ cron: REPO_CRON, scheduledTime: reconcileTick, noRetry() {} }, { ...localEnv(), REPO_ENVIRONMENTS: undefined }, ctx);
     expect(await outbox()).toHaveLength(0);
   });
 });

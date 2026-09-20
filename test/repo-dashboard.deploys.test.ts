@@ -123,8 +123,16 @@ describe("non-decisive conclusions", () => {
       deploy(1, "stale", "a", 300), deploy(2, "action_required", "b", 200),
       deploy(3, "neutral", "c", 100), deploy(4, "skipped", "d", 50),
     ]);
-    const strips = await deployHistories(env.DB);
+    const strips = await deployHistories(env.DB, NOW);
     expect(strips.get("staging:backend")!.map((d) => [d.sha, d.result])).toEqual([["a", "cancel"], ["b", "cancel"]]);
+  });
+
+  // M14: `deploy` / `check`-as-deploy rows are never pruned, so the strip's
+  // read needs its own bound — 90 days, like `recentPrRows`.
+  it("ignores a deploy older than 90 days", async () => {
+    await put([deploy(1, "success", "old", 91 * 24 * 60), deploy(2, "success", "new", 60)]);
+    const strips = await deployHistories(env.DB, NOW);
+    expect(strips.get("staging:backend")!.map((d) => d.sha)).toEqual(["new"]);
   });
 
   it("neutral and skipped checks are a pass; error joins failure and timed_out as a fail", () => {
@@ -167,6 +175,18 @@ describe("branchHeads — env_heads snapshot precedence", () => {
   it("ignores a snapshot entry that is not a sha string", async () => {
     await putSnapshot(env.DB, "env_heads", { main: null, production: 7 }, at(10));
     expect([...(await branchHeads(env.DB, ["main", "production"]))]).toEqual([]);
+  });
+
+  // P1 (Task 13 parked finding): occurred_at is stored WITHOUT milliseconds
+  // ("...T12:00:30Z") while a snapshot's computed_at comes from
+  // `new Date().toISOString()` WITH them ("...T12:00:30.500Z"). Within the same
+  // UTC second '.' < 'Z', so a STRING comparison says the snapshot lost even
+  // though it is genuinely newer — production-shaped timestamps (unlike the
+  // tests above, which format both sides identically) are what catch this.
+  it("prefers a snapshot that is newer by milliseconds within the same UTC second, over a same-second push", async () => {
+    await put([{ ...base, semantic_key: "gh:push:pushed1:main", kind: "push", ref: "main", sha: "pushed1", count: 1, occurred_at: "2026-09-20T12:00:30Z" }]);
+    await putSnapshot(env.DB, "env_heads", { main: "synced1" }, "2026-09-20T12:00:30.500Z");
+    expect((await branchHeads(env.DB, ["main"])).get("main")).toBe("synced1");
   });
 });
 

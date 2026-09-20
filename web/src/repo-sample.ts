@@ -122,8 +122,10 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
       { label: "Open bugs", value: 6, delta: 1, tone: "warn" },
     ] },
     health: { status: "ok", data: [
-      { env: "staging", url: "https://staging.saplinglearn.com/health", up: true, ms: 212 },
-      { env: "main", url: "https://app.saplinglearn.com/health", up: true, ms: 148 },
+      { env: "staging · web", url: "https://staging.saplinglearn.com", up: true, ms: 148 },
+      { env: "staging · api", url: "https://api.staging.saplinglearn.com/api/health", up: true, ms: 212 },
+      { env: "production · web", url: "https://saplinglearn.com", up: true, ms: 121 },
+      { env: "production · api", url: "https://api.saplinglearn.com/api/health", up: true, ms: 168 },
     ] },
 
     codeStats: { status: "ok", data: [

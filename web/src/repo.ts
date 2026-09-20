@@ -215,7 +215,11 @@ function overviewTab(p: RepoProps): string {
       </div>
     </div>`).join("")}</div>`);
 
-  const health = sec(p, (d) => d.health, { nc: "Health checks aren't connected — nothing pings the environment URLs yet.", empty: "No health checks recorded.", lines: 2 }, (rows) =>
+  // Three states, decided server-side (src/tools/repo.ts): `not_connected` =
+  // nothing has ever pinged these URLs; `empty` = the pings exist but every
+  // reading has aged out (the 10-minute cron has stopped) — which must NOT read
+  // as "never set up".
+  const health = sec(p, (d) => d.health, { nc: "Health checks aren't connected — nothing pings the environment URLs yet.", empty: "No fresh health reading — the last ping is over 30 minutes old.", lines: 2 }, (rows) =>
     rows.map((h) => {
       const c = h.up ? "var(--green)" : "var(--red)";
       return `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 110px 90px;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)">

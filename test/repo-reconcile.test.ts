@@ -5,32 +5,9 @@ import { ingestRepoEvent } from "../src/consumer";
 import { reconcileRepo } from "../src/repo/github";
 import { getSnapshot } from "../src/repo/store";
 import type { RepoEventRow } from "../src/repo/types";
-import { ENVS } from "./helpers/repo";
+import { ENVS, fakeGithub } from "./helpers/repo";
 
 const NOW = Date.parse("2026-09-20T12:00:00Z");
-
-interface GraphqlCall { query: string; variables: Record<string, unknown> }
-
-/** A fake api.github.com keyed by path prefix. The deployments backfill is ONE
- *  POST to https://api.github.com/graphql, so that request is routed on its URL
- *  and its body is parsed and recorded (a test can then assert what the query
- *  was filtered by); the key `"graphql"` supplies its response body. */
-function fakeGithub(routes: Record<string, unknown>): { fetchImpl: typeof fetch; calls: string[]; graphql: GraphqlCall[] } {
-  const calls: string[] = [];
-  const graphql: GraphqlCall[] = [];
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    calls.push(url);
-    if (url.endsWith("/graphql")) {
-      graphql.push(JSON.parse(String(init?.body ?? "{}")) as GraphqlCall);
-      const body = "graphql" in routes ? routes.graphql : { data: { repository: { deployments: { nodes: [] } } } };
-      return new Response(JSON.stringify(body), { status: 200 });
-    }
-    const hit = Object.keys(routes).find((k) => k !== "graphql" && url.includes(k));
-    return hit ? new Response(JSON.stringify(routes[hit]), { status: 200 }) : new Response("[]", { status: 200 });
-  }) as typeof fetch;
-  return { fetchImpl, calls, graphql };
-}
 
 const openPr = { number: 482, title: "Batch D1 reads", html_url: "https://github.com/o/r/pull/482", state: "open", draft: false, merged_at: null, updated_at: "2026-09-20T09:10:00Z", user: { login: "lpcooper-arch" }, head: { ref: "feature/usage-rollup", sha: "c91d2ae" }, base: { ref: "main" } };
 const commit = { sha: "f00d", commit: { message: "old work\n\nbody", committer: { date: "2026-09-10T08:00:00Z" } }, author: { login: "AndresL230" } };
@@ -61,8 +38,10 @@ describe("reconcileRepo — deployments, workflow runs and env-head checks", () 
     expect(kinds).toEqual([{ kind: "check", n: 1 }, { kind: "deploy", n: 2 }, { kind: "run", n: 1 }]);
     // The check-runs list omits check_suite.head_branch reliably only per-ref: the branch we ASKED for is the branch.
     expect(await all(env.DB, `SELECT env, part FROM repo_events WHERE kind = 'check'`)).toEqual([{ env: "staging", part: "frontend" }]);
-    // One GraphQL request replaces the old 1 + 20 REST deployment calls.
-    expect(gh.calls.filter((c) => c.endsWith("/graphql")).length).toBe(1);
+    // One GraphQL request replaces the old 1 + 20 REST deployment calls; a
+    // second GraphQL request is Task 12's branches refs query (both env's
+    // request the same URL, routed by query text — see fakeGithub above).
+    expect(gh.calls.filter((c) => c.endsWith("/graphql")).length).toBe(2);
     expect(gh.calls.some((c) => c.includes("/deployments"))).toBe(false);
   });
 
@@ -85,10 +64,32 @@ describe("reconcileRepo — deployments, workflow runs and env-head checks", () 
     expect(await all(env.DB, `SELECT * FROM repo_events WHERE kind = 'deploy'`)).toEqual([]);
   });
 
-  it("skips the deployments request entirely when no environment is configured", async () => {
+  it("skips the deployments request entirely when no environment is configured — but the branches refs query still runs", async () => {
     const gh = fakeGithub({});
     await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, [], NOW);
-    expect(gh.calls.some((c) => c.endsWith("/graphql"))).toBe(false);
+    // `deployments` genuinely cannot filter without environment names, so it
+    // stays gated; `branches` degrades fine with envs: [] (see the dedicated
+    // test below), so a refs query is legitimate here — only the deployments
+    // query must be absent.
+    expect(gh.graphql.some((c) => c.query.includes("deployments("))).toBe(false);
+    expect(gh.graphql.some((c) => c.query.includes("refs(refPrefix"))).toBe(true);
+  });
+
+  // Fix round 1, Finding 1: `computeBranches` degrades correctly with no
+  // environments configured — empty exclusion set, "main" as the compare
+  // head (the same fallback the `commits` arm above uses) — so unlike
+  // `deployments`, the `branches` arm runs UNCONDITIONALLY.
+  it("writes a branches snapshot compared against main with nothing excluded when no environment is configured", async () => {
+    const gh = fakeGithub({
+      refsGraphql: { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+        { name: "feature/x", target: { committedDate: "2026-09-19T00:00:00Z" }, compare: { aheadBy: 0, behindBy: 2 } },
+      ] } } } },
+    });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, [], NOW);
+    const call = gh.graphql.find((c) => c.query.includes("refs(refPrefix"));
+    expect(call?.variables).toMatchObject({ owner: "o", name: "r", head: "main" });
+    const snap = await getSnapshot(env.DB, "branches");
+    expect(snap?.data).toEqual({ active: 1, stale: 0, rows: [{ name: "feature/x", at: "2026-09-19T00:00:00Z", ahead: 2, behind: 0, stale: false }] });
   });
 
   it("an errors body writes nothing, does not throw, and names the arm in `failed`", async () => {
@@ -197,23 +198,55 @@ describe("reconcileRepo", () => {
       return new Response("nope", { status: 500 });
     }) as typeof fetch;
     const res = await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS, NOW);
-    expect(res).toEqual({ written: 0, unchanged: 0, failed: ["open_prs", "closed_prs", "commits", "deployments", "runs", "env_heads", "checks"] });
+    expect(res).toEqual({ written: 0, unchanged: 0, failed: ["open_prs", "closed_prs", "commits", "deployments", "runs", "env_heads", "checks", "branches", "drift"] });
     expect(calls.length).toBeGreaterThan(0);
     for (const init of calls) {
       expect((init.headers as Record<string, string>).authorization).toBe("Bearer t");
     }
   });
 
+  // Task 11 carry-over: `refreshDrift` (and now `refreshBranches`) swallow their
+  // OWN errors so the webhook and cron callers never throw — but that used to
+  // mean a failing drift compare inside `reconcileRepo` was invisible in
+  // `failed`. Both are now split into a throwing inner function
+  // (`computeDrift` / `computeBranches`) that `reconcileRepo`'s `safely` arms
+  // call directly, so a failure lands in `failed` AND the previously stored
+  // snapshot is left standing (never clobbered by a failed refresh).
+  it("names 'drift' and 'branches' in `failed` on a later failure, without disturbing the snapshots a clean run wrote", async () => {
+    const goodGh = fakeGithub({
+      refsGraphql: { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+        { name: "feature/x", target: { committedDate: "2026-09-19T00:00:00Z" }, compare: { aheadBy: 0, behindBy: 1 } },
+      ] } } } },
+      "/compare/production...main": { ahead_by: 1, behind_by: 0, commits: [{ sha: "aaa1111bbb", commit: { message: "direct push", committer: { date: "2026-09-20T09:00:00Z" } }, author: { login: "AndresL230" } }] },
+    });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: goodGh.fetchImpl }, ENVS, NOW);
+    const driftBefore = await getSnapshot(env.DB, "drift");
+    const branchesBefore = await getSnapshot(env.DB, "branches");
+    expect(driftBefore).not.toBeNull();
+    expect(branchesBefore).not.toBeNull();
+
+    // A blanket 500 (the same shape as the "never throws" test above) fails
+    // every arm, drift and branches included.
+    const failingFetch = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+    const res = await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: failingFetch }, ENVS, NOW);
+    expect(res.failed).toEqual(expect.arrayContaining(["drift", "branches"]));
+    expect(await getSnapshot(env.DB, "drift")).toEqual(driftBefore);
+    expect(await getSnapshot(env.DB, "branches")).toEqual(branchesBefore);
+  });
+
   // The subrequest budget: `reconcileRepo` shares one Cloudflare invocation (50
   // subrequests on the free plan) with runBackfill's ~13. Counted from the code:
   // 2 PR lists + 1 pre-capture commit window + 1 GraphQL deployments + 1 run
-  // list + ≤5 job lookups + 2 per environment (head commit, head checks).
+  // list + ≤5 job lookups + 2 per environment (head commit, head checks) +
+  // 1 GraphQL branches refs page + 2 drift compares (ahead, then behind —
+  // worst case, both sides non-empty).
   it("stays inside its share of the 50-subrequest budget", async () => {
     const runs = Array.from({ length: 7 }, (_, i) => ({
       id: 9000 + i, name: `CI ${i}`, head_branch: "main", head_sha: `sha${i}`, status: "completed",
       conclusion: "failure", run_attempt: 1, event: "push", html_url: `https://github.com/o/r/actions/runs/${9000 + i}`,
       updated_at: "2026-09-20T09:10:00Z", run_started_at: "2026-09-20T09:05:00Z", actor: { login: "AndresL230" },
     }));
+    const compareCommit = { sha: "abc1234def", commit: { message: "msg", committer: { date: "2026-09-20T09:00:00Z" } }, author: { login: "AndresL230" } };
     const gh = fakeGithub({
       "/pulls?state=open": [openPr], "/pulls?state=closed": [openPr], "/commits?sha=main&since=": [commit],
       graphql: deployments(...Array.from({ length: 20 }, (_, i) => deployNode({ databaseId: 7000 + i, commitOid: `sha${i}` }))),
@@ -221,9 +254,11 @@ describe("reconcileRepo", () => {
       "/jobs": { jobs: [{ name: "e2e", conclusion: "failure", steps: [] }] },
       "/commits?sha=main&per_page=1": [commit], "/commits?sha=production&per_page=1": [commit],
       "check-runs": { check_runs: [] },
+      "/compare/production...main": { ahead_by: 1, behind_by: 1, commits: [compareCommit] },
+      "/compare/main...production": { ahead_by: 1, behind_by: 1, commits: [compareCommit] },
     });
     await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
-    expect(gh.calls.length).toBe(14); // 5 + 5 job lookups + 2 environments × 2
+    expect(gh.calls.length).toBe(17); // 5 + 5 job lookups + 2 environments × 2 + 1 branches refs page + 2 drift compares
   });
 });
 

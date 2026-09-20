@@ -110,6 +110,31 @@ describe("getRepoDashboard — a D1-only projection", () => {
     expect(code[1]).toMatchObject({ label: "Merged this week", value: 3, sub: "by 2 people" });
   });
 
+  // Task 12: `refreshBranches` (src/repo/github.ts) writes a `branches`
+  // snapshot; the projection only reads it back — never guessed.
+  it("reads the branches snapshot back as `ok`, and swaps the 4th code tile to Active branches once one exists", async () => {
+    const before = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(before.branches.status).toBe("not_connected");
+    expect(data(before.codeStats)[3]).toMatchObject({ label: "Issues closed" });
+
+    await putSnapshot(env.DB, "branches", {
+      active: 5, stale: 2,
+      rows: [{ name: "feature/x", at: "2026-09-19T00:00:00Z", ahead: 3, behind: 1, stale: false }],
+    });
+    const after = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(data(after.branches)).toEqual({
+      active: 5, stale: 2,
+      rows: [{ name: "feature/x", at: "2026-09-19T00:00:00Z", ahead: 3, behind: 1, stale: false }],
+    });
+    expect(data(after.codeStats)[3]).toEqual({ label: "Active branches", value: 5, sub: "2 stale", tone: "warn" });
+  });
+
+  it("tones the Active branches tile neutral when nothing is stale", async () => {
+    await putSnapshot(env.DB, "branches", { active: 3, stale: 0, rows: [] });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(data(d.codeStats)[3]).toEqual({ label: "Active branches", value: 3, sub: "0 stale", tone: "neutral" });
+  });
+
   it("buckets merges into 14 UTC days, oldest first", async () => {
     await ingestAll([prEvent(1, "a", ago(0, 1)), prEvent(2, "a", ago(0, 2)), prEvent(3, "a", ago(13))]);
     const bars = data((await getRepoDashboard(env.DB, "o/r", NOW)).bars);

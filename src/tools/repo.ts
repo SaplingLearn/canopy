@@ -1,6 +1,6 @@
 import type {
-  RepoActivity, RepoBars, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
-  RepoEnv, RepoEnvPart, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
+  RepoActivity, RepoBars, RepoBranches, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
+  RepoDrift, RepoEnv, RepoEnvPart, RepoHealth, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
@@ -10,19 +10,21 @@ import {
   hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
-import { getSnapshot } from "../repo/store";
+import { getSnapshot, latestHealth } from "../repo/store";
 import type { RepoEventRow, RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
-// no live GitHub, no per-user token, nothing written. It reads what the webhook
-// and the backfill already captured (`events`: merged/closed PRs + issue
+// no live GitHub, no per-user token, nothing written. It reads what the webhook,
+// the backfill and the repo cron (src/repo/cron.ts) already captured — deploys,
+// checks, runs, branches, drift and environment health, from `repo_events` /
+// `repo_snapshots` / `repo_metrics` — plus `events` (merged/closed PRs + issue
 // snapshots), the ticket queue and the sprints.
 //
-// Everything Canopy has NO capture path for — deploys, CI runs, branches,
-// commits, coverage, bundle size, usage, Cloudflare analytics, health checks,
-// TODO counts — is returned as `not_connected`, never guessed. Adding a capture
-// path later means flipping ONE section here from `not_connected` to `ok`; the
-// screen already renders every section's live shape.
+// Everything Canopy has NO capture path for — coverage, bundle size, usage,
+// Cloudflare analytics, hosting, TODO counts — is returned as `not_connected`,
+// never guessed (the `UNCAPTURED` object below is the auditable list). Adding a
+// capture path later means flipping ONE section here from `not_connected` to
+// `ok`; the screen already renders every section's live shape.
 
 const DAY = 86_400_000;
 const PR_LIMIT = 8;
@@ -32,6 +34,10 @@ const LABEL_LIMIT = 6;
 const CI_FAILURE_LIMIT = 5;
 const BAR_DAYS = 14; // = the two-week PR window below
 const RECENT_PR_DAYS = 90; // recentPrRows' bound — a PR untouched this long need not be "recent"
+/** A health row older than this means the cron (src/repo/cron.ts, every 10
+ *  minutes) has stopped — never trust a stale "up"/"down" as current: treat it
+ *  as absent, both for display and for the environment pill. */
+const HEALTH_STALE_MS = 30 * 60_000;
 
 /** Event time: the payload's own clock, else when Canopy recorded it. */
 const AT = `COALESCE(occurred_at, recorded_at)`;
@@ -42,8 +48,6 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 
 /** The sections no capture path feeds yet. One object so the list is auditable. */
 const UNCAPTURED = {
-  drift: NOT_CONNECTED, health: NOT_CONNECTED,
-  branches: NOT_CONNECTED,
   coverage: NOT_CONNECTED, bundle: NOT_CONNECTED,
   usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
   todos: NOT_CONNECTED,
@@ -52,7 +56,8 @@ const UNCAPTURED = {
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
     repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
-    environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED,
+    environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
+    branches: NOT_CONNECTED, health: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
     sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
   };
@@ -188,6 +193,13 @@ export async function getRepoDashboard(
   const twoWeeksAgo = new Date(now - 14 * DAY).toISOString();
   const ninetyDaysAgo = new Date(now - RECENT_PR_DAYS * DAY).toISOString();
 
+  // Never on the render path: GitHub's GraphQL refs query is called off
+  // reconcileRepo only — this only reads back the snapshot it wrote. No
+  // snapshot yet → not_connected; a stale one is still shown, same as `drift`
+  // below — and NOTHING on screen says how old it is (`computedAt` is stored
+  // but never travels in the DTO).
+  const branchSnap = await getSnapshot<RepoBranches>(db, "branches");
+
   const people = await personsByLogin(db);
 
   // Two weeks of PR closes cover the week-over-week delta AND the 14-day bars.
@@ -245,9 +257,30 @@ export async function getRepoDashboard(
   // both halves, ONE branch-head read, and ONE check read covering the
   // environment heads AND the listed PRs' heads together. N environments cost
   // the same three round-trips as one.
-  const strips = envs.length ? await deployHistories(db) : new Map<string, RepoDeploy[]>();
+  const strips = envs.length ? await deployHistories(db, now) : new Map<string, RepoDeploy[]>();
   const heads = envs.length ? await branchHeads(db, envs.map((e) => e.branch)) : new Map<string, string>();
   const checks = await latestChecks(db, [...heads.values(), ...prRows.map((r) => r.sha ?? "")]);
+
+  // Environment health: 10-minute pings the repo cron writes (src/repo/poll.ts).
+  // A row older than HEALTH_STALE_MS means the cron has stopped — never guess
+  // "up" off a stale ping, so a stale (or missing) row is simply left out here,
+  // which also keeps it out of the pill below (never guessed either). But a
+  // stale row is still EVIDENCE THE PINGS EXIST, which is a different answer
+  // from never having been set up: `healthEver` carries that apart, so the
+  // block can read `empty` ("the last ping is old") rather than claiming
+  // nothing pings these URLs. ONE query for every environment half.
+  const healthRows = envs.length ? await latestHealth(db) : new Map<string, { at: string; value: number }>();
+  const health: RepoHealth[] = [];
+  let healthEver = false;
+  for (const cfg of envs) {
+    for (const [part, label, url] of [["frontend", "web", cfg.frontendUrl], ["backend", "api", cfg.apiUrl + cfg.healthPath]] as const) {
+      const up = healthRows.get(`health_up:${cfg.key}:${part}`);
+      const ms = healthRows.get(`health_ms:${cfg.key}:${part}`);
+      if (!up) continue;
+      healthEver = true;
+      if (now - Date.parse(up.at) <= HEALTH_STALE_MS) health.push({ env: `${cfg.label} · ${label}`, url, up: up.value === 1, ms: Math.round(ms?.value ?? 0) });
+    }
+  }
 
   const deployRows: RepoDeployRow[] = [];
   const cards = envs.map((cfg) => {
@@ -267,25 +300,36 @@ export async function getRepoDashboard(
       : failing.length ? `${failing.length} of ${onHead.length} checks failing — ${failing[0]}`
       : settled.length < onHead.length ? `${settled.length} of ${onHead.length} checks finished`
       : `All ${onHead.length} checks passing`;
+    const envHealth = health.filter((h) => h.env.startsWith(`${cfg.label} ·`));
+    const down = envHealth.some((h) => !h.up);
     // The card is CONNECTED once anything about the environment was captured —
-    // a deploy result or a head check. That is a different question from the
-    // pill, which is a verdict: HEALTHY is a claim about CHECKS, so it needs
-    // checks captured on the head, none of them failing, and no failed part. A
-    // deploy that landed with no checks captured says only that it landed —
-    // UNKNOWN, neutral. A part that FAILED is a fact on its own, so FAILING
-    // does not wait for checks.
-    const connected = parts.some((p) => p.result !== null) || onHead.length > 0;
+    // a deploy result, a head check, or a health ping. That is a different
+    // question from the pill, which is a verdict: HEALTHY is a claim about
+    // CHECKS, so it needs checks captured on the head, none of them failing,
+    // and no failed part — a health ping alone (up, but no deploys/checks) is
+    // not enough to call it HEALTHY, only enough to call it connected. A part
+    // that FAILED is a fact on its own, so FAILING does not wait for checks.
+    // DOWN outranks everything: the site being unreachable is the headline,
+    // whatever the checks say.
+    // Two different questions, and the second is NOT the first: the card is
+    // connected once ANYTHING about the environment landed (health included),
+    // but the DEPLOYS section's fallback must ignore health — one ping is not
+    // grounds to say "No deploys recorded" while no deploy capture exists at all.
+    const deployCapture = parts.some((p) => p.result !== null) || onHead.length > 0;
+    const connected = deployCapture || envHealth.length > 0;
     const failed = parts.some((p) => p.result === "fail");
+    const known = onHead.length > 0;
     const card: RepoEnv = {
       key: cfg.key, name: cfg.label, note: cfg.note, parts, url: cfg.frontendUrl, ci,
       ciTone: !onHead.length ? "neutral" : failing.length ? "bad" : "good",
-      pill: failed ? "FAILING" : failing.length ? "DEGRADED" : onHead.length ? "HEALTHY" : "UNKNOWN",
-      tone: failed ? "bad" : failing.length ? "warn" : onHead.length ? "good" : "neutral",
+      pill: down ? "DOWN" : failed ? "FAILING" : failing.length ? "DEGRADED" : known ? "HEALTHY" : "UNKNOWN",
+      tone: down || failed ? "bad" : failing.length ? "warn" : known ? "good" : "neutral",
     };
-    return { card, connected };
+    return { card, connected, deployCapture };
   });
   const envCards: RepoEnv[] = cards.map((c) => c.card);
   const anyEnvCapture = cards.some((c) => c.connected);
+  const anyDeployCapture = cards.some((c) => c.deployCapture);
 
   // CI is `not_connected` until a workflow run has ever been captured — a 0%
   // failure rate over nothing is a guess, not an answer. And the SEVEN-DAY rate
@@ -352,7 +396,11 @@ export async function getRepoDashboard(
           tone: "neutral",
         }
       : { label: "Issues opened", value: openedThisWeek.length, sub: "this week", tone: "neutral" },
-    { label: "Issues closed", value: closedThisWeek.length, sub: "this week", tone: "neutral" },
+    // Never guess: the tile is "Active branches" only once a branches
+    // snapshot exists; until then it keeps its previous content.
+    branchSnap
+      ? { label: "Active branches", value: branchSnap.data.active, sub: `${branchSnap.data.stale} stale`, tone: branchSnap.data.stale ? "warn" : "neutral" }
+      : { label: "Issues closed", value: closedThisWeek.length, sub: "this week", tone: "neutral" },
   ];
 
   // Commits once pushes are captured; merges (what `events` has always had) until then.
@@ -450,12 +498,25 @@ export async function getRepoDashboard(
     : listPrs.map((p) => prOf(people, p));
 
   const some = <T>(rows: T[]): RepoSection<T[]> => (rows.length ? ok(rows) : EMPTY);
+  // Never on the render path: GitHub's compare API is called off a push
+  // webhook or reconcileRepo, never here — this only reads back what one of
+  // those already wrote. No snapshot yet → not_connected; a stale one is
+  // still shown, with nothing on screen saying how old it is (see `branches`).
+  const driftSnap = await getSnapshot<RepoDrift>(db, "drift");
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
+    drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
+    branches: branchSnap ? ok(branchSnap.data) : NOT_CONNECTED,
+    // Three states, not two. Every row here is already fresh (stale ones were
+    // filtered out above); readings that exist but have all gone stale mean the
+    // PINGS STOPPED (`empty`), and only a target that was never pinged at all
+    // is `not_connected`.
+    health: health.length ? ok(health) : healthEver ? EMPTY : NOT_CONNECTED,
     // An environment card needs BOTH a configured environment and something
     // captured about it; a configured-but-silent environment is not connected.
     environments: envs.length && anyEnvCapture ? ok(envCards) : NOT_CONNECTED,
-    deploys: deployRows.length ? ok(deployRows) : envs.length && anyEnvCapture ? EMPTY : NOT_CONNECTED,
+    // `anyDeployCapture`, NOT `anyEnvCapture`: health says nothing about deploys.
+    deploys: deployRows.length ? ok(deployRows) : envs.length && anyDeployCapture ? EMPTY : NOT_CONNECTED,
     ciFailures: runCaptured
       ? ok({
           // null / [] until the week is covered — never a rate over a partial window.

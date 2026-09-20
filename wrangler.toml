@@ -41,7 +41,15 @@ enabled = true
 # secret) — a plain fetch(), not a Cloudflare binding, so no [ai] block is needed.
 
 # Cron triggers, dispatched by expression in src/index.ts scheduled():
-#   "0 */6 * * *"  — sprint progress cache backstop (event-derived writes are primary)
+#   "*/10 * * * *" — the repo dashboard trigger (src/repo/cron.ts), several cadences
+#                    folded into one, gated in code on the fire time's minute/hour —
+#                    ONE heavy job per invocation, never stacked (Cloudflare caps an
+#                    invocation at 50 subrequests): every tick pings environment
+#                    health (src/repo/poll.ts); :00 is the hourly-polls slot (none
+#                    wired yet); every 6th hour, :10 runs the sprint progress cache
+#                    backstop (event-derived writes are primary), :20 the GitHub
+#                    reconcile (deploys/checks/runs/branches/drift/open-PRs) and :30
+#                    the capture prune (src/repo/store.ts pruneRepoCapture).
 #   "0 * * * *"    — DAILY digest candidate: fires hourly; runs only when the org-local
 #                    hour equals notification_settings.send_hour on a Mon–Fri
 #   "0 * * * SUN,MON"  — WEEKLY digest candidate: hourly on Sun+Mon UTC (covers a local
@@ -50,4 +58,4 @@ enabled = true
 # is read from D1 at fire time — see src/notifications/cron.ts. The outbox
 # idempotency key makes an extra fire harmless.
 [triggers]
-crons = ["0 */6 * * *", "0 * * * *", "0 * * * SUN,MON"]
+crons = ["*/10 * * * *", "0 * * * *", "0 * * * SUN,MON"]
