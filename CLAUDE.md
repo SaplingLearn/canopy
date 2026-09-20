@@ -72,7 +72,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `RepoEnvConfig[]`, `[]` on absent/malformed), `capture.ts` (PURE delivery→`RepoEvent[]` derivation,
   `repoEventsFromDelivery` — no DB, no clock, no network, and stores only a SLICE of each payload in `raw`),
   `store.ts` (snapshot/metric upserts — including the `prs_reconciled` completeness marker and the
-  `env_heads` branch-head snapshot — plus `pruneRepoCapture`, CALLED by the repo cron's every-6th-hour tick:
+  `env_heads` branch-head snapshot (and `putMetric`, the ONE seam that normalises `repo_metrics.at`) — plus
+  `pruneRepoCapture`, CALLED by the repo cron's 6-hourly `:30` tick:
   45-day retention for high-frequency `check` rows and matching metrics, deliberately NOT covering `pr`/`push`,
   and the `check` deletion is further gated `part IS NULL` — a FRONTEND deploy record is a `check` row too
   (`part = 'frontend'`) and must be kept forever like `deploy` rows, not aged out with plain CI checks),
@@ -80,9 +81,11 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   including `recordingSince`, the earliest `recorded_at` per kind that the week-over-week deltas below gate
   on, and the ONE non-decisive-conclusion policy at `foldResult`/`checkState`), `github.ts`
   (service-token GitHub reads — `ghJson` / `ghGraphql` / `reconcileRepo`, driven off the admin
-  `/admin/backfill` route AND, every 6th hour, the repo cron below — never on the render path), `poll.ts`
-  (`pingHealth` — a polite `GET` per environment deployable into `repo_metrics`, every cron tick), and
-  `cron.ts` (`handleRepoCron` — the repo trigger's one dispatcher; see the Repo dashboard section below).
+  `/admin/backfill` route AND the repo cron's 6-hourly `:20` tick — never on the render path), `poll.ts`
+  (`pingHealth` — a polite `GET` per environment deployable into `repo_metrics`, all targets pinged
+  concurrently, every cron tick), and `cron.ts` (`handleRepoCron` — the repo trigger's one dispatcher, ONE
+  heavy job per invocation, with the subrequest budget stated at the dispatcher; see the Repo dashboard
+  section below).
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
@@ -385,41 +388,62 @@ captured reads `UNKNOWN` (neutral) — it says only that it landed. A failed par
 (below) saying the environment is unreachable is the headline, whatever the checks say. The `environments`
 section being CONNECTED is a separate question, and is not derived from the pill: it is `ok` once any part
 has a result, any head check is captured, OR a health ping (up or down) has landed for that environment — a
-health ping alone is enough to be CONNECTED but never enough to be `HEALTHY` on its own.
+health ping alone is enough to be CONNECTED but never enough to be `HEALTHY` on its own. **The `deploys`
+section's fallback is gated on a SEPARATE, narrower flag** (parts-with-a-result OR head checks captured —
+health EXCLUDED): a health ping is not grounds for "No deploys recorded", so `deploys` stays
+`not_connected` until deploy capture itself exists, while `environments` goes `ok` off the ping.
 
 **Environment health is a standing 10-minute ping, not event capture**: `handleRepoCron` (`src/repo/cron.ts`)
 runs `pingHealth` (`src/repo/poll.ts`) on EVERY tick of the repo cron — a polite `GET` (an 8s
 `AbortSignal.timeout`, `redirect: "follow"`, a `canopy-health` user-agent, no retries) against each
 environment's TWO deployables (the Cloudflare frontend URL, the Railway backend's `apiUrl + healthPath`),
-written as `health_up` (0/1) and `health_ms` into `repo_metrics`, bucketed to the 10-minute tick (`at` =
-the bucket floor's `toISOString()` — every read of that table, `latestMetric`/`metricSeries`, assumes that
-one format) so a redelivered or double-fired tick is a no-op (`putMetric`'s `INSERT OR IGNORE` on `(metric,
-env, part, at)`). A thrown fetch (timeout, DNS, connection refused) is recorded as down, never an exception
-out of the cron. **A health row older than 30 minutes means the cron has stopped** — `getRepoDashboard`
-treats it as ABSENT, both for display (the health block lists only fresh rows) and for the pill (a stale
-"down" cannot drag an environment to `DOWN`); the `health` section itself is `not_connected` only when
-every configured target's row is stale or was never pinged.
+all of them pinged CONCURRENTLY (`Promise.all` — sequentially, four dead targets would burn 4 × the timeout
+before the tick's real work; each target still times itself, so `health_ms` is unaffected). `redirect:
+"follow"` + `res.ok` means a redirect that LANDS on a 200 counts as up: it is a reachability check, not a
+content check. Written as `health_up` (0/1) and `health_ms` into `repo_metrics`, bucketed to the 10-minute
+tick, so a redelivered or double-fired tick is a no-op (`putMetric`'s `INSERT OR IGNORE` on `(metric, env,
+part, at)`). **There is exactly ONE `repo_metrics.at` format, enforced at the write seam**: `putMetric`
+re-serialises `at` through `toISOString()` and SKIPS an unparseable value — every read of that table
+(`latestMetric` / `metricSeries` / `latestHealth`) compares `at` as a raw string and the UNIQUE key
+includes it, so two writers spelling the same instant differently would both mis-order and duplicate.
+A thrown fetch (timeout, DNS, connection refused) is recorded as down, never an exception out of the cron.
+**A health row older than 30 minutes means the cron has stopped** — `getRepoDashboard` treats it as ABSENT,
+both for display (the health block lists only fresh rows) and for the pill (a stale "down" cannot drag an
+environment to `DOWN`). The `health` section therefore has THREE states, not two: `ok` when any configured
+target has a fresh reading, **`empty` when readings exist but every one has aged out** (the pings were set
+up and have stopped — the screen says "No fresh health reading — the last ping is over 30 minutes old."),
+and `not_connected` only when no reading has EVER landed. The whole read is ONE D1 statement
+(`latestHealth` in `src/repo/store.ts`, the latest row per metric/env/part) however many environments are
+configured.
 
 **Drift and branches are also live, off two GraphQL/REST sources, never at render**: `computeDrift`
 (`src/repo/github.ts`) compares `envs[0]` (the head, e.g. `main`) against `envs[last]` (the base, e.g.
 `production`) via TWO `GET /compare/<base>...<head>` calls (GitHub's compare only returns the AHEAD side's
 commits, so the BEHIND side needs its own, second compare), groups the ahead commits by the PR that landed
 them (a squash merge's trailing `(#123)`) or as a direct push, and stores one `RepoDrift` snapshot the
-Overview's drift strip reads back. It runs off TWO triggers: a push to either configured environment branch
+Overview's drift strip reads back. The PR-title lookup behind those groups fans out in chunks (`fanOut`,
+`src/db.ts`) — a compare returns up to 250 commits and D1 caps a statement at 100 bound parameters. The
+snapshot's `ahead`/`behind` are GitHub's own TOTALS while `groups` is built from the commits the compare
+actually returned, so on a divergence past that 250 cap the strip's HEADER stays truthful and only the
+expanded breakdown is partial. It runs off TWO triggers: a push to either configured environment branch
 (`src/webhook.ts`, via the never-throwing `refreshDrift` wrapper) and every `reconcileRepo` (backstopping a
 repo that never gets such a push, or whose webhook-triggered call failed). `computeBranches` is ONE GraphQL
 page of `refs(refPrefix:"refs/heads/")` with a per-ref `compare(headRef:$head)` (up to 100 branches per page,
-5 pages max — REST would cost one `/compare` request PER BRANCH) and stores a `RepoBranches` snapshot
-(active/stale counts, and up to 8 rows: the freshest branches plus a few of the stalest-but-unmerged, 14 days
-untouched = stale). GraphQL's `Ref.compare` treats THE BRANCH as base and `$head` as head, so
+5 pages max — REST would cost one `/compare` request PER BRANCH; still paging after the 5th, it THROWS
+rather than pass off a 500-branch prefix as the whole repo) and stores a `RepoBranches` snapshot
+(active/stale counts, and up to 8 rows: the freshest branches plus up to 3 of the stalest-but-unmerged, 14
+days untouched = stale — the fresh slice reserves room for what is actually appended, so a repo whose stale
+branches are all merged still fills all 8). GraphQL's `Ref.compare` treats THE BRANCH as base and `$head` as head, so
 `aheadBy`/`behindBy` arrive INVERTED from the product's meaning — `computeBranches` flips them back on
 purpose (verified live against the target repo). It runs only from `reconcileRepo` (no webhook trigger — a
 full refs page on every push would be wasteful). Both `computeDrift` and `computeBranches` THROW on failure
 so `reconcileRepo`'s `safely` wrapper can name them in `failed` without disturbing the LAST GOOD snapshot
 (never clobbered by a failed refresh); their never-throwing wrappers (`refreshDrift` / `refreshBranches`) are
 what callers outside that `safely` arm use. Both sections read `not_connected` until their first snapshot
-exists, and — like `drift` always has — show a STALE snapshot rather than nothing: a fact as of its own
-`computedAt`.
+exists, and — like `drift` always has — show a STALE snapshot rather than nothing. **Nothing on screen says
+how old one is**: `computedAt` is stored on `repo_snapshots` but never reaches the DTO, so a snapshot from a
+Sync that has not run in a week renders exactly like a fresh one. (`branchHeads` reads `computedAt` for
+precedence; the render never does.)
 
 **ONE policy for a non-decisive conclusion**, stated at `foldResult` and again at `checkState`
 (`src/repo/reads.ts`) and shared by the deploy dots and the PR checks column: `success` = ok;
@@ -449,7 +473,7 @@ phase, `status`) — the capture paths all exist in code, but until the repo own
 GitHub's webhook settings, no live delivery lands. Until then, `reconcileRepo` is the only source for
 deploys, checks and runs — and it now runs off TWO triggers, not one: an admin's manual "Sync GitHub"
 (`POST /admin/backfill`, on the batch that ends the loop — see below) and, since Phase 3's Task 13, the repo
-cron's every-6th-hour tick (`src/repo/cron.ts`'s `handleRepoCron`) — the exact same function either way, so
+cron's 6-hourly `:20` tick (`src/repo/cron.ts`'s `handleRepoCron`) — the exact same function either way, so
 a repo nobody clicks Sync on still self-heals within 6 hours. `reconcileRepo`'s arms, each wrapped in its
 own `safely` block: open PRs (+ the `prs_reconciled` marker), closed PRs, the pre-capture commit window,
 **deployments over GraphQL**, completed workflow runs, the failing-job label pass, the environment heads,
@@ -479,10 +503,21 @@ passes that straight through as its `repo` object, and the cron logs `failed` to
   branches share a HEAD both environments' checks come back on the first branch asked, and injecting that
   branch left the other one permanently untagged (the correctly-tagged row later dropping as `unchanged`).
 
-Worst case one `reconcileRepo` makes **10 + 2N outbound requests** for N configured environments (14 for
+Worst case one `reconcileRepo` makes **17 + 2N outbound requests** for N configured environments (21 for
 today's two): 2 PR lists + 1 pre-capture commit window + 1 GraphQL deployments + 1 workflow-run list + ≤5
-job lookups + 2 per environment (head commit, head checks). It shares one Cloudflare invocation — 50
-subrequests on the free plan — with `runBackfill`'s ~13.
+job lookups + ≤5 GraphQL branch pages + ≤2 drift compares + 2 per environment (head commit, head checks).
+Cloudflare caps one invocation at 50 subrequests on the free plan, and reconcile shares an invocation with
+`runBackfill`'s ~13 when it is the admin Sync running it. **That cap is why the repo cron gives each heavy
+job its own tick** (below): health + reconcile fits, health + reconcile + the UNBOUNDED progress recompute
+did not.
+
+**The repo cron's per-tick schedule** (`src/repo/cron.ts`, `REPO_CRON = "*/10 * * * *"`, budget arithmetic
+stated at the dispatcher) — ONE heavy job per invocation, keyed off the fire time's UTC minute/hour:
+EVERY tick pings health (2 requests per environment, 4 today); `:00` is the hourly-polls slot, EMPTY today
+and reserved for Phase 5 (nothing else may run on it); and every 6th hour `:10` runs `recomputeAllProgress`
+alone (unbounded — one request per issue number of every array-ref sprint), `:20` runs `reconcileRepo`
+alone (logging `failed` when non-empty), and `:30` runs `pruneRepoCapture` (D1 only). A tick of a
+non-6-hourly hour does health and nothing else.
 
 **Reviews have no backfill arm** (`reconcileRepo` does not poll PR reviews) and no webhook subscription, so
 the `R` contributor tally stays `null` until at least one of those lands.
@@ -520,10 +555,11 @@ branches and health** (lighting up the drift strip, the branches list + Active b
 block feeding the HEALTHY/DEGRADED/DOWN pill — see above; no GitHub settings change, no new secret); the
 phases after it, covering coverage, bundle, usage, Cloudflare, hosting and TODOs, are specified in
 `docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. `pruneRepoCapture` (`src/repo/store.ts`) is
-now CALLED — every 6th-hour tick of the repo cron (`src/repo/cron.ts`) — and deletes `check` rows older than
+now CALLED — the repo cron's 6-hourly `:30` tick (`src/repo/cron.ts`) — and deletes `check` rows older than
 45 days ONLY `WHERE part IS NULL`: a FRONTEND deploy record IS a `check` row (the Workers Builds check,
 carrying `part = 'frontend'`), and pruning it on the same schedule as a plain CI check would silently lose
-the deploy dot strip's web half. The capture names a PR's AUTHOR and an issue's subject, not who
+the deploy dot strip's web half. Because those deploy rows are never pruned, `deployHistories`
+(`src/repo/reads.ts`) carries its own 90-day bound instead of grouping the whole table forever. The capture names a PR's AUTHOR and an issue's subject, not who
 merged/closed — so the feed never claims an actor it does not have. "Preview with sample data" swaps in
 `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the Worker.
 
@@ -639,8 +675,9 @@ Secrets (`wrangler secret put …`; local: `.dev.vars`): `GITHUB_CLIENT_ID`, `GI
 `/auth/google/login` itself returns 503), `GOOGLE_CLIENT_SECRET` (absent → the login redirect still
 happens, but the code exchange fails and `/auth/google/callback` 401s `exchange_failed`), `COOKIE_SECRET`,
 `GITHUB_WEBHOOK_SECRET` (HMAC for the webhook — absent → the surface 401s), `GITHUB_SERVICE_TOKEN`
-(app-level token for the sprint-progress backstop AND the repo cron's GitHub reconcile — absent → those two
-steps of the repo cron's every-6th-hour tick are skipped; health pings still run every tick regardless),
+(app-level token for the sprint-progress backstop AND the repo cron's GitHub reconcile — absent → the
+cron's `:10` and `:20` 6-hourly ticks are skipped; the `:30` prune is D1-only and runs regardless, as do
+the health pings on every tick),
 `GEMINI_API_KEY`
 (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt fallback), `RESEND_API_KEY`
 (email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`). Vars
@@ -656,11 +693,18 @@ it is empty; `ciFailures` does NOT consult it and is gated only on `run` capture
 reads it for the GitHub ENVIRONMENT NAMES the deployments GraphQL query filters on, and separately for the
 BRANCHES whose head commit, head checks, and drift/branch comparisons it polls — and the repo cron's
 `pingHealth` (`src/repo/poll.ts`), which reads it for the two ping targets (frontend URL, `apiUrl +
-healthPath`) per environment. Absent → no deployments/branches/drift/checks arms, no health pings, and
-`environments`/`deploys`/`health` stay `not_connected`).
+healthPath`) per environment. Absent → no deployments arm, no env-head or head-checks arms, no drift
+compare (it needs two environments) and no health pings, and `environments`/`deploys`/`health` stay
+`not_connected` — but the **branches arm still runs**: `computeBranches` degrades correctly with `envs: []`
+(head `main`, nothing excluded from the list), so a repo with no `REPO_ENVIRONMENTS` still gets a branches
+snapshot rather than losing one for no structural reason).
 Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
 not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` is three expressions: `*/10 * * * *`
-drives the repo cron (`src/repo/cron.ts`'s `handleRepoCron` — environment health pings on EVERY tick; on the
-hour, hourly polls, none wired yet; every 6th hour, the sprint-progress backstop, the GitHub reconcile, and
-the capture prune), plus the two hourly digest candidates (see Email notifications).
+drives the repo cron (`src/repo/cron.ts`'s `handleRepoCron`), which spreads ONE heavy job per invocation
+across its six ticks an hour — environment health pings on EVERY tick; `:00` the hourly-polls slot (none
+wired yet); and, every 6th hour, `:10` the sprint-progress backstop, `:20` the GitHub reconcile and `:30`
+the capture prune, each alone in its invocation because Cloudflare caps one at 50 subrequests — plus the two
+hourly digest candidates (see Email notifications). `src/index.ts` dispatches by EXACT string equality on
+`controller.cron`, so `REPO_CRON` and the expression in `wrangler.toml` must stay identical (pinned by a
+test).
