@@ -191,7 +191,13 @@ export async function branchHeads(db: DB, branches: string[]): Promise<Map<strin
       const sha = snap.data?.[ref];
       if (typeof sha !== "string" || !sha) continue;
       const push = rows.find((r) => r.ref === ref);
-      if (!push || snap.computedAt > push.at) out.set(ref, sha);
+      // A PRECEDENCE decision (which of two facts about the SAME head wins),
+      // not a window bound — so this must compare parsed instants, not raw ISO
+      // strings. `occurred_at` is stored WITHOUT milliseconds
+      // ("…T12:00:30Z") while `computed_at` comes from `new Date().toISOString()`
+      // WITH them ("…T12:00:30.500Z"); within the same UTC second '.' < 'Z', so a
+      // genuinely newer snapshot would lose a plain string compare.
+      if (!push || Date.parse(snap.computedAt) > Date.parse(push.at)) out.set(ref, sha);
     }
   }
   return out;

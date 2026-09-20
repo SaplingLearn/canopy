@@ -5,45 +5,9 @@ import { ingestRepoEvent } from "../src/consumer";
 import { reconcileRepo } from "../src/repo/github";
 import { getSnapshot } from "../src/repo/store";
 import type { RepoEventRow } from "../src/repo/types";
-import { ENVS } from "./helpers/repo";
+import { ENVS, fakeGithub } from "./helpers/repo";
 
 const NOW = Date.parse("2026-09-20T12:00:00Z");
-
-interface GraphqlCall { query: string; variables: Record<string, unknown> }
-
-/** A fake api.github.com keyed by path prefix. Two GraphQL queries POST to the
- *  same `https://api.github.com/graphql` URL (deployments, and Task 12's
- *  branches refs), so a graphql call is routed by its QUERY TEXT rather than
- *  the URL: the key `"graphql"` supplies the deployments response (as
- *  before), `"refsGraphql"` the branches response — each defaults to an
- *  empty-but-valid shape so a test that cares about neither doesn't have to
- *  mock either. Every call's body is parsed and recorded (a test can then
- *  assert what the query was filtered by). A `/compare/...` REST call
- *  similarly defaults to a zero-diff shape rather than the generic `"[]"`, so
- *  a test that doesn't care about drift doesn't have to mock it either. */
-function fakeGithub(routes: Record<string, unknown>): { fetchImpl: typeof fetch; calls: string[]; graphql: GraphqlCall[] } {
-  const calls: string[] = [];
-  const graphql: GraphqlCall[] = [];
-  const EMPTY_REFS = { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } };
-  const EMPTY_DEPLOYMENTS = { data: { repository: { deployments: { nodes: [] } } } };
-  const EMPTY_COMPARE = { ahead_by: 0, behind_by: 0, commits: [] };
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    calls.push(url);
-    if (url.endsWith("/graphql")) {
-      const call = JSON.parse(String(init?.body ?? "{}")) as GraphqlCall;
-      graphql.push(call);
-      const isRefs = typeof call.query === "string" && call.query.includes("refs(refPrefix");
-      const key = isRefs ? "refsGraphql" : "graphql";
-      const body = key in routes ? routes[key] : isRefs ? EMPTY_REFS : EMPTY_DEPLOYMENTS;
-      return new Response(JSON.stringify(body), { status: 200 });
-    }
-    const hit = Object.keys(routes).find((k) => k !== "graphql" && k !== "refsGraphql" && url.includes(k));
-    if (hit) return new Response(JSON.stringify(routes[hit]), { status: 200 });
-    return new Response(JSON.stringify(url.includes("/compare/") ? EMPTY_COMPARE : []), { status: 200 });
-  }) as typeof fetch;
-  return { fetchImpl, calls, graphql };
-}
 
 const openPr = { number: 482, title: "Batch D1 reads", html_url: "https://github.com/o/r/pull/482", state: "open", draft: false, merged_at: null, updated_at: "2026-09-20T09:10:00Z", user: { login: "lpcooper-arch" }, head: { ref: "feature/usage-rollup", sha: "c91d2ae" }, base: { ref: "main" } };
 const commit = { sha: "f00d", commit: { message: "old work\n\nbody", committer: { date: "2026-09-10T08:00:00Z" } }, author: { login: "AndresL230" } };

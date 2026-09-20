@@ -64,4 +64,19 @@ describe("snapshots and metrics", () => {
     expect((await all<{ metric: string }>(env.DB, `SELECT metric FROM repo_metrics`)).map((r) => r.metric)).toEqual(["coverage"]);
     expect((await all<{ kind: string }>(env.DB, `SELECT kind FROM repo_events`)).map((r) => r.kind)).toEqual(["deploy"]);
   });
+
+  // P2 (Task 13 parked finding): a FRONTEND DEPLOY is a `check` row carrying
+  // `part = 'frontend'` (a Workers Builds check run), while backend deploys are
+  // `deploy` rows kept forever. Pruning every old `check` row regardless of
+  // `part` would age out the frontend dot strip asymmetrically — only a
+  // `part IS NULL` (a plain CI check, not a deploy record) may be pruned.
+  it("keeps an old frontend-deploy check row (part='frontend'), prunes a plain CI check (part=null)", async () => {
+    const now = Date.parse("2026-09-20T12:00:00Z");
+    const old = "2026-07-01T00:00:00Z";
+    await ingestRepoEvent(env.DB, push({ semantic_key: "plain-ci", kind: "check", part: null, occurred_at: old }));
+    await ingestRepoEvent(env.DB, push({ semantic_key: "frontend-deploy", kind: "check", env: "staging", part: "frontend", occurred_at: old }));
+    await pruneRepoCapture(env.DB, now);
+    const kept = await all<{ semantic_key: string }>(env.DB, `SELECT semantic_key FROM repo_events`);
+    expect(kept.map((r) => r.semantic_key)).toEqual(["frontend-deploy"]);
+  });
 });

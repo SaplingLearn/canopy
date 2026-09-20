@@ -4,8 +4,8 @@ import type { RepoMetric } from "./types";
 const DAY = 86_400_000;
 /** High-frequency series and rows that lose their value quickly. Deliberately
  *  does NOT cover `pr` / `push` — those stay forever (the dashboard's
- *  week-over-week deltas and 14-day bars read them). Nothing calls
- *  `pruneRepoCapture` yet; it is wired for the Phase 3 cron. */
+ *  week-over-week deltas and 14-day bars read them). Called every 6-hourly
+ *  tick of the repo cron (src/repo/cron.ts). */
 const FAST_METRICS = ["health_up", "health_ms"];
 const FAST_KINDS = ["check"];
 const FAST_RETENTION_DAYS = 45;
@@ -43,5 +43,9 @@ export async function latestMetric(db: DB, metric: string, env: string, part: st
 export async function pruneRepoCapture(db: DB, now: number): Promise<void> {
   const cutoff = new Date(now - FAST_RETENTION_DAYS * DAY).toISOString();
   await run(db, `DELETE FROM repo_metrics WHERE metric IN (${ph(FAST_METRICS.length)}) AND at < ?`, ...FAST_METRICS, cutoff);
-  await run(db, `DELETE FROM repo_events WHERE kind IN (${ph(FAST_KINDS.length)}) AND occurred_at < ?`, ...FAST_KINDS, cutoff);
+  // `part IS NULL` only: a `check` row carrying a `part` (a Workers Builds run
+  // tagged as a frontend deploy — see the migration's column notes) is a
+  // DEPLOY record and must be kept forever like `deploy` rows, or the
+  // frontend dot strip would age out asymmetrically from the backend's.
+  await run(db, `DELETE FROM repo_events WHERE kind IN (${ph(FAST_KINDS.length)}) AND part IS NULL AND occurred_at < ?`, ...FAST_KINDS, cutoff);
 }

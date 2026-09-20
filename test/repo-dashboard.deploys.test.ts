@@ -168,6 +168,18 @@ describe("branchHeads — env_heads snapshot precedence", () => {
     await putSnapshot(env.DB, "env_heads", { main: null, production: 7 }, at(10));
     expect([...(await branchHeads(env.DB, ["main", "production"]))]).toEqual([]);
   });
+
+  // P1 (Task 13 parked finding): occurred_at is stored WITHOUT milliseconds
+  // ("...T12:00:30Z") while a snapshot's computed_at comes from
+  // `new Date().toISOString()` WITH them ("...T12:00:30.500Z"). Within the same
+  // UTC second '.' < 'Z', so a STRING comparison says the snapshot lost even
+  // though it is genuinely newer — production-shaped timestamps (unlike the
+  // tests above, which format both sides identically) are what catch this.
+  it("prefers a snapshot that is newer by milliseconds within the same UTC second, over a same-second push", async () => {
+    await put([{ ...base, semantic_key: "gh:push:pushed1:main", kind: "push", ref: "main", sha: "pushed1", count: 1, occurred_at: "2026-09-20T12:00:30Z" }]);
+    await putSnapshot(env.DB, "env_heads", { main: "synced1" }, "2026-09-20T12:00:30.500Z");
+    expect((await branchHeads(env.DB, ["main"])).get("main")).toBe("synced1");
+  });
 });
 
 describe("CI failures", () => {
