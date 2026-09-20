@@ -311,14 +311,21 @@ app.post("/admin/backfill", async (c) => {
   if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);
-  // Best-effort, and only on the FINAL batch of a Sync (web/src/main.ts
+  // Best-effort, and only on the batch that ENDS a Sync (web/src/main.ts
   // re-POSTs this route up to 10 times while the summary budget stays
   // exhausted): reconcileRepo redoes ~250 no-op statements on an
   // already-reconciled repo, so running it on every intermediate batch would
   // waste that work 9 times over for nothing. `repo` is present in the
-  // response only when it actually ran.
+  // response only when it actually ran. The client sends its own 1-based
+  // batch number and its cap (`{ batch, of }`) — the server has no other way
+  // to see the client's loop counter, and without it a Sync that hits the cap
+  // while still exhausted would never reconcile. Read defensively: an absent
+  // or malformed body behaves exactly as before (gates on the budget alone).
+  const body = (await c.req.json().catch(() => null)) as { batch?: unknown; of?: unknown } | null;
+  const batch = typeof body?.batch === "number" ? body.batch : undefined;
+  const of = typeof body?.of === "number" ? body.of : undefined;
   let repo: { written: number; unchanged: number } | undefined;
-  if (isFinalBackfillBatch(res) && c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
+  if (isFinalBackfillBatch(res, batch, of) && c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
     repo = await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
   }
   return c.json(repo ? { ...res, repo } : res);

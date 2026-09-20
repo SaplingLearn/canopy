@@ -383,13 +383,19 @@ issue's subject, not who merged/closed — so the feed never claims an actor it 
 sample data" swaps in `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the
 Worker.
 
-`POST /admin/backfill` runs `reconcileRepo` **once per Sync, on the FINAL batch only** — the field to check
-is `BackfillResult.summaryBudgetExhausted` (`src/tools/backfill.ts`); `isFinalBackfillBatch` is `true` when
-it is `false` (the frontend loop's last call). The SPA can re-POST this route up to 10 times per Sync while
-the summarizer budget stays exhausted, and `reconcileRepo` redoes ~250 no-op statements on an
-already-reconciled repo, so running it on every intermediate batch would waste that work repeatedly for
-nothing; the route folds its `{ written, unchanged }` into the JSON response as `repo`, present only when it
-actually ran. Still best-effort (`.catch(() => undefined)`) and unable to fail the route.
+`POST /admin/backfill` runs `reconcileRepo` **once per Sync, on the batch that ENDS the loop** — either the
+batch whose `BackfillResult.summaryBudgetExhausted` reads `false` (the normal last call), OR the batch that
+hits the frontend's own cap while the budget is STILL exhausted (the server has no other way to see the
+client's loop counter, so a Sync that maxes out `MAX_BACKFILL_BATCHES` without ever clearing the budget
+would otherwise never reconcile). `isFinalBackfillBatch(result, batch?, of?)` (`src/tools/backfill.ts`) is
+`true` when the budget is not exhausted, OR when the caller-supplied `batch >= of`; `web/src/main.ts`'s
+`runAdminBackfillLoop` sends its 1-based batch number and `MAX_BACKFILL_BATCHES` (10) as `{ batch, of }` in
+the POST body, and the route reads them defensively (absent/malformed → behaves as before, gating on the
+budget alone). The SPA can re-POST this route up to 10 times per Sync while the summarizer budget stays
+exhausted, and `reconcileRepo` redoes ~250 no-op statements on an already-reconciled repo, so running it on
+every intermediate batch would waste that work repeatedly for nothing; the route folds its
+`{ written, unchanged }` into the JSON response as `repo`, present only when it actually ran. Still
+best-effort (`.catch(() => undefined)`) and unable to fail the route.
 
 ## Sidebar & motion — the `<aside>` outlives rerenders
 

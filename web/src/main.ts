@@ -904,12 +904,13 @@ function flash(msg: string): void {
 
 // Drives a (possibly multi-batch) Sync GitHub run: the backend caps AI calls
 // per invocation (src/tools/backfill.ts's summaryBudgetExhausted), so this
-// keeps calling adminBackfill() while a budget was exhausted, updating
+// keeps calling adminBackfill(batch, of) while a budget was exhausted, updating
 // state.backfillSync after every batch — both PR and issue counts are
 // absolute snapshots from the response, not accumulated here, so the modal's
 // progress bars always reflect real server-side state. MAX_BACKFILL_BATCHES
 // is a client-side backstop against spinning forever if summaries never
-// converge (e.g. every AI call keeps falling back to excerpt).
+// converge (e.g. every AI call keeps falling back to excerpt) — the batch/of
+// pair we send lets the server reconcile on the batch that hits this cap too.
 const MAX_BACKFILL_BATCHES = 10;
 
 async function runAdminBackfillLoop(): Promise<void> {
@@ -918,8 +919,11 @@ async function runAdminBackfillLoop(): Promise<void> {
   let last: Awaited<ReturnType<typeof adminBackfill>> | null = null;
   try {
     do {
-      last = await adminBackfill();
       batchesSoFar++;
+      // 1-based batch number + the cap, so the server can reconcile on the
+      // batch that hits MAX_BACKFILL_BATCHES even while still exhausted (it
+      // has no other way to see this client-side loop counter).
+      last = await adminBackfill(batchesSoFar, MAX_BACKFILL_BATCHES);
       summarizedSoFar += last.summarized;
       state.backfillSync = {
         phase: "progress",
