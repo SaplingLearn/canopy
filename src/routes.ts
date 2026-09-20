@@ -26,6 +26,7 @@ import {
 import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
+import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
 import { createInvite, revokeInvite, listInvites } from "./auth/invites";
@@ -283,6 +284,19 @@ app.get("/me/dashboard", async (c) => {
     // Absolute backstop: never 500. Anything unexpected (D1) → empty degraded payload.
     const empty: DashboardData = { person: null, previousActivity: [], todo: [], tickets: [], degraded: true };
     return c.json(empty);
+  }
+});
+
+// The Repo dashboard — the same class of read as /me/dashboard: a D1-only
+// projection over captured events, tickets and sprints (src/tools/repo.ts). No
+// live GitHub; whatever Canopy has no capture path for is `not_connected`.
+// Stored nowhere; never 500s.
+app.get("/repo/dashboard", async (c) => {
+  const repo = c.env.GITHUB_REPO ?? "";
+  try {
+    return c.json(await getRepoDashboard(c.env.DB, repo));
+  } catch {
+    return c.json(emptyRepoDashboard(repo, true));
   }
 });
 
