@@ -7,7 +7,7 @@ import { type DB, all, first, nowIso } from "../db";
 import { list_sprints } from "./sprints";
 import { hasCaptured, prStatesAsOf, recentPrRows, commitsByDay, pushRowsSince, recordingSince } from "../repo/reads";
 import { getSnapshot } from "../repo/store";
-import type { RepoEventRow } from "../repo/types";
+import type { RepoEventRow, RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
 // no live GitHub, no per-user token, nothing written. It reads what the webhook
@@ -26,6 +26,7 @@ const ACTIVITY_LIMIT = 20;
 const CONTRIBUTOR_LIMIT = 8;
 const LABEL_LIMIT = 6;
 const BAR_DAYS = 14; // = the two-week PR window below
+const RECENT_PR_DAYS = 90; // recentPrRows' bound — a PR untouched this long need not be "recent"
 
 /** Event time: the payload's own clock, else when Canopy recorded it. */
 const AT = `COALESCE(occurred_at, recorded_at)`;
@@ -158,6 +159,7 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   const nowAt = new Date(now).toISOString();
   const weekAgo = new Date(now - 7 * DAY).toISOString();
   const twoWeeksAgo = new Date(now - 14 * DAY).toISOString();
+  const ninetyDaysAgo = new Date(now - RECENT_PR_DAYS * DAY).toISOString();
 
   const people = await personsByLogin(db);
 
@@ -186,10 +188,10 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   // open-PR count. Same field name/shape as before; only what it gates on
   // changed.
   const prCaptured = (await getSnapshot(db, "prs_reconciled")) !== null;
-  const isOpen = (r: RepoEventRow) => r.state === "draft" || r.state === "review";
+  const isOpen = (r: RepoPrRow) => r.state === "draft" || r.state === "review";
   const prsNow = prCaptured ? (await prStatesAsOf(db, nowAt)).filter(isOpen) : [];
   const prsThen = prCaptured ? (await prStatesAsOf(db, weekAgo)).filter(isOpen) : [];
-  const awaiting = (rows: RepoEventRow[]) => rows.filter((r) => r.state === "review").length;
+  const awaiting = (rows: RepoPrRow[]) => rows.filter((r) => r.state === "review").length;
   // A delta is only real once capture was RECORDING for the whole comparison
   // window — otherwise "now vs a week ago" is really "now vs whenever capture
   // began", which reads as a spurious spike. `tickets` is the fallback tile's
@@ -329,7 +331,7 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   const PR_STATES = ["draft", "review", "approved", "merged", "closed"] as const;
   const isKnownPrState = (s: string | null): s is RepoPr["state"] => (PR_STATES as readonly string[]).includes(s ?? "");
   const capturedPrs: RepoPr[] = prCaptured
-    ? (await recentPrRows(db, PR_LIMIT))
+    ? (await recentPrRows(db, PR_LIMIT, ninetyDaysAgo))
         // An unrecognized state is dropped, never guessed as "awaiting review".
         .filter((r) => isKnownPrState(r.state))
         .map((r) => ({
