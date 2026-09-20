@@ -355,6 +355,35 @@ merged PRs · reviews this week — `reviews` is `null`, rendered as "—" and e
 a `review` row has ever been captured (`hasCaptured(db, 'review')`); no capture path exists yet, so today
 that is always).
 
+**Environments, deploy history, check state and CI failures are also live** (Task 10 closes out Phase 2):
+`repo_events` kinds `deploy` / `check` / `run` back the environment cards, the per-part dot-strip deploy
+history (`deployHistories`), each environment's head-check verdict (`ci` / `ciTone` / `pill` —
+HEALTHY/DEGRADED/FAILING/UNKNOWN), and the CI-failures block (`ciFailureRows` + `ciDailyRates`, gated on
+`hasCaptured(db, 'run')`). **Each environment ships two deployables**, on two different hosts
+(`src/tools/repo.ts`'s `HOSTS`/`PARTS`): **Backend** is a Railway `deployment_status`, matched to an
+environment by `deployment.environment` equalling `cfg.railwayEnv`; **Frontend** is the Cloudflare "Workers
+Builds" `check_run` — but a Workers Builds check only counts as THAT environment's frontend deploy when
+BOTH its name matches `cfg.workerCheck` AND its branch matches `cfg.branch` (`fromCheckRun` in
+`src/repo/capture.ts`) — the same check name running on a PR branch is just a check, not a deploy.
+`REPO_ENVIRONMENTS` now feeds three places: the webhook capture (`repoEnvironments(env)` passed into
+`repoEventsFromDelivery` so a `deployment_status`/`check_run` delivery can be matched to its environment),
+the projection (`getRepoDashboard`'s `envs` param), and `reconcileRepo` (which reads it to know which
+branches to poll). A branch's "No checks captured" verdict came from `branchHeads` reading ONLY captured
+`push` rows for that branch — a branch pushed rarely (production) could go without one; `reconcileRepo` now
+also backfills each configured environment branch's HEAD as a synthetic `push` row
+(`gh:push:<sha>:<branch>`, `provenance: "backfill"`, same shape as its other commit backfills) so every
+configured branch has a head to key checks off, not just ones that happen to have a captured push.
+**These sections still read `not_connected` (or `empty`) on a fresh deploy**: the webhook is not yet
+subscribed to `deployment_status` / `check_run` / `workflow_run` / `pull_request_review` (nor, for a later
+phase, `status`) — the capture paths all exist in code, but until the repo owner adds those events in
+GitHub's webhook settings, no live delivery lands. Until then, an admin's "Sync GitHub"
+(`POST /admin/backfill`'s final batch, which calls `reconcileRepo`) is the ONLY source for deploys, checks
+and runs — `reconcileRepo` backfills the newest 20 deployments (with their statuses), completed workflow
+runs (each newly-written failing/timed-out run enriched with its failing job title via `fillFailedJob`,
+capped at 5 lookups per reconcile), and every configured environment branch's head checks. **Reviews have
+no backfill arm** (`reconcileRepo` does not poll PR reviews), so the `R` contributor tally stays `null`
+until the webhook subscription itself lands.
+
 The never-guess fallback rule now turns on a **completeness marker**, not "any row exists": `prCaptured` =
 `getSnapshot(db, 'prs_reconciled') !== null`, a snapshot `reconcileRepo` (`src/repo/github.ts`) writes only
 after the open-PR list has been BOTH fetched AND ingested without throwing — a marker, not
@@ -372,12 +401,13 @@ count-1 row PER COMMIT) are excluded from the activity feed and the contributors
 40-commit backfill would otherwise read as 40 feed lines and P=40 for one person — but still count toward
 the Commits tile's totals and the 14-day bars, which read `repo_events` unfiltered by provenance.
 
-**Everything with no capture path is `not_connected`, never guessed** — environments,
-drift, health, branches, deploys, CI failures, coverage, bundle, usage, Cloudflare, hosting, TODO counts
-(the `UNCAPTURED` object is the auditable list). Adding a capture path = flip one section there to `ok`; the
-screen already renders every section's live shape. Phases 2–5 — what lights up each remaining
-`not_connected` section (deploys, checks, CI runs, reviews, environments, drift, health, branches, coverage,
-bundle, usage, Cloudflare, hosting, TODOs) — are specified in
+**Everything with no capture path is `not_connected`, never guessed** — drift, health, branches, coverage,
+bundle, usage, Cloudflare, hosting, TODO counts (the `UNCAPTURED` object is the auditable list; environments
+/ deploys / CI failures are no longer in it — Phase 2 closed with Task 10, see above). Adding a capture path
+= flip one section there to `ok`; the screen already renders every section's live shape. Phase 3 — drift,
+branches, health (lighting up the drift strip, the branches list + Active branches tile, and the health
+block feeding the HEALTHY/DEGRADED pill; no GitHub settings change, no new secret) — and the phases after it
+covering coverage, bundle, usage, Cloudflare, hosting and TODOs are specified in
 `docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. The capture names a PR's AUTHOR and an
 issue's subject, not who merged/closed — so the feed never claims an actor it does not have. "Preview with
 sample data" swaps in `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the
@@ -503,9 +533,11 @@ happens, but the code exchange fails and `/auth/google/callback` 401s `exchange_
 `REPO_ENVIRONMENTS` (a JSON list, parsed by `src/repo/config.ts`'s `repoEnvironments()` — which branch
 deploys to which environment plus its Worker/URLs; absent or malformed → `[]`. Today it encodes two:
 **staging** deploys from `main`, **production** from a `production` branch; backend on Railway, frontend on
-Cloudflare Workers. Phase 1 reads it only to pick the backfill's default branch (`reconcileRepo`) and passes
-it — currently unused — into the webhook's repo capture; the dashboard's `environments` section itself
-stays `not_connected` regardless, until a later phase wires it up).
+Cloudflare Workers. Now read in three places (Task 10 closes out Phase 2): the webhook's repo capture
+(matching a `deployment_status`/`check_run` delivery to its environment), the dashboard projection
+(`getRepoDashboard`'s `envs` param — the `environments`/`deploys`/`ciFailures` sections stay `not_connected`
+when it is empty), and `reconcileRepo` (which branches to poll for deployments/checks and, for each
+configured branch, its head commit and head checks). Absent → all three stay `not_connected`/inert).
 Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
 not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` drives the progress recompute backstop (`0 */6 * * *`) and the two hourly digest

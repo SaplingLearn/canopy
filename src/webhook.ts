@@ -365,7 +365,7 @@ export async function handleGithubWebhook(
         const res = await ingestRepoEvent(env.DB, ev);
         if (res.outcome !== "written") { repo.unchanged++; continue; }
         repo.captured++;
-        if (ev.kind === "run" && ev.state === "failure" && ev.number && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
+        if (ev.kind === "run" && (ev.state === "failure" || ev.state === "timed_out") && ev.number && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
           const job = fillFailedJob(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, ev.number, ev.semantic_key);
           // Off the response path when the runtime allows; GitHub gives a hook 10s.
           if (opts?.waitUntil) opts.waitUntil(job); else await job;

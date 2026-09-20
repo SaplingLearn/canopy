@@ -310,6 +310,17 @@ describe("handleGithubWebhook — repo capture runs beside the My Work capture",
     expect(row).toEqual([{ title: "e2e (browser lane) · Run e2e suite" }]);
   });
 
+  it("a TIMED_OUT workflow_run is also enriched with the failing job title — not just `failure`", async () => {
+    const jobs = { jobs: [
+      { name: "e2e (browser lane)", conclusion: "failure", steps: [{ name: "Run e2e suite", conclusion: "failure" }] },
+    ] };
+    const fetchImpl = (async () => new Response(JSON.stringify(jobs), { status: 200 })) as typeof fetch;
+    const timedOut = { ...workflowRun, workflow_run: { ...workflowRun.workflow_run, conclusion: "timed_out" } };
+    await postWebhook("workflow_run", timedOut, { ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r" }, { fetchImpl });
+    const row = await all<{ title: string | null }>(env.DB, `SELECT title FROM repo_events WHERE kind = 'run'`);
+    expect(row).toEqual([{ title: "e2e (browser lane) · Run e2e suite" }]);
+  });
+
   it("without GITHUB_SERVICE_TOKEN, a failed run row lands with no title and no fetch is attempted", async () => {
     let calls = 0;
     const fetchImpl = (async () => { calls++; throw new Error("must not be called"); }) as typeof fetch;

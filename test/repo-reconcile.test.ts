@@ -23,9 +23,55 @@ function fakeGithub(routes: Record<string, unknown>): { fetchImpl: typeof fetch;
 const openPr = { number: 482, title: "Batch D1 reads", html_url: "https://github.com/o/r/pull/482", state: "open", draft: false, merged_at: null, updated_at: "2026-09-20T09:10:00Z", user: { login: "lpcooper-arch" }, head: { ref: "feature/usage-rollup", sha: "c91d2ae" }, base: { ref: "main" } };
 const commit = { sha: "f00d", commit: { message: "old work\n\nbody", committer: { date: "2026-09-10T08:00:00Z" } }, author: { login: "AndresL230" } };
 
+describe("reconcileRepo — deployments, workflow runs and env-head checks", () => {
+  it("backfills Railway deployments with their statuses, recent runs, and env-head checks", async () => {
+    const gh = fakeGithub({
+      "/deployments?": [{ id: 7001, sha: "becdbac", ref: "becdbac", environment: "Sapling / staging", created_at: "2026-09-20T09:04:47Z", creator: { login: "railway-app[bot]" } }],
+      "/deployments/7001/statuses": [{ id: 2, state: "success", created_at: "2026-09-20T09:05:34Z", log_url: "https://railway.com/l" }, { id: 1, state: "in_progress", created_at: "2026-09-20T09:04:47Z", log_url: null }],
+      "/actions/runs?": { workflow_runs: [{ id: 99, name: "CI", head_branch: "main", head_sha: "becdbac", status: "completed", conclusion: "success", run_attempt: 1, event: "push", html_url: "https://github.com/o/r/actions/runs/99", updated_at: "2026-09-20T09:10:00Z", run_started_at: "2026-09-20T09:05:00Z", actor: { login: "AndresL230" } }] },
+      "/commits/main/check-runs": { check_runs: [{ id: 5001, name: "Workers Builds: frontend-staging", status: "completed", conclusion: "success", head_sha: "becdbac", details_url: "https://dash", started_at: "2026-09-20T09:05:00Z", completed_at: "2026-09-20T09:06:32Z", app: { slug: "cloudflare-workers-and-pages" }, check_suite: { head_branch: "main" } }] },
+    });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
+    const kinds = await all<{ kind: string; n: number }>(env.DB, `SELECT kind, COUNT(*) AS n FROM repo_events GROUP BY kind ORDER BY kind`);
+    expect(kinds).toEqual([{ kind: "check", n: 1 }, { kind: "deploy", n: 2 }, { kind: "run", n: 1 }]);
+    // The check-runs list omits check_suite.head_branch reliably only per-ref: the branch we ASKED for is the branch.
+    expect(await all(env.DB, `SELECT env, part FROM repo_events WHERE kind = 'check'`)).toEqual([{ env: "staging", part: "frontend" }]);
+  });
+
+  it("backfills each configured environment branch's head commit as a push row, even one pushed rarely", async () => {
+    const gh = fakeGithub({
+      "/commits?sha=production&per_page=1": [{ sha: "prodhead1234567", commit: { message: "release cut", committer: { date: "2026-09-19T10:00:00Z" } }, author: { login: "AndresL230" } }],
+    });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
+    const rows = await all(env.DB, `SELECT ref, sha, provenance FROM repo_events WHERE kind = 'push' AND ref = 'production'`);
+    expect(rows).toEqual([{ ref: "production", sha: "prodhead1234567", provenance: "backfill" }]);
+  });
+
+  it("enriches a backfilled failing or timed-out run with its failing job title, capped at 5 lookups", async () => {
+    const runs = Array.from({ length: 7 }, (_, i) => ({
+      id: 9000 + i, name: `CI ${i}`, head_branch: "main", head_sha: `sha${i}`, status: "completed",
+      conclusion: i % 2 === 0 ? "failure" : "timed_out", run_attempt: 1, event: "push",
+      html_url: `https://github.com/o/r/actions/runs/${9000 + i}`, updated_at: "2026-09-20T09:10:00Z",
+      run_started_at: "2026-09-20T09:05:00Z", actor: { login: "AndresL230" },
+    }));
+    const gh = fakeGithub({
+      "/actions/runs?": { workflow_runs: runs },
+      "/jobs": { jobs: [{ name: "e2e", conclusion: "failure", steps: [{ name: "run suite", conclusion: "failure" }] }] },
+    });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
+    const jobCalls = gh.calls.filter((c) => c.includes("/jobs"));
+    expect(jobCalls.length).toBe(5);
+    const titled = await all<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM repo_events WHERE kind = 'run' AND title IS NOT NULL`);
+    expect(titled[0].n).toBe(5);
+  });
+});
+
 describe("reconcileRepo", () => {
   it("backfills open PRs and older commits through the gate, idempotently", async () => {
-    const gh = fakeGithub({ "/pulls?state=open": [openPr], "/pulls?state=closed": [], "/commits?": [commit] });
+    // Keyed to the pre-capture WINDOW call specifically (`&since=`) so it does not
+    // also answer the per-environment-head commit fetch (`&per_page=1`, no `since`)
+    // added for the env-head push backfill — those are separate, unmocked here.
+    const gh = fakeGithub({ "/pulls?state=open": [openPr], "/pulls?state=closed": [], "/commits?sha=main&since=": [commit] });
     const first = await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
     expect(first).toEqual({ written: 2, unchanged: 0 });
     const again = await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
