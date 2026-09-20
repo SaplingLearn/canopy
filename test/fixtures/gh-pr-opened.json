@@ -1,0 +1,11 @@
+{
+  "action": "opened",
+  "number": 482,
+  "pull_request": {
+    "number": 482, "title": "Batch D1 reads in usage rollup", "html_url": "https://github.com/SaplingLearn/sapling/pull/482",
+    "state": "open", "draft": false, "merged": false, "updated_at": "2026-09-20T09:10:00Z",
+    "user": { "login": "lpcooper-arch" },
+    "head": { "ref": "feature/usage-rollup", "sha": "c91d2aec91d2aec91d2aec91d2aec91d2aec91d2" },
+    "base": { "ref": "main" }
+  }
+}
