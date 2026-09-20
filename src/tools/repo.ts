@@ -1,6 +1,6 @@
 import type {
   RepoActivity, RepoBars, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
-  RepoEnv, RepoEnvPart, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
+  RepoDrift, RepoEnv, RepoEnvPart, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
@@ -42,7 +42,7 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 
 /** The sections no capture path feeds yet. One object so the list is auditable. */
 const UNCAPTURED = {
-  drift: NOT_CONNECTED, health: NOT_CONNECTED,
+  health: NOT_CONNECTED,
   branches: NOT_CONNECTED,
   coverage: NOT_CONNECTED, bundle: NOT_CONNECTED,
   usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
@@ -52,7 +52,7 @@ const UNCAPTURED = {
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
     repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
-    environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED,
+    environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
     sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
   };
@@ -450,8 +450,14 @@ export async function getRepoDashboard(
     : listPrs.map((p) => prOf(people, p));
 
   const some = <T>(rows: T[]): RepoSection<T[]> => (rows.length ? ok(rows) : EMPTY);
+  // Never on the render path: GitHub's compare API is called off a push
+  // webhook or reconcileRepo, never here — this only reads back what one of
+  // those already wrote. No snapshot yet → not_connected; a stale one is
+  // still shown (a fact as of its own computedAt).
+  const driftSnap = await getSnapshot<RepoDrift>(db, "drift");
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
+    drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
     // An environment card needs BOTH a configured environment and something
     // captured about it; a configured-but-silent environment is not connected.
     environments: envs.length && anyEnvCapture ? ok(envCards) : NOT_CONNECTED,

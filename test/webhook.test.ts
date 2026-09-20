@@ -19,6 +19,9 @@ import workflowRun from "./fixtures/gh-workflow-run.json";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { IssueSummaryRow } from "@shared/rows";
 import type { RepoEventRow } from "../src/repo/types";
+import { getSnapshot } from "../src/repo/store";
+import type { RepoDrift } from "@shared/repo";
+import { ENVS } from "./helpers/repo";
 
 const SECRET = "test-webhook-secret"; // matches vitest.config.ts binding
 
@@ -328,5 +331,44 @@ describe("handleGithubWebhook — repo capture runs beside the My Work capture",
     expect(calls).toBe(0);
     const row = await all<{ title: string | null }>(env.DB, `SELECT title FROM repo_events WHERE kind = 'run'`);
     expect(row).toEqual([{ title: null }]);
+  });
+});
+
+describe("handleGithubWebhook — drift snapshot on a push to an environment branch", () => {
+  const withRepoConfig = { ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r", REPO_ENVIRONMENTS: JSON.stringify(ENVS) } as Env;
+
+  it("a push to main (an environment branch) refreshes the drift snapshot", async () => {
+    const fetchImpl = (async (u: RequestInfo | URL) => {
+      const url = String(u);
+      if (url.endsWith("/compare/production...main")) {
+        return new Response(JSON.stringify({
+          ahead_by: 2, behind_by: 0,
+          commits: [{ sha: "c91d2aeXXXX", commit: { message: "rollup: batch D1 reads", committer: { date: "2026-09-20T09:00:00Z" } }, author: { login: "AndresL230" } }],
+        }), { status: 200 });
+      }
+      return new Response("[]", { status: 200 });
+    }) as typeof fetch;
+    const res = await postWebhook("push", pushFixture, withRepoConfig, { fetchImpl });
+    expect(res.status).toBe(200);
+    const snap = await getSnapshot<RepoDrift>(env.DB, "drift");
+    expect(snap?.data).toMatchObject({ head: "main", base: "production", ahead: 2, behind: 0 });
+  });
+
+  it("a push to a non-environment branch attempts no compare", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => { calls++; return new Response("[]", { status: 200 }); }) as typeof fetch;
+    const offBranchPush = { ...pushFixture, ref: "refs/heads/feature/off-environment" };
+    await postWebhook("push", offBranchPush, withRepoConfig, { fetchImpl });
+    expect(calls).toBe(0);
+    expect(await getSnapshot(env.DB, "drift")).toBeNull();
+  });
+
+  it("with no GITHUB_SERVICE_TOKEN, no fetch is attempted and no snapshot is written", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => { calls++; return new Response("[]", { status: 200 }); }) as typeof fetch;
+    const noToken = { ...env, GITHUB_REPO: "o/r", REPO_ENVIRONMENTS: JSON.stringify(ENVS) } as Env;
+    await postWebhook("push", pushFixture, noToken, { fetchImpl });
+    expect(calls).toBe(0);
+    expect(await getSnapshot(env.DB, "drift")).toBeNull();
   });
 });

@@ -207,13 +207,15 @@ describe("reconcileRepo", () => {
   // The subrequest budget: `reconcileRepo` shares one Cloudflare invocation (50
   // subrequests on the free plan) with runBackfill's ~13. Counted from the code:
   // 2 PR lists + 1 pre-capture commit window + 1 GraphQL deployments + 1 run
-  // list + ≤5 job lookups + 2 per environment (head commit, head checks).
+  // list + ≤5 job lookups + 2 per environment (head commit, head checks) +
+  // 2 drift compares (ahead, then behind — worst case, both sides non-empty).
   it("stays inside its share of the 50-subrequest budget", async () => {
     const runs = Array.from({ length: 7 }, (_, i) => ({
       id: 9000 + i, name: `CI ${i}`, head_branch: "main", head_sha: `sha${i}`, status: "completed",
       conclusion: "failure", run_attempt: 1, event: "push", html_url: `https://github.com/o/r/actions/runs/${9000 + i}`,
       updated_at: "2026-09-20T09:10:00Z", run_started_at: "2026-09-20T09:05:00Z", actor: { login: "AndresL230" },
     }));
+    const compareCommit = { sha: "abc1234def", commit: { message: "msg", committer: { date: "2026-09-20T09:00:00Z" } }, author: { login: "AndresL230" } };
     const gh = fakeGithub({
       "/pulls?state=open": [openPr], "/pulls?state=closed": [openPr], "/commits?sha=main&since=": [commit],
       graphql: deployments(...Array.from({ length: 20 }, (_, i) => deployNode({ databaseId: 7000 + i, commitOid: `sha${i}` }))),
@@ -221,9 +223,11 @@ describe("reconcileRepo", () => {
       "/jobs": { jobs: [{ name: "e2e", conclusion: "failure", steps: [] }] },
       "/commits?sha=main&per_page=1": [commit], "/commits?sha=production&per_page=1": [commit],
       "check-runs": { check_runs: [] },
+      "/compare/production...main": { ahead_by: 1, behind_by: 1, commits: [compareCommit] },
+      "/compare/main...production": { ahead_by: 1, behind_by: 1, commits: [compareCommit] },
     });
     await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
-    expect(gh.calls.length).toBe(14); // 5 + 5 job lookups + 2 environments × 2
+    expect(gh.calls.length).toBe(16); // 5 + 5 job lookups + 2 environments × 2 + 2 drift compares
   });
 });
 
