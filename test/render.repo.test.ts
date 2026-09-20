@@ -143,6 +143,21 @@ describe("repoView — live content", () => {
     expect(html).not.toMatch(/undefined|NaN/);
   });
 
+  it("an environment card shows a line per deployable and says when one has no capture", () => {
+    const data = live({ environments: { status: "ok", data: [{ key: "staging", name: "staging", note: "main", tone: "good", pill: "HEALTHY", ci: "All 8 checks passing", ciTone: "good", url: "https://staging.saplinglearn.com",
+      parts: [{ part: "backend", host: "Railway", sha: "abc1234", deployedAt: new Date().toISOString(), deployedBy: "AndresL230", result: "ok" }, { part: "frontend", host: "Cloudflare", sha: null, deployedAt: null, deployedBy: null, result: null }] }] } });
+    const html = repoView(props({ repo: { status: "ok", data } }));
+    expect(html).toContain("Backend");
+    expect(html).toContain("by AndresL230 · Railway");
+    expect(html).toContain("No Cloudflare deploy captured yet");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("labels each deploy strip with its environment AND its half", () => {
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data: repoSample() }, sample: true }));
+    for (const label of ["staging · api", "staging · web", "production · api", "production · web"]) expect(html).toContain(label);
+  });
+
   it("links the current sprint to its screen", () => {
     const data = live({ sprint: { status: "ok", data: { id: 3, label: "Notifications GA", due: "2026-10-02", closed: 21, total: 34, pct: 62 } } });
     const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
@@ -164,7 +179,7 @@ describe("repo header chrome", () => {
     expect(repoControls(props())).not.toContain("staging");
     const withEnvs = repoControls(props({ repo: { status: "ok", data: repoSample() } }));
     expect(withEnvs).toContain("staging — degraded");
-    expect(withEnvs).toContain("main — healthy");
+    expect(withEnvs).toContain("production — healthy");
   });
 
   it("labels freshness, and says so while a request is out", () => {

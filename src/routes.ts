@@ -296,7 +296,7 @@ app.get("/me/dashboard", async (c) => {
 app.get("/repo/dashboard", async (c) => {
   const repo = c.env.GITHUB_REPO ?? "";
   try {
-    return c.json(await getRepoDashboard(c.env.DB, repo));
+    return c.json(await getRepoDashboard(c.env.DB, repo, Date.now(), repoEnvironments(c.env)));
   } catch {
     return c.json(emptyRepoDashboard(repo, true));
   }

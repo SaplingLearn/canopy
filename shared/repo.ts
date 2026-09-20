@@ -39,16 +39,31 @@ export interface RepoPerson {
 }
 
 // ── Overview ────────────────────────────────────────────────────────────────
+/** An environment ships TWO deployables: a Railway backend and a Cloudflare
+ *  frontend. They move independently, so each half carries its own sha. */
+export type RepoPartName = "backend" | "frontend";
+export interface RepoEnvPart {
+  part: RepoPartName;
+  host: "Railway" | "Cloudflare";
+  /** Null = no deploy captured for this half yet — never a guessed sha. */
+  sha: string | null;
+  deployedAt: string | null;
+  /** The human who pushed that sha; the deploying bot when no push was captured. */
+  deployedBy: string | null;
+  result: "ok" | "fail" | "cancel" | "running" | null;
+}
 export interface RepoEnv {
+  /** The configured env key the capture is stored under ("staging"). */
+  key: string;
   name: string;
   /** e.g. "production" beside `main`. */
   note: string | null;
   tone: RepoTone;
   pill: string;
-  sha: string;
-  deployedAt: string;
-  deployedBy: string;
+  parts: RepoEnvPart[];
+  /** "All 8 checks passing" | "1 of 8 checks failing — e2e". */
   ci: string;
+  ciTone: RepoTone;
   url: string;
 }
 export interface RepoDriftCommit { sha: string; msg: string; at: string }
@@ -85,7 +100,8 @@ export interface RepoBranches { active: number; stale: number; rows: RepoBranch[
 
 // ── CI & Deploys ────────────────────────────────────────────────────────────
 export interface RepoDeploy { sha: string; at: string; by: string; result: "ok" | "fail" | "cancel" }
-export interface RepoDeployRow { env: string; deploys: RepoDeploy[] }
+/** One dot strip: the last deploys of ONE half of ONE environment. */
+export interface RepoDeployRow { env: string; part: RepoPartName; label: string; deploys: RepoDeploy[] }
 export interface RepoCiFailure { workflow: string; branch: string; job: string; at: string; url: string }
 export interface RepoCiFailures { rate: number; trend: number[]; rows: RepoCiFailure[] }
 export interface RepoTrend { value: string; trend: number[]; delta: string; tone: RepoTone; note: string }
