@@ -365,8 +365,14 @@ function ciTab(p: RepoProps): string {
     }).join(""));
 
   const fails = okData(p, (d) => d.ciFailures);
+  // `rate === null` = run capture has not been recording for a whole week yet
+  // (src/tools/repo.ts). The percentage and the sparkline both describe seven
+  // days, so neither is drawn — a quiet line says why instead. The failure rows
+  // themselves are facts and are always listed.
   const failures = sec(p, (d) => d.ciFailures, { nc: "CI isn't connected — workflow runs aren't captured yet.", empty: "No CI failures this week." }, (f) =>
-    `${spark(f.trend, "var(--amber)", 40)}
+    `${f.rate === null
+        ? `<div style="margin-top:8px;font-size:12.5px;color:var(--fg-40)">A 7-day rate appears after a week of captured runs.</div>`
+        : spark(f.trend, "var(--amber)", 40)}
     <div style="margin-top:10px">${f.rows.map((r) => `<div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) 82px;gap:10px;align-items:center;padding:10px 4px;${TOP}">
       <span style="display:inline-flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--red);flex:none">✕</span><span style="font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.workflow)}</span></span>
       <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.branch)}</span>
@@ -392,7 +398,7 @@ function ciTab(p: RepoProps): string {
     </div>
     <div ${rise(1, `display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,1fr);${TOP};flex:1`, "repo-split")}>
       <div style="padding:18px 20px;min-width:0;display:flex;flex-direction:column">
-        <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">CI failures — 7-day rate</span>${fails ? `<span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap;color:var(--amber)">${fails.rate.toFixed(1)}%</span>` : ""}</div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">CI failures — 7-day rate</span>${fails && fails.rate !== null ? `<span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap;color:var(--amber)">${fails.rate.toFixed(1)}%</span>` : ""}</div>
         ${failures}
       </div>
       <div style="${LEFT};min-width:0;display:flex;flex-direction:column" class="repo-split-r">

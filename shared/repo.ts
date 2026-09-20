@@ -103,7 +103,12 @@ export interface RepoDeploy { sha: string; at: string; by: string; result: "ok" 
 /** One dot strip: the last deploys of ONE half of ONE environment. */
 export interface RepoDeployRow { env: string; part: RepoPartName; label: string; deploys: RepoDeploy[] }
 export interface RepoCiFailure { workflow: string; branch: string; job: string; at: string; url: string }
-export interface RepoCiFailures { rate: number; trend: number[]; rows: RepoCiFailure[] }
+/** `rate`/`trend` are the SEVEN-day picture, so they are published only once run
+ *  capture had been recording for the whole week — before that a "0.0%" day is
+ *  just a day capture was not running, not a green day. `rate: null` (and an
+ *  empty `trend`) means "not enough capture yet"; `rows` are the failures
+ *  themselves, facts, and are always listed. */
+export interface RepoCiFailures { rate: number | null; trend: number[]; rows: RepoCiFailure[] }
 export interface RepoTrend { value: string; trend: number[]; delta: string; tone: RepoTone; note: string }
 export type RepoActivityKind = "push" | "merge" | "deploy" | "issue" | "close" | "release" | "review";
 export interface RepoActivity {

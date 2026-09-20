@@ -27,7 +27,7 @@ import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprint
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
-import { reconcileRepo } from "./repo/github";
+import { reconcileRepo, type ReconcileResult } from "./repo/github";
 import { repoEnvironments } from "./repo/config";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
@@ -324,7 +324,10 @@ app.post("/admin/backfill", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { batch?: unknown; of?: unknown } | null;
   const batch = typeof body?.batch === "number" ? body.batch : undefined;
   const of = typeof body?.of === "number" ? body.of : undefined;
-  let repo: { written: number; unchanged: number } | undefined;
+  // `repo.failed` names each reconcile arm that threw (deployments / runs / …),
+  // so a Sync that silently lost one is distinguishable from one that had
+  // nothing to do.
+  let repo: ReconcileResult | undefined;
   if (isFinalBackfillBatch(res, batch, of) && c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
     repo = await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
   }

@@ -187,8 +187,9 @@ export function adminBackfill(batch: number, of: number): Promise<{
   issues: number;
   issuesToSummarize: number;
   /** Present only on the batch that ends a Sync — the repo-capture reconcile
-   *  (src/repo/github.ts's reconcileRepo) rides that batch only. */
-  repo?: { written: number; unchanged: number };
+   *  (src/repo/github.ts's reconcileRepo) rides that batch only. `failed` names
+   *  each arm of it that threw ("deployments", "runs", …); empty on a clean run. */
+  repo?: { written: number; unchanged: number; failed: string[] };
 }> {
   return postJson("/admin/backfill", { batch, of });
 }

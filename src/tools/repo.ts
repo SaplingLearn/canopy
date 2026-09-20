@@ -250,7 +250,7 @@ export async function getRepoDashboard(
   const checks = await latestChecks(db, [...heads.values(), ...prRows.map((r) => r.sha ?? "")]);
 
   const deployRows: RepoDeployRow[] = [];
-  const envCards: RepoEnv[] = envs.map((cfg) => {
+  const cards = envs.map((cfg) => {
     const parts: RepoEnvPart[] = PARTS.map((part) => {
       const history = strips.get(`${cfg.key}:${part}`) ?? [];
       // A half with no capture gets no dot strip at all — an empty one would
@@ -267,23 +267,35 @@ export async function getRepoDashboard(
       : failing.length ? `${failing.length} of ${onHead.length} checks failing — ${failing[0]}`
       : settled.length < onHead.length ? `${settled.length} of ${onHead.length} checks finished`
       : `All ${onHead.length} checks passing`;
-    // UNKNOWN until SOMETHING about this environment was captured — a card with
-    // no deploy and no check must not read as healthy.
-    const known = parts.some((p) => p.result !== null) || onHead.length > 0;
+    // The card is CONNECTED once anything about the environment was captured —
+    // a deploy result or a head check. That is a different question from the
+    // pill, which is a verdict: HEALTHY is a claim about CHECKS, so it needs
+    // checks captured on the head, none of them failing, and no failed part. A
+    // deploy that landed with no checks captured says only that it landed —
+    // UNKNOWN, neutral. A part that FAILED is a fact on its own, so FAILING
+    // does not wait for checks.
+    const connected = parts.some((p) => p.result !== null) || onHead.length > 0;
     const failed = parts.some((p) => p.result === "fail");
-    return {
+    const card: RepoEnv = {
       key: cfg.key, name: cfg.label, note: cfg.note, parts, url: cfg.frontendUrl, ci,
       ciTone: !onHead.length ? "neutral" : failing.length ? "bad" : "good",
-      pill: !known ? "UNKNOWN" : failed ? "FAILING" : failing.length ? "DEGRADED" : "HEALTHY",
-      tone: !known ? "neutral" : failed ? "bad" : failing.length ? "warn" : "good",
+      pill: failed ? "FAILING" : failing.length ? "DEGRADED" : onHead.length ? "HEALTHY" : "UNKNOWN",
+      tone: failed ? "bad" : failing.length ? "warn" : onHead.length ? "good" : "neutral",
     };
+    return { card, connected };
   });
-  const anyDeployCapture = envCards.some((e) => e.pill !== "UNKNOWN");
+  const envCards: RepoEnv[] = cards.map((c) => c.card);
+  const anyEnvCapture = cards.some((c) => c.connected);
 
   // CI is `not_connected` until a workflow run has ever been captured — a 0%
-  // failure rate over nothing is a guess, not an answer.
+  // failure rate over nothing is a guess, not an answer. And the SEVEN-DAY rate
+  // (and its per-day trend) waits for the same recording-window rule the PR and
+  // commit deltas use: until `run` capture predates the whole week, a day with
+  // no captured runs is a day capture was not running, not a green day. The
+  // failures LIST is not gated — those rows are facts.
   const runCaptured = await hasCaptured(db, "run");
-  const ciRates = runCaptured ? await ciDailyRates(db, now) : null;
+  const runRecordingSince = runCaptured ? await recordingSince(db, "run") : null;
+  const ciRates = runRecordingSince !== null && runRecordingSince <= weekAgo ? await ciDailyRates(db, now) : null;
   const failureRows = runCaptured ? await ciFailureRows(db, weekAgo, CI_FAILURE_LIMIT) : [];
   const reviews = await reviewRowsSince(db, twoWeeksAgo);
 
@@ -442,11 +454,12 @@ export async function getRepoDashboard(
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
     // An environment card needs BOTH a configured environment and something
     // captured about it; a configured-but-silent environment is not connected.
-    environments: envs.length && anyDeployCapture ? ok(envCards) : NOT_CONNECTED,
-    deploys: deployRows.length ? ok(deployRows) : envs.length && anyDeployCapture ? EMPTY : NOT_CONNECTED,
-    ciFailures: runCaptured && ciRates
+    environments: envs.length && anyEnvCapture ? ok(envCards) : NOT_CONNECTED,
+    deploys: deployRows.length ? ok(deployRows) : envs.length && anyEnvCapture ? EMPTY : NOT_CONNECTED,
+    ciFailures: runCaptured
       ? ok({
-          rate: ciRates.rate, trend: ciRates.days,
+          // null / [] until the week is covered — never a rate over a partial window.
+          rate: ciRates?.rate ?? null, trend: ciRates?.days ?? [],
           rows: failureRows.map((r) => ({
             workflow: r.name ?? "workflow", branch: r.ref ?? "", job: r.title ?? "—",
             at: r.occurred_at, url: r.url ?? "",

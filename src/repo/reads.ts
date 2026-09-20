@@ -1,6 +1,7 @@
 // Every SELECT over the repo capture tables. D1 only — nothing here may fetch.
 import { type DB, all, first, fanOut, ph } from "../db";
 import type { RepoDeploy } from "@shared/repo";
+import { getSnapshot } from "./store";
 import type { RepoEventKind, RepoEventRow, RepoPart, RepoPrRow, RepoReviewRow, RepoRunRow } from "./types";
 
 /** The columns a `pr` reader needs — never `raw`, and never the columns no PR
@@ -78,20 +79,49 @@ const DEPLOY_HISTORY = 10;
  *  nothing about whether CI is healthy, so it is not in the denominator. */
 const DECISIVE = ["success", "failure", "timed_out"];
 
+// ── the ONE policy for a non-decisive conclusion ─────────────────────────────
+//
+// GitHub deployment states and check/run conclusions overlap but are not the
+// same set, and both surfaces (a deploy dot, a checks icon) must read them the
+// same way. There is exactly one table, stated here and again at `checkState`:
+//
+//   success                                   → ok      (a deploy landed / a check passed)
+//   failure · error · timed_out               → fail
+//   stale · action_required · cancelled ·
+//     inactive WITHOUT a preceding success    → cancel   (it was abandoned, not failed)
+//   neutral · skipped                         → NOTHING HAPPENED: not a dot at
+//                                               all for a deploy, and a pass for
+//                                               the checks icon (a skipped check
+//                                               is not a failing one)
+//
+// `inactive` AFTER a success is just the supersede marker of a deploy that DID
+// land, which is why `success` is checked first.
+
+/** Non-decisive conclusions, by the table above. */
+const CANCEL_STATES = ["stale", "action_required", "cancelled", "inactive"];
+const FAIL_STATES = ["failure", "error", "timed_out"];
+
 /** Fold one deployment's (or one Workers Builds check run's) status rows into a
- *  single dot: a superseded deploy (success → inactive) still DEPLOYED, one
- *  that never succeeded and went inactive/cancelled was cancelled, and one
- *  still in flight is not a dot at all (null). */
+ *  single dot, by the policy above: a superseded deploy (success → inactive)
+ *  still DEPLOYED, one that never succeeded and went inactive/cancelled/stale
+ *  was cancelled, and one still in flight (or neutral/skipped) is not a dot at
+ *  all (null). */
 function foldResult(states: string[]): RepoDeploy["result"] | null {
   if (states.includes("success")) return "ok";
-  if (states.some((s) => s === "failure" || s === "error" || s === "timed_out")) return "fail";
-  if (states.some((s) => s === "inactive" || s === "cancelled")) return "cancel";
+  if (states.some((s) => FAIL_STATES.includes(s))) return "fail";
+  if (states.some((s) => CANCEL_STATES.includes(s))) return "cancel";
   return null;
 }
 
 /** Who pushed each of these commits — the human behind a deploying bot. The
  *  FIRST push row for a sha wins (a re-push of the same head is the same
- *  person's commit). */
+ *  person's commit).
+ *
+ *  CAVEAT: on a BACKFILLED push row (`provenance = 'backfill'`, written by the
+ *  pre-capture commit fill in src/repo/github.ts) `actor_login` is the commit
+ *  AUTHOR, not the pusher — the commits API cannot say who pushed. So on a
+ *  squash merge "deployed by" can name the PR author rather than whoever
+ *  pressed merge. A webhook push row carries the real pusher. */
 async function pushersFor(db: DB, shas: string[]): Promise<Map<string, string>> {
   const ids = [...new Set(shas.filter(Boolean))];
   if (!ids.length) return new Map();
@@ -134,16 +164,37 @@ export async function deployHistories(db: DB, limit: number = DEPLOY_HISTORY): P
   return out;
 }
 
-/** The head sha of each branch, as the push capture last saw it. */
+/** The head sha of each branch — the newer of two sources, never a third query
+ *  per branch:
+ *
+ *  1. the latest captured `push` row for that branch (what the webhook saw), and
+ *  2. the `env_heads` snapshot `reconcileRepo` writes (`{ [branch]: sha }`),
+ *     which exists so a branch pushed rarely (production) still has a head for
+ *     "CI on head" to key checks off.
+ *
+ *  The snapshot wins only when it is NEWER than that branch's latest push (or
+ *  when no push was ever captured for it) — a Sync is a point-in-time read, and
+ *  a push that landed after it is the better answer. Two D1 statements whatever
+ *  the branch count. */
 export async function branchHeads(db: DB, branches: string[]): Promise<Map<string, string>> {
   const refs = [...new Set(branches.filter(Boolean))];
   if (!refs.length) return new Map();
-  const rows = await fanOut<{ ref: string; sha: string }>(db, refs, (p) =>
-    `SELECT ref, sha FROM (
-       SELECT ref, sha, ROW_NUMBER() OVER (PARTITION BY ref ORDER BY occurred_at DESC, id DESC) AS rn
+  const rows = await fanOut<{ ref: string; sha: string; at: string }>(db, refs, (p) =>
+    `SELECT ref, sha, at FROM (
+       SELECT ref, sha, occurred_at AS at, ROW_NUMBER() OVER (PARTITION BY ref ORDER BY occurred_at DESC, id DESC) AS rn
          FROM repo_events WHERE kind = 'push' AND ref IN (${p})
      ) WHERE rn = 1 AND sha IS NOT NULL`);
-  return new Map(rows.map((r) => [r.ref, r.sha]));
+  const out = new Map(rows.map((r) => [r.ref, r.sha] as const));
+  const snap = await getSnapshot<Record<string, unknown>>(db, "env_heads");
+  if (snap) {
+    for (const ref of refs) {
+      const sha = snap.data?.[ref];
+      if (typeof sha !== "string" || !sha) continue;
+      const push = rows.find((r) => r.ref === ref);
+      if (!push || snap.computedAt > push.at) out.set(ref, sha);
+    }
+  }
+  return out;
 }
 
 /** The LATEST state of every check on each of these commits (a re-run
@@ -163,10 +214,17 @@ export async function latestChecks(db: DB, shas: string[]): Promise<Map<string, 
 }
 
 /** One commit's checks as a single verdict — null when nothing is captured for
- *  it, so the PR list's checks column renders nothing rather than a guess. */
+ *  it, so the PR list's checks column renders nothing rather than a guess.
+ *
+ *  Same ONE policy as `foldResult` above: `failure` / `error` / `timed_out` are
+ *  a fail, `pending` is still running, and everything else — `success`,
+ *  `neutral`, `skipped`, and the cancel bucket (`cancelled` / `stale` /
+ *  `action_required`) — is NOT a failing check. This column has only
+ *  pass/fail/run, and "abandoned" is a statement about a DEPLOY, not about the
+ *  code under review, so the cancel bucket reads here as "nothing failing". */
 export function checkState(checks: { state: string }[] | undefined): "pass" | "fail" | "run" | null {
   if (!checks?.length) return null;
-  if (checks.some((c) => c.state === "failure" || c.state === "timed_out")) return "fail";
+  if (checks.some((c) => FAIL_STATES.includes(c.state))) return "fail";
   if (checks.some((c) => c.state === "pending")) return "run";
   return "pass";
 }
@@ -194,19 +252,34 @@ export async function ciFailureRows(db: DB, sinceIso: string, limit: number): Pr
       ORDER BY occurred_at DESC, id DESC LIMIT ?`, sinceIso, limit);
 }
 
-/** Failure rate (%) per UTC day for the last 7 days, oldest first, plus the
- *  rate over the whole window. Cancelled/skipped runs are not decisive. */
+/** Failed/timed-out runs that still have no job title, newest first — the
+ *  backlog `reconcileRepo` drains a capped slice of on each Sync. Bounded to a
+ *  window so an ancient unlabellable run cannot block the queue forever. */
+export async function untitledFailedRuns(db: DB, sinceIso: string, limit: number): Promise<{ number: number; semantic_key: string }[]> {
+  return all<{ number: number; semantic_key: string }>(db,
+    `SELECT number, semantic_key FROM repo_events
+      WHERE kind = 'run' AND state IN ('failure', 'timed_out') AND title IS NULL AND number IS NOT NULL
+        AND occurred_at > ?
+      ORDER BY occurred_at DESC, id DESC LIMIT ?`, sinceIso, limit);
+}
+
+/** Failure rate (%) per UTC day for the last 7 calendar days, oldest first,
+ *  plus the rate over exactly those SAME seven buckets. Cancelled/skipped runs
+ *  are not decisive (see the policy at `foldResult`). The window starts at the
+ *  oldest bucket's UTC midnight — a rolling 7×24h bound would pull in rows from
+ *  a partial eighth day that belong to no bar, so the headline rate and the
+ *  sparkline would describe different windows. */
 export async function ciDailyRates(db: DB, now: number): Promise<{ days: number[]; rate: number }> {
-  const since = new Date(now - 7 * 86_400_000).toISOString();
+  const day = (i: number) => new Date(now - i * 86_400_000).toISOString().slice(0, 10);
+  const since = `${day(6)}T00:00:00.000Z`;
   const rows = await all<{ day: string; state: string; n: number }>(db,
     `SELECT substr(occurred_at, 1, 10) AS day, state, COUNT(*) AS n FROM repo_events
-      WHERE kind = 'run' AND occurred_at > ? AND state IN (${ph(DECISIVE.length)}) GROUP BY day, state`,
+      WHERE kind = 'run' AND occurred_at >= ? AND state IN (${ph(DECISIVE.length)}) GROUP BY day, state`,
     since, ...DECISIVE);
   let bad = 0, total = 0;
   const days: number[] = [];
   for (let i = 6; i >= 0; i--) {
-    const day = new Date(now - i * 86_400_000).toISOString().slice(0, 10);
-    const of = rows.filter((r) => r.day === day);
+    const of = rows.filter((r) => r.day === day(i));
     const t = of.reduce((n, r) => n + r.n, 0);
     const b = of.filter((r) => r.state !== "success").reduce((n, r) => n + r.n, 0);
     bad += b; total += t;
