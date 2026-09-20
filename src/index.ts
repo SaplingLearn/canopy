@@ -31,7 +31,7 @@ export default {
     // Third auth class: GitHub webhook deliveries, HMAC-verified over the raw
     // body against GITHUB_WEBHOOK_SECRET. Never touches sessionGate.
     if (url.pathname === "/webhook/github" && request.method === "POST") {
-      return handleGithubWebhook(request, env);
+      return handleGithubWebhook(request, env, { waitUntil: (p) => ctx.waitUntil(p) });
     }
     // Signed one-click unsubscribe (canopy-email.md §7): the single token
     // exception. POST (what List-Unsubscribe-Post mail clients send) verifies the

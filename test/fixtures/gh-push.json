@@ -1,0 +1,16 @@
+{
+  "ref": "refs/heads/main",
+  "before": "1111111111111111111111111111111111111111",
+  "after": "becdbac09eaf5d7c73b9f27019c0e43c4444dd7b",
+  "created": false, "deleted": false, "forced": false,
+  "compare": "https://github.com/SaplingLearn/sapling/compare/1111111...becdbac",
+  "repository": { "pushed_at": 1789895090 },
+  "pusher": { "name": "AndresL230" },
+  "sender": { "login": "AndresL230" },
+  "commits": [
+    { "id": "aaaaaaa1", "distinct": true, "message": "rollup: batch D1 reads\n\nbody", "timestamp": "2026-09-20T09:03:00Z", "author": { "username": "AndresL230" } },
+    { "id": "aaaaaaa2", "distinct": true, "message": "fix window math", "timestamp": "2026-09-20T09:04:00Z", "author": { "username": "AndresL230" } },
+    { "id": "aaaaaaa3", "distinct": false, "message": "already on another branch", "timestamp": "2026-09-19T09:04:00Z", "author": { "username": "lpcooper-arch" } }
+  ],
+  "head_commit": { "id": "becdbac09eaf5d7c73b9f27019c0e43c4444dd7b", "message": "fix window math", "timestamp": "2026-09-20T09:04:41Z" }
+}

@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
 import { render, initialState } from "../web/src/render";
-import { REPO_TABS, type RepoDashboard } from "@shared/repo";
+import { REPO_TABS, type RepoDashboard, type RepoPerson } from "@shared/repo";
 
 const NC = { status: "not_connected" } as const;
 const EMPTY = { status: "empty" } as const;
@@ -49,7 +49,7 @@ describe("repoView — section states", () => {
   it("shows 'Nothing here yet' for a connected section with no rows", () => {
     const html = repoView(props({ tab: "planning" }));
     expect(html).toContain("No sprint is active");
-    expect(html).toContain("No merges or closes this week.");
+    expect(html).toContain("No pushes, merges or reviews this week.");
   });
 
   it("first load is skeletons; a failed first load is an error with Retry", () => {
@@ -87,6 +87,18 @@ describe("repoView — live content", () => {
     expect(html).toContain("MERGED");
   });
 
+  it("names the PR-list header from what's actually shown, not the sample flag", () => {
+    const prRow = (state: "review" | "merged") => ({
+      number: 1, title: "PR", url: "https://github.com/o/r/pull/1",
+      author: { login: "x", handle: null, name: null, color: null }, branch: "feat/x", state, checks: null, at: new Date().toISOString(),
+    });
+    const open = live({ prs: { status: "ok", data: [prRow("review")] } });
+    expect(repoView(props({ tab: "code", repo: { status: "ok", data: open } }))).toContain("Pull requests — open &amp; recent");
+
+    const closed = live({ prs: { status: "ok", data: [prRow("merged")] } });
+    expect(repoView(props({ tab: "code", repo: { status: "ok", data: closed } }))).toContain("Pull requests — recently closed");
+  });
+
   it("draws one bar per day and scales them to the busiest", () => {
     const days = Array.from({ length: 14 }, (_, i) => ({ date: `2026-09-${String(7 + i).padStart(2, "0")}`, count: i === 13 ? 4 : i === 0 ? 2 : 0 }));
     const data = live({ bars: { status: "ok", data: { title: "Merge activity — last 14 days", note: "6 merged PRs · all branches", days } } });
@@ -112,6 +124,63 @@ describe("repoView — live content", () => {
     expect(repoView(props({ tab: "usage", range: "30d", repo: { status: "ok", data } }))).toContain("5.1M");
   });
 
+  it("M11: renders a null reviews count as an em dash, excluded from the bar width", () => {
+    const person = (login: string): RepoPerson => ({ login, handle: login, name: null, color: null });
+    const data = live({
+      contributors: {
+        status: "ok",
+        data: [
+          { person: person("a"), pushes: 4, merged: 2, reviews: null },
+          { person: person("b"), pushes: 1, merged: 0, reviews: null },
+        ],
+      },
+    });
+    const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
+    expect(html).toContain("4 · 2 · —");
+    expect(html).toContain("1 · 0 · —");
+    // max = 4 + 2 + 0 (reviews excluded, not counted as 0-contribution-but-present) → row "a" fills 100%.
+    expect(html).toContain("width:100%");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("an environment card shows a line per deployable and says when one has no capture", () => {
+    const data = live({ environments: { status: "ok", data: [{ key: "staging", name: "staging", note: "main", tone: "good", pill: "HEALTHY", ci: "All 8 checks passing", ciTone: "good", url: "https://staging.saplinglearn.com",
+      parts: [{ part: "backend", host: "Railway", sha: "abc1234", deployedAt: new Date().toISOString(), deployedBy: "AndresL230", result: "ok" }, { part: "frontend", host: "Cloudflare", sha: null, deployedAt: null, deployedBy: null, result: null }] }] } });
+    const html = repoView(props({ repo: { status: "ok", data } }));
+    expect(html).toContain("Backend");
+    expect(html).toContain("by AndresL230 · Railway");
+    expect(html).toContain("No Cloudflare deploy captured yet");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  // F3: `rate: null` = run capture has not covered a whole week yet. The header
+  // percentage and the sparkline both describe seven days, so neither may be
+  // drawn — but the failures themselves are facts and stay listed.
+  it("a CI block with no 7-day rate yet shows no percentage, no sparkline, and says why", () => {
+    const data = live({ ciFailures: { status: "ok", data: { rate: null, trend: [], rows: [
+      { workflow: "e2e (browser lane)", branch: "main", job: "e2e · run suite", at: new Date().toISOString(), url: "https://github.com/o/r/actions/runs/3" },
+    ] } } });
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
+    expect(html).toContain("A 7-day rate appears after a week of captured runs.");
+    expect(html).not.toMatch(/>\d+\.\d%</); // no headline percentage rendered as text
+    expect(html).not.toContain("repo-spark");
+    expect(html).toContain("e2e · run suite");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("shows the rate and the sparkline once a week of runs is captured", () => {
+    const data = live({ ciFailures: { status: "ok", data: { rate: 6.7, trend: [4, 9, 6, 3, 11, 8, 5], rows: [] } } });
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
+    expect(html).toContain("6.7%");
+    expect(html).toContain("repo-spark");
+    expect(html).not.toContain("A 7-day rate appears");
+  });
+
+  it("labels each deploy strip with its environment AND its half", () => {
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data: repoSample() }, sample: true }));
+    for (const label of ["staging · api", "staging · web", "production · api", "production · web"]) expect(html).toContain(label);
+  });
+
   it("links the current sprint to its screen", () => {
     const data = live({ sprint: { status: "ok", data: { id: 3, label: "Notifications GA", due: "2026-10-02", closed: 21, total: 34, pct: 62 } } });
     const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
@@ -133,7 +202,7 @@ describe("repo header chrome", () => {
     expect(repoControls(props())).not.toContain("staging");
     const withEnvs = repoControls(props({ repo: { status: "ok", data: repoSample() } }));
     expect(withEnvs).toContain("staging — degraded");
-    expect(withEnvs).toContain("main — healthy");
+    expect(withEnvs).toContain("production — healthy");
   });
 
   it("labels freshness, and says so while a request is out", () => {

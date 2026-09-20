@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all, first, run } from "../src/db";
-import { runBackfill } from "../src/tools/backfill";
+import { runBackfill, isFinalBackfillBatch } from "../src/tools/backfill";
 import type { Env } from "../src/env";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { EventRow, PrSummaryRow, IssueSummaryRow } from "@shared/rows";
@@ -396,5 +396,44 @@ describe("runBackfill — issue summarization", () => {
     expect(issueSummarizer.calls).toBe(1); // already structured → skipped, not re-called
     expect(secondRun.summarized).toBe(2); // the 2 remaining PRs
     expect(summarizer.calls).toBe(3); // all 3 PRs summarized across the two runs
+  });
+});
+
+// F3: /admin/backfill (src/routes.ts) runs the repo-capture reconcile ONLY on
+// the final batch of a Sync, so it isn't redone on every intermediate batch of
+// a multi-batch run. The route itself has no fetchImpl seam (it calls
+// runBackfill(c.env, login) and reconcileRepo with the real global `fetch`,
+// never opts.fetchImpl), and hitting real GitHub from a test is out —
+// per CLAUDE.md, tests must never touch the network. So the "final batch
+// only" decision is covered here as a pure unit, independent of the route.
+describe("isFinalBackfillBatch — the /admin/backfill 'run reconcile once' gate", () => {
+  it("is true once the summary budget is NOT exhausted (the loop's last batch)", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: false })).toBe(true);
+  });
+
+  it("is false while the summary budget is still exhausted (an intermediate batch)", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true })).toBe(false);
+  });
+
+  // Task 6b #4: the frontend loop (web/src/main.ts's runAdminBackfillLoop) caps
+  // itself at MAX_BACKFILL_BATCHES — a Sync that hits that cap while STILL
+  // exhausted must also reconcile, since no later batch will ever come. The
+  // server can't see the client's counter on its own, so the client sends it.
+  it("is true when the caller-supplied batch has reached the cap, even while the budget stays exhausted", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, 10, 10)).toBe(true);
+  });
+
+  it("is false while the batch is still under the cap and the budget stays exhausted", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, 5, 10)).toBe(false);
+  });
+
+  it("stays true once the budget is not exhausted, regardless of batch/of", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: false }, 1, 10)).toBe(true);
+  });
+
+  it("treats an absent or malformed batch/of as today (never final on the cap alone)", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, undefined, 10)).toBe(false);
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, 10, undefined)).toBe(false);
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, Number.NaN, 10)).toBe(false);
   });
 });

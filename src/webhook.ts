@@ -1,9 +1,12 @@
 import type { CapturedEvent } from "@shared/contract";
 import type { Env } from "./env";
 import { type DB } from "./db";
-import { ingestEvent } from "./consumer";
+import { ingestEvent, ingestRepoEvent } from "./consumer";
 import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer, geminiIssueSummarizer, storePrSummary, storeIssueSummary } from "./tools/summarize";
 import { applyEventProgress } from "./tools/progress";
+import { repoEventsFromDelivery } from "./repo/capture";
+import { repoEnvironments } from "./repo/config";
+import { fillFailedJob } from "./repo/github";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
@@ -286,16 +289,32 @@ async function progressSeam(db: DB, payload: unknown): Promise<void> {
   await applyEventProgress(db, payload);
 }
 
+/** Deliveries the My Work capture (`events`) reads. */
+const WORK_EVENT_NAMES = ["pull_request", "issues"];
+/** Deliveries the repo dashboard capture (`repo_events`) reads. Later phases append. */
+export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push", "pull_request_review", "deployment_status", "check_run", "workflow_run"];
+
 // ---------------------------------------------------------------------------
 // The webhook branch. HMAC-verify the raw body BEFORE anything else (a bad or
 // missing signature — or an unset secret — is a bare 401, mirroring /mcp). Then
 // derive events, capture each through the single gate, and hang the (currently
-// no-op) summary/progress seams off the newly-written ones.
+// no-op) summary/progress seams off the newly-written ones. The SAME verified
+// delivery is also read a second, independent time for the repo dashboard's
+// capture (`repo_events`) — a failure there must never cost the My Work capture.
 // ---------------------------------------------------------------------------
 export async function handleGithubWebhook(
   request: Request,
   env: Env,
-  opts?: { summarizer?: Summarizer<PrSummary> | null; issueSummarizer?: Summarizer<IssueSummary> | null }
+  opts?: {
+    summarizer?: Summarizer<PrSummary> | null;
+    issueSummarizer?: Summarizer<IssueSummary> | null;
+    // Live from Task 8: the failed-job lookup below reads fetchImpl and, when
+    // given, schedules itself via waitUntil so the webhook response isn't held
+    // up (GitHub gives a hook 10s). Task 11 adds a second use (branch-drift
+    // snapshot on a push to an environment branch).
+    fetchImpl?: typeof fetch;
+    waitUntil?: (p: Promise<unknown>) => void;
+  }
 ): Promise<Response> {
   const rawBody = await request.text();
   const sig = request.headers.get("x-hub-signature-256");
@@ -305,8 +324,10 @@ export async function handleGithubWebhook(
   }
 
   const eventName = request.headers.get("x-github-event") ?? "";
-  if (eventName !== "pull_request" && eventName !== "issues") {
-    // Verified, but not a surface we capture (ping, push, …).
+  const forWork = WORK_EVENT_NAMES.includes(eventName);
+  const forRepo = REPO_EVENT_NAMES.includes(eventName);
+  if (!forWork && !forRepo) {
+    // Verified, but not a surface we capture (ping, star, …).
     return json({ ok: true, ignored: true });
   }
 
@@ -314,30 +335,48 @@ export async function handleGithubWebhook(
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    payload = null; // eventsFromDelivery treats a non-object payload as []
+    payload = null; // both derivations treat a non-object payload as []
   }
 
-  const events = eventsFromDelivery(eventName, payload);
   let captured = 0;
   let unchanged = 0;
-  for (const ev of events) {
-    const res = await ingestEvent(env.DB, ev, "github-webhook");
-    if (res.outcome === "written") {
+  if (forWork) {
+    for (const ev of eventsFromDelivery(eventName, payload)) {
+      const res = await ingestEvent(env.DB, ev, "github-webhook");
+      if (res.outcome !== "written") { unchanged++; continue; }
       captured++;
       if (ev.event_type === "pr_merged" || ev.event_type === "pr_closed") {
         const summarizer = opts?.summarizer ?? (env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null);
         await summarizePrSeam(env.DB, summarizer, ev);
-      } else {
+      } else if (ev.event_type === "issue") {
         await progressSeam(env.DB, payload);
         const issueSummarizer = opts?.issueSummarizer ?? (env.GEMINI_API_KEY ? geminiIssueSummarizer(env.GEMINI_API_KEY) : null);
         await summarizeIssueSeam(env.DB, issueSummarizer, ev);
       }
-    } else {
-      unchanged++;
     }
   }
 
-  return json({ ok: true, captured, unchanged });
+  // The repo dashboard's capture: a second, independent reading of the SAME
+  // verified delivery. A failure here must never cost the My Work capture above.
+  const repo = { captured: 0, unchanged: 0 };
+  if (forRepo) {
+    try {
+      for (const ev of repoEventsFromDelivery(eventName, payload, repoEnvironments(env))) {
+        const res = await ingestRepoEvent(env.DB, ev);
+        if (res.outcome !== "written") { repo.unchanged++; continue; }
+        repo.captured++;
+        if (ev.kind === "run" && (ev.state === "failure" || ev.state === "timed_out") && ev.number && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
+          const job = fillFailedJob(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, ev.number, ev.semantic_key);
+          // Off the response path when the runtime allows; GitHub gives a hook 10s.
+          if (opts?.waitUntil) opts.waitUntil(job); else await job;
+        }
+      }
+    } catch (e) {
+      console.error("repo capture failed", eventName, e);
+    }
+  }
+
+  return json({ ok: true, captured, unchanged, repo });
 }
 
 function json(body: unknown, status = 200): Response {

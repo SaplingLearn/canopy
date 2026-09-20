@@ -15,4 +15,5 @@ export interface Env {
   PUBLIC_ORIGIN?: string; // absolute origin for links in email (deep links, unsubscribe); absent → relative links
   NOTIFICATIONS_MODE?: "local" | "resend"; // delivery gate; absent → local (bodies to the dev table, Resend never called)
   RESEND_API_KEY?: string; // Resend API key; required only when NOTIFICATIONS_MODE = "resend"
+  REPO_ENVIRONMENTS?: string; // JSON RepoEnvConfig[] (src/repo/config.ts): which branch deploys to which environment, and its URLs
 }

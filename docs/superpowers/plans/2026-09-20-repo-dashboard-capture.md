@@ -72,7 +72,7 @@
 - [ ] **Before Phase 2 merges:** on `SaplingLearn/sapling` → Settings → Webhooks → the Canopy hook → add events **Deployment statuses, Check runs, Workflow runs, Pull request reviews, Statuses**.
 - [ ] **Before Phase 3 merges:** confirm `GITHUB_SERVICE_TOKEN` can read the repo's contents/actions (it already reads issues + PRs).
 - [ ] **Phase 4:** merge the CI-steps PR into `SaplingLearn/sapling` (YAML is in Task 14).
-- [ ] **Phase 5:** `wrangler secret put CLOUDFLARE_API_TOKEN` (Account Analytics: Read), `CLOUDFLARE_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; add the Railway service id to `REPO_ENVIRONMENTS`; ship the Sapling metrics endpoint.
+- [ ] **Phase 5:** `wrangler secret put CF_ANALYTICS_TOKEN` (Cloudflare custom token, Account → Account Analytics → Read, on the account that hosts the `frontend` / `frontend-staging` Workers), `RAILWAY_TOKEN` (an ACCOUNT or WORKSPACE token — a project token uses a different header and covers one environment), `SAPLING_METRICS_TOKEN` (a random string, also set on the Sapling backend); `CF_ANALYTICS_ACCOUNT_ID` is NOT a secret — it goes in `wrangler.toml` `[vars]`. **Deliberately NOT named `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`: those are the env vars the wrangler CLI itself authenticates with, and an analytics-read token under that name in a shell or CI would break deploys.** add the Railway service id to `REPO_ENVIRONMENTS`; ship the Sapling metrics endpoint.
 
 ## File Structure
 
@@ -1251,6 +1251,30 @@ git commit -m "Reconcile repo capture from the GitHub API, through the gate"
 - [ ] **Step 2:** Run `npm run typecheck && npm test`. Expected: all green except the documented `GEMINI_API_KEY` summarizer case.
 - [ ] **Step 3:** `npm run db:migrate:local`, `npm run dev`, open `http://localhost:8787/#repo/code`, click **Sync GitHub** on My Work (admin), reload Repo. Expected: Open PRs tile populated, PR list shows open PRs with head branches.
 - [ ] **Step 4:** Apply `0027` to prod (`CLOUDFLARE_ACCOUNT_ID=… npm run db:migrate:remote`) BEFORE merging, then open the PR.
+
+---
+
+# Phase 1 — shipped (PR #54). What execution changed, and what Phase 2 inherits
+
+Phase 1 was executed task-by-task with per-task reviews and one whole-branch review. **Read this before starting Phase 2 — several Task 7–19 snippets below predate these changes.**
+
+**Changed from the plan text above (the code is the truth):**
+- `prCaptured` is NOT `hasCaptured(db,"pr")`. It is "the `prs_reconciled` snapshot exists", written by `reconcileRepo` only after the open-PR list was fetched and ingested. One webhook PR row must never flip the tiles. *Task 9's `capturedPrs` / `awaiting` snippets must keep this gate.*
+- Week-over-week deltas are emitted only when capture was RECORDING for the whole window: `recordingSince(db, kind)` = `MIN(recorded_at)` (not `occurred_at`). PR tiles need it ≤ `weekAgo`; the commits tile needs it ≤ `twoWeeksAgo`, else `sub: "this week"`. *Apply the same rule to every delta later phases add.*
+- `fromPullRequest` takes `at = updated_at ?? merged_at ?? closed_at`.
+- `RepoContributor.reviews` is `number | null` — `null` until a `review` row was ever captured. *Task 9 sets the count; it must not reintroduce a bare `0`.*
+- Backfilled (`provenance='backfill'`) push rows are excluded from the feed and the P tally (still counted in commit totals and bars). An unrecognized `pr` state drops the row.
+- `reconcileRepo` runs once per Sync — `isFinalBackfillBatch(res)` in `src/tools/backfill.ts` — and its counts join the `/admin/backfill` response as `repo`.
+- The webhook response gained `repo: {captured, unchanged}`; five exact-`toEqual` assertions in `webhook` / `progress` / `summarize` tests were updated. *Every later change to that response shape must grep for them.*
+- `test/env.d.ts` must declare each new `Env` var a test passes to a narrowly-typed function (TS2559 weak-type check) — relevant to Tasks 16–18's new secrets.
+
+**Do FIRST in Phase 2 (parked with rulings in Phase 1):**
+1. Add the missing test by name: a webhook-only `pr` row with no `prs_reconciled` marker leaves the merged-PR fallback tiles in place. (Verified live and by inspection; not yet pinned.)
+2. Push `occurred_at` → `repository.pushed_at` (unix seconds in the push payload) instead of the head commit's timestamp: a rebase or cherry-pick currently lands commits in an old day bucket, and it is the root of the backfill-shadowing edge. Changes `test/fixtures/gh-push.json` and Task 2's assertions — do it before Task 7 adds arms.
+3. `src/repo/reads.ts`: the three window-function reads are `SELECT *` (including `raw`) over every `pr` row with no bound. `synchronize` fires per push to any PR branch. Project only needed columns and bound the scan before volume matters; decide `pr`/`push` retention (today `pruneRepoCapture` covers only `check`).
+4. If a Sync hits `MAX_BACKFILL_BATCHES` (10) while still summarizing, no batch is "final" and the reconcile is skipped until the next click — run it on the capped last batch too, and fix CLAUDE.md's "once per Sync" wording.
+5. The admin route has no `fetchImpl` seam, so "reconcile on the final batch only" is unit-tested as a pure helper, not end-to-end. Task 13 moves the reconcile into cron, where `handleRepoCron` does take `fetchImpl` — cover it there.
+6. Small: hoist `obj`/`str`/`num` in `capture.ts` when Task 7 adds arms; use `db.ts` `ph()` in `store.ts`; comment that `opts.fetchImpl`/`waitUntil` become live in Task 8.
 
 ---
 
@@ -2521,13 +2545,13 @@ it("a usage metric with no source says so in place, without blanking its neighbo
 
 **Interfaces:**
 - Produces: `pollCloudflare(db, cf: { token: string; accountId: string }, envs: RepoEnvConfig[], now: number, fetchImpl?: typeof fetch): Promise<void>` — writes hourly `cf_requests` and `cf_errors` (`env`=config key, `part`="frontend") for the last 3 complete hours (overlap heals a missed tick; `INSERT OR IGNORE` dedupes).
-- `Env` gains `CLOUDFLARE_API_TOKEN?: string; CLOUDFLARE_ACCOUNT_ID?: string;`
+- `Env` gains `CF_ANALYTICS_TOKEN?: string; CF_ANALYTICS_ACCOUNT_ID?: string;`
 
 - [ ] **Step 1: Verify the dataset against the live API before writing the parser** (one manual call; needs the token):
 
 ```bash
-curl -s https://api.cloudflare.com/client/v4/graphql -H "authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'content-type: application/json' \
-  -d '{"query":"query($a:String!,$s:String!,$from:Time!,$to:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:100,filter:{scriptName:$s,datetime_geq:$from,datetime_leq:$to},orderBy:[datetimeHour_ASC]){dimensions{datetimeHour} sum{requests errors}}}}}","variables":{"a":"'$CLOUDFLARE_ACCOUNT_ID'","s":"frontend-staging","from":"2026-09-20T00:00:00Z","to":"2026-09-20T12:00:00Z"}}' | jq .
+curl -s https://api.cloudflare.com/client/v4/graphql -H "authorization: Bearer $CF_ANALYTICS_TOKEN" -H 'content-type: application/json' \
+  -d '{"query":"query($a:String!,$s:String!,$from:Time!,$to:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:100,filter:{scriptName:$s,datetime_geq:$from,datetime_leq:$to},orderBy:[datetimeHour_ASC]){dimensions{datetimeHour} sum{requests errors}}}}}","variables":{"a":"'$CF_ANALYTICS_ACCOUNT_ID'","s":"frontend-staging","from":"2026-09-20T00:00:00Z","to":"2026-09-20T12:00:00Z"}}' | jq .
 ```
 
 Expected: `data.viewer.accounts[0].workersInvocationsAdaptive[]` rows of `{dimensions:{datetimeHour}, sum:{requests, errors}}`. If the field names differ, correct the query AND the fixture below to match before continuing.
@@ -2601,8 +2625,8 @@ export async function pollCloudflare(db: DB, cf: { token: string; accountId: str
 In `src/repo/cron.ts`, at the `// hourly polls land here` marker:
 
 ```ts
-  if (env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID) {
-    await safely("cloudflare", () => pollCloudflare(env.DB, { token: env.CLOUDFLARE_API_TOKEN!, accountId: env.CLOUDFLARE_ACCOUNT_ID! }, envs, scheduledTime, fetchImpl));
+  if (env.CF_ANALYTICS_TOKEN && env.CF_ANALYTICS_ACCOUNT_ID) {
+    await safely("cloudflare", () => pollCloudflare(env.DB, { token: env.CF_ANALYTICS_TOKEN!, accountId: env.CF_ANALYTICS_ACCOUNT_ID! }, envs, scheduledTime, fetchImpl));
   }
 ```
 
@@ -2648,7 +2672,7 @@ In `src/repo/cron.ts`, at the `// hourly polls land here` marker:
 return `usage: anyUsage ? ok(usageData) : NOT_CONNECTED, cloudflare: cfData["7d"].length ? ok(cfData) : NOT_CONNECTED,` (import `REPO_RANGES`, `RepoRange`, `RepoUsageEnv`, `RepoCfRow`). In `web/src/repo.ts` retitle the panel `Cloudflare — frontend Workers`.
 
 - [ ] **Step 5: Run** — `npx vitest run test/repo-poll.cloudflare.test.ts test/repo-dashboard.test.ts && npm run typecheck` → PASS. **Commit** — `git commit -am "Poll Cloudflare Workers analytics for the frontend's requests and errors"`.
-- [ ] **Step 6:** `wrangler secret put CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; document both in `CLAUDE.md` › Env.
+- [ ] **Step 6:** `wrangler secret put CF_ANALYTICS_TOKEN`; add `CF_ANALYTICS_ACCOUNT_ID` to `wrangler.toml` `[vars]` (not sensitive — it appears in every public Workers Builds check-run URL); document both in `CLAUDE.md` › Env.
 
 ### Task 17: Railway CPU and memory (source L)
 
@@ -2817,7 +2841,7 @@ Cron (hourly block): `if (env.SAPLING_METRICS_TOKEN) await safely("sapling", () 
 
 ### Task 19: Final close-out
 
-- [ ] `CLAUDE.md`: the Repo dashboard paragraph lists every section as live with its source; `UNCAPTURED` is empty or gone; Env section documents `REPO_ENVIRONMENTS`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; the cron paragraph describes the `*/10` trigger's three cadences.
+- [ ] `CLAUDE.md`: the Repo dashboard paragraph lists every section as live with its source; `UNCAPTURED` is empty or gone; Env section documents `REPO_ENVIRONMENTS`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; the cron paragraph describes the `*/10` trigger's three cadences.
 - [ ] `web/src/repo.ts`: delete `notConnected` copy that names a capture path that now exists; keep the state itself (a fresh install still starts unconnected).
 - [ ] `npm run typecheck && npm test`; run the app, Sync GitHub, and walk all five tabs in live mode against the sample mode side by side.
 

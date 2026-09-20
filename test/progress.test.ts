@@ -170,7 +170,8 @@ describe("webhook end-to-end — the progress seam", () => {
       env as unknown as Env
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0 });
+    // "issues" is not a REPO_EVENT_NAMES entry, so the repo capture never runs.
+    expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0, repo: { captured: 0, unchanged: 0 } });
 
     const row = await first<SprintProgressRow>(env.DB, `SELECT * FROM sprint_progress WHERE sprint_id = ?`, id);
     expect(row).toMatchObject({ closed: 5, total: 6, source: "event" });

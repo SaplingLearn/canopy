@@ -148,7 +148,7 @@ export function repoUpdatedLabel(p: Pick<RepoProps, "repo" | "fetchedAt">, now: 
 export function repoControls(p: RepoProps): string {
   const envs = okData(p, (d) => d.environments) ?? [];
   const pills = envs.map((e) => {
-    const c = TONE[e.tone === "neutral" ? "good" : e.tone];
+    const c = TONE[e.tone];
     return `<span title="${attr(`${e.name} — ${e.pill.toLowerCase()}`)}" style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;white-space:nowrap;color:var(--fg-70)"><span class="${e.tone === "good" || e.tone === "neutral" ? "" : "repo-pulse"}" style="--c:${c};width:7px;height:7px;border-radius:50%;background:${c};box-shadow:0 0 0 3px color-mix(in srgb,${c} 16%,transparent)"></span>${esc(e.name)}</span>`;
   }).join("");
   const busy = p.repo.status === "loading";
@@ -165,16 +165,19 @@ const kv = (k: string, v: string): string =>
 
 function overviewTab(p: RepoProps): string {
   const now = Date.now();
-  const envs = sec(p, (d) => d.environments, { nc: "Deploy status isn't captured yet — Canopy records merged PRs and issues from the GitHub webhook, not deployments.", empty: "No environments recorded." }, (rows) =>
+  const envs = sec(p, (d) => d.environments, { nc: "No environment has reported a deploy or a CI check yet — the webhook captures them once an environment is configured.", empty: "No environments recorded." }, (rows) =>
     `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${rows.map((e, i) => {
-      const c = TONE[e.tone === "neutral" ? "good" : e.tone];
+      const c = TONE[e.tone];
       return `<div style="padding:20px 22px 10px;min-width:0;${i ? LEFT : ""}">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
           <span style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;flex:1">${esc(e.name)}${e.note ? ` <span style="font-size:11.5px;font-weight:500;color:var(--fg-40)">${esc(e.note)}</span>` : ""}</span>
           ${statusBadge(e.pill, c)}
         </div>
-        ${kv("Deployed", `<div style="font-size:13.5px;line-height:1.6;color:var(--fg-70);display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="${CODE}">${esc(e.sha)}</span><span style="font-size:12px;color:var(--fg-40);white-space:nowrap">${esc(ago(e.deployedAt, now))} ago · by ${esc(e.deployedBy)}</span></div>`)}
-        ${kv("CI on head", `<div style="font-size:13.5px;line-height:1.6;display:flex;align-items:center;gap:7px;color:${c}"><span style="font-family:var(--mono);font-size:13px">${e.tone === "good" || e.tone === "neutral" ? "✓" : "✕"}</span>${esc(e.ci)}</div>`)}
+        ${e.parts.map((pt) => kv(pt.part === "backend" ? "Backend" : "Frontend",
+          pt.sha
+            ? `<div style="font-size:13.5px;line-height:1.6;color:var(--fg-70);display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="${CODE}">${esc(pt.sha)}</span><span style="font-size:12px;color:var(--fg-40);white-space:nowrap">${esc(ago(pt.deployedAt ?? "", now))} ago · by ${esc(pt.deployedBy ?? "unknown")} · ${esc(pt.host)}</span>${pt.result === "fail" ? `<span style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--red)">FAILED</span>` : ""}</div>`
+            : `<div style="font-size:12.5px;color:var(--fg-40)">No ${esc(pt.host)} deploy captured yet</div>`)).join("")}
+        ${kv("CI on head", `<div style="font-size:13.5px;line-height:1.6;display:flex;align-items:center;gap:7px;color:${TONE[e.ciTone]}"><span style="font-family:var(--mono);font-size:13px">${e.ciTone === "good" ? "✓" : e.ciTone === "bad" ? "✕" : "●"}</span>${esc(e.ci)}</div>`)}
         ${kv("URL", `<div style="font-size:13.5px;line-height:1.6"><a href="${attr(safeUrl(e.url))}" target="_blank" rel="noopener" class="repo-link" style="font-family:var(--mono);font-size:12.5px">${esc(e.url.replace(/^https?:\/\//, ""))} ↗</a></div>`)}
       </div>`;
     }).join("")}</div>`);
@@ -278,7 +281,10 @@ function codeTab(p: RepoProps): string {
     <div style="display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--fg-40)"><span>${esc(fmt(b.days[0].date))}</span><span>${esc(fmt(mid.date))}</span><span>${esc(fmt(b.days[b.days.length - 1].date))}</span></div>`;
   });
 
-  const prsLive = okData(p, (d) => d.prs) !== null;
+  const prRows = okData(p, (d) => d.prs);
+  const prsLive = prRows !== null;
+  // The header names what's actually shown, not the sample flag — a captured list can include OPEN PRs.
+  const prsOpen = prRows ? prRows.some((r) => r.state !== "merged" && r.state !== "closed") : false;
   const prs = sec(p, (d) => d.prs, { nc: "Pull requests aren't connected.", empty: "No pull requests captured yet.", lines: 4 }, (rows) => rows.map((r) => prRow(r, now)).join(""));
 
   const br = okData(p, (d) => d.branches);
@@ -296,7 +302,7 @@ function codeTab(p: RepoProps): string {
       ${bars}
     </div>
     <div ${rise(2, `display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:13px 20px;${TOP};border-bottom:1px solid var(--border)`)}>
-      <span style="${LABEL}">Pull requests — ${p.repo.data?.sample ? "open &amp; recent" : "recently closed"}</span>
+      <span style="${LABEL}">Pull requests — ${prsOpen ? "open &amp; recent" : "recently closed"}</span>
       <span style="font-size:11px;color:var(--fg-40);white-space:nowrap">sorted by last updated</span>
     </div>
     <div ${rise(3)}>${prsLive ? prs : `<div style="padding:6px 20px;border-bottom:1px solid var(--border)">${prs}</div>`}</div>
@@ -336,12 +342,12 @@ const titled = (title: string, body: string): string => `<div style="${LABEL}">$
 function ciTab(p: RepoProps): string {
   const now = Date.now();
   const RESULT = { ok: ["var(--green)", "DEPLOYED"], fail: ["var(--red)", "FAILED"], cancel: ["var(--amber)", "CANCELLED"] } as const;
-  const deploys = sec(p, (d) => d.deploys, { nc: "Deploy history isn't connected — deployments aren't captured yet.", empty: "No deploys recorded.", lines: 2 }, (rows) =>
+  const deploys = sec(p, (d) => d.deploys, { nc: "No deploy has been captured for a configured environment yet.", empty: "No deploys recorded.", lines: 2 }, (rows) =>
     rows.map((row) => {
       const okCount = row.deploys.filter((d) => d.result === "ok").length;
       const last = row.deploys[row.deploys.length - 1];
       return `<div style="display:flex;align-items:center;gap:16px;padding:14px 0;${TOP};flex-wrap:wrap">
-        <span style="width:64px;font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70);flex:none">${esc(row.env)}</span>
+        <span style="width:118px;font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70);flex:none">${esc(row.label)}</span>
         <div style="display:flex;align-items:center;gap:9px">${row.deploys.map((d, i) => {
           const [color, word] = RESULT[d.result];
           // Pure CSS tooltip (hover + keyboard focus): no state, so no rerender on every dot.
@@ -359,8 +365,14 @@ function ciTab(p: RepoProps): string {
     }).join(""));
 
   const fails = okData(p, (d) => d.ciFailures);
+  // `rate === null` = run capture has not been recording for a whole week yet
+  // (src/tools/repo.ts). The percentage and the sparkline both describe seven
+  // days, so neither is drawn — a quiet line says why instead. The failure rows
+  // themselves are facts and are always listed.
   const failures = sec(p, (d) => d.ciFailures, { nc: "CI isn't connected — workflow runs aren't captured yet.", empty: "No CI failures this week." }, (f) =>
-    `${spark(f.trend, "var(--amber)", 40)}
+    `${f.rate === null
+        ? `<div style="margin-top:8px;font-size:12.5px;color:var(--fg-40)">A 7-day rate appears after a week of captured runs.</div>`
+        : spark(f.trend, "var(--amber)", 40)}
     <div style="margin-top:10px">${f.rows.map((r) => `<div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) 82px;gap:10px;align-items:center;padding:10px 4px;${TOP}">
       <span style="display:inline-flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--red);flex:none">✕</span><span style="font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.workflow)}</span></span>
       <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.branch)}</span>
@@ -386,7 +398,7 @@ function ciTab(p: RepoProps): string {
     </div>
     <div ${rise(1, `display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,1fr);${TOP};flex:1`, "repo-split")}>
       <div style="padding:18px 20px;min-width:0;display:flex;flex-direction:column">
-        <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">CI failures — 7-day rate</span>${fails ? `<span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap;color:var(--amber)">${fails.rate.toFixed(1)}%</span>` : ""}</div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">CI failures — 7-day rate</span>${fails && fails.rate !== null ? `<span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap;color:var(--amber)">${fails.rate.toFixed(1)}%</span>` : ""}</div>
         ${failures}
       </div>
       <div style="${LEFT};min-width:0;display:flex;flex-direction:column" class="repo-split-r">
@@ -469,14 +481,16 @@ function planningTab(p: RepoProps): string {
   });
   const sprintLive = okData(p, (d) => d.sprint) !== null;
 
-  const contributors = sec(p, (d) => d.contributors, { nc: "Contributors aren't connected.", empty: "No merges or closes this week.", lines: 4 }, (rows) => {
-    const max = Math.max(1, ...rows.map((r) => r.merged));
+  const contributors = sec(p, (d) => d.contributors, { nc: "Contributors aren't connected.", empty: "No pushes, merges or reviews this week.", lines: 4 }, (rows) => {
+    // `reviews` is null until a `review` row has ever been captured — never
+    // guessed as 0, and excluded from the bar width (not just rendered as "—").
+    const max = Math.max(1, ...rows.map((r) => r.pushes + r.merged + (r.reviews ?? 0)));
     return rows.map((r, i) => {
       const color = r.person.color ? `var(--p-${r.person.color})` : "var(--fg-40)";
       return `<div style="display:grid;grid-template-columns:112px minmax(0,1fr) 74px;gap:12px;align-items:center;padding:5.5px 0;${TOP}">
         <span style="display:inline-flex;align-items:center;gap:7px;min-width:0">${avatar(r.person, 20)}<span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(who(r.person))}</span></span>
-        <span style="display:block;height:6px;border-radius:999px;background:var(--hover);overflow:hidden"><span class="repo-fill" style="--i:${i};display:block;height:100%;border-radius:999px;background:${color};width:${Math.round((r.merged / max) * 100)}%"></span></span>
-        <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);text-align:right">${r.merged} · ${r.closed}</span>
+        <span style="display:block;height:6px;border-radius:999px;background:var(--hover);overflow:hidden"><span class="repo-fill" style="--i:${i};display:block;height:100%;border-radius:999px;background:${color};width:${Math.round(((r.pushes + r.merged + (r.reviews ?? 0)) / max) * 100)}%"></span></span>
+        <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);text-align:right">${r.pushes} · ${r.merged} · ${r.reviews === null ? "—" : r.reviews}</span>
       </div>`;
     }).join("");
   });
@@ -506,7 +520,7 @@ function planningTab(p: RepoProps): string {
   return `<div ${rise(0, `padding:20px 22px`)}>${sprintLive ? sprint : `<div style="${LABEL}">Current sprint</div>${sprint}`}</div>
     <div ${rise(1, `display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));${TOP};flex:1`)}>
       <div style="padding:16px 20px;min-width:0">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="${LABEL}">Contributors this week</span><span title="merged PRs · issues closed" style="font-family:var(--mono);font-size:10px;color:var(--fg-40);letter-spacing:.04em">PRS · ISSUES</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="${LABEL}">Contributors this week</span><span title="pushes · merged PRs · reviews" style="font-family:var(--mono);font-size:10px;color:var(--fg-40);letter-spacing:.04em">P · M · R</span></div>
         ${contributors}
       </div>
       <div style="padding:16px 20px;${LEFT};min-width:0">
