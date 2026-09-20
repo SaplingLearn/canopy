@@ -72,7 +72,7 @@
 - [ ] **Before Phase 2 merges:** on `SaplingLearn/sapling` → Settings → Webhooks → the Canopy hook → add events **Deployment statuses, Check runs, Workflow runs, Pull request reviews, Statuses**.
 - [ ] **Before Phase 3 merges:** confirm `GITHUB_SERVICE_TOKEN` can read the repo's contents/actions (it already reads issues + PRs).
 - [ ] **Phase 4:** merge the CI-steps PR into `SaplingLearn/sapling` (YAML is in Task 14).
-- [ ] **Phase 5:** `wrangler secret put CF_ANALYTICS_TOKEN` (Cloudflare custom token, Account → Account Analytics → Read, on the account that hosts the `frontend` / `frontend-staging` Workers), `RAILWAY_TOKEN` (an ACCOUNT or WORKSPACE token — a project token uses a different header and covers one environment), `SAPLING_METRICS_TOKEN` (a random string, also set on the Sapling backend); `CF_ANALYTICS_ACCOUNT_ID` is NOT a secret — it goes in `wrangler.toml` `[vars]`. **Deliberately NOT named `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`: those are the env vars the wrangler CLI itself authenticates with, and an analytics-read token under that name in a shell or CI would break deploys.** add the Railway service id to `REPO_ENVIRONMENTS`; ship the Sapling metrics endpoint.
+- [ ] **Phase 5:** `wrangler secret put CF_ANALYTICS_TOKEN` (Cloudflare custom token, Account → Account Analytics → Read, on the account that hosts the `frontend` / `frontend-staging` Workers), `RAILWAY_TOKEN_STAGING` + `RAILWAY_TOKEN_PRODUCTION` (Railway PROJECT tokens, one per environment, from the project's Settings → Tokens; sent as `Project-Access-Token`, see Task 17's amendment), `SAPLING_METRICS_TOKEN` (a random string, also set on the Sapling backend); `CF_ANALYTICS_ACCOUNT_ID` is NOT a secret — it goes in `wrangler.toml` `[vars]`. **Deliberately NOT named `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`: those are the env vars the wrangler CLI itself authenticates with, and an analytics-read token under that name in a shell or CI would break deploys.** add the Railway service id to `REPO_ENVIRONMENTS`; ship the Sapling metrics endpoint.
 
 ## File Structure
 
@@ -2676,6 +2676,16 @@ return `usage: anyUsage ? ok(usageData) : NOT_CONNECTED, cloudflare: cfData["7d"
 
 ### Task 17: Railway CPU and memory (source L)
 
+> **AMENDED 2026-09-20 (owner confirmed how Railway tokens work for this project) — this block WINS over the snippets below.**
+> Railway tokens here are **PROJECT tokens, one per environment** (created in the project's Settings → Tokens, each bound to a single environment). Two consequences, both verified against Railway's public API docs:
+> 1. They are sent as the header **`Project-Access-Token: <token>`** — NOT `Authorization: Bearer` (that header is for account / workspace tokens and a project token is rejected there).
+> 2. One token reaches ONE environment, so there are TWO secrets, named from the environment `key` upper-cased: **`RAILWAY_TOKEN_STAGING`** and **`RAILWAY_TOKEN_PRODUCTION`**. There is no `RAILWAY_TOKEN`.
+>
+> So: `pollRailway(db, tokens: Record<string, string | undefined>, envs, now, fetchImpl?)` where `tokens[cfg.key]` is that environment's token; an environment with no token (or no `railwayEnvironmentId` / `railwayServiceId`) is skipped — the other still polls. `Env` gains `RAILWAY_TOKEN_STAGING?: string; RAILWAY_TOKEN_PRODUCTION?: string;` and the cron builds the map as `{ staging: env.RAILWAY_TOKEN_STAGING, production: env.RAILWAY_TOKEN_PRODUCTION }` — keep that mapping in ONE small helper keyed on `cfg.key.toUpperCase()` so a third environment is one line. Tests assert the header name and that each environment's request carries ITS OWN token and never the other's.
+> This is also the safer shape: a project token can touch one environment of one project, where a workspace token could touch everything in the workspace. It is still not read-only — Railway has no read-only scope.
+> The Railway project id is `3f90b930-b996-4cea-ad06-daa046de18b6` (owner-confirmed; not a secret). The `metrics` query needs `environmentId` + `serviceId`, not the project id. Whether `metrics` is permitted to a project token is NOT confirmed by Railway's docs — Step 1's manual call decides it; if it is refused, STOP and leave `hosting` `not_connected`.
+
+
 **Files:** Modify `src/repo/poll.ts`, `src/repo/cron.ts`, `src/env.ts`, `src/tools/repo.ts`, `wrangler.toml` (add `railwayServiceId` to each `REPO_ENVIRONMENTS` entry); Test `test/repo-poll.railway.test.ts`.
 
 **Interfaces:** `pollRailway(db, token: string, envs: RepoEnvConfig[], now: number, fetchImpl?): Promise<void>` → hourly `rw_cpu` (vCPU) and `rw_mem_mb`, `part`="backend". Skips an env missing `railwayEnvironmentId` or `railwayServiceId`. `Env` gains `RAILWAY_TOKEN?: string`.
@@ -2683,7 +2693,7 @@ return `usage: anyUsage ? ok(usageData) : NOT_CONNECTED, cloudflare: cfData["7d"
 - [ ] **Step 1: Verify Railway's public GraphQL API before writing the parser** — Railway's schema is theirs to change and is not vendored here:
 
 ```bash
-curl -s https://backboard.railway.com/graphql/v2 -H "authorization: Bearer $RAILWAY_TOKEN" -H 'content-type: application/json' \
+curl -s https://backboard.railway.com/graphql/v2 -H "Project-Access-Token: $RAILWAY_TOKEN_STAGING" -H 'content-type: application/json' \
   -d '{"query":"query($e:String!,$s:String!,$start:DateTime!){metrics(environmentId:$e,serviceId:$s,startDate:$start,measurements:[CPU_USAGE,MEMORY_USAGE_GB],sampleRateSeconds:3600){measurement values{ts value}}}","variables":{"e":"76bb36e5-cf12-4b1e-b47f-d276a56c3b85","s":"<service id>","start":"2026-09-20T00:00:00Z"}}' | jq .
 ```
 
@@ -2765,7 +2775,7 @@ Projection — remove `hosting` from `UNCAPTURED`:
 
 return `hosting: hosting.length ? ok(hosting) : NOT_CONNECTED,`. In `web/src/repo.ts` retitle the block `Hosting — Railway backend`.
 
-- [ ] **Step 4: Run → PASS. Commit** — `git commit -am "Poll Railway for the backend's CPU and memory"`. Then `wrangler secret put RAILWAY_TOKEN`; add the two service ids to `REPO_ENVIRONMENTS`.
+- [ ] **Step 4: Run → PASS. Commit** — `git commit -am "Poll Railway for the backend's CPU and memory"`. Then `wrangler secret put RAILWAY_TOKEN_STAGING` and `RAILWAY_TOKEN_PRODUCTION`; add the backend's service id to each `REPO_ENVIRONMENTS` entry.
 
 ### Task 18: Active users — the Sapling metrics contract (source M)
 
@@ -2841,7 +2851,7 @@ Cron (hourly block): `if (env.SAPLING_METRICS_TOKEN) await safely("sapling", () 
 
 ### Task 19: Final close-out
 
-- [ ] `CLAUDE.md`: the Repo dashboard paragraph lists every section as live with its source; `UNCAPTURED` is empty or gone; Env section documents `REPO_ENVIRONMENTS`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; the cron paragraph describes the `*/10` trigger's three cadences.
+- [ ] `CLAUDE.md`: the Repo dashboard paragraph lists every section as live with its source; `UNCAPTURED` is empty or gone; Env section documents `REPO_ENVIRONMENTS`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION`, `SAPLING_METRICS_TOKEN`; the cron paragraph describes the `*/10` trigger's three cadences.
 - [ ] `web/src/repo.ts`: delete `notConnected` copy that names a capture path that now exists; keep the state itself (a fresh install still starts unconnected).
 - [ ] `npm run typecheck && npm test`; run the app, Sync GitHub, and walk all five tabs in live mode against the sample mode side by side.
 
