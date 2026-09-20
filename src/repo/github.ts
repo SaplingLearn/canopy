@@ -241,11 +241,14 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
     });
   }
 
-  // Branches: every ref, ahead/behind `main` and flagged stale, in ONE
-  // GraphQL page (see computeBranches below). Gated on envs.length the same
-  // way `deployments` is — with nothing configured there is no environment
-  // branch list to exclude and no reason to spend the request.
-  if (envs.length) await safely("branches", () => computeBranches(db, opts, envs, now));
+  // Branches: every ref, ahead/behind `main` (envs[0]?.branch ?? "main" —
+  // same fallback the `commits` arm above uses) and flagged stale, in ONE
+  // GraphQL page (see computeBranches below). Runs UNCONDITIONALLY — unlike
+  // `deployments`, which genuinely cannot filter without environment names,
+  // computeBranches degrades correctly with envs: [] (empty exclusion set,
+  // "main" as head), so a repo with no REPO_ENVIRONMENTS configured still
+  // gets a branches list instead of losing it for no structural reason.
+  await safely("branches", () => computeBranches(db, opts, envs, now));
 
   // Branch drift (`<base>...<head>`, e.g. `production...main`), so the
   // Overview strip has data even before any push webhook lands on an
@@ -406,7 +409,12 @@ async function computeBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now:
     .sort((a, b) => (a.at < b.at ? 1 : -1));
   const stale = rows.filter((r) => r.stale);
   const fresh = rows.filter((r) => !r.stale);
-  const shown = [...fresh.slice(0, BRANCH_ROWS - Math.min(3, stale.length)), ...stale.filter((r) => r.ahead > 0).slice(0, 3)];
+  // `stale` (like `rows`) is newest-first, so `.slice(0, 3)` would pick the
+  // three LEAST stale — the opposite of "worth deleting". Take the tail (the
+  // three OLDEST stale-and-unmerged branches) and reverse it so the single
+  // most-overdue branch leads the trailing group.
+  const worthDeleting = stale.filter((r) => r.ahead > 0).slice(-3).reverse();
+  const shown = [...fresh.slice(0, BRANCH_ROWS - Math.min(3, stale.length)), ...worthDeleting];
   const data: RepoBranches = { active: fresh.length, stale: stale.length, rows: shown };
   await putSnapshot(db, "branches", data);
 }

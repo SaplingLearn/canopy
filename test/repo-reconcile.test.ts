@@ -64,10 +64,32 @@ describe("reconcileRepo — deployments, workflow runs and env-head checks", () 
     expect(await all(env.DB, `SELECT * FROM repo_events WHERE kind = 'deploy'`)).toEqual([]);
   });
 
-  it("skips the deployments request entirely when no environment is configured", async () => {
+  it("skips the deployments request entirely when no environment is configured — but the branches refs query still runs", async () => {
     const gh = fakeGithub({});
     await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, [], NOW);
-    expect(gh.calls.some((c) => c.endsWith("/graphql"))).toBe(false);
+    // `deployments` genuinely cannot filter without environment names, so it
+    // stays gated; `branches` degrades fine with envs: [] (see the dedicated
+    // test below), so a refs query is legitimate here — only the deployments
+    // query must be absent.
+    expect(gh.graphql.some((c) => c.query.includes("deployments("))).toBe(false);
+    expect(gh.graphql.some((c) => c.query.includes("refs(refPrefix"))).toBe(true);
+  });
+
+  // Fix round 1, Finding 1: `computeBranches` degrades correctly with no
+  // environments configured — empty exclusion set, "main" as the compare
+  // head (the same fallback the `commits` arm above uses) — so unlike
+  // `deployments`, the `branches` arm runs UNCONDITIONALLY.
+  it("writes a branches snapshot compared against main with nothing excluded when no environment is configured", async () => {
+    const gh = fakeGithub({
+      refsGraphql: { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+        { name: "feature/x", target: { committedDate: "2026-09-19T00:00:00Z" }, compare: { aheadBy: 0, behindBy: 2 } },
+      ] } } } },
+    });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, [], NOW);
+    const call = gh.graphql.find((c) => c.query.includes("refs(refPrefix"));
+    expect(call?.variables).toMatchObject({ owner: "o", name: "r", head: "main" });
+    const snap = await getSnapshot(env.DB, "branches");
+    expect(snap?.data).toEqual({ active: 1, stale: 0, rows: [{ name: "feature/x", at: "2026-09-19T00:00:00Z", ahead: 2, behind: 0, stale: false }] });
   });
 
   it("an errors body writes nothing, does not throw, and names the arm in `failed`", async () => {
