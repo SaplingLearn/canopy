@@ -72,7 +72,7 @@
 - [ ] **Before Phase 2 merges:** on `SaplingLearn/sapling` → Settings → Webhooks → the Canopy hook → add events **Deployment statuses, Check runs, Workflow runs, Pull request reviews, Statuses**.
 - [ ] **Before Phase 3 merges:** confirm `GITHUB_SERVICE_TOKEN` can read the repo's contents/actions (it already reads issues + PRs).
 - [ ] **Phase 4:** merge the CI-steps PR into `SaplingLearn/sapling` (YAML is in Task 14).
-- [ ] **Phase 5:** `wrangler secret put CLOUDFLARE_API_TOKEN` (Account Analytics: Read), `CLOUDFLARE_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; add the Railway service id to `REPO_ENVIRONMENTS`; ship the Sapling metrics endpoint.
+- [ ] **Phase 5:** `wrangler secret put CF_ANALYTICS_TOKEN` (Cloudflare custom token, Account → Account Analytics → Read, on the account that hosts the `frontend` / `frontend-staging` Workers), `RAILWAY_TOKEN` (an ACCOUNT or WORKSPACE token — a project token uses a different header and covers one environment), `SAPLING_METRICS_TOKEN` (a random string, also set on the Sapling backend); `CF_ANALYTICS_ACCOUNT_ID` is NOT a secret — it goes in `wrangler.toml` `[vars]`. **Deliberately NOT named `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`: those are the env vars the wrangler CLI itself authenticates with, and an analytics-read token under that name in a shell or CI would break deploys.** add the Railway service id to `REPO_ENVIRONMENTS`; ship the Sapling metrics endpoint.
 
 ## File Structure
 
@@ -2545,13 +2545,13 @@ it("a usage metric with no source says so in place, without blanking its neighbo
 
 **Interfaces:**
 - Produces: `pollCloudflare(db, cf: { token: string; accountId: string }, envs: RepoEnvConfig[], now: number, fetchImpl?: typeof fetch): Promise<void>` — writes hourly `cf_requests` and `cf_errors` (`env`=config key, `part`="frontend") for the last 3 complete hours (overlap heals a missed tick; `INSERT OR IGNORE` dedupes).
-- `Env` gains `CLOUDFLARE_API_TOKEN?: string; CLOUDFLARE_ACCOUNT_ID?: string;`
+- `Env` gains `CF_ANALYTICS_TOKEN?: string; CF_ANALYTICS_ACCOUNT_ID?: string;`
 
 - [ ] **Step 1: Verify the dataset against the live API before writing the parser** (one manual call; needs the token):
 
 ```bash
-curl -s https://api.cloudflare.com/client/v4/graphql -H "authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'content-type: application/json' \
-  -d '{"query":"query($a:String!,$s:String!,$from:Time!,$to:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:100,filter:{scriptName:$s,datetime_geq:$from,datetime_leq:$to},orderBy:[datetimeHour_ASC]){dimensions{datetimeHour} sum{requests errors}}}}}","variables":{"a":"'$CLOUDFLARE_ACCOUNT_ID'","s":"frontend-staging","from":"2026-09-20T00:00:00Z","to":"2026-09-20T12:00:00Z"}}' | jq .
+curl -s https://api.cloudflare.com/client/v4/graphql -H "authorization: Bearer $CF_ANALYTICS_TOKEN" -H 'content-type: application/json' \
+  -d '{"query":"query($a:String!,$s:String!,$from:Time!,$to:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:100,filter:{scriptName:$s,datetime_geq:$from,datetime_leq:$to},orderBy:[datetimeHour_ASC]){dimensions{datetimeHour} sum{requests errors}}}}}","variables":{"a":"'$CF_ANALYTICS_ACCOUNT_ID'","s":"frontend-staging","from":"2026-09-20T00:00:00Z","to":"2026-09-20T12:00:00Z"}}' | jq .
 ```
 
 Expected: `data.viewer.accounts[0].workersInvocationsAdaptive[]` rows of `{dimensions:{datetimeHour}, sum:{requests, errors}}`. If the field names differ, correct the query AND the fixture below to match before continuing.
@@ -2625,8 +2625,8 @@ export async function pollCloudflare(db: DB, cf: { token: string; accountId: str
 In `src/repo/cron.ts`, at the `// hourly polls land here` marker:
 
 ```ts
-  if (env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID) {
-    await safely("cloudflare", () => pollCloudflare(env.DB, { token: env.CLOUDFLARE_API_TOKEN!, accountId: env.CLOUDFLARE_ACCOUNT_ID! }, envs, scheduledTime, fetchImpl));
+  if (env.CF_ANALYTICS_TOKEN && env.CF_ANALYTICS_ACCOUNT_ID) {
+    await safely("cloudflare", () => pollCloudflare(env.DB, { token: env.CF_ANALYTICS_TOKEN!, accountId: env.CF_ANALYTICS_ACCOUNT_ID! }, envs, scheduledTime, fetchImpl));
   }
 ```
 
@@ -2672,7 +2672,7 @@ In `src/repo/cron.ts`, at the `// hourly polls land here` marker:
 return `usage: anyUsage ? ok(usageData) : NOT_CONNECTED, cloudflare: cfData["7d"].length ? ok(cfData) : NOT_CONNECTED,` (import `REPO_RANGES`, `RepoRange`, `RepoUsageEnv`, `RepoCfRow`). In `web/src/repo.ts` retitle the panel `Cloudflare — frontend Workers`.
 
 - [ ] **Step 5: Run** — `npx vitest run test/repo-poll.cloudflare.test.ts test/repo-dashboard.test.ts && npm run typecheck` → PASS. **Commit** — `git commit -am "Poll Cloudflare Workers analytics for the frontend's requests and errors"`.
-- [ ] **Step 6:** `wrangler secret put CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; document both in `CLAUDE.md` › Env.
+- [ ] **Step 6:** `wrangler secret put CF_ANALYTICS_TOKEN`; add `CF_ANALYTICS_ACCOUNT_ID` to `wrangler.toml` `[vars]` (not sensitive — it appears in every public Workers Builds check-run URL); document both in `CLAUDE.md` › Env.
 
 ### Task 17: Railway CPU and memory (source L)
 
@@ -2841,7 +2841,7 @@ Cron (hourly block): `if (env.SAPLING_METRICS_TOKEN) await safely("sapling", () 
 
 ### Task 19: Final close-out
 
-- [ ] `CLAUDE.md`: the Repo dashboard paragraph lists every section as live with its source; `UNCAPTURED` is empty or gone; Env section documents `REPO_ENVIRONMENTS`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; the cron paragraph describes the `*/10` trigger's three cadences.
+- [ ] `CLAUDE.md`: the Repo dashboard paragraph lists every section as live with its source; `UNCAPTURED` is empty or gone; Env section documents `REPO_ENVIRONMENTS`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN`, `SAPLING_METRICS_TOKEN`; the cron paragraph describes the `*/10` trigger's three cadences.
 - [ ] `web/src/repo.ts`: delete `notConnected` copy that names a capture path that now exists; keep the state itself (a fresh install still starts unconnected).
 - [ ] `npm run typecheck && npm test`; run the app, Sync GitHub, and walk all five tabs in live mode against the sample mode side by side.
 
