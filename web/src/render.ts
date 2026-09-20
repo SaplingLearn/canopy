@@ -23,6 +23,9 @@ import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } fr
 import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
+import { sidebarView, NAV_CLOSED, type NavOpen } from "./sidebar";
+import { repoView, repoControls, repoCrumb, type RepoProps } from "./repo";
+import type { RepoDashboard, RepoTab, RepoRange } from "@shared/repo";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
 // A docs "space" is a free-form top-level grouping shown as a toggle (e.g.
@@ -35,7 +38,9 @@ export type Screen =
   | "site"
   // Tickets (Phase 5): the queue, one ticket, the new-ticket form, and a sprint.
   // `sprint` is a Roadmap child — the sidebar highlights Roadmap while it is open.
-  | "tickets" | "ticketdetail" | "newticket" | "sprint";
+  | "tickets" | "ticketdetail" | "newticket" | "sprint"
+  // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
+  | "repo";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -64,6 +69,19 @@ export interface AppState {
   theme: "dark" | "light" | "midnight" | "system";
   systemDark: boolean;
   collapsed: boolean;
+  /** The viewport is too narrow for the full rail — it renders collapsed regardless of `collapsed`. */
+  narrow: boolean;
+  /** Which sidebar entries have their sub-page list open (persisted; a group opens itself on entry). */
+  navOpen: NavOpen;
+  // ── Repo dashboard ─────────────────────────────────────────────────────────
+  repo: Loadable<RepoDashboard | null>;
+  repoTab: RepoTab;
+  repoRange: RepoRange;
+  repoDriftOpen: boolean;
+  /** When `repo` last loaded (ms) — the header's "updated Xm ago". */
+  repoFetchedAt: number | null;
+  /** Showing the built-in sample set instead of the Worker's projection. Session-only. */
+  repoSample: boolean;
   feedAuthor: string;
   feedTag: string;
   feedRange: string;
@@ -206,6 +224,10 @@ export function initialState(): AppState {
     screen: "mywork",
     theme: "dark", systemDark: true,
     collapsed: false,
+    narrow: false,
+    navOpen: { ...NAV_CLOSED },
+    repo: { status: "idle", data: null },
+    repoTab: "overview", repoRange: "7d", repoDriftOpen: false, repoFetchedAt: null, repoSample: false,
     feedAuthor: "all", feedTag: "all", feedRange: "all",
     feed: { status: "idle", data: [] },
     mywork: { status: "idle", data: null },
@@ -444,80 +466,26 @@ function verifyingCard(): string {
 }
 
 // ── app shell ────────────────────────────────────────────────────────────────
+/** The rail is collapsed when the person collapsed it OR the viewport forces it. */
+export const railCollapsed = (s: AppState): boolean => s.collapsed || s.narrow;
+
 function sidebar(s: AppState): string {
-  const expanded = !s.collapsed;
-  const navItem = (act: string, cls: string, title: string, svg: string, extra = ""): string =>
-    `<button data-act="${act}" title="${title}" class="cnpy-nav ${cls}">${svg}${expanded ? `<span style="white-space:nowrap;flex:1;text-align:left">${title}</span>` : ""}${extra}</button>`;
-
   const counts = triageCounts(s);
-  // Section label (WORKSPACE / TRIAGE) — a header, not a destination. Collapsed
-  // sidebar shows a hairline divider instead.
-  const sectionLabel = (label: string): string => expanded
-    ? `<div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);padding:12px 11px 7px">${label}</div>`
-    : `<div style="height:1px;background:var(--border);margin:12px 8px 9px"></div>`;
-  const collapsedDot = `<span style="position:absolute;top:7px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--accent)"></span>`;
-  const onReview = s.screen === "review";
-  const reviewExtra = expanded
-    ? (counts.review > 0
-      ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;height:16px;line-height:16px;padding:0 6px;border-radius:999px;flex:none;color:${onReview ? "var(--accent)" : "var(--fg-40)"};border:1px solid ${onReview ? "var(--accent)" : "var(--border)"};background:${onReview ? "var(--accent-soft)" : "transparent"}">${counts.review}</span>`
-      : "")
-    : (counts.review > 0 ? collapsedDot : "");
-  const maintExtra = expanded
-    ? (counts.maintenance > 0
-      ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;flex:none;color:var(--fg-40)">${counts.maintenance}</span>`
-      : "")
-    : (counts.maintenance > 0 ? collapsedDot : "");
-  // Tickets badge (design call #2): unassigned ACTIVE tickets. Always accent —
-  // unlike Review's, it is a "nobody has this" signal, not a queue depth. Hidden
-  // at 0; an accent dot when the sidebar is collapsed.
-  const ticketExtra = s.ticketBadge > 0
-    ? (expanded
-      ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;height:16px;line-height:16px;padding:0 6px;border-radius:999px;flex:none;color:var(--accent);border:1px solid var(--accent);background:var(--accent-soft)">${s.ticketBadge}</span>`
-      : collapsedDot)
-    : "";
-
-  return `<aside class="cnpy-aside">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 14px 14px 16px;min-height:58px">
-      <button data-act="goSite" title="About Canopy" style="display:flex;align-items:center;gap:10px;overflow:hidden;padding:0;color:inherit">
-        ${logo(24)}
-        ${expanded ? `<span style="font-size:18px;font-weight:600;letter-spacing:-0.02em;white-space:nowrap">Canopy</span>` : ""}
-      </button>
-      ${expanded ? `<button data-act="toggleCollapse" title="Collapse sidebar" class="cnpy-iconbtn" style="flex:none;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--fg-40)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path><path d="M14.5 9.5 12 12l2.5 2.5"></path></svg>
-      </button>` : ""}
-    </div>
-
-    ${s.collapsed ? `<div style="display:flex;justify-content:center;padding:0 0 8px">
-      <button data-act="toggleCollapse" title="Expand sidebar" class="cnpy-iconbtn" style="width:36px;height:30px;border-radius:7px;display:grid;place-items:center;color:var(--fg-40)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16"></path><path d="M9.5 9.5 12 12l-2.5 2.5"></path></svg>
-      </button>
-    </div>` : ""}
-
-    <nav style="display:flex;flex-direction:column;gap:3px;padding:0 10px 6px;flex:1">
-      ${sectionLabel("Workspace")}
-      ${navItem("goMyWork", "n-mywork", "My Work", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M3 12 12 3l9 9"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg>`)}
-      ${navItem("goRoadmap", "n-roadmap", "Roadmap", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg>`)}
-      ${navItem("goFeed", "n-feed", "Feed", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path></svg>`)}
-      ${navItem("goTickets", "n-tickets", "Tickets", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"></path><path d="M13 5v2M13 11v2M13 17v2"></path></svg>`, ticketExtra)}
-      ${sectionLabel("Knowledge")}
-      ${navItem("goDocs", "n-docs", "Docs", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path></svg>`)}
-      ${navItem("goSearch", "n-search", "Search", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>`)}
-      ${sectionLabel("Triage")}
-      ${navItem("goReview", "n-review", "Review", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m9 12.5 2 2 4-5"></path></svg>`, reviewExtra)}
-      ${navItem("goMaintenance", "n-maintenance", "Maintenance", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`, maintExtra)}
-      ${sectionLabel("Help")}
-      ${navItem("goGuide", "n-guide", "Get Started", `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><path d="M2 4h7a3 3 0 0 1 3 3v14a2.5 2.5 0 0 0-2.5-2.5H2z"></path><path d="M22 4h-7a3 3 0 0 0-3 3v14a2.5 2.5 0 0 1 2.5-2.5H22z"></path></svg>`)}
-    </nav>
-
-    ${expanded ? `<div style="padding:0 21px 8px;font-size:11px;color:var(--fg-40)">agents produce · humans confirm</div>` : ""}
-    <div style="padding:10px;border-top:1px solid var(--border)">
-      <button data-act="goSettings" title="Settings" class="cnpy-chip">
-        ${personChip(s.me ? { handle: s.me.handle, name: s.displayName || s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null, 30, s.me?.handle ?? "?")}
-        ${expanded ? `<div style="overflow:hidden;flex:1;text-align:left"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.displayName || (s.me?.handle ?? ""))}</div><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.me ? handleTag({ handle: s.me.handle, color: s.me.color }, s.me.handle, 11) : handleTag(null, "", 11)}</div></div>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>` : ""}
-      </button>
-    </div>
-  </aside>`;
+  return sidebarView({
+    screen: s.screen,
+    collapsed: railCollapsed(s),
+    navOpen: s.navOpen,
+    qView: s.qView,
+    roadmapTab: s.roadmapTab,
+    repoTab: s.repoTab,
+    docSpace: s.docSpace,
+    docSpaces: DOC_SPACES.map((k) => ({ key: k, label: spaceLabel(k) })),
+    // Tickets: unassigned ACTIVE tickets — a "nobody has this" signal (design call #2).
+    counts: { review: counts.review, maintenance: counts.maintenance, tickets: s.ticketBadge },
+    me: s.me ? { handle: s.me.handle, name: s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null,
+    displayName: s.displayName,
+    logo: logo(24),
+  });
 }
 
 /** The "›" crumb text for the three child screens (empty on a top-level screen). */
@@ -537,6 +505,7 @@ function header(s: AppState): string {
     unsubscribe: "Unsubscribe", site: "Canopy",
     // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
     tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
+    repo: "Repo",
   };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
@@ -619,7 +588,7 @@ function header(s: AppState): string {
   // `ticketsBack` resolves to Tickets, or Roadmap from a sprint (one act, like
   // the design's single `back` handler).
   const child = s.screen === "ticketdetail" || s.screen === "newticket" || s.screen === "sprint";
-  const crumb = child
+  const crumb = s.screen === "repo" ? repoCrumb(repoProps(s)) : child
     ? `<span style="display:inline-flex;align-items:center;gap:10px;min-width:0"><span style="color:var(--fg-40);font-size:13px">›</span><span style="font-size:13px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(headerCrumb(s))}</span></span>`
     : "";
   const title = child
@@ -633,7 +602,7 @@ function header(s: AppState): string {
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${themeBtn}
+      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${themeBtn}
     </div>
   </header>`;
 }
@@ -677,7 +646,7 @@ function feedView(s: AppState): string {
   }).join("");
 
   const empty = s.feed.status === "ok" && s.feed.data.length === 0 ? notice("No entries match this filter.") : "";
-  return wrapFeed(`${cards}${empty}`);
+  return wrapFeed(`<div class="cnpy-stagger">${cards}</div>${empty}`);
 }
 
 // ── docs ─────────────────────────────────────────────────────────────────────
@@ -892,7 +861,7 @@ function roadmapNarrative(s: AppState): string {
   const renderGroup = (items: SprintView[], heading: string, color: string): string =>
     items.length === 0
       ? ""
-      : `${sectionHeading(heading, color)}${items.map((sp) => sprintCard(sp, s.persons.data, { done: isDone(sp) })).join("")}`;
+      : `${sectionHeading(heading, color)}<div class="cnpy-stagger">${items.map((sp) => sprintCard(sp, s.persons.data, { done: isDone(sp) })).join("")}</div>`;
 
   const intro = total === 0
     ? notice("No sprints yet.")
@@ -1108,7 +1077,7 @@ function searchView(s: AppState): string {
     body = notice("No results for that query.");
   } else {
     const primaryBlock = primary.length
-      ? `<div>${primary.map((r) => primaryCard(r, sq)).join("")}</div>`
+      ? `<div class="cnpy-stagger">${primary.map((r) => primaryCard(r, sq)).join("")}</div>`
       : "";
     const pointerBlock = pointers.length
       ? `<div style="margin-top:22px">
@@ -1581,13 +1550,13 @@ function myWorkView(s: AppState): string {
     ? mwDegradedHint("Couldn't load your recent activity right now.")
     : d.previousActivity.length === 0
       ? mwEmptyHint("No merged or closed PRs yet.")
-      : `<div class="cnpy-mw-grid">${d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("")}</div>`;
+      : `<div class="cnpy-mw-grid cnpy-stagger">${d.previousActivity.map((pr) => prActivityCard(pr, renderMarkdown)).join("")}</div>`;
 
   const todoBody = d.degraded
     ? mwDegradedHint("Couldn't load your to-do list right now.")
     : d.todo.length === 0
       ? mwEmptyHint("No open issues assigned to you.")
-      : `<div class="cnpy-mw-grid">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
+      : `<div class="cnpy-mw-grid cnpy-stagger">${d.todo.map((t) => todoCard(t)).join("")}</div>`;
 
   // The third block (design call #9): the org's ticket queue, filtered to what is
   // assigned to me and still open. Tickets are NEVER folded into `todo` — that
@@ -1596,7 +1565,7 @@ function myWorkView(s: AppState): string {
     ? mwDegradedHint("Couldn't load your assigned tickets right now.")
     : d.tickets.length === 0
       ? mwEmptyHint("No tickets assigned to you. The queue has what's waiting.")
-      : `<div class="cnpy-mw-grid">${d.tickets.map((t) => ticketCard(t, (h) => personFor(s, h))).join("")}</div>`;
+      : `<div class="cnpy-mw-grid cnpy-stagger">${d.tickets.map((t) => ticketCard(t, (h) => personFor(s, h))).join("")}</div>`;
 
   const activity = mwSection("Previous activity", activityBody);
   const todo = mwSection("To-do", todoBody);
@@ -1735,12 +1704,20 @@ function screenBody(s: AppState): string {
     case "newticket": return newTicketScreen(s);
     case "ticketdetail": return ticketDetailScreen(s);
     case "sprint": return sprintScreenBody(s);
+    case "repo": return repoView(repoProps(s));
     default: return feedView(s);
   }
 }
 
+/** Project the app state onto the Repo dashboard's props (its components never see AppState). */
+function repoProps(s: AppState): RepoProps {
+  return { tab: s.repoTab, range: s.repoRange, driftOpen: s.repoDriftOpen, repo: s.repo, fetchedAt: s.repoFetchedAt, sample: s.repoSample };
+}
+
+// `.cnpy-shell` is the seam web/src/morph.ts looks for: inside it the <aside> is
+// patched in place (so its transitions run) and <main> is swapped.
 function appView(s: AppState): string {
-  return `<div style="display:flex;height:100vh;overflow:hidden">
+  return `<div class="cnpy-shell" style="display:flex;height:100vh;overflow:hidden">
     ${sidebar(s)}
     <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
       ${header(s)}
@@ -1784,7 +1761,7 @@ function backfillSyncModal(sync: BackfillSyncState): string {
 
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
-  return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${s.collapsed ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
+  return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${railCollapsed(s) ? "1" : "0"}" data-narrow="${s.narrow ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
     ${s.view === "auth" ? authView(s) : s.screen === "site" ? landingView({ dark: resolved(s) !== "light", signInOpen: false, signedIn: true, seen: s.landingSeen }) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}

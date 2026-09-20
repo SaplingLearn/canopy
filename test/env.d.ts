@@ -21,6 +21,7 @@ declare global {
       ADMIN_LOGINS?: string;
       PUBLIC_ORIGIN?: string;
       NOTIFICATIONS_MODE?: "local" | "resend";
+      REPO_ENVIRONMENTS?: string;
     }
   }
 }

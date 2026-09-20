@@ -1,0 +1,259 @@
+// Service-token reads of the GitHub API for the repo dashboard. NEVER on the
+// render path: called from the webhook handler (event-triggered) and scheduled().
+import type { DB } from "../db";
+import { first, run } from "../db";
+import { ingestRepoEvent } from "../consumer";
+import { putSnapshot } from "./store";
+import { untitledFailedRuns } from "./reads";
+import type { RepoEnvConfig } from "./config";
+import type { RepoEvent } from "./types";
+import { repoEventsFromDelivery } from "./capture";
+
+/** At most this many `.../jobs` lookups per `reconcileRepo` call, so a first
+ *  Sync over 100 untitled failed runs cannot fan out into 100 extra API calls.
+ *  The backlog drains a slice at a time, over successive Syncs. */
+const MAX_JOB_LOOKUPS = 5;
+/** How far back the job-title pass looks for an untitled failed run. */
+const JOB_LOOKUP_DAYS = 7;
+
+export interface GhOpts { token: string; repo: string; fetchImpl?: typeof fetch }
+
+/** What one `reconcileRepo` reports: the gate's counts, plus the NAME of every
+ *  arm whose `safely` block threw — a Sync that silently lost its deployments
+ *  looked identical to one that had none. `/admin/backfill` passes this through
+ *  as its `repo` object. */
+export interface ReconcileResult { written: number; unchanged: number; failed: string[] }
+
+const DAY = 86_400_000;
+const HEADERS = (token: string) => ({ authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "canopy-worker" });
+
+export async function ghJson<T>(opts: GhOpts, path: string): Promise<T> {
+  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token) });
+  if (!res.ok) throw new Error(`github ${res.status} ${path}`);
+  return (await res.json()) as T;
+}
+
+/** The GraphQL sibling of `ghJson`: same auth/user-agent, POSTed to the v4
+ *  endpoint. GraphQL answers 200 with an `errors` array on a bad query or a
+ *  missing repo, so a non-2xx is NOT the only failure — both throw, and the
+ *  caller's `safely` arm turns either into a named entry in `failed`. */
+export async function ghGraphql<T>(opts: GhOpts, query: string, variables: Record<string, unknown>): Promise<T> {
+  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/graphql`, {
+    method: "POST",
+    headers: { ...HEADERS(opts.token), "content-type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) throw new Error(`github graphql ${res.status}`);
+  const body = (await res.json()) as { data?: T; errors?: { message?: string }[] };
+  if (body.errors?.length) throw new Error(`github graphql: ${body.errors.map((e) => e?.message ?? "error").join("; ")}`);
+  return (body.data ?? ({} as T)) as T;
+}
+
+interface GhPull { number: number; title: string; html_url: string; state: string; draft: boolean; merged_at: string | null; updated_at: string; user: { login: string }; head: { ref: string; sha: string }; base: { ref: string } }
+interface GhCommit { sha: string; commit: { message: string; committer: { date: string } }; author: { login: string } | null }
+
+const prEvent = (pr: GhPull): RepoEvent => ({
+  semantic_key: `gh:prs:${pr.number}:backfill:${pr.updated_at}`,
+  kind: "pr", number: pr.number,
+  state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : pr.draft ? "draft" : "review",
+  ref: pr.head.ref, sha: pr.head.sha, actor_login: pr.user.login, title: pr.title.slice(0, 300), url: pr.html_url,
+  raw: JSON.stringify({ action: "backfill", base: pr.base.ref, draft: pr.draft }),
+  provenance: "backfill", occurred_at: pr.merged_at ?? pr.updated_at,
+});
+
+/** The shape/key scheme `reconcileRepo`'s pre-capture commit backfill has always
+ *  used: `gh:push:<sha>:<branch>`, `count: 1`, `provenance: "backfill"`. */
+const commitToPushEvent = (c: GhCommit, branch: string): RepoEvent => ({
+  semantic_key: `gh:push:${c.sha}:${branch}`, kind: "push", ref: branch, sha: c.sha, actor_login: c.author?.login ?? null,
+  count: 1, title: c.commit.message.split("\n")[0].slice(0, 200), raw: JSON.stringify({ backfill: true }),
+  provenance: "backfill", occurred_at: c.commit.committer.date,
+});
+
+// ── deployments over GraphQL ─────────────────────────────────────────────────
+//
+// ONE request replaces the old `GET /deployments?per_page=20` plus a
+// `/statuses` call per deployment (21 subrequests, most of them spent on
+// Railway's PR-preview environments). `environments:` filters server-side to the
+// environments this deployment reports on, and `statuses(first:10)` brings each
+// deployment's status rows along in the same round trip.
+//
+// Facts verified live against the target repo: `databaseId` EQUALS the REST /
+// webhook `deployment.id`, so `gh:deploy:<id>:<state>` still collides with a
+// webhook row (a redelivery overlap drops as `unchanged`); `state` arrives
+// UPPERCASE; a Bot creator's `login` arrives WITHOUT the `[bot]` suffix the
+// webhook carries; timestamps already have no milliseconds. GraphQL statuses
+// have no numeric id, so `raw.status_id` is null.
+const DEPLOYMENTS_QUERY = `query($owner:String!,$name:String!,$envs:[String!]){ repository(owner:$owner,name:$name){
+  deployments(environments:$envs, first:20, orderBy:{field:CREATED_AT,direction:DESC}){ nodes{
+    databaseId commitOid environment createdAt creator{ login __typename }
+    statuses(first:10){ nodes{ state createdAt logUrl } } } } } }`;
+
+interface GqlDeployment {
+  databaseId?: number | null; commitOid?: string | null; environment?: string | null; createdAt?: string | null;
+  creator?: { login?: string | null; __typename?: string | null } | null;
+  statuses?: { nodes?: ({ state?: string | null; createdAt?: string | null; logUrl?: string | null } | null)[] | null } | null;
+}
+interface GqlDeployments { repository?: { deployments?: { nodes?: (GqlDeployment | null)[] | null } | null } | null }
+
+/** The webhook says `railway-app[bot]`; GraphQL says `railway-app` with
+ *  `__typename: "Bot"`. Re-suffix so a backfilled row and a webhook row for the
+ *  same deploy carry the same actor. */
+function creatorLogin(creator: GqlDeployment["creator"]): string | null {
+  const login = typeof creator?.login === "string" && creator.login ? creator.login : null;
+  if (!login) return null;
+  return creator?.__typename === "Bot" && !login.endsWith("[bot]") ? `${login}[bot]` : login;
+}
+
+export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now: number = Date.now()): Promise<ReconcileResult> {
+  const out: ReconcileResult = { written: 0, unchanged: 0, failed: [] };
+  /** Every event goes through the SAME gate the webhook uses; a redelivery or a
+   *  backfill overlap drops as `unchanged` on the UNIQUE semantic key. */
+  const take = async (events: RepoEvent[]): Promise<void> => {
+    for (const ev of events) {
+      const res = await ingestRepoEvent(db, ev);
+      if (res.outcome === "written") out.written++; else out.unchanged++;
+    }
+  };
+  // Each arm is independent: one failing must not starve the others. The arm's
+  // NAME lands in `failed` so a caller can tell "no deployments" from "the
+  // deployments read blew up" (each name appears at most once).
+  const safely = async (arm: string, fn: () => Promise<void>) => {
+    try { await fn(); } catch (e) {
+      console.error("reconcileRepo", arm, e);
+      if (!out.failed.includes(arm)) out.failed.push(arm);
+    }
+  };
+
+  // The completeness marker: written only after the OPEN-PR list has been both
+  // fetched AND ingested without throwing. `prCaptured` in src/tools/repo.ts
+  // gates on THIS snapshot, not on "any pr row exists" — a lone webhook
+  // delivery (the first `pull_request` after deploy) must not make the
+  // Overview claim a complete open-PR count. A marker (not `provenance =
+  // 'backfill'`) because a repo with zero open PRs would otherwise never earn
+  // one.
+  await safely("open_prs", async () => {
+    const openPrs = await ghJson<GhPull[]>(opts, `/pulls?state=open&sort=updated&direction=desc&per_page=100`);
+    await take(openPrs.map(prEvent));
+    await putSnapshot(db, "prs_reconciled", { at: new Date(now).toISOString() }, new Date(now).toISOString());
+  });
+  await safely("closed_prs", async () => { await take((await ghJson<GhPull[]>(opts, `/pulls?state=closed&sort=updated&direction=desc&per_page=50`)).map(prEvent)); });
+
+  // Commits on the default environment branch, ONLY for the stretch before push
+  // capture began — a backfilled commit is a count-1 push, and overlapping a real
+  // push (count N, same head sha) would shadow it. This fills ONLY the
+  // pre-capture stretch: it cannot and does not recover a push missed AFTER
+  // capture began (a gap from a webhook outage, say) — that stays lost.
+  await safely("commits", async () => {
+    const branch = envs[0]?.branch ?? "main";
+    const earliest = await first<{ at: string }>(db, `SELECT MIN(occurred_at) AS at FROM repo_events WHERE kind = 'push' AND provenance = 'webhook'`);
+    const since = new Date(now - 14 * DAY).toISOString();
+    const until = earliest?.at ?? new Date(now).toISOString();
+    if (until <= since) return;
+    const commits = await ghJson<GhCommit[]>(opts, `/commits?sha=${encodeURIComponent(branch)}&since=${since}&until=${until}&per_page=100`);
+    await take(commits.map((c) => commitToPushEvent(c, branch)));
+  });
+
+  const asBackfill = (events: RepoEvent[]): RepoEvent[] => events.map((e) => ({ ...e, provenance: "backfill" as const }));
+
+  // Deployments: ONE GraphQL request, filtered to the configured environments
+  // (see DEPLOYMENTS_QUERY above). Each status is re-wrapped into the webhook's
+  // own `deployment_status` payload shape and put through the SAME pure arm, so
+  // there is one derivation of a deploy row, not two.
+  if (envs.length) await safely("deployments", async () => {
+    const [owner, name] = opts.repo.split("/");
+    const data = await ghGraphql<GqlDeployments>(opts, DEPLOYMENTS_QUERY, { owner, name, envs: envs.map((e) => e.railwayEnv) });
+    const nodes = data?.repository?.deployments?.nodes;
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      if (!node || typeof node.databaseId !== "number") continue;
+      const deployment = {
+        id: node.databaseId, sha: node.commitOid ?? null, ref: null, environment: node.environment ?? null,
+        created_at: node.createdAt ?? null, creator: { login: creatorLogin(node.creator) },
+      };
+      const statuses = node.statuses?.nodes;
+      for (const st of Array.isArray(statuses) ? statuses : []) {
+        if (!st || typeof st.state !== "string") continue;
+        // `id: null` — a GraphQL status carries no numeric id. Never invented.
+        const deployment_status = { id: null, state: st.state.toLowerCase(), created_at: st.createdAt ?? null, log_url: st.logUrl ?? null };
+        await take(asBackfill(repoEventsFromDelivery("deployment_status", { deployment_status, deployment }, envs)));
+      }
+    }
+  });
+
+  // Completed workflow runs.
+  await safely("runs", async () => {
+    const { workflow_runs = [] } = await ghJson<{ workflow_runs?: Record<string, unknown>[] }>(opts, `/actions/runs?status=completed&per_page=100`);
+    for (const workflow_run of workflow_runs) {
+      await take(asBackfill(repoEventsFromDelivery("workflow_run", { action: "completed", workflow_run }, envs)));
+    }
+  });
+
+  // The failing-job label a live webhook delivery gets (src/webhook.ts), applied
+  // to the BACKLOG rather than to whatever this Sync happened to write: the
+  // newest untitled failure/timed_out runs of the last week, capped at
+  // MAX_JOB_LOOKUPS. A first Sync's leftovers therefore drain over later Syncs
+  // instead of staying nameless forever. `fillFailedJob` never throws.
+  await safely("job_titles", async () => {
+    const backlog = await untitledFailedRuns(db, new Date(now - JOB_LOOKUP_DAYS * DAY).toISOString(), MAX_JOB_LOOKUPS);
+    for (const r of backlog) await fillFailedJob(db, opts, r.number, r.semantic_key);
+  });
+
+  // Each configured environment branch's HEAD, as ONE `env_heads` snapshot
+  // (`{ [branch]: sha }`). Deliberately NOT a synthetic push row any more: a
+  // Sync landing between a real push and its webhook delivery would write the
+  // count-1 row first and the real count-N push would then drop as `unchanged`,
+  // permanently under-counting commits and losing the push from the feed; and
+  // every Sync that saw a new head added a phantom commit to the totals.
+  // `branchHeads` (src/repo/reads.ts) prefers this snapshot over a captured
+  // push only when the snapshot is the NEWER of the two.
+  const heads = new Map<string, string>();
+  for (const cfg of envs) {
+    await safely("env_heads", async () => {
+      const commits = await ghJson<GhCommit[]>(opts, `/commits?sha=${encodeURIComponent(cfg.branch)}&per_page=1`);
+      if (commits[0]?.sha) heads.set(cfg.branch, commits[0].sha);
+    });
+  }
+  // Only what this reconcile actually observed: a branch whose fetch failed is
+  // dropped rather than carried forward under a fresh `computed_at` (which would
+  // let a stale sha outrank a newer captured push).
+  if (heads.size) await safely("env_heads", () => putSnapshot(db, "env_heads", Object.fromEntries(heads), new Date(now).toISOString()));
+
+  // Each environment head's check runs (also the frontend deploy record: a
+  // Workers Builds check IS a deploy, but only on the branch that environment
+  // ships from). Independent per environment so one branch's failure never
+  // starves another's.
+  for (const cfg of envs) {
+    await safely("checks", async () => {
+      const { check_runs = [] } = await ghJson<{ check_runs?: Record<string, unknown>[] }>(opts, `/commits/${encodeURIComponent(cfg.branch)}/check-runs?per_page=100`);
+      for (const cr of check_runs) {
+        if (cr.status !== "completed") continue;
+        // The list item may omit check_suite.head_branch. Do NOT blindly inject
+        // the branch we asked for: when two configured branches share a HEAD,
+        // both environments' Workers Builds checks come back on the first branch
+        // asked, and tagging the other one with this branch leaves it untagged
+        // forever (the correctly-tagged row later drops as `unchanged`). The
+        // owner is the config whose workerCheck matches the run's NAME and whose
+        // head is the run's head sha; absent that, the branch we asked for.
+        const owner = envs.find((e) => e.workerCheck === cr.name && heads.get(e.branch) === cr.head_sha);
+        const check_run = { ...cr, check_suite: { head_branch: owner?.branch ?? cfg.branch } };
+        await take(asBackfill(repoEventsFromDelivery("check_run", { action: "completed", check_run }, envs)));
+      }
+    });
+  }
+
+  return out;
+}
+
+interface GhJobs { jobs: { name: string; conclusion: string | null; steps?: { name: string; conclusion: string | null }[] }[] }
+
+/** Enrichment, not capture: the run row already landed. A failure here costs a label, nothing else. */
+export async function fillFailedJob(db: DB, opts: GhOpts, runId: number, semanticKey: string): Promise<void> {
+  try {
+    const { jobs } = await ghJson<GhJobs>(opts, `/actions/runs/${runId}/jobs?filter=latest&per_page=100`);
+    const job = jobs.find((j) => j.conclusion === "failure" || j.conclusion === "timed_out");
+    if (!job) return;
+    const step = job.steps?.find((s) => s.conclusion === "failure")?.name;
+    await run(db, `UPDATE repo_events SET title = ? WHERE semantic_key = ?`, step ? `${job.name} · ${step}` : job.name, semanticKey);
+  } catch (e) {
+    console.error("fillFailedJob", runId, e);
+  }
+}

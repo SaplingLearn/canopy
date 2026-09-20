@@ -1,0 +1,9 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 5001, "name": "Workers Builds: frontend-staging", "status": "completed", "conclusion": "success",
+    "head_sha": "becdbac09eaf5d7c73b9f27019c0e43c4444dd7b", "details_url": "https://dash.cloudflare.com/x/builds/67d2",
+    "started_at": "2026-09-20T09:05:00Z", "completed_at": "2026-09-20T09:06:32Z",
+    "app": { "slug": "cloudflare-workers-and-pages" }, "check_suite": { "head_branch": "main" }
+  }
+}

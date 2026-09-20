@@ -293,7 +293,7 @@ export function reviewView(p: ReviewProps): string {
         <div style="font-size:12.5px;color:var(--fg-55);margin-top:3px">Agent-produced changes waiting for a verdict.</div>
         ${reviewFilterChips(p.filter)}
       </div>
-      <div class="cnpy-scroll" style="flex:1;overflow-y:auto;padding:2px 14px 80px">${list}</div>
+      <div class="cnpy-scroll cnpy-stagger" style="flex:1;overflow-y:auto;padding:2px 14px 80px">${list}</div>
     </div>
     <div class="cnpy-scroll" style="flex:1;min-width:0;overflow-y:auto">
       ${sel ? reviewDetail(sel, p.diffView) : reviewQueueClear()}

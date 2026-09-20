@@ -10,6 +10,7 @@ import { append_feed, propose_doc_update, stage_adr, route_triage, ensure_identi
 import { contentHash } from "./hash";
 import { changeKind } from "./diff";
 import type { Principal } from "./auth/principal";
+import type { RepoEvent } from "./repo/types";
 
 // Per-type, per-outcome counts surfaced on /ingest so a re-run reads, e.g.,
 // "3 docs: 1 staged, 2 unchanged".
@@ -236,6 +237,27 @@ export async function ingestEvent(db: DB, event: CapturedEvent, recordedBy: stri
   await ensure_identity_task(db, event.subject_login);
   if (ledger) await ledgerRecord(db, ledger, "event", written ? "written" : "unchanged", event.semantic_key);
   return written ? { outcome: "written", id: res.meta.last_row_id as number } : { outcome: "unchanged" };
+}
+
+/**
+ * THE GATE for repo-dashboard capture (kinds: push / pr / review / deploy / check
+ * / run). Same reconciliation as ingestEvent — a UNIQUE `semantic_key` written
+ * INSERT OR IGNORE, so a redelivery or a backfill overlap drops as `unchanged` —
+ * and deliberately NOTHING else: no identity intake (most actors here are bots or
+ * CI) and no summaries. Reached only from the HMAC-verified webhook and the
+ * admin backfill.
+ */
+export async function ingestRepoEvent(db: DB, ev: RepoEvent): Promise<{ outcome: "written" | "unchanged" }> {
+  const res = await run(
+    db,
+    `INSERT OR IGNORE INTO repo_events
+       (semantic_key, kind, ref, sha, number, env, part, state, name, actor_login, title, url, count, raw, provenance, occurred_at, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ev.semantic_key, ev.kind, ev.ref ?? null, ev.sha ?? null, ev.number ?? null, ev.env ?? null, ev.part ?? null,
+    ev.state ?? null, ev.name ?? null, ev.actor_login ?? null, ev.title ?? null, ev.url ?? null, ev.count ?? null,
+    ev.raw, ev.provenance, ev.occurred_at, nowIso()
+  );
+  return { outcome: (res.meta.changes ?? 0) > 0 ? "written" : "unchanged" };
 }
 
 /**

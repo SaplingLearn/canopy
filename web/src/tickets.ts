@@ -264,7 +264,7 @@ function tableView(p: QueueProps): string {
     <div>TITLE</div><div>OPENED BY</div><div>CATEGORY</div><div>PRIORITY</div><div>STATUS</div><div>ASSIGNEE</div><div style="text-align:right">AGE</div>
   </div>`;
   const groups = queueGroups(p.tickets, p.sprints)
-    .map((g) => `<div>${groupHeader(g)}${g.rows.map((t) => tableRow(t, p.persons)).join("")}</div>`)
+    .map((g) => `<div class="cnpy-stagger">${groupHeader(g)}${g.rows.map((t) => tableRow(t, p.persons)).join("")}</div>`)
     .join("");
   const empty = p.tickets.length === 0
     ? `<div style="text-align:center;padding:60px;color:var(--fg-40);font-size:13px">Nothing in this view.</div>`
@@ -298,7 +298,7 @@ function boardView(p: QueueProps): string {
         <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;white-space:nowrap;${headColor}">${esc(TICKET_STATUS_LABEL[st].toUpperCase())}</span>
         <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${cards.length}</span>
       </div>
-      ${cards.map((t) => boardCard(t, p.persons)).join("")}
+      <div class="cnpy-stagger">${cards.map((t) => boardCard(t, p.persons)).join("")}</div>
       ${empty}
     </div>`;
   }).join("");

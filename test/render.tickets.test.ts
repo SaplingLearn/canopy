@@ -156,35 +156,41 @@ describe("ticketPill / priorityChip / age (design call #5)", () => {
 // ── sidebar ──────────────────────────────────────────────────────────────────
 
 describe("sidebar — the Tickets entry (design call #2)", () => {
-  it("sits after Feed and before Docs, inside Workspace", () => {
+  it("sits in Workspace, after My Work and before Roadmap", () => {
     const html = render(appState({ screen: "tickets" }));
-    const feed = html.indexOf('data-act="goFeed"');
+    const mywork = html.indexOf('data-act="goMyWork"');
     const tickets = html.indexOf('data-act="goTickets"');
-    const docs = html.indexOf('data-act="goDocs"');
-    expect(feed).toBeGreaterThan(-1);
-    expect(tickets).toBeGreaterThan(feed);
-    expect(docs).toBeGreaterThan(tickets);
+    const roadmap = html.indexOf('data-act="goRoadmap"');
+    expect(mywork).toBeGreaterThan(-1);
+    expect(tickets).toBeGreaterThan(mywork);
+    expect(roadmap).toBeGreaterThan(tickets);
   });
+
+  // The badge is ALWAYS emitted (the rail is patched in place, so its structure
+  // never changes); `data-n="0"` is what canopy.css hides.
+  const ticketsRow = (html: string): string => html.slice(html.indexOf("cnpy-navrow n-tickets"), html.indexOf("cnpy-navrow n-roadmap"));
 
   it("hides the badge at 0 and shows the count in an accent pill above it", () => {
-    const zero = render(appState({ screen: "feed", ticketBadge: 0 }));
-    expect(zero).toContain('class="cnpy-nav n-tickets"');
-    expect(zero).not.toContain("border-radius:999px;flex:none;color:var(--accent)");
+    const zero = ticketsRow(render(appState({ screen: "feed", ticketBadge: 0 })));
+    expect(zero).toContain('<span class="cnpy-lbl cnpy-badge is-accent" data-n="0">0</span>');
 
-    const some = render(appState({ screen: "feed", ticketBadge: 4 }));
-    expect(some).toContain("border-radius:999px;flex:none;color:var(--accent);border:1px solid var(--accent);background:var(--accent-soft)\">4</span>");
+    const some = ticketsRow(render(appState({ screen: "feed", ticketBadge: 4 })));
+    expect(some).toContain('<span class="cnpy-lbl cnpy-badge is-accent" data-n="4">4</span>');
   });
 
-  it("collapses the badge to a single accent dot", () => {
+  it("carries the collapsed rail's accent dot beside the count", () => {
     const html = render(appState({ screen: "feed", ticketBadge: 4, collapsed: true }));
-    const dots = html.match(/width:7px;height:7px;border-radius:50%;background:var\(--accent\)/g) ?? [];
-    expect(dots.length).toBe(1);                       // review/maintenance counts are 0 here
-    expect(html).not.toContain(">4</span>");
+    expect(html).toContain('data-collapsed="1"');
+    expect(ticketsRow(html)).toContain('<span class="cnpy-dot" data-n="4"></span>');
+    // review/maintenance counts are 0 here, so theirs stay hidden
+    expect(html.match(/class="cnpy-dot" data-n="0"/g)?.length).toBe(8);
   });
 
-  it("marks the nav active on all three ticket screens via data-screen", () => {
+  it("lights Tickets on all three ticket screens", () => {
     for (const screen of ["tickets", "ticketdetail", "newticket"] as const) {
-      expect(render(appState({ screen }))).toContain(`data-screen="${screen}"`);
+      const html = render(appState({ screen }));
+      expect(html).toContain(`data-screen="${screen}"`);
+      expect(html).toContain('class="cnpy-navrow n-tickets is-active"');
     }
   });
 });

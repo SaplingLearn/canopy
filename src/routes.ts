@@ -7,7 +7,7 @@ import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
 import { consume } from "./consumer";
-import { runBackfill } from "./tools/backfill";
+import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
   create_ticket, transition_ticket, toggle_assignee, add_ticket_link,
@@ -26,6 +26,9 @@ import {
 import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
+import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
+import { reconcileRepo, type ReconcileResult } from "./repo/github";
+import { repoEnvironments } from "./repo/config";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
 import { createInvite, revokeInvite, listInvites } from "./auth/invites";
@@ -286,6 +289,19 @@ app.get("/me/dashboard", async (c) => {
   }
 });
 
+// The Repo dashboard — the same class of read as /me/dashboard: a D1-only
+// projection over captured events, tickets and sprints (src/tools/repo.ts). No
+// live GitHub; whatever Canopy has no capture path for is `not_connected`.
+// Stored nowhere; never 500s.
+app.get("/repo/dashboard", async (c) => {
+  const repo = c.env.GITHUB_REPO ?? "";
+  try {
+    return c.json(await getRepoDashboard(c.env.DB, repo, Date.now(), repoEnvironments(c.env)));
+  } catch {
+    return c.json(emptyRepoDashboard(repo, true));
+  }
+});
+
 // ADMIN action (session-gated + admin-gated): server-side GitHub backfill.
 // A computed/authored direct writer in the promote class — humans (admins)
 // trigger it — but every captured event still funnels through the ingestEvent
@@ -295,7 +311,27 @@ app.post("/admin/backfill", async (c) => {
   if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);
-  return c.json(res);
+  // Best-effort, and only on the batch that ENDS a Sync (web/src/main.ts
+  // re-POSTs this route up to 10 times while the summary budget stays
+  // exhausted): reconcileRepo redoes ~250 no-op statements on an
+  // already-reconciled repo, so running it on every intermediate batch would
+  // waste that work 9 times over for nothing. `repo` is present in the
+  // response only when it actually ran. The client sends its own 1-based
+  // batch number and its cap (`{ batch, of }`) — the server has no other way
+  // to see the client's loop counter, and without it a Sync that hits the cap
+  // while still exhausted would never reconcile. Read defensively: an absent
+  // or malformed body behaves exactly as before (gates on the budget alone).
+  const body = (await c.req.json().catch(() => null)) as { batch?: unknown; of?: unknown } | null;
+  const batch = typeof body?.batch === "number" ? body.batch : undefined;
+  const of = typeof body?.of === "number" ? body.of : undefined;
+  // `repo.failed` names each reconcile arm that threw (deployments / runs / …),
+  // so a Sync that silently lost one is distinguishable from one that had
+  // nothing to do.
+  let repo: ReconcileResult | undefined;
+  if (isFinalBackfillBatch(res, batch, of) && c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
+    repo = await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
+  }
+  return c.json(repo ? { ...res, repo } : res);
 });
 
 // ── Tickets (session-cookie only, NEVER MCP): the one queue the whole org files

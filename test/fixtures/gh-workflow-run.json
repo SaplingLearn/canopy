@@ -1,0 +1,9 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 35501310333, "name": "e2e (browser lane)", "head_branch": "main", "head_sha": "becdbac09eaf5d7c73b9f27019c0e43c4444dd7b",
+    "status": "completed", "conclusion": "failure", "run_attempt": 1, "event": "push",
+    "html_url": "https://github.com/SaplingLearn/Sapling/actions/runs/35501310333",
+    "updated_at": "2026-09-20T09:20:00Z", "run_started_at": "2026-09-20T09:05:00Z", "actor": { "login": "AndresL230" }
+  }
+}

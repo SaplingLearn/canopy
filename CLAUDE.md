@@ -54,7 +54,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 
 - `shared/` — the ONLY shared layer (imported via the `@shared` alias by `src/` and `web/`):
   `contract.ts` (Zod ingest contract), `vocabulary.ts` (controlled vocab), `rows.ts` (one type per D1 table),
-  `dashboard.ts` (the My Work DTO shared by the Worker and web), `notifications.ts` (the digest DTOs), and the
+  `dashboard.ts` (the My Work DTO shared by the Worker and web), `repo.ts` (the Repo dashboard DTO — zod-free,
+  since the SPA imports `REPO_TABS` as a value), `notifications.ts` (the digest DTOs), and the
   tickets pair-per-domain: `tickets.ts` / `sprints.ts` (zod rows, DTOs, payloads, `parseTicketLink`,
   `toSprintView`) over `tickets-core.ts` / `sprints-core.ts`. **The `*-core.ts` split is a rule**: anything
   the SPA imports as a VALUE (`canTransition` / `legalMoves` / `TICKET_STATUS_LABEL` / `isOpenStatus`,
@@ -63,10 +64,22 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `src/` — the Worker. `index.ts` (fetch entry: `/mcp` by bearer, `/webhook/github` by HMAC, everything
   else to the Hono app; plus the `scheduled()` progress backstop), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
-  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
+  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `repo.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
   Email notifications section), `db.ts` (D1 helpers), `auth/` (`persons.ts` — the identity root;
   `google.ts` — second provider; `onboard.ts` — the sign-in fork + onboarding cookie; `invites.ts`),
-  `env.ts`.
+  `env.ts`. `repo/` is the repo-capture package behind `tools/repo.ts`: `types.ts` (the `RepoEvent` /
+  `RepoEventRow` / `RepoMetric` shapes), `config.ts` (parses the `REPO_ENVIRONMENTS` var into
+  `RepoEnvConfig[]`, `[]` on absent/malformed), `capture.ts` (PURE delivery→`RepoEvent[]` derivation,
+  `repoEventsFromDelivery` — no DB, no clock, no network, and stores only a SLICE of each payload in `raw`),
+  `store.ts` (snapshot/metric upserts — including the `prs_reconciled` completeness marker and the
+  `env_heads` branch-head snapshot — plus `pruneRepoCapture` — 45-day retention for high-frequency `check`
+  rows and matching metrics, deliberately NOT covering `pr`/`push`; nothing calls it yet, it is wired for the
+  Phase 3 cron, where it needs a `part='frontend'` carve-out because a frontend DEPLOY record is a `check`
+  row), `reads.ts` (every SELECT over the capture tables — D1 only, nothing here may fetch,
+  including `recordingSince`, the earliest `recorded_at` per kind that the week-over-week deltas below gate
+  on, and the ONE non-decisive-conclusion policy at `foldResult`/`checkState`), and `github.ts`
+  (service-token GitHub reads — `ghJson` / `ghGraphql` / `reconcileRepo`, driven off the admin
+  `/admin/backfill` route, never on the render path).
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
   `milestones.phase`], `0013_roadmap_fts`, `0014_drop_focus` [retires `0007_focus`],
@@ -83,14 +96,20 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `milestone_progress`→`sprint_progress` (`milestone_id`→`sprint_id`), `plan_versions.milestones_json`
   →`sprints_json`, roadmap_fts re-keyed `milestone:<id>`→`sprint:<id>`, new `sprint_resources`, and
   `DROP TABLE milestone_proposals` — the whole agent-proposed-roadmap surface goes with it], then
-  `0026_token_hint` [`mcp_tokens.token_hint` — the clear-text label Settings lists a token by]).
+  `0026_token_hint` [`mcp_tokens.token_hint` — the clear-text label Settings lists a token by], then
+  `0027_repo_capture` [`repo_events` (append-only, UNIQUE `semantic_key`, kinds push/pr/review/deploy/check/run)
+  / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
+  `events`]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
-  plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
+  the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
   `web/src/markdown.ts` renders PR summaries, the roadmap narrative and a sprint description as styled HTML;
   `web/src/notifications.ts` holds the Settings › Email notifications and Maintenance › Notifications views;
   `web/src/tickets.ts` + `web/src/sprints.ts` are the (purely presentational) tickets/sprint components, and
-  `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`).
+  `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`,
+  `#repo/<tab>`). `web/src/repo.ts` is the Repo dashboard (ported from the Claude Design `Canopy Repo
+  Dashboard.dc.html`), `web/src/repo-sample.ts` its design-placeholder set (a dynamic import, never in the main
+  bundle), and `web/src/sidebar.ts` + `web/src/morph.ts` the sidebar — see "Sidebar & motion" below.
   Signed out, the app renders the **landing page** (`web/src/landing.ts`, ported from the Claude Design
   `Canopy Site.dc.html`); its nav's Sign in opens the GitHub/Google dialog, and its in-page links scroll
   rather than set the hash (the hash is the route and the sign-in return-to). Signed IN, the sidebar logo
@@ -106,10 +125,11 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 `consume()` is an **ingestion** gate, not a universal write gate: it polices agent-proposed content
 (vocab, confidence, content-hash dedupe, reconciliation). Every ingested entry funnels through the
 per-type **gate** functions in `src/consumer.ts` (`ingestFeedEntry` / `ingestDocProposal` /
-`ingestAdrDraft` / `ingestEvent`). The ingestion entry points are thin
+`ingestAdrDraft` / `ingestEvent` / `ingestRepoEvent`). The ingestion entry points are thin
 adapters over these: `/ingest` and the MCP `record_session` batch tool (both via `consume`), the
-per-entry MCP write tools (`append_feed`, `propose_doc_update`), and the `/webhook/github` branch
-(`ingestEvent`). The gate **reconciles**, not just routes:
+per-entry MCP write tools (`append_feed`, `propose_doc_update`), and the `/webhook/github` branch, which
+calls `ingestEvent` (into `events`, for My Work) AND, independently, `ingestRepoEvent` (into `repo_events`,
+for the Repo dashboard — see below) off the SAME verified delivery. The gate **reconciles**, not just routes:
 
 - **Replay ledger** (`processed_items`, keyed by `session.id + item_index`): a re-POST of the same
   payload drops every item as `unchanged` — nothing is double-written. MCP tools use an ephemeral
@@ -128,6 +148,18 @@ per-entry MCP write tools (`append_feed`, `propose_doc_update`), and the `/webho
   trusted only post-HMAC — distinct from the writer.
 - **Author is ALWAYS the authenticated principal**, passed in by the caller. The client-supplied
   `session.author` is advisory and ignored. (This writer rule does NOT clobber an event's `subject_login`.)
+- **Repo capture is a SECOND, sibling gate to `ingestEvent`** — same reconciliation (a UNIQUE `semantic_key`
+  written `INSERT OR IGNORE`, so a redelivery or a backfill overlap drops as `unchanged`) but deliberately
+  NOT the `events` table: `ingestEvent` raises an `identity_tasks` row per unmapped `subject_login`, which is
+  wrong for bots and high-volume CI telemetry (pushes, checks, runs). `ingestRepoEvent` carries no
+  vocab/confidence and does no identity intake or summarization; it is reached only from the HMAC-verified
+  webhook and the admin-triggered `reconcileRepo` backfill (`src/repo/github.ts`, service-token GitHub reads,
+  never on the render path) — never through `/ingest` or `record_session`. `src/webhook.ts`'s
+  `WORK_EVENT_NAMES` (`pull_request` / `issues`) and `REPO_EVENT_NAMES` (currently `pull_request` / `push`,
+  later phases append) independently gate which deliveries feed which capture; a repo-capture failure is
+  caught and logged, never costing the My Work capture, and the webhook's response body carries
+  `repo: { captured, unchanged }` alongside the existing `captured` / `unchanged`. PR-close and issue capture
+  into `events` is unchanged by any of this.
 
 Authored and computed writes are **direct, in the `promote` class** — NOT the ingestion gate — exactly
 like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan write
@@ -309,6 +341,179 @@ that renders a "No summary recorded" placeholder. Stored as columns on `pr_summa
 `issue_summaries` and regenerable via Sync (a row is "done" only when
 `model != 'excerpt' AND title IS NOT NULL`) — never truth, never generated at render.
 
+**The Repo dashboard** (`GET /repo/dashboard` → `getRepoDashboard` in `src/tools/repo.ts`; screen `#repo`,
+`#repo/code|ci|usage|planning`) is the same class of read as My Work: D1-only, session-cookie, never a 500
+(a throw yields `emptyRepoDashboard(repo, degraded:true)`), and NOT an MCP tool. Every block travels as a
+`RepoSection<T>` = `ok` / `empty` / `not_connected`. What D1 can answer is live — merged/closed PRs, the
+week-over-week tiles (open issues/bugs are the LATEST snapshot per issue as of now vs 7 days ago, read with
+`json_extract` so issue bodies never leave D1; open tickets are a live count with a net 7-day delta from
+`ticket_events` — **shown only until PR capture is complete; it leaves the Overview once `prCaptured` flips**,
+replaced by the Open PRs/Awaiting review tiles below), the activity feed, open issues by label, and the
+sprint a person marked `active` (the Roadmap's ticket progress) — **plus, from Phase 1's `repo_events`
+capture** (`ingestRepoEvent`, see Core invariant above): Open PRs / Awaiting review tiles, a PR list that
+includes open PRs with their own head branch (not just the base ref), a Commits tile with a week-over-week
+delta, 14 UTC days of COMMIT bars, pushes woven into the activity feed, and P · M · R contributors (pushes ·
+merged PRs · reviews this week — `reviews` is `null`, rendered as "—" and excluded from the bar width, until
+a `review` row has ever been captured (`hasCaptured(db, 'review')`); the `pull_request_review` CAPTURE ARM
+exists (`fromReview` in `src/repo/capture.ts`), but nothing feeds it — the webhook is not subscribed to that
+event and `reconcileRepo` has no reviews arm — so today that is always).
+
+**Environments, deploy history, check state and CI failures are also live** (Task 10 closes out Phase 2):
+`repo_events` kinds `deploy` / `check` / `run` back the environment cards, the per-part dot-strip deploy
+history (`deployHistories`), each environment's head-check verdict (`ci` / `ciTone` / `pill` —
+HEALTHY/DEGRADED/FAILING/UNKNOWN), and the CI-failures block (`ciFailureRows` + `ciDailyRates`, gated on
+`hasCaptured(db, 'run')`). **Each environment ships two deployables**, on two different hosts
+(`src/tools/repo.ts`'s `HOSTS`/`PARTS`): **Backend** is a Railway `deployment_status`, matched to an
+environment by `deployment.environment` equalling `cfg.railwayEnv`; **Frontend** is the Cloudflare "Workers
+Builds" `check_run` — but a Workers Builds check only counts as THAT environment's frontend deploy when
+BOTH its name matches `cfg.workerCheck` AND its branch matches `cfg.branch` (`fromCheckRun` in
+`src/repo/capture.ts`) — the same check name running on a PR branch is just a check, not a deploy.
+`REPO_ENVIRONMENTS` now feeds three places: the webhook capture (`repoEnvironments(env)` passed into
+`repoEventsFromDelivery` so a `deployment_status`/`check_run` delivery can be matched to its environment),
+the projection (`getRepoDashboard`'s `envs` param), and `reconcileRepo` (which reads it BOTH to name the
+GitHub environments the deployments query filters on AND to pick the branches whose head + head checks it
+polls — deployments are selected by ENVIRONMENT NAME, only heads and checks are per branch).
+
+**The environment pill is a verdict about CHECKS**: `HEALTHY` needs checks captured on the branch head,
+none of them failing, and no failed part. A deploy that landed with NO checks captured reads `UNKNOWN`
+(neutral) — it says only that it landed. A failed part is a fact on its own, so `FAILING` does not wait for
+checks. The `environments` section being CONNECTED is a separate question, and is not derived from the pill:
+it is `ok` once any part has a result or any head check is captured.
+
+**ONE policy for a non-decisive conclusion**, stated at `foldResult` and again at `checkState`
+(`src/repo/reads.ts`) and shared by the deploy dots and the PR checks column: `success` = ok;
+`failure`/`error`/`timed_out` = fail; `stale`/`action_required`/`cancelled`/`inactive`-without-a-preceding-
+success = cancel (abandoned, not failed — `inactive` AFTER a success is just the supersede marker of a
+deploy that DID land, which is why `success` is tested first); `neutral`/`skipped` = nothing happened, so
+NOT a dot at all, and a pass for the checks icon. The checks column has only pass/fail/run, and "abandoned"
+is a statement about a deploy rather than about the code, so the cancel bucket reads there as not-failing.
+
+A branch's "No checks captured" verdict comes from `branchHeads` (`src/repo/reads.ts`), which now reads TWO
+sources and takes the newer: that branch's latest captured `push` row, and the **`env_heads` snapshot**
+(`{ [branch]: sha }`) `reconcileRepo` writes via `putSnapshot` — so a branch pushed rarely (production)
+still has a head for checks to key off. The snapshot wins only when its `computed_at` is newer than that
+branch's latest push `occurred_at` (or when no push was ever captured for the branch). It is deliberately a
+SNAPSHOT and no longer a synthetic `push` row: a Sync landing between a real push and its webhook delivery
+wrote the count-1 row first, and the real count-N push then dropped as `unchanged` — permanently
+under-counting commits and losing the push from the feed — while every Sync that saw a new head added a
+phantom commit to the totals. Two D1 statements, whatever the branch count. The pre-capture commit backfill
+(the stretch BEFORE push capture began) still writes real backfill push rows and is untouched.
+
+**These sections still read `not_connected` (or `empty`) on a fresh deploy**: the webhook is not yet
+subscribed to `deployment_status` / `check_run` / `workflow_run` / `pull_request_review` (nor, for a later
+phase, `status`) — the capture paths all exist in code, but until the repo owner adds those events in
+GitHub's webhook settings, no live delivery lands. Until then, an admin's "Sync GitHub"
+(`POST /admin/backfill`, on the batch that ends the loop — see below — which calls `reconcileRepo`) is the
+ONLY source for deploys, checks and runs. `reconcileRepo`'s arms, each wrapped in its own `safely` block:
+open PRs (+ the `prs_reconciled` marker), closed PRs, the pre-capture commit window, **deployments over
+GraphQL**, completed workflow runs, the failing-job label pass, the environment heads, and each
+environment's head checks. It returns `{ written, unchanged, failed: string[] }` — `failed` NAMES every arm
+that threw (`"deployments"`, `"runs"`, …), so a Sync that silently lost one is no longer indistinguishable
+from a Sync that had nothing to do; `/admin/backfill` passes that straight through as its `repo` object.
+
+- **Deployments are ONE GraphQL request** (`ghGraphql` beside `ghJson` in `src/repo/github.ts`; POST to
+  `https://api.github.com/graphql`, same bearer + user-agent, throwing on non-2xx AND on an `errors` body),
+  filtered server-side by `environments: [<every cfg.railwayEnv>]` with `statuses(first:10)` inline — the
+  arm is skipped entirely when no environment is configured. It replaces `GET /deployments?per_page=20`
+  plus one `/statuses` call each (21 subrequests, most of them spent on Railway's PR previews). Each status
+  is re-wrapped into the WEBHOOK's own `deployment_status` payload shape and put back through the pure
+  `repoEventsFromDelivery` arm, so there is one derivation of a deploy row, not two. Verified live:
+  `databaseId` EQUALS the REST/webhook `deployment.id` (so `gh:deploy:<id>:<state>` still collides with a
+  webhook row), `state` arrives UPPERCASE and is lowercased, a Bot creator's `login` arrives WITHOUT the
+  `[bot]` suffix and is re-suffixed so backfill and webhook rows agree, and a GraphQL status has no numeric
+  id, so `raw.status_id` is `null`, never invented.
+- **The failing-job label pass reads the BACKLOG, not this Sync's writes**: each reconcile takes the ≤5
+  newest `run` rows of the last 7 days whose state is `failure`/`timed_out` and whose `title IS NULL`
+  (`untitledFailedRuns` in `src/repo/reads.ts`) and calls `fillFailedJob` on each. A first Sync's leftovers
+  therefore drain over later Syncs instead of staying nameless forever. Cap still 5.
+- **Which environment a Workers Builds check belongs to is decided by NAME + HEAD SHA**, not by the branch
+  the poll happened to ask for: the owner is the config whose `workerCheck` matches the run's name AND whose
+  captured head equals the run's `head_sha` (falling back to the polled branch). When two configured
+  branches share a HEAD both environments' checks come back on the first branch asked, and injecting that
+  branch left the other one permanently untagged (the correctly-tagged row later dropping as `unchanged`).
+
+Worst case one `reconcileRepo` makes **10 + 2N outbound requests** for N configured environments (14 for
+today's two): 2 PR lists + 1 pre-capture commit window + 1 GraphQL deployments + 1 workflow-run list + ≤5
+job lookups + 2 per environment (head commit, head checks). It shares one Cloudflare invocation — 50
+subrequests on the free plan — with `runBackfill`'s ~13.
+
+**Reviews have no backfill arm** (`reconcileRepo` does not poll PR reviews) and no webhook subscription, so
+the `R` contributor tally stays `null` until at least one of those lands.
+
+The never-guess fallback rule now turns on a **completeness marker**, not "any row exists": `prCaptured` =
+`getSnapshot(db, 'prs_reconciled') !== null`, a snapshot `reconcileRepo` (`src/repo/github.ts`) writes only
+after the open-PR list has been BOTH fetched AND ingested without throwing — a marker, not
+`provenance = 'backfill'`, because a repo with zero open PRs would otherwise never earn one. Until it exists,
+the Open PRs/Awaiting review tiles and the Code tab's PR stat read as Merged PRs / Closed-unmerged instead of
+lying with "Open PRs: 0" off a single webhook delivery, and the PR list stays the merged/closed list read
+from `events`; the 14-day bars stay MERGE bars, not commit bars, **until a `push` row exists in the trailing
+14-day window** (not "ever", since the bars only look at that window). A week-over-week DELTA is a further,
+independent gate on top of `prCaptured`/`pushes.length`: `recordingSince(db, kind)` (`src/repo/reads.ts`,
+`MIN(recorded_at)` for that `repo_events` kind) must predate the comparison window, else the delta reads `0`
+(the screen already renders `delta: 0` as "—") rather than an artifact of when capture happened to begin —
+PR tiles need `recordingSince('pr') <= weekAgo`, the Commits tile needs `recordingSince('push') <=
+twoWeeksAgo` (else its `sub` is just `"this week"`, no comparison). **The CI-failure rate follows the same
+rule**: `RepoCiFailures.rate` is `number | null` and its `trend` may be `[]` — both are the seven-day
+picture, so they are emitted only when `recordingSince(db, 'run') <= weekAgo`; before that a day with no
+captured runs is a day capture was not running, not a green day. The failures LIST (`rows`) is NOT gated —
+those rows are facts, and returning `empty` instead would render "No CI failures this week", which would
+itself be false. `rate` and `trend` are computed over the SAME seven UTC calendar-day buckets
+(`ciDailyRates` bounds its window at the oldest bucket's midnight). In `ciTab` (`web/src/repo.ts`) a `null`
+rate draws no percentage and no sparkline, just "A 7-day rate appears after a week of captured runs.";
+`repo-sample.ts` keeps its numbers. Backfilled `push` rows (one synthetic
+count-1 row PER COMMIT) are excluded from the activity feed and the contributors' `pushes` tally — a
+40-commit backfill would otherwise read as 40 feed lines and P=40 for one person — but still count toward
+the Commits tile's totals and the 14-day bars, which read `repo_events` unfiltered by provenance.
+
+**Everything with no capture path is `not_connected`, never guessed** — drift, health, branches, coverage,
+bundle, usage, Cloudflare, hosting, TODO counts (the `UNCAPTURED` object is the auditable list; environments
+/ deploys / CI failures are no longer in it — Phase 2 closed with Task 10, see above). Adding a capture path
+= flip one section there to `ok`; the screen already renders every section's live shape. Phase 3 — drift,
+branches, health (lighting up the drift strip, the branches list + Active branches tile, and the health
+block feeding the HEALTHY/DEGRADED pill; no GitHub settings change, no new secret) — and the phases after it
+covering coverage, bundle, usage, Cloudflare, hosting and TODOs are specified in
+`docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. **Phase 3 caveat:** `pruneRepoCapture`
+(`src/repo/store.ts`, still uncalled) deletes `check` rows after 45 days, and a FRONTEND deploy record IS a
+`check` row (the Workers Builds check) — wiring the prune cron needs a carve-out for checks carrying
+`part = 'frontend'`, or the deploy history silently loses its web half. The capture names a PR's AUTHOR and an
+issue's subject, not who merged/closed — so the feed never claims an actor it does not have. "Preview with
+sample data" swaps in `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the
+Worker.
+
+`POST /admin/backfill` runs `reconcileRepo` **once per Sync, on the batch that ENDS the loop** — either the
+batch whose `BackfillResult.summaryBudgetExhausted` reads `false` (the normal last call), OR the batch that
+hits the frontend's own cap while the budget is STILL exhausted (the server has no other way to see the
+client's loop counter, so a Sync that maxes out `MAX_BACKFILL_BATCHES` without ever clearing the budget
+would otherwise never reconcile). `isFinalBackfillBatch(result, batch?, of?)` (`src/tools/backfill.ts`) is
+`true` when the budget is not exhausted, OR when the caller-supplied `batch >= of`; `web/src/main.ts`'s
+`runAdminBackfillLoop` sends its 1-based batch number and `MAX_BACKFILL_BATCHES` (10) as `{ batch, of }` in
+the POST body, and the route reads them defensively (absent/malformed → behaves as before, gating on the
+budget alone). The SPA can re-POST this route up to 10 times per Sync while the summarizer budget stays
+exhausted, and `reconcileRepo` redoes ~250 no-op statements on an already-reconciled repo, so running it on
+every intermediate batch would waste that work repeatedly for nothing; the route folds its
+`{ written, unchanged }` into the JSON response as `repo`, present only when it actually ran. Still
+best-effort (`.catch(() => undefined)`) and unable to fail the route.
+
+## Sidebar & motion — the `<aside>` outlives rerenders
+
+`rerender()` swaps the app wholesale, which is fatal for a transition: a width, a rotating chevron or an
+opening sub-page list can only animate on an element that SURVIVES the state change. So `web/src/morph.ts`
+`paint()` patches the `<aside>` in place and swaps only `<main>` (the seam is `.cnpy-shell`). That only works
+because **the sidebar's structure is stable** (`web/src/sidebar.ts`): every label, badge, dot, chevron and
+sub-page list is ALWAYS emitted, and collapsed / open / active are attributes and classes that `canopy.css`
+animates (`data-collapsed`, `.cnpy-sub[data-open]`, `.is-active`, `data-n="0"` hides a badge). Emitting a
+node conditionally there swaps it out from under its own animation — `test/render.sidebar.test.ts` pins the
+element tree across every state. `data-keep` marks a script-owned node (the collapsed-rail tooltip) the
+patcher leaves alone. A sub-page list the app opened on entry folds again on leaving; one opened by hand
+sticks and is what persists (`canopy.navOpen`). Below 900px the rail renders collapsed (`state.narrow`)
+without touching the saved preference. Search is the box at the top of the rail (⌘K / Ctrl+K), not a nav row.
+
+Screen entrances are `[data-enter]` (set by `markEnter()` in `main.ts` only when the route changed or the
+screen's main read landed — never on a keystroke). `--enter-t` is a NEGATIVE animation-delay, so a rerender
+mid-entrance joins the animation where the old DOM left off. Hooks: `.cnpy-rise` + `--i`, `.cnpy-stagger`
+(lists), `.repo-bar` / `.repo-fill` / `.repo-spark`, `data-count` (count-up). In-place changes use the
+one-shot `pendingFlash`. All of it is off under `prefers-reduced-motion`.
+
 ## Email notifications — a read-side projection, never a writer (spec: `docs/superpowers/specs/2026-09-11-canopy-email.md`)
 
 Digests are assembled from D1 and sent via Resend; the pipeline never writes to the store (only to its own
@@ -367,7 +572,8 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
 - `shared/vocabulary.ts` MUST match `migrations/0002_seed_vocab.sql` — it's the gate's source of truth.
 - D1 helpers live in `src/db.ts` (`first` / `all` / `run` / `nowIso`); writers in `src/tools/writes.ts`.
 - Tests use real Miniflare D1; `test/apply-migrations.ts` truncates data tables `beforeEach` via
-  `scripts/seed/reset.mjs` (add new tables — `events`, `pr_summaries`, `sprints`, `sprint_progress`,
+  `scripts/seed/reset.mjs` (add new tables — `events`, `repo_events`, `repo_snapshots`, `repo_metrics`,
+  `pr_summaries`, `sprints`, `sprint_progress`,
   `sprint_resources`, `tickets` + `ticket_*`, `persons`, `identities`, `invites`, `plan`,
   `plan_versions`, `notification_*` — there). That file is also the canonical person seed: the four
   engineers (github identities) plus two Google-only non-engineers, `meilin` / `sanaok`.
@@ -390,7 +596,18 @@ happens, but the code exchange fails and `/auth/google/callback` 401s `exchange_
 (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt fallback), `RESEND_API_KEY`
 (email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`). Vars
 (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`), `ADMIN_LOGINS`, `PUBLIC_ORIGIN`
-(absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`). Bindings: `DB`
+(absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`),
+`REPO_ENVIRONMENTS` (a JSON list, parsed by `src/repo/config.ts`'s `repoEnvironments()` — which branch
+deploys to which environment plus its Worker/URLs; absent or malformed → `[]`. Today it encodes two:
+**staging** deploys from `main`, **production** from a `production` branch; backend on Railway, frontend on
+Cloudflare Workers. Now read in three places (Task 10 closes out Phase 2): the webhook's repo capture
+(matching a `deployment_status`/`check_run` delivery to its environment), the dashboard projection
+(`getRepoDashboard`'s `envs` param — the `environments` and `deploys` sections stay `not_connected` when it
+is empty; `ciFailures` does NOT consult it and is gated only on `run` capture), and `reconcileRepo` — which
+reads it for the GitHub ENVIRONMENT NAMES the deployments GraphQL query filters on, and separately for the
+BRANCHES whose head commit and head checks it polls. Absent → no deployments arm and no head/check arm at
+all, and `environments`/`deploys` stay `not_connected`).
+Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
 not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` drives the progress recompute backstop (`0 */6 * * *`) and the two hourly digest
 candidates (see Email notifications).

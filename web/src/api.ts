@@ -15,6 +15,7 @@ import type {
   TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate,
 } from "@shared/tickets";
 import type { DashboardData } from "@shared/dashboard";
+import type { RepoDashboard } from "@shared/repo";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
 
@@ -170,7 +171,11 @@ export function resendInvite(email: string): Promise<{ ok: true; email: { status
 
 // ADMIN action: trigger the server-side GitHub backfill (admin-only route). The
 // worker holds the service token and fetches GitHub directly — no webhook secret.
-export function adminBackfill(): Promise<{
+// `batch` (1-based) / `of` (the client's own cap) let the server run the
+// repo-capture reconcile on whichever batch ends the loop — including one that
+// hits the cap while the summary budget is still exhausted, which the server
+// otherwise has no way to see (src/tools/backfill.ts's isFinalBackfillBatch).
+export function adminBackfill(batch: number, of: number): Promise<{
   ok: boolean;
   captured: number;
   unchanged: number;
@@ -181,12 +186,21 @@ export function adminBackfill(): Promise<{
   prs: number;
   issues: number;
   issuesToSummarize: number;
+  /** Present only on the batch that ends a Sync — the repo-capture reconcile
+   *  (src/repo/github.ts's reconcileRepo) rides that batch only. `failed` names
+   *  each arm of it that threw ("deployments", "runs", …); empty on a clean run. */
+  repo?: { written: number; unchanged: number; failed: string[] };
 }> {
-  return postJson("/admin/backfill", {});
+  return postJson("/admin/backfill", { batch, of });
 }
 
 export function getMyDashboard(): Promise<DashboardData> {
   return getJson<DashboardData>("/me/dashboard");
+}
+
+/** The Repo dashboard — a D1-only projection; uncaptured sections arrive `not_connected`. */
+export function getRepoDashboard(): Promise<RepoDashboard> {
+  return getJson<RepoDashboard>("/repo/dashboard");
 }
 
 // The Triage "Proposals" queue = staged doc versions newer than the live doc.

@@ -16,6 +16,10 @@ export const RESET_STATEMENTS = [
   "DELETE FROM pr_summaries",
   "DELETE FROM issue_summaries",
   "DELETE FROM events",
+  // Repo dashboard capture (0027) — no FKs in or out.
+  "DELETE FROM repo_events",
+  "DELETE FROM repo_snapshots",
+  "DELETE FROM repo_metrics",
   "DELETE FROM sprint_progress",
   "DELETE FROM plan_versions",
   "UPDATE plan SET narrative = '', current_version = 0, updated_at = NULL, updated_by = NULL",
