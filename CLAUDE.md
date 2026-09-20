@@ -71,8 +71,11 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `RepoEventRow` / `RepoMetric` shapes), `config.ts` (parses the `REPO_ENVIRONMENTS` var into
   `RepoEnvConfig[]`, `[]` on absent/malformed), `capture.ts` (PURE delivery→`RepoEvent[]` derivation,
   `repoEventsFromDelivery` — no DB, no clock, no network, and stores only a SLICE of each payload in `raw`),
-  `store.ts` (snapshot/metric upserts plus `pruneRepoCapture`'s 45-day retention for high-frequency check
-  rows), `reads.ts` (every SELECT over the capture tables — D1 only, nothing here may fetch), and `github.ts`
+  `store.ts` (snapshot/metric upserts plus `pruneRepoCapture` — 45-day retention for high-frequency `check`
+  rows and matching metrics, deliberately NOT covering `pr`/`push`; nothing calls it yet, it is wired for the
+  Phase 3 cron), `reads.ts` (every SELECT over the capture tables — D1 only, nothing here may fetch,
+  including `recordingSince`, the earliest `recorded_at` per kind that the week-over-week deltas below gate
+  on), and `github.ts`
   (service-token GitHub reads — `reconcileRepo`, driven off the admin `/admin/backfill` route, never on the
   render path).
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
@@ -342,16 +345,34 @@ that renders a "No summary recorded" placeholder. Stored as columns on `pr_summa
 `RepoSection<T>` = `ok` / `empty` / `not_connected`. What D1 can answer is live — merged/closed PRs, the
 week-over-week tiles (open issues/bugs are the LATEST snapshot per issue as of now vs 7 days ago, read with
 `json_extract` so issue bodies never leave D1; open tickets are a live count with a net 7-day delta from
-`ticket_events`), the activity feed, open issues by label, and the sprint a person marked `active` (the
-Roadmap's ticket progress) — **plus, from Phase 1's `repo_events` capture** (`ingestRepoEvent`, see Core
-invariant above): Open PRs / Awaiting review tiles, a PR list that includes open PRs with their own head
-branch (not just the base ref), a Commits tile with a week-over-week delta, 14 UTC days of COMMIT bars,
-pushes woven into the activity feed, and P · M · R contributors (pushes · merged PRs · reviews this week —
-`reviews` stays 0 until Phase 2 wires review capture). The never-guess fallback rule: until at least one
-`pr` row has been captured (`hasCaptured(db, 'pr')`), the Open PRs/Awaiting review tiles and the Code tab's
-PR stat read as Merged PRs / Closed-unmerged instead of lying with "Open PRs: 0", and the PR list stays the
-merged/closed list read from `events`; the 14-day bars stay MERGE bars, not commit bars, until at least one
-`push` row exists. **Everything with no capture path is `not_connected`, never guessed** — environments,
+`ticket_events` — **shown only until PR capture is complete; it leaves the Overview once `prCaptured` flips**,
+replaced by the Open PRs/Awaiting review tiles below), the activity feed, open issues by label, and the
+sprint a person marked `active` (the Roadmap's ticket progress) — **plus, from Phase 1's `repo_events`
+capture** (`ingestRepoEvent`, see Core invariant above): Open PRs / Awaiting review tiles, a PR list that
+includes open PRs with their own head branch (not just the base ref), a Commits tile with a week-over-week
+delta, 14 UTC days of COMMIT bars, pushes woven into the activity feed, and P · M · R contributors (pushes ·
+merged PRs · reviews this week — `reviews` is `null`, rendered as "—" and excluded from the bar width, until
+a `review` row has ever been captured (`hasCaptured(db, 'review')`); no capture path exists yet, so today
+that is always).
+
+The never-guess fallback rule now turns on a **completeness marker**, not "any row exists": `prCaptured` =
+`getSnapshot(db, 'prs_reconciled') !== null`, a snapshot `reconcileRepo` (`src/repo/github.ts`) writes only
+after the open-PR list has been BOTH fetched AND ingested without throwing — a marker, not
+`provenance = 'backfill'`, because a repo with zero open PRs would otherwise never earn one. Until it exists,
+the Open PRs/Awaiting review tiles and the Code tab's PR stat read as Merged PRs / Closed-unmerged instead of
+lying with "Open PRs: 0" off a single webhook delivery, and the PR list stays the merged/closed list read
+from `events`; the 14-day bars stay MERGE bars, not commit bars, **until a `push` row exists in the trailing
+14-day window** (not "ever", since the bars only look at that window). A week-over-week DELTA is a further,
+independent gate on top of `prCaptured`/`pushes.length`: `recordingSince(db, kind)` (`src/repo/reads.ts`,
+`MIN(recorded_at)` for that `repo_events` kind) must predate the comparison window, else the delta reads `0`
+(the screen already renders `delta: 0` as "—") rather than an artifact of when capture happened to begin —
+PR tiles need `recordingSince('pr') <= weekAgo`, the Commits tile needs `recordingSince('push') <=
+twoWeeksAgo` (else its `sub` is just `"this week"`, no comparison). Backfilled `push` rows (one synthetic
+count-1 row PER COMMIT) are excluded from the activity feed and the contributors' `pushes` tally — a
+40-commit backfill would otherwise read as 40 feed lines and P=40 for one person — but still count toward
+the Commits tile's totals and the 14-day bars, which read `repo_events` unfiltered by provenance.
+
+**Everything with no capture path is `not_connected`, never guessed** — environments,
 drift, health, branches, deploys, CI failures, coverage, bundle, usage, Cloudflare, hosting, TODO counts
 (the `UNCAPTURED` object is the auditable list). Adding a capture path = flip one section there to `ok`; the
 screen already renders every section's live shape. Phases 2–5 — what lights up each remaining
@@ -361,6 +382,14 @@ bundle, usage, Cloudflare, hosting, TODOs) — are specified in
 issue's subject, not who merged/closed — so the feed never claims an actor it does not have. "Preview with
 sample data" swaps in `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the
 Worker.
+
+`POST /admin/backfill` runs `reconcileRepo` **once per Sync, on the FINAL batch only** — the field to check
+is `BackfillResult.summaryBudgetExhausted` (`src/tools/backfill.ts`); `isFinalBackfillBatch` is `true` when
+it is `false` (the frontend loop's last call). The SPA can re-POST this route up to 10 times per Sync while
+the summarizer budget stays exhausted, and `reconcileRepo` redoes ~250 no-op statements on an
+already-reconciled repo, so running it on every intermediate batch would waste that work repeatedly for
+nothing; the route folds its `{ written, unchanged }` into the JSON response as `repo`, present only when it
+actually ran. Still best-effort (`.catch(() => undefined)`) and unable to fail the route.
 
 ## Sidebar & motion — the `<aside>` outlives rerenders
 
