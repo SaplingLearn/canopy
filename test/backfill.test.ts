@@ -414,4 +414,26 @@ describe("isFinalBackfillBatch — the /admin/backfill 'run reconcile once' gate
   it("is false while the summary budget is still exhausted (an intermediate batch)", () => {
     expect(isFinalBackfillBatch({ summaryBudgetExhausted: true })).toBe(false);
   });
+
+  // Task 6b #4: the frontend loop (web/src/main.ts's runAdminBackfillLoop) caps
+  // itself at MAX_BACKFILL_BATCHES — a Sync that hits that cap while STILL
+  // exhausted must also reconcile, since no later batch will ever come. The
+  // server can't see the client's counter on its own, so the client sends it.
+  it("is true when the caller-supplied batch has reached the cap, even while the budget stays exhausted", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, 10, 10)).toBe(true);
+  });
+
+  it("is false while the batch is still under the cap and the budget stays exhausted", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, 5, 10)).toBe(false);
+  });
+
+  it("stays true once the budget is not exhausted, regardless of batch/of", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: false }, 1, 10)).toBe(true);
+  });
+
+  it("treats an absent or malformed batch/of as today (never final on the cap alone)", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, undefined, 10)).toBe(false);
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, 10, undefined)).toBe(false);
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true }, Number.NaN, 10)).toBe(false);
+  });
 });

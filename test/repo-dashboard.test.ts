@@ -325,4 +325,27 @@ describe("getRepoDashboard — pushes and PR state (sources A, B)", () => {
     const labels = data((await getRepoDashboard(env.DB, "o/r", NOW)).stats).map((s) => s.label);
     expect(labels).toEqual(["Merged PRs", "Open issues", "Open bugs", "Open tickets"]);
   });
+
+  it("F1 pinned: a single webhook pr row never flips the tiles or the PR list until prs_reconciled exists", async () => {
+    await ingestRepo([prRow(7, "review", ago(1))]);
+    const before = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(data(before.stats).map((s) => s.label)).toEqual(["Merged PRs", "Open issues", "Open bugs", "Open tickets"]);
+    // The PR list must not come from repo_events either, while uncaptured —
+    // nothing was ingested into `events`, so the merged/closed fallback is empty.
+    expect(before.prs.status).toBe("empty");
+
+    await markPrsReconciled();
+    const after = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(data(after.stats).map((s) => s.label)).toEqual(["Open PRs", "Awaiting review", "Open issues", "Open bugs"]);
+    expect(data(after.prs).map((p) => p.number)).toEqual([7]);
+  });
+
+  it("bounds recentPrRows to 90 days but not prStatesAsOf — a PR untouched for 120 days is still open but absent from the recent list", async () => {
+    await ingestRepo([prRow(50, "review", ago(120))]);
+    await markPrsReconciled();
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    const [openPrs] = data(d.stats);
+    expect(openPrs).toMatchObject({ label: "Open PRs", value: 1 });
+    expect(d.prs.status).toBe("empty");
+  });
 });

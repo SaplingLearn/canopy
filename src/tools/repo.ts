@@ -1,13 +1,17 @@
 import type {
-  RepoActivity, RepoBars, RepoCodeStat, RepoContributor, RepoDashboard, RepoLabels,
-  RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
+  RepoActivity, RepoBars, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
+  RepoEnv, RepoEnvPart, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
 import { list_sprints } from "./sprints";
-import { hasCaptured, prStatesAsOf, recentPrRows, commitsByDay, pushRowsSince, recordingSince } from "../repo/reads";
+import {
+  approvedPrs, branchHeads, checkState, ciDailyRates, ciFailureRows, commitsByDay, deployHistories,
+  hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
+} from "../repo/reads";
+import type { RepoEnvConfig } from "../repo/config";
 import { getSnapshot } from "../repo/store";
-import type { RepoEventRow } from "../repo/types";
+import type { RepoEventRow, RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
 // no live GitHub, no per-user token, nothing written. It reads what the webhook
@@ -25,7 +29,9 @@ const PR_LIMIT = 8;
 const ACTIVITY_LIMIT = 20;
 const CONTRIBUTOR_LIMIT = 8;
 const LABEL_LIMIT = 6;
+const CI_FAILURE_LIMIT = 5;
 const BAR_DAYS = 14; // = the two-week PR window below
+const RECENT_PR_DAYS = 90; // recentPrRows' bound — a PR untouched this long need not be "recent"
 
 /** Event time: the payload's own clock, else when Canopy recorded it. */
 const AT = `COALESCE(occurred_at, recorded_at)`;
@@ -36,9 +42,9 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 
 /** The sections no capture path feeds yet. One object so the list is auditable. */
 const UNCAPTURED = {
-  environments: NOT_CONNECTED, drift: NOT_CONNECTED, health: NOT_CONNECTED,
+  drift: NOT_CONNECTED, health: NOT_CONNECTED,
   branches: NOT_CONNECTED,
-  deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, coverage: NOT_CONNECTED, bundle: NOT_CONNECTED,
+  coverage: NOT_CONNECTED, bundle: NOT_CONNECTED,
   usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
   todos: NOT_CONNECTED,
 } as const;
@@ -46,10 +52,25 @@ const UNCAPTURED = {
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
     repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
+    environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
     sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
   };
 }
+
+/** Each environment ships two deployables, on two different hosts. */
+const HOSTS = { backend: "Railway", frontend: "Cloudflare" } as const;
+const PARTS = ["backend", "frontend"] as const;
+/** The word the dot strip labels each half with: "staging · api" / "· web". */
+const PART_WORD = { backend: "api", frontend: "web" } as const;
+
+const PR_STATES = ["draft", "review", "approved", "merged", "closed"] as const;
+const isKnownPrState = (s: string | null): s is RepoPr["state"] => (PR_STATES as readonly string[]).includes(s ?? "");
+
+const REVIEW_TEXT: Record<string, string> = {
+  approved: "approved", changes_requested: "requested changes on",
+  commented: "commented on", dismissed: "dismissed a review on",
+};
 
 // ── people ───────────────────────────────────────────────────────────────────
 type PersonMap = Map<string, RepoPerson>;
@@ -127,7 +148,7 @@ const prOf = (people: PersonMap, r: PrRow): RepoPr => ({
   author: personOf(people, r.subject_login),
   branch: r.base ? `→ ${r.base}` : null,
   state: r.event_type === "pr_merged" ? "merged" : "closed",
-  checks: null, // no check-run capture
+  checks: null, // the `events` fallback carries no head sha to look checks up by
   at: r.at,
 });
 
@@ -154,10 +175,18 @@ function activityOf(people: PersonMap, r: IssueRow): RepoActivity | null {
   }
 }
 
-export async function getRepoDashboard(db: DB, repo: string, now: number = Date.now()): Promise<RepoDashboard> {
+export async function getRepoDashboard(
+  db: DB,
+  repo: string,
+  now: number = Date.now(),
+  /** The environments this deployment reports on (`REPO_ENVIRONMENTS`). None
+   *  configured → the environment/deploy sections stay `not_connected`. */
+  envs: RepoEnvConfig[] = []
+): Promise<RepoDashboard> {
   const nowAt = new Date(now).toISOString();
   const weekAgo = new Date(now - 7 * DAY).toISOString();
   const twoWeeksAgo = new Date(now - 14 * DAY).toISOString();
+  const ninetyDaysAgo = new Date(now - RECENT_PR_DAYS * DAY).toISOString();
 
   const people = await personsByLogin(db);
 
@@ -186,10 +215,16 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   // open-PR count. Same field name/shape as before; only what it gates on
   // changed.
   const prCaptured = (await getSnapshot(db, "prs_reconciled")) !== null;
-  const isOpen = (r: RepoEventRow) => r.state === "draft" || r.state === "review";
+  const isOpen = (r: RepoPrRow) => r.state === "draft" || r.state === "review";
   const prsNow = prCaptured ? (await prStatesAsOf(db, nowAt)).filter(isOpen) : [];
   const prsThen = prCaptured ? (await prStatesAsOf(db, weekAgo)).filter(isOpen) : [];
-  const awaiting = (rows: RepoEventRow[]) => rows.filter((r) => r.state === "review").length;
+  // The PR list: the latest state per PR, unknown states dropped (never guessed).
+  const prRows = prCaptured ? (await recentPrRows(db, PR_LIMIT, ninetyDaysAgo)).filter((r) => isKnownPrState(r.state)) : [];
+  // ONE approval read for both consumers below — the listed PRs and the open-PR
+  // tile. An approved PR is no longer "awaiting review".
+  const approved = await approvedPrs(db, [...prsNow, ...prRows].filter((r) => r.state === "review").map((r) => r.number ?? 0));
+  const awaiting = (rows: RepoPrRow[], done: Set<number> = new Set()) =>
+    rows.filter((r) => r.state === "review" && !done.has(r.number ?? -1)).length;
   // A delta is only real once capture was RECORDING for the whole comparison
   // window — otherwise "now vs a week ago" is really "now vs whenever capture
   // began", which reads as a spurious spike. `tickets` is the fallback tile's
@@ -204,6 +239,65 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   const commitsLastWeek = sum(pushes.filter((p) => p.occurred_at <= weekAgo));
   const pushRecordingSince = pushes.length ? await recordingSince(db, "push") : null;
   const pushDeltaOk = pushRecordingSince !== null && pushRecordingSince <= twoWeeksAgo;
+
+  // ── environments: two deployables each (Railway backend, Cloudflare frontend) ─
+  // Batched on purpose: ONE deploy-history read covering every environment and
+  // both halves, ONE branch-head read, and ONE check read covering the
+  // environment heads AND the listed PRs' heads together. N environments cost
+  // the same three round-trips as one.
+  const strips = envs.length ? await deployHistories(db) : new Map<string, RepoDeploy[]>();
+  const heads = envs.length ? await branchHeads(db, envs.map((e) => e.branch)) : new Map<string, string>();
+  const checks = await latestChecks(db, [...heads.values(), ...prRows.map((r) => r.sha ?? "")]);
+
+  const deployRows: RepoDeployRow[] = [];
+  const cards = envs.map((cfg) => {
+    const parts: RepoEnvPart[] = PARTS.map((part) => {
+      const history = strips.get(`${cfg.key}:${part}`) ?? [];
+      // A half with no capture gets no dot strip at all — an empty one would
+      // read as "nothing has deployed", which is not what is known.
+      if (history.length) deployRows.push({ env: cfg.key, part, label: `${cfg.label} · ${PART_WORD[part]}`, deploys: history });
+      const last = history[history.length - 1] ?? null;
+      return { part, host: HOSTS[part], sha: last?.sha ?? null, deployedAt: last?.at ?? null, deployedBy: last?.by ?? null, result: last?.result ?? null };
+    });
+    const head = heads.get(cfg.branch);
+    const onHead = (head ? checks.get(head) : undefined) ?? [];
+    const failing = onHead.filter((c) => c.state === "failure" || c.state === "timed_out").map((c) => c.name);
+    const settled = onHead.filter((c) => c.state !== "pending");
+    const ci = !onHead.length ? "No checks captured"
+      : failing.length ? `${failing.length} of ${onHead.length} checks failing — ${failing[0]}`
+      : settled.length < onHead.length ? `${settled.length} of ${onHead.length} checks finished`
+      : `All ${onHead.length} checks passing`;
+    // The card is CONNECTED once anything about the environment was captured —
+    // a deploy result or a head check. That is a different question from the
+    // pill, which is a verdict: HEALTHY is a claim about CHECKS, so it needs
+    // checks captured on the head, none of them failing, and no failed part. A
+    // deploy that landed with no checks captured says only that it landed —
+    // UNKNOWN, neutral. A part that FAILED is a fact on its own, so FAILING
+    // does not wait for checks.
+    const connected = parts.some((p) => p.result !== null) || onHead.length > 0;
+    const failed = parts.some((p) => p.result === "fail");
+    const card: RepoEnv = {
+      key: cfg.key, name: cfg.label, note: cfg.note, parts, url: cfg.frontendUrl, ci,
+      ciTone: !onHead.length ? "neutral" : failing.length ? "bad" : "good",
+      pill: failed ? "FAILING" : failing.length ? "DEGRADED" : onHead.length ? "HEALTHY" : "UNKNOWN",
+      tone: failed ? "bad" : failing.length ? "warn" : onHead.length ? "good" : "neutral",
+    };
+    return { card, connected };
+  });
+  const envCards: RepoEnv[] = cards.map((c) => c.card);
+  const anyEnvCapture = cards.some((c) => c.connected);
+
+  // CI is `not_connected` until a workflow run has ever been captured — a 0%
+  // failure rate over nothing is a guess, not an answer. And the SEVEN-DAY rate
+  // (and its per-day trend) waits for the same recording-window rule the PR and
+  // commit deltas use: until `run` capture predates the whole week, a day with
+  // no captured runs is a day capture was not running, not a green day. The
+  // failures LIST is not gated — those rows are facts.
+  const runCaptured = await hasCaptured(db, "run");
+  const runRecordingSince = runCaptured ? await recordingSince(db, "run") : null;
+  const ciRates = runRecordingSince !== null && runRecordingSince <= weekAgo ? await ciDailyRates(db, now) : null;
+  const failureRows = runCaptured ? await ciFailureRows(db, weekAgo, CI_FAILURE_LIMIT) : [];
+  const reviews = await reviewRowsSince(db, twoWeeksAgo);
 
   const issueEvents = await all<IssueRow>(
     db,
@@ -231,7 +325,10 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   const stats: RepoStat[] = prCaptured
     ? [
         { label: "Open PRs", value: prsNow.length, delta: prDeltaOk ? prsNow.length - prsThen.length : 0, tone: "neutral" },
-        { label: "Awaiting review", value: awaiting(prsNow), delta: prDeltaOk ? awaiting(prsNow) - awaiting(prsThen) : 0, tone: "neutral" },
+        // The week-ago value keeps the approval-blind form on purpose: which
+        // PRs were approved a week ago is not knowable from today's reviews,
+        // and the delta is suppressed anyway until capture predates the window.
+        { label: "Awaiting review", value: awaiting(prsNow, approved), delta: prDeltaOk ? awaiting(prsNow, approved) - awaiting(prsThen) : 0, tone: "neutral" },
         ...issueTiles,
       ]
     : [
@@ -245,7 +342,7 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   const commitDelta = commitsThisWeek - commitsLastWeek;
   const codeStats: RepoCodeStat[] = [
     prCaptured
-      ? { label: "Open PRs", value: prsNow.length, sub: `${awaiting(prsNow)} awaiting review`, tone: "neutral" }
+      ? { label: "Open PRs", value: prsNow.length, sub: `${awaiting(prsNow, approved)} awaiting review`, tone: "neutral" }
       : { label: "Closed unmerged", value: closedUnmerged.length, sub: "this week", tone: "neutral" },
     { label: "Merged this week", value: mergedThisWeek.length, sub: mergers === 0 ? "this week" : mergers === 1 ? "by 1 person" : `by ${mergers} people`, tone: "neutral" },
     pushes.length
@@ -287,7 +384,17 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     kind: "push" as const, actor: p.actor_login ? personOf(people, p.actor_login) : null,
     text: `pushed ${p.count ?? 0} commit${p.count === 1 ? "" : "s"} to ${p.ref ?? "a branch"}`, url: p.url, at: p.occurred_at,
   }));
-  const activity = prActivity.concat(issueActivity, pushActivity)
+  const reviewActivity: RepoActivity[] = reviews.slice(0, ACTIVITY_LIMIT).map((r) => ({
+    kind: "review" as const, actor: r.actor_login ? personOf(people, r.actor_login) : null,
+    text: `${REVIEW_TEXT[r.state ?? "commented"] ?? "reviewed"} #${r.number ?? "?"}`, url: r.url, at: r.occurred_at,
+  }));
+  // A deploy line is worth a feed row only once it landed — a failed or
+  // cancelled attempt belongs to the dot strip, not to "what happened".
+  const deployActivity: RepoActivity[] = deployRows.flatMap((row) =>
+    row.deploys.filter((d) => d.result === "ok").map((d) => ({
+      kind: "deploy" as const, actor: null, text: `${d.sha} deployed to ${row.label}`, url: null, at: d.at,
+    })));
+  const activity = prActivity.concat(issueActivity, pushActivity, reviewActivity, deployActivity)
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, ACTIVITY_LIMIT);
 
   // ── Team & Planning ───────────────────────────────────────────────────────
@@ -303,9 +410,12 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   // push's P=1 for the same 40 commits.
   for (const p of pushesThisWeek) if (p.actor_login && !p.actor_login.endsWith("[bot]") && p.provenance === "webhook") bump(p.actor_login, "pushes");
   for (const p of mergedThisWeek) bump(p.subject_login, "merged");
-  // `reviews` has no capture path yet (Phase 2) — every tally is 0, which would
-  // render as a real "0 reviews" column. Show it only once a `review` row has
-  // ever been captured; until then it is `null` (never guessed).
+  // Same rule as the pushes above: a review bot (CodeRabbit, Copilot) is not a
+  // person having a week, and would dwarf every human column.
+  for (const r of reviews) if (r.occurred_at > weekAgo && r.actor_login && !r.actor_login.endsWith("[bot]")) bump(r.actor_login, "reviews");
+  // A tally of 0 would render as a real "0 reviews" column. Show the count only
+  // once a `review` row has ever been captured; until then it is `null` (never
+  // guessed) — `reviews` in the window can legitimately be 0 for a person.
   const hasReviewCapture = await hasCaptured(db, "review");
   const contributors: RepoContributor[] = [...tally.values()]
     .sort((a, b) => (b.pushes + b.merged + b.reviews) - (a.pushes + a.merged + a.reviews) || a.login.localeCompare(b.login))
@@ -326,23 +436,36 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     ? { id: current.id, label: current.label, due: current.due, closed: current.progress.closed, total: current.progress.total, pct: current.progress.pct }
     : null;
 
-  const PR_STATES = ["draft", "review", "approved", "merged", "closed"] as const;
-  const isKnownPrState = (s: string | null): s is RepoPr["state"] => (PR_STATES as readonly string[]).includes(s ?? "");
+  // `prRows` was already read (and filtered to known states) above, so the
+  // checks and approvals could be resolved for the whole page in one query each.
   const capturedPrs: RepoPr[] = prCaptured
-    ? (await recentPrRows(db, PR_LIMIT))
-        // An unrecognized state is dropped, never guessed as "awaiting review".
-        .filter((r) => isKnownPrState(r.state))
-        .map((r) => ({
-          number: r.number ?? 0, title: r.title ?? `PR #${r.number}`, url: r.url ?? "",
-          author: personOf(people, r.actor_login ?? "unknown"), branch: r.ref,
-          state: r.state as RepoPr["state"],
-          checks: null, at: r.occurred_at,
-        }))
+    ? prRows.map((r) => ({
+        number: r.number ?? 0, title: r.title ?? `PR #${r.number}`, url: r.url ?? "",
+        author: personOf(people, r.actor_login ?? "unknown"), branch: r.ref,
+        // An approval is a state the capture can prove; everything else is the
+        // row's own state (an unrecognized one was dropped, never guessed).
+        state: r.state === "review" && approved.has(r.number ?? -1) ? "approved" : (r.state as RepoPr["state"]),
+        checks: checkState(checks.get(r.sha ?? "")), at: r.occurred_at,
+      }))
     : listPrs.map((p) => prOf(people, p));
 
   const some = <T>(rows: T[]): RepoSection<T[]> => (rows.length ? ok(rows) : EMPTY);
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
+    // An environment card needs BOTH a configured environment and something
+    // captured about it; a configured-but-silent environment is not connected.
+    environments: envs.length && anyEnvCapture ? ok(envCards) : NOT_CONNECTED,
+    deploys: deployRows.length ? ok(deployRows) : envs.length && anyEnvCapture ? EMPTY : NOT_CONNECTED,
+    ciFailures: runCaptured
+      ? ok({
+          // null / [] until the week is covered — never a rate over a partial window.
+          rate: ciRates?.rate ?? null, trend: ciRates?.days ?? [],
+          rows: failureRows.map((r) => ({
+            workflow: r.name ?? "workflow", branch: r.ref ?? "", job: r.title ?? "—",
+            at: r.occurred_at, url: r.url ?? "",
+          })),
+        })
+      : NOT_CONNECTED,
     stats: ok(stats),
     codeStats: ok(codeStats),
     bars: barTotal > 0 ? ok(bars) : EMPTY,

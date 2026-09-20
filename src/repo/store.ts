@@ -1,4 +1,4 @@
-import { type DB, all, first, run, nowIso } from "../db";
+import { type DB, all, first, run, nowIso, ph } from "../db";
 import type { RepoMetric } from "./types";
 
 const DAY = 86_400_000;
@@ -42,6 +42,6 @@ export async function latestMetric(db: DB, metric: string, env: string, part: st
 
 export async function pruneRepoCapture(db: DB, now: number): Promise<void> {
   const cutoff = new Date(now - FAST_RETENTION_DAYS * DAY).toISOString();
-  await run(db, `DELETE FROM repo_metrics WHERE metric IN (${FAST_METRICS.map(() => "?").join(",")}) AND at < ?`, ...FAST_METRICS, cutoff);
-  await run(db, `DELETE FROM repo_events WHERE kind IN (${FAST_KINDS.map(() => "?").join(",")}) AND occurred_at < ?`, ...FAST_KINDS, cutoff);
+  await run(db, `DELETE FROM repo_metrics WHERE metric IN (${ph(FAST_METRICS.length)}) AND at < ?`, ...FAST_METRICS, cutoff);
+  await run(db, `DELETE FROM repo_events WHERE kind IN (${ph(FAST_KINDS.length)}) AND occurred_at < ?`, ...FAST_KINDS, cutoff);
 }

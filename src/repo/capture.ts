@@ -22,7 +22,16 @@ function fromPush(p: Obj): RepoEvent[] {
   if (!after) return [];
   const commits = Array.isArray(p.commits) ? p.commits.map(obj).filter((c): c is Obj => c !== null) : [];
   const head = obj(p.head_commit);
-  const at = str(head?.timestamp) ?? str(commits[commits.length - 1]?.timestamp);
+  // A push HAPPENED when GitHub says it did (`repository.pushed_at`, unix
+  // seconds) — not when its head commit was originally authored. A rebase or
+  // cherry-pick carries an old commit timestamp but is pushed just now; using
+  // the commit's own timestamp would land it in a stale day bucket.
+  const pushedAt = num(obj(p.repository)?.pushed_at);
+  // Second-precision, no milliseconds — matches GitHub's own timestamp shape
+  // (every other `occurred_at` on this arm comes straight off the payload).
+  const at = pushedAt !== null
+    ? new Date(pushedAt * 1000).toISOString().replace(/\.\d{3}Z$/, "Z")
+    : str(head?.timestamp) ?? str(commits[commits.length - 1]?.timestamp);
   if (!at) return [];
   return [{
     semantic_key: `gh:push:${after}:${branch}`,
@@ -57,12 +66,89 @@ function fromPullRequest(p: Obj): RepoEvent[] {
   }];
 }
 
-export function repoEventsFromDelivery(eventName: string, payload: unknown, _envs: RepoEnvConfig[]): RepoEvent[] {
+function fromDeploymentStatus(p: Obj, envs: RepoEnvConfig[]): RepoEvent[] {
+  const st = obj(p.deployment_status);
+  const dep = obj(p.deployment);
+  const id = num(dep?.id);
+  const state = str(st?.state);
+  const at = str(st?.created_at);
+  const ghEnv = str(dep?.environment);
+  if (!st || !dep || id === null || !state || !at || !ghEnv) return [];
+  const cfg = envs.find((e) => e.railwayEnv === ghEnv);
+  if (!cfg) return []; // preview / unknown environment — not one the dashboard reports on
+  return [{
+    semantic_key: `gh:deploy:${id}:${state}`,
+    kind: "deploy", number: id, env: cfg.key, part: "backend", sha: str(dep.sha), state, name: ghEnv,
+    actor_login: str(obj(dep.creator)?.login), url: str(st.log_url),
+    raw: JSON.stringify({ ref: str(dep.ref), status_id: num(st.id), deployment_created_at: str(dep.created_at) }),
+    provenance: "webhook", occurred_at: at,
+  }];
+}
+
+function fromCheckRun(p: Obj, envs: RepoEnvConfig[]): RepoEvent[] {
+  const action = str(p.action);
+  const cr = obj(p.check_run);
+  if (!cr || (action !== "created" && action !== "completed")) return [];
+  const id = num(cr.id);
+  const name = str(cr.name);
+  const sha = str(cr.head_sha);
+  const at = action === "completed" ? str(cr.completed_at) : str(cr.started_at);
+  if (id === null || !name || !sha || !at) return [];
+  const ref = str(obj(cr.check_suite)?.head_branch);
+  // A Workers Builds check is a DEPLOY only on the branch that environment ships from.
+  const cfg = envs.find((e) => e.workerCheck === name && e.branch === ref) ?? null;
+  return [{
+    semantic_key: `gh:check:${id}:${action}`,
+    kind: "check", number: id, sha, ref, name,
+    state: action === "completed" ? (str(cr.conclusion) ?? "neutral") : "pending",
+    env: cfg?.key ?? null, part: cfg ? "frontend" : null, url: str(cr.details_url),
+    raw: JSON.stringify({ app: str(obj(cr.app)?.slug), status: str(cr.status) }),
+    provenance: "webhook", occurred_at: at,
+  }];
+}
+
+function fromWorkflowRun(p: Obj): RepoEvent[] {
+  const run = obj(p.workflow_run);
+  if (!run || str(p.action) !== "completed") return [];
+  const id = num(run.id);
+  const at = str(run.updated_at);
+  if (id === null || !at) return [];
+  const attempt = num(run.run_attempt) ?? 1;
+  return [{
+    semantic_key: `gh:run:${id}:${attempt}`,
+    kind: "run", number: id, name: str(run.name), ref: str(run.head_branch), sha: str(run.head_sha),
+    state: str(run.conclusion) ?? "neutral", actor_login: str(obj(run.actor)?.login), url: str(run.html_url), count: attempt,
+    raw: JSON.stringify({ event: str(run.event), started_at: str(run.run_started_at) }),
+    provenance: "webhook", occurred_at: at,
+  }];
+}
+
+function fromReview(p: Obj): RepoEvent[] {
+  const action = str(p.action);
+  const review = obj(p.review);
+  const number = num(obj(p.pull_request)?.number);
+  if (!review || number === null || (action !== "submitted" && action !== "dismissed")) return [];
+  const id = num(review.id);
+  const at = str(review.submitted_at);
+  if (id === null || !at) return [];
+  return [{
+    semantic_key: `gh:review:${id}:${action}`,
+    kind: "review", number, state: action === "dismissed" ? "dismissed" : (str(review.state) ?? "commented").toLowerCase(),
+    actor_login: str(obj(review.user)?.login), url: str(review.html_url),
+    raw: JSON.stringify({ action }), provenance: "webhook", occurred_at: at,
+  }];
+}
+
+export function repoEventsFromDelivery(eventName: string, payload: unknown, envs: RepoEnvConfig[]): RepoEvent[] {
   const p = obj(payload);
   if (!p) return [];
   switch (eventName) {
     case "push": return fromPush(p);
     case "pull_request": return fromPullRequest(p);
+    case "deployment_status": return fromDeploymentStatus(p, envs);
+    case "check_run": return fromCheckRun(p, envs);
+    case "workflow_run": return fromWorkflowRun(p);
+    case "pull_request_review": return fromReview(p);
     default: return [];
   }
 }

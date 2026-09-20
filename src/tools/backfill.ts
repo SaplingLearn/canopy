@@ -41,10 +41,21 @@ const SUMMARY_CALL_DELAY_MS = 500;
  *  re-POSTs `/admin/backfill` up to MAX_BACKFILL_BATCHES times while the
  *  summary budget stays exhausted). The repo-capture reconcile is expensive
  *  (~250 no-op statements on an already-reconciled repo) and idempotent, so it
- *  belongs on the LAST batch only, not every one. "Last" = the batch whose
- *  result says the summary budget was NOT exhausted — the loop stops there. */
-export function isFinalBackfillBatch(result: Pick<BackfillResult, "summaryBudgetExhausted">): boolean {
-  return !result.summaryBudgetExhausted;
+ *  belongs on the batch that ENDS the loop, not every one. That is either the
+ *  batch whose result says the summary budget was NOT exhausted (the normal
+ *  case), OR — since the server has no other way to see the client's loop
+ *  counter — the batch the CLIENT reports as having reached its own cap
+ *  (`batch >= of`) while still exhausted, so a Sync that hits
+ *  MAX_BACKFILL_BATCHES without ever clearing the budget still reconciles once.
+ *  `batch`/`of` are caller-supplied and may be absent or malformed (an older
+ *  client, a hand-rolled request) — treated as "unknown", never as "final". */
+export function isFinalBackfillBatch(
+  result: Pick<BackfillResult, "summaryBudgetExhausted">,
+  batch?: number,
+  of?: number
+): boolean {
+  if (!result.summaryBudgetExhausted) return true;
+  return typeof batch === "number" && Number.isFinite(batch) && typeof of === "number" && Number.isFinite(of) && batch >= of;
 }
 
 export interface BackfillResult {

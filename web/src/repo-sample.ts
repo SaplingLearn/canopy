@@ -5,7 +5,10 @@
 // loaded on demand (a dynamic import — not in the main bundle), and the screen
 // labels it "sample data" for as long as it is showing.
 
-import type { RepoDashboard, RepoPerson, RepoRange, RepoUsageEnv, RepoCfRow, RepoActivityKind, RepoPrState } from "@shared/repo";
+import type {
+  RepoDashboard, RepoDeployRow, RepoEnvPart, RepoPartName, RepoPerson, RepoRange, RepoUsageEnv, RepoCfRow,
+  RepoActivityKind, RepoPrState,
+} from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
@@ -53,7 +56,28 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     ["push", "tom-h", "pushed 1 commit to spike/edge-cache", 16 * DAY],
   ];
 
-  const deploys = (rows: [string, number, string, "ok" | "fail" | "cancel"][]) => rows.map(([sha, ms, by, result]) => ({ sha, at: at(ms), by, result }));
+  // ── two deployables per environment ───────────────────────────────────────
+  // Each environment ships a Railway API and a Cloudflare web build from the
+  // same commit; the frontend lands a couple of minutes behind the API.
+  type Dot = [string, number, string, "ok" | "fail" | "cancel"];
+  const deploys = (rows: Dot[]) => rows.map(([sha, ms, by, result]) => ({ sha, at: at(ms), by, result }));
+  const web = (rows: Dot[]): Dot[] => rows.map((r, i) => (i === rows.length - 1 ? [r[0], r[1] - 2 * MIN, r[2], r[3]] : r));
+  const API: Record<"staging" | "production", Dot[]> = {
+    staging: [["8c11d02", 3 * DAY, "meilin", "ok"], ["e4907fa", 3 * DAY, "sanaok", "ok"], ["1b6c3e9", 2 * DAY, "jose-a", "ok"], ["77d20ba", 2 * DAY, "priya-k", "cancel"], ["f0a94c7", 2 * DAY, "priya-k", "ok"], ["93be511", DAY, "tom-h", "ok"], ["ab27e64", DAY, "dev-raj", "ok"], ["c58f1d3", 22 * HOUR, "dev-raj", "fail"], ["d94ea08", 21 * HOUR, "dev-raj", "ok"], ["a3f82c1", 26 * MIN, "dev-raj", "ok"]],
+    production: [["41c9de7", 14 * DAY, "jose-a", "ok"], ["5b803af", 12 * DAY, "meilin", "ok"], ["68d1c42", 11 * DAY, "kenji-m", "ok"], ["7e5b9d0", 9 * DAY, "sanaok", "ok"], ["8f26a13", 8 * DAY, "meilin", "fail"], ["90ab7c5", 8 * DAY, "meilin", "ok"], ["a1c38e6", 6 * DAY, "meilin", "ok"], ["b273f19", 5 * DAY, "tom-h", "ok"], ["c3841da", 3 * DAY, "priya-k", "ok"], ["9d417be", 2 * DAY, "jose-a", "ok"]],
+  };
+  const strips: Record<"staging" | "production", Record<RepoPartName, Dot[]>> = {
+    staging: { backend: API.staging, frontend: web(API.staging) },
+    production: { backend: API.production, frontend: web(API.production) },
+  };
+  const PART = { backend: ["api", "Railway"], frontend: ["web", "Cloudflare"] } as const;
+  const deployRows: RepoDeployRow[] = (["staging", "production"] as const).flatMap((env) =>
+    (["backend", "frontend"] as const).map((part) => ({ env, part, label: `${env} · ${PART[part][0]}`, deploys: deploys(strips[env][part]) })));
+  const envParts = (env: "staging" | "production"): RepoEnvPart[] =>
+    (["backend", "frontend"] as const).map((part) => {
+      const [sha, ms, by, result] = strips[env][part][strips[env][part].length - 1];
+      return { part, host: PART[part][1], sha, deployedAt: at(ms), deployedBy: by, result };
+    });
 
   const env = (name: string, host: string, d: { req: string; reqA: number[]; err: number; errA: number[]; users: string; usersA: number[] }, warn: boolean): RepoUsageEnv => ({
     name, host, requests: d.req, requestsTrend: d.reqA, errorRate: d.err, errorTrend: d.errA, errorTone: warn ? "warn" : "good", users: d.users, usersTrend: d.usersA,
@@ -81,8 +105,8 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     repo: "SaplingLearn/sapling", generatedAt: at(0), degraded: false, sample: true,
 
     environments: { status: "ok", data: [
-      { name: "staging", note: null, tone: "warn", pill: "DEGRADED", sha: "a3f82c1", deployedAt: at(26 * MIN), deployedBy: "dev-raj", ci: "1 of 6 checks failing — e2e-smoke", url: "https://staging.saplinglearn.com" },
-      { name: "main", note: "production", tone: "good", pill: "HEALTHY", sha: "9d417be", deployedAt: at(2 * DAY), deployedBy: "jose-a", ci: "All 6 checks passing", url: "https://app.saplinglearn.com" },
+      { key: "staging", name: "staging", note: "main", tone: "warn", pill: "DEGRADED", parts: envParts("staging"), ci: "1 of 6 checks failing — e2e-smoke", ciTone: "bad", url: "https://staging.saplinglearn.com" },
+      { key: "production", name: "production", note: "production", tone: "good", pill: "HEALTHY", parts: envParts("production"), ci: "All 6 checks passing", ciTone: "good", url: "https://app.saplinglearn.com" },
     ] },
     drift: { status: "ok", data: { head: "staging", base: "main", ahead: 12, behind: 1, groups: [
       { tag: "#482", kind: "pr", title: "Batch D1 reads in usage rollup", meta: "dev-raj · 3 commits", commits: commits([["c91d2ae", "rollup: batch D1 reads per window", 24 * MIN], ["b02f1cd", "fix window math off-by-one", HOUR], ["a3f82c1", "wire usage endpoint to rollup", 2 * HOUR]]) },
@@ -124,10 +148,7 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
       { name: "design/triage-map", at: at(21 * DAY), ahead: 2, behind: 48, stale: true },
     ] } },
 
-    deploys: { status: "ok", data: [
-      { env: "staging", deploys: deploys([["8c11d02", 3 * DAY, "meilin", "ok"], ["e4907fa", 3 * DAY, "sanaok", "ok"], ["1b6c3e9", 2 * DAY, "jose-a", "ok"], ["77d20ba", 2 * DAY, "priya-k", "cancel"], ["f0a94c7", 2 * DAY, "priya-k", "ok"], ["93be511", DAY, "tom-h", "ok"], ["ab27e64", DAY, "dev-raj", "ok"], ["c58f1d3", 22 * HOUR, "dev-raj", "fail"], ["d94ea08", 21 * HOUR, "dev-raj", "ok"], ["a3f82c1", 26 * MIN, "dev-raj", "ok"]]) },
-      { env: "main", deploys: deploys([["41c9de7", 14 * DAY, "jose-a", "ok"], ["5b803af", 12 * DAY, "meilin", "ok"], ["68d1c42", 11 * DAY, "kenji-m", "ok"], ["7e5b9d0", 9 * DAY, "sanaok", "ok"], ["8f26a13", 8 * DAY, "meilin", "fail"], ["90ab7c5", 8 * DAY, "meilin", "ok"], ["a1c38e6", 6 * DAY, "meilin", "ok"], ["b273f19", 5 * DAY, "tom-h", "ok"], ["c3841da", 3 * DAY, "priya-k", "ok"], ["9d417be", 2 * DAY, "jose-a", "ok"]]) },
-    ] },
+    deploys: { status: "ok", data: deployRows },
     ciFailures: { status: "ok", data: { rate: 6.7, trend: [4, 9, 6, 3, 11, 8, 5], rows: [
       { workflow: "e2e-smoke", branch: "staging", job: "auth flow · shard 1/2", at: at(26 * MIN), url: `${GH}/actions` },
       { workflow: "test", branch: "fix/sse-auth", job: "vitest · shard 2/4", at: at(2 * HOUR), url: `${GH}/actions` },

@@ -143,6 +143,44 @@ describe("repoView — live content", () => {
     expect(html).not.toMatch(/undefined|NaN/);
   });
 
+  it("an environment card shows a line per deployable and says when one has no capture", () => {
+    const data = live({ environments: { status: "ok", data: [{ key: "staging", name: "staging", note: "main", tone: "good", pill: "HEALTHY", ci: "All 8 checks passing", ciTone: "good", url: "https://staging.saplinglearn.com",
+      parts: [{ part: "backend", host: "Railway", sha: "abc1234", deployedAt: new Date().toISOString(), deployedBy: "AndresL230", result: "ok" }, { part: "frontend", host: "Cloudflare", sha: null, deployedAt: null, deployedBy: null, result: null }] }] } });
+    const html = repoView(props({ repo: { status: "ok", data } }));
+    expect(html).toContain("Backend");
+    expect(html).toContain("by AndresL230 · Railway");
+    expect(html).toContain("No Cloudflare deploy captured yet");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  // F3: `rate: null` = run capture has not covered a whole week yet. The header
+  // percentage and the sparkline both describe seven days, so neither may be
+  // drawn — but the failures themselves are facts and stay listed.
+  it("a CI block with no 7-day rate yet shows no percentage, no sparkline, and says why", () => {
+    const data = live({ ciFailures: { status: "ok", data: { rate: null, trend: [], rows: [
+      { workflow: "e2e (browser lane)", branch: "main", job: "e2e · run suite", at: new Date().toISOString(), url: "https://github.com/o/r/actions/runs/3" },
+    ] } } });
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
+    expect(html).toContain("A 7-day rate appears after a week of captured runs.");
+    expect(html).not.toMatch(/>\d+\.\d%</); // no headline percentage rendered as text
+    expect(html).not.toContain("repo-spark");
+    expect(html).toContain("e2e · run suite");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("shows the rate and the sparkline once a week of runs is captured", () => {
+    const data = live({ ciFailures: { status: "ok", data: { rate: 6.7, trend: [4, 9, 6, 3, 11, 8, 5], rows: [] } } });
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
+    expect(html).toContain("6.7%");
+    expect(html).toContain("repo-spark");
+    expect(html).not.toContain("A 7-day rate appears");
+  });
+
+  it("labels each deploy strip with its environment AND its half", () => {
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data: repoSample() }, sample: true }));
+    for (const label of ["staging · api", "staging · web", "production · api", "production · web"]) expect(html).toContain(label);
+  });
+
   it("links the current sprint to its screen", () => {
     const data = live({ sprint: { status: "ok", data: { id: 3, label: "Notifications GA", due: "2026-10-02", closed: 21, total: 34, pct: 62 } } });
     const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
@@ -164,7 +202,7 @@ describe("repo header chrome", () => {
     expect(repoControls(props())).not.toContain("staging");
     const withEnvs = repoControls(props({ repo: { status: "ok", data: repoSample() } }));
     expect(withEnvs).toContain("staging — degraded");
-    expect(withEnvs).toContain("main — healthy");
+    expect(withEnvs).toContain("production — healthy");
   });
 
   it("labels freshness, and says so while a request is out", () => {
