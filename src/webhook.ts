@@ -307,6 +307,9 @@ export async function handleGithubWebhook(
   opts?: {
     summarizer?: Summarizer<PrSummary> | null;
     issueSummarizer?: Summarizer<IssueSummary> | null;
+    // Unused today; Tasks 8 and 11 wire these up for the repo-capture
+    // enrichment (fetching PR/check-run detail off GitHub, scheduling it via
+    // waitUntil so the webhook response itself isn't held up).
     fetchImpl?: typeof fetch;
     waitUntil?: (p: Promise<unknown>) => void;
   }
