@@ -13,8 +13,11 @@ import {
 import prMerged from "./fixtures/gh-pr-merged.json";
 import issueAssigned from "./fixtures/gh-issue-assigned.json";
 import issueClosed from "./fixtures/gh-issue-closed.json";
+import pushFixture from "./fixtures/gh-push.json";
+import prOpened from "./fixtures/gh-pr-opened.json";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { IssueSummaryRow } from "@shared/rows";
+import type { RepoEventRow } from "../src/repo/types";
 
 const SECRET = "test-webhook-secret"; // matches vitest.config.ts binding
 
@@ -55,7 +58,9 @@ describe("handleGithubWebhook — the third auth class", () => {
   it("valid signature + pr-merged → 200, one events row; redelivery → captured:0 unchanged:1", async () => {
     const res = await postWebhook("pull_request", prMerged);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0 });
+    // pull_request is also a REPO_EVENT_NAMES entry: the same verified delivery
+    // independently reaches repo_events (a closed+merged PR → one "pr"/"merged" row).
+    expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0, repo: { captured: 1, unchanged: 0 } });
 
     let rows = await all<EventRow>(env.DB, `SELECT * FROM events`);
     expect(rows.length).toBe(1);
@@ -67,7 +72,7 @@ describe("handleGithubWebhook — the third auth class", () => {
     // Redelivery of the SAME body: the UNIQUE semantic_key dedupes (INSERT OR IGNORE).
     const res2 = await postWebhook("pull_request", prMerged);
     expect(res2.status).toBe(200);
-    expect(await res2.json()).toEqual({ ok: true, captured: 0, unchanged: 1 });
+    expect(await res2.json()).toEqual({ ok: true, captured: 0, unchanged: 1, repo: { captured: 0, unchanged: 1 } });
     rows = await all<EventRow>(env.DB, `SELECT * FROM events`);
     expect(rows.length).toBe(1); // still exactly one row
   });
@@ -253,5 +258,40 @@ describe("webhook → issue summarize wiring", () => {
     await postWebhook("issues", issueAssigned, env, { issueSummarizer: stub });
     const progress = await all(env.DB, `SELECT * FROM sprint_progress`);
     expect(progress.length).toBe(1); // issueAssigned carries a GitHub group — progressSeam still wrote it
+  });
+});
+
+describe("handleGithubWebhook — repo capture runs beside the My Work capture", () => {
+  it("a push is captured into repo_events and writes nothing to events", async () => {
+    const res = await postWebhook("push", pushFixture);
+    expect(await res.json()).toMatchObject({ ok: true, captured: 0, repo: { captured: 1, unchanged: 0 } });
+    expect(await all<EventRow>(env.DB, `SELECT * FROM events`)).toHaveLength(0);
+    expect(await all<RepoEventRow>(env.DB, `SELECT * FROM repo_events`)).toHaveLength(1);
+    const again = await postWebhook("push", pushFixture);
+    expect(await again.json()).toMatchObject({ repo: { captured: 0, unchanged: 1 } });
+  });
+
+  it("an opened PR reaches repo_events only; a merged PR reaches BOTH", async () => {
+    await postWebhook("pull_request", prOpened);
+    expect(await all(env.DB, `SELECT * FROM events`)).toHaveLength(0);
+    await postWebhook("pull_request", prMerged, env, { summarizer: null });
+    expect(await all<EventRow>(env.DB, `SELECT event_type FROM events`)).toEqual([{ event_type: "pr_merged" }]);
+    const kinds = await all<{ state: string }>(env.DB, `SELECT state FROM repo_events WHERE kind = 'pr' ORDER BY id`);
+    expect(kinds.map((k) => k.state)).toEqual(["review", "merged"]);
+  });
+
+  it("a push never reaches the issue summarizer", async () => {
+    let called = 0;
+    const spy: Summarizer<IssueSummary> = {
+      model: "spy",
+      summarize: async () => { called++; throw new Error("must not run"); },
+    };
+    await postWebhook("push", pushFixture, env, { issueSummarizer: spy });
+    expect(called).toBe(0);
+  });
+
+  it("an unhandled event name is still verified-then-ignored", async () => {
+    const res = await postWebhook("star", { action: "created" });
+    expect(await res.json()).toEqual({ ok: true, ignored: true });
   });
 });

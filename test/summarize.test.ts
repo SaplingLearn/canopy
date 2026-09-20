@@ -165,7 +165,9 @@ describe("webhook → summarize wiring", () => {
     const stub: Summarizer<PrSummary> = { model: "stub", summarize: async () => PR_STUB };
     const res = await postWebhook("pull_request", prMerged, { summarizer: stub });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0 });
+    // pull_request is also a REPO_EVENT_NAMES entry: the same verified delivery
+    // independently reaches repo_events (a closed+merged PR → one "pr"/"merged" row).
+    expect(await res.json()).toEqual({ ok: true, captured: 1, unchanged: 0, repo: { captured: 1, unchanged: 0 } });
 
     let rows = await all<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE semantic_key = ?`, "gh:pr:42:merged");
     expect(rows.length).toBe(1);
@@ -176,7 +178,7 @@ describe("webhook → summarize wiring", () => {
     // re-runs, so still exactly one pr_summaries row.
     const res2 = await postWebhook("pull_request", prMerged, { summarizer: stub });
     expect(res2.status).toBe(200);
-    expect(await res2.json()).toEqual({ ok: true, captured: 0, unchanged: 1 });
+    expect(await res2.json()).toEqual({ ok: true, captured: 0, unchanged: 1, repo: { captured: 0, unchanged: 1 } });
     rows = await all<PrSummaryRow>(env.DB, `SELECT * FROM pr_summaries WHERE semantic_key = ?`, "gh:pr:42:merged");
     expect(rows.length).toBe(1);
   });
