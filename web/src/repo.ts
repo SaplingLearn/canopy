@@ -473,13 +473,15 @@ function planningTab(p: RepoProps): string {
   const sprintLive = okData(p, (d) => d.sprint) !== null;
 
   const contributors = sec(p, (d) => d.contributors, { nc: "Contributors aren't connected.", empty: "No pushes, merges or reviews this week.", lines: 4 }, (rows) => {
-    const max = Math.max(1, ...rows.map((r) => r.pushes + r.merged + r.reviews));
+    // `reviews` is null until a `review` row has ever been captured — never
+    // guessed as 0, and excluded from the bar width (not just rendered as "—").
+    const max = Math.max(1, ...rows.map((r) => r.pushes + r.merged + (r.reviews ?? 0)));
     return rows.map((r, i) => {
       const color = r.person.color ? `var(--p-${r.person.color})` : "var(--fg-40)";
       return `<div style="display:grid;grid-template-columns:112px minmax(0,1fr) 74px;gap:12px;align-items:center;padding:5.5px 0;${TOP}">
         <span style="display:inline-flex;align-items:center;gap:7px;min-width:0">${avatar(r.person, 20)}<span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(who(r.person))}</span></span>
-        <span style="display:block;height:6px;border-radius:999px;background:var(--hover);overflow:hidden"><span class="repo-fill" style="--i:${i};display:block;height:100%;border-radius:999px;background:${color};width:${Math.round(((r.pushes + r.merged + r.reviews) / max) * 100)}%"></span></span>
-        <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);text-align:right">${r.pushes} · ${r.merged} · ${r.reviews}</span>
+        <span style="display:block;height:6px;border-radius:999px;background:var(--hover);overflow:hidden"><span class="repo-fill" style="--i:${i};display:block;height:100%;border-radius:999px;background:${color};width:${Math.round(((r.pushes + r.merged + (r.reviews ?? 0)) / max) * 100)}%"></span></span>
+        <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);text-align:right">${r.pushes} · ${r.merged} · ${r.reviews === null ? "—" : r.reviews}</span>
       </div>`;
     }).join("");
   });

@@ -3,6 +3,7 @@
 import type { DB } from "../db";
 import { first } from "../db";
 import { ingestRepoEvent } from "../consumer";
+import { putSnapshot } from "./store";
 import type { RepoEnvConfig } from "./config";
 import type { RepoEvent } from "./types";
 
@@ -40,12 +41,25 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
   // Each list is independent: one failing must not starve the others.
   const safely = async (fn: () => Promise<void>) => { try { await fn(); } catch (e) { console.error("reconcileRepo", e); } };
 
-  await safely(async () => take((await ghJson<GhPull[]>(opts, `/pulls?state=open&sort=updated&direction=desc&per_page=100`)).map(prEvent)));
+  // The completeness marker: written only after the OPEN-PR list has been both
+  // fetched AND ingested without throwing. `prCaptured` in src/tools/repo.ts
+  // gates on THIS snapshot, not on "any pr row exists" — a lone webhook
+  // delivery (the first `pull_request` after deploy) must not make the
+  // Overview claim a complete open-PR count. A marker (not `provenance =
+  // 'backfill'`) because a repo with zero open PRs would otherwise never earn
+  // one.
+  await safely(async () => {
+    const openPrs = await ghJson<GhPull[]>(opts, `/pulls?state=open&sort=updated&direction=desc&per_page=100`);
+    await take(openPrs.map(prEvent));
+    await putSnapshot(db, "prs_reconciled", { at: new Date(now).toISOString() }, new Date(now).toISOString());
+  });
   await safely(async () => take((await ghJson<GhPull[]>(opts, `/pulls?state=closed&sort=updated&direction=desc&per_page=50`)).map(prEvent)));
 
   // Commits on the default environment branch, ONLY for the stretch before push
   // capture began — a backfilled commit is a count-1 push, and overlapping a real
-  // push (count N, same head sha) would shadow it.
+  // push (count N, same head sha) would shadow it. This fills ONLY the
+  // pre-capture stretch: it cannot and does not recover a push missed AFTER
+  // capture began (a gap from a webhook outage, say) — that stays lost.
   await safely(async () => {
     const branch = envs[0]?.branch ?? "main";
     const earliest = await first<{ at: string }>(db, `SELECT MIN(occurred_at) AS at FROM repo_events WHERE kind = 'push' AND provenance = 'webhook'`);

@@ -2,7 +2,10 @@ import { type DB, all, first, run, nowIso } from "../db";
 import type { RepoMetric } from "./types";
 
 const DAY = 86_400_000;
-/** High-frequency series and rows that lose their value quickly. */
+/** High-frequency series and rows that lose their value quickly. Deliberately
+ *  does NOT cover `pr` / `push` — those stay forever (the dashboard's
+ *  week-over-week deltas and 14-day bars read them). Nothing calls
+ *  `pruneRepoCapture` yet; it is wired for the Phase 3 cron. */
 const FAST_METRICS = ["health_up", "health_ms"];
 const FAST_KINDS = ["check"];
 const FAST_RETENTION_DAYS = 45;

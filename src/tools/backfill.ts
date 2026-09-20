@@ -37,6 +37,16 @@ const USER_AGENT = "canopy";
 const SUMMARY_BATCH_LIMIT = 5;
 const SUMMARY_CALL_DELAY_MS = 500;
 
+/** A Sync is (possibly) several batches (web/src/main.ts's `runAdminBackfillLoop`
+ *  re-POSTs `/admin/backfill` up to MAX_BACKFILL_BATCHES times while the
+ *  summary budget stays exhausted). The repo-capture reconcile is expensive
+ *  (~250 no-op statements on an already-reconciled repo) and idempotent, so it
+ *  belongs on the LAST batch only, not every one. "Last" = the batch whose
+ *  result says the summary budget was NOT exhausted — the loop stops there. */
+export function isFinalBackfillBatch(result: Pick<BackfillResult, "summaryBudgetExhausted">): boolean {
+  return !result.summaryBudgetExhausted;
+}
+
 export interface BackfillResult {
   ok: boolean;
   error?: string;

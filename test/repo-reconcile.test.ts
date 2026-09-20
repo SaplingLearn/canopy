@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { reconcileRepo } from "../src/repo/github";
+import { getSnapshot } from "../src/repo/store";
 import type { RepoEventRow } from "../src/repo/types";
 import { ENVS } from "./helpers/repo";
 
@@ -37,7 +38,44 @@ describe("reconcileRepo", () => {
   });
 
   it("sends the service token and never throws on a failing list", async () => {
-    const fetchImpl = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+    const calls: RequestInit[] = [];
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(init ?? {});
+      return new Response("nope", { status: 500 });
+    }) as typeof fetch;
     await expect(reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS, NOW)).resolves.toEqual({ written: 0, unchanged: 0 });
+    expect(calls.length).toBeGreaterThan(0);
+    for (const init of calls) {
+      expect((init.headers as Record<string, string>).authorization).toBe("Bearer t");
+    }
+  });
+});
+
+// F1: the `prs_reconciled` completeness marker. `prCaptured` in
+// src/tools/repo.ts gates on this snapshot, not on "any pr row exists" — a
+// lone webhook delivery must not make the Overview claim a complete open-PR
+// count.
+describe("reconcileRepo — the prs_reconciled completeness marker", () => {
+  it("writes the marker once the open-PR list is fetched and ingested without throwing", async () => {
+    const gh = fakeGithub({ "/pulls?state=open": [openPr], "/pulls?state=closed": [], "/commits?": [] });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
+    const marker = await getSnapshot<{ at: string }>(env.DB, "prs_reconciled");
+    expect(marker).not.toBeNull();
+    expect(marker!.data.at).toBe(new Date(NOW).toISOString());
+  });
+
+  it("writes the marker even for a repo with zero open PRs — a marker, not a backfill row, earns it", async () => {
+    const gh = fakeGithub({ "/pulls?state=open": [], "/pulls?state=closed": [], "/commits?": [] });
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
+    expect(await getSnapshot(env.DB, "prs_reconciled")).not.toBeNull();
+  });
+
+  it("does NOT write the marker when the open-PR fetch itself fails", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return url.includes("/pulls?state=open") ? new Response("nope", { status: 500 }) : new Response("[]", { status: 200 });
+    }) as typeof fetch;
+    await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS, NOW);
+    expect(await getSnapshot(env.DB, "prs_reconciled")).toBeNull();
   });
 });

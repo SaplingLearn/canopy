@@ -182,6 +182,9 @@ export function adminBackfill(): Promise<{
   prs: number;
   issues: number;
   issuesToSummarize: number;
+  /** Present only on the FINAL batch of a Sync — the repo-capture reconcile
+   *  (src/repo/github.ts's reconcileRepo) rides that batch only. */
+  repo?: { written: number; unchanged: number };
 }> {
   return postJson("/admin/backfill", {});
 }

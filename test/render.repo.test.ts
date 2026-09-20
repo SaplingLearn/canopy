@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
 import { render, initialState } from "../web/src/render";
-import { REPO_TABS, type RepoDashboard } from "@shared/repo";
+import { REPO_TABS, type RepoDashboard, type RepoPerson } from "@shared/repo";
 
 const NC = { status: "not_connected" } as const;
 const EMPTY = { status: "empty" } as const;
@@ -122,6 +122,25 @@ describe("repoView — live content", () => {
     const data = repoSample();
     expect(repoView(props({ tab: "usage", range: "24h", repo: { status: "ok", data } }))).toContain("12.4K");
     expect(repoView(props({ tab: "usage", range: "30d", repo: { status: "ok", data } }))).toContain("5.1M");
+  });
+
+  it("M11: renders a null reviews count as an em dash, excluded from the bar width", () => {
+    const person = (login: string): RepoPerson => ({ login, handle: login, name: null, color: null });
+    const data = live({
+      contributors: {
+        status: "ok",
+        data: [
+          { person: person("a"), pushes: 4, merged: 2, reviews: null },
+          { person: person("b"), pushes: 1, merged: 0, reviews: null },
+        ],
+      },
+    });
+    const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
+    expect(html).toContain("4 · 2 · —");
+    expect(html).toContain("1 · 0 · —");
+    // max = 4 + 2 + 0 (reviews excluded, not counted as 0-contribution-but-present) → row "a" fills 100%.
+    expect(html).toContain("width:100%");
+    expect(html).not.toMatch(/undefined|NaN/);
   });
 
   it("links the current sprint to its screen", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all, first, run } from "../src/db";
-import { runBackfill } from "../src/tools/backfill";
+import { runBackfill, isFinalBackfillBatch } from "../src/tools/backfill";
 import type { Env } from "../src/env";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { EventRow, PrSummaryRow, IssueSummaryRow } from "@shared/rows";
@@ -396,5 +396,22 @@ describe("runBackfill — issue summarization", () => {
     expect(issueSummarizer.calls).toBe(1); // already structured → skipped, not re-called
     expect(secondRun.summarized).toBe(2); // the 2 remaining PRs
     expect(summarizer.calls).toBe(3); // all 3 PRs summarized across the two runs
+  });
+});
+
+// F3: /admin/backfill (src/routes.ts) runs the repo-capture reconcile ONLY on
+// the final batch of a Sync, so it isn't redone on every intermediate batch of
+// a multi-batch run. The route itself has no fetchImpl seam (it calls
+// runBackfill(c.env, login) and reconcileRepo with the real global `fetch`,
+// never opts.fetchImpl), and hitting real GitHub from a test is out —
+// per CLAUDE.md, tests must never touch the network. So the "final batch
+// only" decision is covered here as a pure unit, independent of the route.
+describe("isFinalBackfillBatch — the /admin/backfill 'run reconcile once' gate", () => {
+  it("is true once the summary budget is NOT exhausted (the loop's last batch)", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: false })).toBe(true);
+  });
+
+  it("is false while the summary budget is still exhausted (an intermediate batch)", () => {
+    expect(isFinalBackfillBatch({ summaryBudgetExhausted: true })).toBe(false);
   });
 });

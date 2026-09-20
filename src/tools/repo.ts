@@ -5,7 +5,8 @@ import type {
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
 import { list_sprints } from "./sprints";
-import { hasCaptured, prStatesAsOf, recentPrRows, commitsByDay, pushRowsSince } from "../repo/reads";
+import { hasCaptured, prStatesAsOf, recentPrRows, commitsByDay, pushRowsSince, recordingSince } from "../repo/reads";
+import { getSnapshot } from "../repo/store";
 import type { RepoEventRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
@@ -177,19 +178,32 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
 
   const openNow = await openIssuesAsOf(db, nowAt);
   const openThen = await openIssuesAsOf(db, weekAgo);
-  const tickets = await ticketCounts(db, weekAgo);
 
   // ── repo capture (sources A, B) ───────────────────────────────────────────
-  const prCaptured = await hasCaptured(db, "pr");
+  // `prCaptured` is a COMPLETENESS marker (`prs_reconciled`, written by
+  // reconcileRepo only after the open-PR list is fetched AND ingested), not
+  // "any pr row exists" — a single webhook delivery must not claim a complete
+  // open-PR count. Same field name/shape as before; only what it gates on
+  // changed.
+  const prCaptured = (await getSnapshot(db, "prs_reconciled")) !== null;
   const isOpen = (r: RepoEventRow) => r.state === "draft" || r.state === "review";
   const prsNow = prCaptured ? (await prStatesAsOf(db, nowAt)).filter(isOpen) : [];
   const prsThen = prCaptured ? (await prStatesAsOf(db, weekAgo)).filter(isOpen) : [];
   const awaiting = (rows: RepoEventRow[]) => rows.filter((r) => r.state === "review").length;
+  // A delta is only real once capture was RECORDING for the whole comparison
+  // window — otherwise "now vs a week ago" is really "now vs whenever capture
+  // began", which reads as a spurious spike. `tickets` is the fallback tile's
+  // own read, so skip it entirely once PR capture makes that tile unreachable.
+  const prRecordingSince = prCaptured ? await recordingSince(db, "pr") : null;
+  const prDeltaOk = prRecordingSince !== null && prRecordingSince <= weekAgo;
+  const tickets = prCaptured ? { open: 0, delta: 0 } : await ticketCounts(db, weekAgo);
   const pushes = await pushRowsSince(db, twoWeeksAgo);
   const pushesThisWeek = pushes.filter((p) => p.occurred_at > weekAgo);
   const sum = (rows: RepoEventRow[]) => rows.reduce((n, r) => n + (r.count ?? 0), 0);
   const commitsThisWeek = sum(pushesThisWeek);
   const commitsLastWeek = sum(pushes.filter((p) => p.occurred_at <= weekAgo));
+  const pushRecordingSince = pushes.length ? await recordingSince(db, "push") : null;
+  const pushDeltaOk = pushRecordingSince !== null && pushRecordingSince <= twoWeeksAgo;
 
   const issueEvents = await all<IssueRow>(
     db,
@@ -216,8 +230,8 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   // Until PR state has been captured (or backfilled) an "Open PRs: 0" would be a lie.
   const stats: RepoStat[] = prCaptured
     ? [
-        { label: "Open PRs", value: prsNow.length, delta: prsNow.length - prsThen.length, tone: "neutral" },
-        { label: "Awaiting review", value: awaiting(prsNow), delta: awaiting(prsNow) - awaiting(prsThen), tone: "neutral" },
+        { label: "Open PRs", value: prsNow.length, delta: prDeltaOk ? prsNow.length - prsThen.length : 0, tone: "neutral" },
+        { label: "Awaiting review", value: awaiting(prsNow), delta: prDeltaOk ? awaiting(prsNow) - awaiting(prsThen) : 0, tone: "neutral" },
         ...issueTiles,
       ]
     : [
@@ -235,7 +249,11 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
       : { label: "Closed unmerged", value: closedUnmerged.length, sub: "this week", tone: "neutral" },
     { label: "Merged this week", value: mergedThisWeek.length, sub: mergers === 0 ? "this week" : mergers === 1 ? "by 1 person" : `by ${mergers} people`, tone: "neutral" },
     pushes.length
-      ? { label: "Commits this week", value: commitsThisWeek, sub: `${commitDelta >= 0 ? "▲" : "▼"} ${Math.abs(commitDelta)} vs last week`, tone: "neutral" }
+      ? {
+          label: "Commits this week", value: commitsThisWeek,
+          sub: pushDeltaOk ? `${commitDelta >= 0 ? "▲" : "▼"} ${Math.abs(commitDelta)} vs last week` : "this week",
+          tone: "neutral",
+        }
       : { label: "Issues opened", value: openedThisWeek.length, sub: "this week", tone: "neutral" },
     { label: "Issues closed", value: closedThisWeek.length, sub: "this week", tone: "neutral" },
   ];
@@ -262,7 +280,10 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     url: p.url, at: p.at,
   }));
   const issueActivity = issueEvents.map((e) => activityOf(people, e)).filter((a): a is RepoActivity => a !== null);
-  const pushActivity: RepoActivity[] = pushes.slice(0, ACTIVITY_LIMIT).map((p) => ({
+  // A backfilled push is a synthetic count-1 row PER COMMIT (40 real commits
+  // become 40 rows), so it would flood the feed with lines a real push never
+  // produces — keep the feed to what the webhook actually saw.
+  const pushActivity: RepoActivity[] = pushes.filter((p) => p.provenance === "webhook").slice(0, ACTIVITY_LIMIT).map((p) => ({
     kind: "push" as const, actor: p.actor_login ? personOf(people, p.actor_login) : null,
     text: `pushed ${p.count ?? 0} commit${p.count === 1 ? "" : "s"} to ${p.ref ?? "a branch"}`, url: p.url, at: p.occurred_at,
   }));
@@ -277,13 +298,19 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     row[key] += 1;
     tally.set(k, row);
   };
-  // A bot's pushes are not a person's week.
-  for (const p of pushesThisWeek) if (p.actor_login && !p.actor_login.endsWith("[bot]")) bump(p.actor_login, "pushes");
+  // A bot's pushes are not a person's week; nor is a backfilled one — a
+  // 40-commit backfilled push would tally P=40 for one person against a real
+  // push's P=1 for the same 40 commits.
+  for (const p of pushesThisWeek) if (p.actor_login && !p.actor_login.endsWith("[bot]") && p.provenance === "webhook") bump(p.actor_login, "pushes");
   for (const p of mergedThisWeek) bump(p.subject_login, "merged");
+  // `reviews` has no capture path yet (Phase 2) — every tally is 0, which would
+  // render as a real "0 reviews" column. Show it only once a `review` row has
+  // ever been captured; until then it is `null` (never guessed).
+  const hasReviewCapture = await hasCaptured(db, "review");
   const contributors: RepoContributor[] = [...tally.values()]
     .sort((a, b) => (b.pushes + b.merged + b.reviews) - (a.pushes + a.merged + a.reviews) || a.login.localeCompare(b.login))
     .slice(0, CONTRIBUTOR_LIMIT)
-    .map((t) => ({ person: personOf(people, t.login), pushes: t.pushes, merged: t.merged, reviews: t.reviews }));
+    .map((t) => ({ person: personOf(people, t.login), pushes: t.pushes, merged: t.merged, reviews: hasReviewCapture ? t.reviews : null }));
 
   const byLabel = new Map<string, number>();
   for (const i of openNow) for (const l of i.labels) byLabel.set(l, (byLabel.get(l) ?? 0) + 1);
@@ -300,13 +327,17 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     : null;
 
   const PR_STATES = ["draft", "review", "approved", "merged", "closed"] as const;
+  const isKnownPrState = (s: string | null): s is RepoPr["state"] => (PR_STATES as readonly string[]).includes(s ?? "");
   const capturedPrs: RepoPr[] = prCaptured
-    ? (await recentPrRows(db, PR_LIMIT)).map((r) => ({
-        number: r.number ?? 0, title: r.title ?? `PR #${r.number}`, url: r.url ?? "",
-        author: personOf(people, r.actor_login ?? "unknown"), branch: r.ref,
-        state: (PR_STATES as readonly string[]).includes(r.state ?? "") ? (r.state as RepoPr["state"]) : "review",
-        checks: null, at: r.occurred_at,
-      }))
+    ? (await recentPrRows(db, PR_LIMIT))
+        // An unrecognized state is dropped, never guessed as "awaiting review".
+        .filter((r) => isKnownPrState(r.state))
+        .map((r) => ({
+          number: r.number ?? 0, title: r.title ?? `PR #${r.number}`, url: r.url ?? "",
+          author: personOf(people, r.actor_login ?? "unknown"), branch: r.ref,
+          state: r.state as RepoPr["state"],
+          checks: null, at: r.occurred_at,
+        }))
     : listPrs.map((p) => prOf(people, p));
 
   const some = <T>(rows: T[]): RepoSection<T[]> => (rows.length ? ok(rows) : EMPTY);

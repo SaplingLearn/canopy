@@ -7,7 +7,7 @@ import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
 import { consume } from "./consumer";
-import { runBackfill } from "./tools/backfill";
+import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
   create_ticket, transition_ticket, toggle_assignee, add_ticket_link,
@@ -311,11 +311,17 @@ app.post("/admin/backfill", async (c) => {
   if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);
-  // Best-effort: the repo dashboard's history rides the same admin action.
-  if (c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
-    await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
+  // Best-effort, and only on the FINAL batch of a Sync (web/src/main.ts
+  // re-POSTs this route up to 10 times while the summary budget stays
+  // exhausted): reconcileRepo redoes ~250 no-op statements on an
+  // already-reconciled repo, so running it on every intermediate batch would
+  // waste that work 9 times over for nothing. `repo` is present in the
+  // response only when it actually ran.
+  let repo: { written: number; unchanged: number } | undefined;
+  if (isFinalBackfillBatch(res) && c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
+    repo = await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
   }
-  return c.json(res);
+  return c.json(repo ? { ...res, repo } : res);
 });
 
 // ── Tickets (session-cookie only, NEVER MCP): the one queue the whole org files

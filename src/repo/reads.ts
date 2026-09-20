@@ -6,6 +6,17 @@ export async function hasCaptured(db: DB, kind: RepoEventKind): Promise<boolean>
   return (await first<{ n: number }>(db, `SELECT 1 AS n FROM repo_events WHERE kind = ? LIMIT 1`, kind)) !== null;
 }
 
+/** When capture of `kind` began recording (the earliest `recorded_at`, NOT
+ *  `occurred_at` — a backfilled row's occurred_at can predate capture
+ *  entirely). `SELECT MIN(...)` always returns a row, so an empty table
+ *  comes back as `{ at: null }`, not no row — normalize that to `null`. Used
+ *  to decide whether a week-over-week delta is real or an artifact of when
+ *  capture started. */
+export async function recordingSince(db: DB, kind: RepoEventKind): Promise<string | null> {
+  const row = await first<{ at: string | null }>(db, `SELECT MIN(recorded_at) AS at FROM repo_events WHERE kind = ?`, kind);
+  return row?.at ?? null;
+}
+
 /** The latest `pr` row per PR number as of a moment — a PR's state THEN. */
 export async function prStatesAsOf(db: DB, asOfIso: string): Promise<RepoEventRow[]> {
   return all<RepoEventRow>(db,

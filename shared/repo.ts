@@ -119,8 +119,10 @@ export interface RepoSprint {
   total: number;
   pct: number;
 }
-/** The design's P · M · R: pushes, merged PRs, reviews — this week. */
-export interface RepoContributor { person: RepoPerson; pushes: number; merged: number; reviews: number }
+/** The design's P · M · R: pushes, merged PRs, reviews — this week. `reviews`
+ *  is `null` until a `review` row has ever been captured (no capture path
+ *  exists yet) — never a guessed 0. */
+export interface RepoContributor { person: RepoPerson; pushes: number; merged: number; reviews: number | null }
 export interface RepoLabels { total: number; rows: { name: string; count: number }[] }
 export interface RepoTodos { count: number; delta: number; since: string; trend: number[] }
 
