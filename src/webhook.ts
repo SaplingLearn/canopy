@@ -4,8 +4,9 @@ import { type DB } from "./db";
 import { ingestEvent, ingestRepoEvent } from "./consumer";
 import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer, geminiIssueSummarizer, storePrSummary, storeIssueSummary } from "./tools/summarize";
 import { applyEventProgress } from "./tools/progress";
-import { repoEventsFromDelivery } from "./repo/capture";
+import { repoEventsFromDelivery, metricsFromStatus } from "./repo/capture";
 import { repoEnvironments } from "./repo/config";
+import { putMetric } from "./repo/store";
 import { fillFailedJob, refreshDrift } from "./repo/github";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
@@ -291,8 +292,10 @@ async function progressSeam(db: DB, payload: unknown): Promise<void> {
 
 /** Deliveries the My Work capture (`events`) reads. */
 const WORK_EVENT_NAMES = ["pull_request", "issues"];
-/** Deliveries the repo dashboard capture (`repo_events`) reads. Later phases append. */
-export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push", "pull_request_review", "deployment_status", "check_run", "workflow_run"];
+/** Deliveries the repo dashboard capture (`repo_events`) reads. `status` (Task
+ *  14) is a sibling arm: it feeds `repo_metrics`, not `repo_events` — see the
+ *  branch below. Later phases append. */
+export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push", "pull_request_review", "deployment_status", "check_run", "workflow_run", "status"];
 
 // ---------------------------------------------------------------------------
 // The webhook branch. HMAC-verify the raw body BEFORE anything else (a bad or
@@ -364,18 +367,28 @@ export async function handleGithubWebhook(
     // drift-refresh trigger as well as the event derivation itself.
     const cfgs = repoEnvironments(env);
     try {
-      for (const ev of repoEventsFromDelivery(eventName, payload, cfgs)) {
-        const res = await ingestRepoEvent(env.DB, ev);
-        if (res.outcome !== "written") { repo.unchanged++; continue; }
-        repo.captured++;
-        if (ev.kind === "run" && (ev.state === "failure" || ev.state === "timed_out") && ev.number && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
-          const job = fillFailedJob(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, ev.number, ev.semantic_key);
-          // Off the response path when the runtime allows; GitHub gives a hook 10s.
-          if (opts?.waitUntil) opts.waitUntil(job); else await job;
+      if (eventName === "status") {
+        // A SIBLING arm, not a row through repoEventsFromDelivery/ingestRepoEvent:
+        // a status produces repo_metrics points, never a repo_events row. Most
+        // statuses (Railway's, CodeRabbit's) carry no canopy/* context and cost
+        // one cheap parse in metricsFromStatus, which returns [] for them.
+        for (const m of metricsFromStatus(payload, cfgs)) {
+          if (await putMetric(env.DB, m)) repo.captured++; else repo.unchanged++;
         }
-        if (ev.kind === "push" && cfgs.some((c) => c.branch === ev.ref) && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
-          const drift = refreshDrift(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, cfgs);
-          if (opts?.waitUntil) opts.waitUntil(drift); else await drift;
+      } else {
+        for (const ev of repoEventsFromDelivery(eventName, payload, cfgs)) {
+          const res = await ingestRepoEvent(env.DB, ev);
+          if (res.outcome !== "written") { repo.unchanged++; continue; }
+          repo.captured++;
+          if (ev.kind === "run" && (ev.state === "failure" || ev.state === "timed_out") && ev.number && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
+            const job = fillFailedJob(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, ev.number, ev.semantic_key);
+            // Off the response path when the runtime allows; GitHub gives a hook 10s.
+            if (opts?.waitUntil) opts.waitUntil(job); else await job;
+          }
+          if (ev.kind === "push" && cfgs.some((c) => c.branch === ev.ref) && env.GITHUB_SERVICE_TOKEN && env.GITHUB_REPO) {
+            const drift = refreshDrift(env.DB, { token: env.GITHUB_SERVICE_TOKEN, repo: env.GITHUB_REPO, fetchImpl: opts?.fetchImpl }, cfgs);
+            if (opts?.waitUntil) opts.waitUntil(drift); else await drift;
+          }
         }
       }
     } catch (e) {

@@ -468,10 +468,11 @@ phantom commit to the totals. Two D1 statements, whatever the branch count. The 
 (the stretch BEFORE push capture began) still writes real backfill push rows and is untouched.
 
 **These sections still read `not_connected` (or `empty`) on a fresh deploy**: the webhook is not yet
-subscribed to `deployment_status` / `check_run` / `workflow_run` / `pull_request_review` (nor, for a later
-phase, `status`) — the capture paths all exist in code, but until the repo owner adds those events in
-GitHub's webhook settings, no live delivery lands. Until then, `reconcileRepo` is the only source for
-deploys, checks and runs — and it now runs off TWO triggers, not one: an admin's manual "Sync GitHub"
+subscribed to `deployment_status` / `check_run` / `workflow_run` / `pull_request_review` / `status` — the
+capture paths all exist in code, but until the repo owner adds those events in GitHub's webhook settings, no
+live delivery lands (`status` also needs the target repo's CI to actually post it — see the coverage/bundle/
+TODO paragraph below). Until then, `reconcileRepo` is the only source for deploys, checks and runs — and it
+now runs off TWO triggers, not one: an admin's manual "Sync GitHub"
 (`POST /admin/backfill`, on the batch that ends the loop — see below) and, since Phase 3's Task 13, the repo
 cron's 6-hourly `:20` tick (`src/repo/cron.ts`'s `handleRepoCron`) — the exact same function either way, so
 a repo nobody clicks Sync on still self-heals within 6 hours. `reconcileRepo`'s arms, each wrapped in its
@@ -547,13 +548,14 @@ count-1 row PER COMMIT) are excluded from the activity feed and the contributors
 40-commit backfill would otherwise read as 40 feed lines and P=40 for one person — but still count toward
 the Commits tile's totals and the 14-day bars, which read `repo_events` unfiltered by provenance.
 
-**Everything with no capture path is `not_connected`, never guessed** — coverage, bundle, usage, Cloudflare,
-hosting, TODO counts (the `UNCAPTURED` object is the auditable list; drift/branches/health left it with
-Phase 3, environments/deploys/CI failures with Phase 2's Task 10, see above). Adding a capture path = flip
-one section there to `ok`; the screen already renders every section's live shape. **Phase 3 closed drift,
-branches and health** (lighting up the drift strip, the branches list + Active branches tile, and the health
-block feeding the HEALTHY/DEGRADED/DOWN pill — see above; no GitHub settings change, no new secret); the
-phases after it, covering coverage, bundle, usage, Cloudflare, hosting and TODOs, are specified in
+**Everything with no capture path is `not_connected`, never guessed** — usage, Cloudflare, hosting (the
+`UNCAPTURED` object is the auditable list; drift/branches/health left it with Phase 3, environments/deploys/
+CI failures with Phase 2's Task 10, coverage/bundle/TODO counts with Phase 4's Task 14 — see below). Adding a
+capture path = flip one section there to `ok`; the screen already renders every section's live shape.
+**Phase 3 closed drift, branches and health** (lighting up the drift strip, the branches list + Active
+branches tile, and the health block feeding the HEALTHY/DEGRADED/DOWN pill — see above; no GitHub settings
+change, no new secret); **Phase 4 (Task 14) closed coverage, bundle size and the TODO/FIXME count** (see the
+paragraph below); the phases after it, covering usage, Cloudflare and hosting, are specified in
 `docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. `pruneRepoCapture` (`src/repo/store.ts`) is
 now CALLED — the repo cron's 6-hourly `:30` tick (`src/repo/cron.ts`) — and deletes `check` rows older than
 45 days ONLY `WHERE part IS NULL`: a FRONTEND deploy record IS a `check` row (the Workers Builds check,
@@ -562,6 +564,36 @@ the deploy dot strip's web half. Because those deploy rows are never pruned, `de
 (`src/repo/reads.ts`) carries its own 90-day bound instead of grouping the whole table forever. The capture names a PR's AUTHOR and an issue's subject, not who
 merged/closed — so the feed never claims an actor it does not have. "Preview with sample data" swaps in
 `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the Worker.
+
+**Coverage, bundle size and the TODO/FIXME count are commit-status metrics** (Phase 4, Task 14) — a THIRD
+capture shape beside `repo_events` and the environment/deploy `repo_snapshots`: the target repo's CI posts
+each as a GitHub commit status (`context` names the metric, `description` is the number) on a push to
+`main`; GitHub delivers it as a `status` webhook event, now in `REPO_EVENT_NAMES`, and `metricsFromStatus`
+(`src/repo/capture.ts`) turns it into a `repo_metrics` point — a SIBLING arm to `repoEventsFromDelivery` in
+`src/webhook.ts`'s repo-capture branch, not a row through it, since a status produces no `RepoEvent`. Three
+contexts, one metric each: `canopy/coverage` → `coverage`, `canopy/bundle-kb` → `bundle_kb`, `canopy/todo` →
+`todo_count`. A status counts only when its `branches[].name` includes the FIRST configured environment's
+branch (today `main`; falling back to the literal `"main"` when no environment is configured) — a feature
+branch's coverage is not the repo's — and an unrelated context (Railway's or CodeRabbit's own statuses,
+frequent once the webhook subscribes to Statuses) is dropped after one cheap parse, costing zero D1 writes.
+`putMetric` (`src/repo/store.ts`) now returns whether it wrote a NEW row (false for a redelivery or an
+unparseable `at`), so the webhook counts only newly-captured metrics into `repo.captured`, a redelivery into
+`repo.unchanged` — the same shape every other repo-capture kind reports. **`metricSeries`'s `sinceIso` bound
+is now normalised the same way `at` is stored** (`Date.parse` → `toISOString()`) before the comparison: `at`
+is compared as a raw string, and a caller-computed bound lacking milliseconds (`…00Z`) would otherwise sort
+AFTER a normalised `…00.000Z` row of the exact same instant and wrongly exclude it; an unparseable bound now
+returns `[]` instead of every row ever written. **A delta claims a trend only once the window holds ≥2
+points whose first and last are ≥7 days apart** (`windowDelta` in `src/tools/repo.ts`) — a single reading,
+or two readings a day apart, cannot support "over 30 days" (coverage/bundle read a 30-day window) or a
+"since" date (the TODO count reads a 90-day window — it moves slowly enough that 30 days too often holds
+only one point). Below that bar, `RepoTrend.delta` is `""` (the screen renders no delta text and no stray
+leading space where it used to sit) and `RepoTodos.delta` is `null` (`number | null` in `shared/repo.ts` —
+no delta chip and no "since" text); the value/count and sparkline still show regardless. Both sections stay
+`not_connected` until BOTH the webhook subscribes to `status` (see above) AND the target repo's CI actually
+posts these statuses — the CI-side YAML (the workflow `permissions` block, the `pytest-cov` lockfile caveat,
+why bundle size is left optional) is written up in
+`docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`, a PR against the separate `SaplingLearn/sapling`
+repository that this repo cannot carry directly.
 
 `POST /admin/backfill` runs `reconcileRepo` **once per Sync, on the batch that ENDS the loop** — either the
 batch whose `BackfillResult.summaryBudgetExhausted` reads `false` (the normal last call), OR the batch that

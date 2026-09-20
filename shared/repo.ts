@@ -145,7 +145,11 @@ export interface RepoSprint {
  *  exists yet) — never a guessed 0. */
 export interface RepoContributor { person: RepoPerson; pushes: number; merged: number; reviews: number | null }
 export interface RepoLabels { total: number; rows: { name: string; count: number }[] }
-export interface RepoTodos { count: number; delta: number; since: string; trend: number[] }
+/** `delta`/`since` are `null`/`""` until the window holds ≥2 points whose
+ *  first and last are ≥7 days apart (see `windowDelta` in `src/tools/repo.ts`)
+ *  — a single reading, or two readings a day apart, cannot support a trend
+ *  claim. `null` renders no delta and no "since" text, count/trend still show. */
+export interface RepoTodos { count: number; delta: number | null; since: string; trend: number[] }
 
 export interface RepoDashboard {
   /** `GITHUB_REPO`, e.g. "SaplingLearn/sapling". */

@@ -5,7 +5,7 @@ import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
 import { ingestEvent, ingestRepoEvent } from "../src/consumer";
 import { getRepoDashboard } from "../src/tools/repo";
-import { putSnapshot } from "../src/repo/store";
+import { putSnapshot, putMetric } from "../src/repo/store";
 import { create_sprint, set_sprint_active } from "../src/tools/sprints";
 import { seedPerson } from "./helpers/persons";
 import { run } from "../src/db";
@@ -195,6 +195,39 @@ describe("getRepoDashboard — a D1-only projection", () => {
     await set_sprint_active(env.DB, sp.id, true);
     const sprint = data((await getRepoDashboard(env.DB, "o/r", NOW)).sprint);
     expect(sprint).toMatchObject({ id: sp.id, label: "Notifications GA", closed: 0, total: 0, pct: 0 });
+  });
+
+  it("coverage, bundle and TODO read as value + trend + delta from repo_metrics", async () => {
+    const pts: [string, number][] = [[ago(30), 77.2], [ago(10), 78.0], [ago(1), 78.4]];
+    for (const [at, value] of pts) await putMetric(env.DB, { metric: "coverage", env: "", part: "", value, at });
+    await putMetric(env.DB, { metric: "todo_count", env: "", part: "", value: 61, at: ago(40) });
+    await putMetric(env.DB, { metric: "todo_count", env: "", part: "", value: 43, at: ago(1) });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(data(d.coverage)).toMatchObject({ value: "78.4%", trend: [77.2, 78, 78.4], delta: "+1.2", tone: "good" });
+    expect(data(d.todos)).toMatchObject({ count: 43, delta: -18, trend: [61, 43] });
+    expect(d.bundle.status).toBe("not_connected");
+  });
+
+  // Controller ruling on Task 14: a delta claims a trend only once the window
+  // holds ≥2 points whose first and last are ≥7 days apart — never guess a
+  // trend off a single reading or two readings a day apart.
+  it("a single coverage point shows the value with no delta claim", async () => {
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 80.1, at: ago(1) });
+    const cov = data((await getRepoDashboard(env.DB, "o/r", NOW)).coverage);
+    expect(cov).toMatchObject({ value: "80.1%", trend: [80.1], delta: "", tone: "neutral" });
+  });
+
+  it("two coverage points less than 7 days apart also show no delta claim", async () => {
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 77.0, at: ago(3) });
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 77.5, at: ago(1) });
+    const cov = data((await getRepoDashboard(env.DB, "o/r", NOW)).coverage);
+    expect(cov).toMatchObject({ trend: [77, 77.5], delta: "", tone: "neutral" });
+  });
+
+  it("a single TODO point shows the count with no delta and no since text", async () => {
+    await putMetric(env.DB, { metric: "todo_count", env: "", part: "", value: 50, at: ago(1) });
+    const todos = data((await getRepoDashboard(env.DB, "o/r", NOW)).todos);
+    expect(todos).toMatchObject({ count: 50, delta: null, trend: [50] });
   });
 });
 

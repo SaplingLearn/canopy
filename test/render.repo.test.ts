@@ -206,6 +206,41 @@ describe("repoView — live content", () => {
     for (const label of ["staging · api", "staging · web", "production · api", "production · web"]) expect(html).toContain(label);
   });
 
+  // Task 14, controller ruling M2: a delta ("" for RepoTrend, null for
+  // RepoTodos) means the window can't support a trend claim — the screen
+  // shows the value/count and sparkline but renders no delta text and, for
+  // TODOs, no "since" text either. No stray leading space where the delta
+  // used to sit.
+  it("a coverage trend with no delta claim (delta: \"\") shows the value and note with no delta text or stray space", () => {
+    const data = live({ coverage: { status: "ok", data: { value: "80.1%", trend: [80.1], delta: "", tone: "neutral", note: "over 30 days" } } });
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
+    expect(html).toContain("80.1%");
+    expect(html).toContain("over 30 days");
+    expect(html).not.toContain("</span> over 30 days"); // no empty delta span left behind
+    expect(html).not.toMatch(/>\s+over 30 days/); // no leading space where the delta span used to sit
+  });
+
+  it("still shows the delta text once the window supports a claim", () => {
+    const data = live({ coverage: { status: "ok", data: { value: "78.4%", trend: [77.2, 78.4], delta: "+1.2", tone: "good", note: "over 30 days" } } });
+    const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
+    expect(html).toContain('color:var(--green)">+1.2</span> over 30 days');
+  });
+
+  it("a TODO count with no delta claim (delta: null) shows the count with no delta and no since text", () => {
+    const data = live({ todos: { status: "ok", data: { count: 50, delta: null, since: "", trend: [50] } } });
+    const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
+    expect(html).toContain("50");
+    expect(html).not.toContain("since");
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("still shows delta and since text once the window supports a claim", () => {
+    const data = live({ todos: { status: "ok", data: { count: 43, delta: -18, since: "Aug 1", trend: [61, 43] } } });
+    const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
+    expect(html).toContain("−18");
+    expect(html).toContain("since Aug 1");
+  });
+
   it("links the current sprint to its screen", () => {
     const data = live({ sprint: { status: "ok", data: { id: 3, label: "Notifications GA", due: "2026-10-02", closed: 21, total: 34, pct: 62 } } });
     const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));

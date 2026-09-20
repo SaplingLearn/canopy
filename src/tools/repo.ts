@@ -1,6 +1,7 @@
 import type {
   RepoActivity, RepoBars, RepoBranches, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
-  RepoDrift, RepoEnv, RepoEnvPart, RepoHealth, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
+  RepoDrift, RepoEnv, RepoEnvPart, RepoHealth, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat,
+  RepoTodos, RepoTone, RepoTrend,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
@@ -10,7 +11,7 @@ import {
   hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
-import { getSnapshot, latestHealth } from "../repo/store";
+import { getSnapshot, latestHealth, metricSeries } from "../repo/store";
 import type { RepoEventRow, RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
@@ -18,13 +19,18 @@ import type { RepoEventRow, RepoPrRow } from "../repo/types";
 // the backfill and the repo cron (src/repo/cron.ts) already captured — deploys,
 // checks, runs, branches, drift and environment health, from `repo_events` /
 // `repo_snapshots` / `repo_metrics` — plus `events` (merged/closed PRs + issue
-// snapshots), the ticket queue and the sprints.
+// snapshots), the ticket queue and the sprints. Coverage, bundle size and the
+// TODO/FIXME count (Task 14) are ALSO `repo_metrics`, fed by the target repo's
+// CI posting a commit status (`canopy/coverage` / `canopy/bundle-kb` /
+// `canopy/todo`) that the webhook's `status` branch turns into a metric point
+// (see `docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`) — never a
+// live scan at render time.
 //
-// Everything Canopy has NO capture path for — coverage, bundle size, usage,
-// Cloudflare analytics, hosting, TODO counts — is returned as `not_connected`,
-// never guessed (the `UNCAPTURED` object below is the auditable list). Adding a
-// capture path later means flipping ONE section here from `not_connected` to
-// `ok`; the screen already renders every section's live shape.
+// Everything Canopy has NO capture path for — usage, Cloudflare analytics,
+// hosting — is returned as `not_connected`, never guessed (the `UNCAPTURED`
+// object below is the auditable list). Adding a capture path later means
+// flipping ONE section here from `not_connected` to `ok`; the screen already
+// renders every section's live shape.
 
 const DAY = 86_400_000;
 const PR_LIMIT = 8;
@@ -48,16 +54,14 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 
 /** The sections no capture path feeds yet. One object so the list is auditable. */
 const UNCAPTURED = {
-  coverage: NOT_CONNECTED, bundle: NOT_CONNECTED,
   usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
-  todos: NOT_CONNECTED,
 } as const;
 
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
     repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
     environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
-    branches: NOT_CONNECTED, health: NOT_CONNECTED,
+    branches: NOT_CONNECTED, health: NOT_CONNECTED, coverage: NOT_CONNECTED, bundle: NOT_CONNECTED, todos: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
     sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
   };
@@ -160,6 +164,24 @@ const prOf = (people: PersonMap, r: PrRow): RepoPr => ({
 /** A lower delta is good for a backlog count; a rising bug count is a warning. */
 const backlogTone = (delta: number, warnOnRise: boolean): RepoTone =>
   delta < 0 ? "good" : delta > 0 && warnOnRise ? "warn" : "neutral";
+
+// ── coverage / bundle / TODO metrics (Task 14) ───────────────────────────────
+const SEVEN_DAYS = 7 * DAY;
+
+/** A delta claims a trend only once the window holds ≥2 points whose first and
+ *  last are ≥7 days apart — a single reading (or two readings a day apart)
+ *  cannot support "over 30 days". `points` is ascending by `at` (metricSeries'
+ *  own order), so `[0]`/`[length-1]` ARE the window's first and last. */
+function windowDelta(points: { at: string; value: number }[]): number | null {
+  if (points.length < 2) return null;
+  const first = Date.parse(points[0].at);
+  const last = Date.parse(points[points.length - 1].at);
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last - first < SEVEN_DAYS) return null;
+  return points[points.length - 1].value - points[0].value;
+}
+
+const fixed = (n: number, d: number): string => (Math.round(n * 10 ** d) / 10 ** d).toString();
+const signed = (n: number, d: number, unit = ""): string => `${n > 0 ? "+" : n < 0 ? "−" : ""}${fixed(Math.abs(n), d)}${unit}`;
 
 /** `YYYY-MM-DD` (UTC) for each of the last `n` days, oldest first. */
 function lastDays(now: number, n: number): string[] {
@@ -503,8 +525,49 @@ export async function getRepoDashboard(
   // those already wrote. No snapshot yet → not_connected; a stale one is
   // still shown, with nothing on screen saying how old it is (see `branches`).
   const driftSnap = await getSnapshot<RepoDrift>(db, "drift");
+
+  // ── coverage / bundle / TODO count — repo_metrics, fed by the target repo's
+  // CI posting a commit status that `handleGithubWebhook`'s `status` branch
+  // (src/webhook.ts) turns into a metric point. Never a live scan at render time.
+  const monthAgo = new Date(now - 30 * DAY).toISOString();
+  const covPts = await metricSeries(db, "coverage", "", "", monthAgo);
+  const covDelta = windowDelta(covPts);
+  const coverage: RepoSection<RepoTrend> = covPts.length
+    ? ok({
+        value: `${fixed(covPts[covPts.length - 1].value, 1)}%`,
+        trend: covPts.slice(-10).map((p) => p.value),
+        delta: covDelta === null ? "" : signed(covDelta, 1),
+        tone: covDelta === null ? "neutral" : covDelta >= 0 ? "good" : "warn",
+        note: "over 30 days",
+      })
+    : NOT_CONNECTED;
+  const bunPts = await metricSeries(db, "bundle_kb", "", "", monthAgo);
+  const bunDelta = windowDelta(bunPts);
+  const bundle: RepoSection<RepoTrend> = bunPts.length
+    ? ok({
+        value: `${fixed(bunPts[bunPts.length - 1].value, 0)} KB`,
+        trend: bunPts.slice(-10).map((p) => p.value),
+        delta: bunDelta === null ? "" : signed(bunDelta, 0, " KB"),
+        tone: bunDelta === null ? "neutral" : bunDelta > 0 ? "warn" : "good",
+        note: "over 30 days · gzip",
+      })
+    : NOT_CONNECTED;
+  // A wider window than coverage/bundle (90 days, not 30): the TODO count
+  // moves slowly, so a 30-day window would too often hold only one point.
+  const todoPts = await metricSeries(db, "todo_count", "", "", new Date(now - 90 * DAY).toISOString());
+  const todoDelta = windowDelta(todoPts);
+  const todos: RepoSection<RepoTodos> = todoPts.length
+    ? ok({
+        count: todoPts[todoPts.length - 1].value,
+        delta: todoDelta,
+        since: todoDelta === null ? "" : new Date(todoPts[0].at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }),
+        trend: todoPts.slice(-10).map((p) => p.value),
+      })
+    : NOT_CONNECTED;
+
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
+    coverage, bundle, todos,
     drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
     branches: branchSnap ? ok(branchSnap.data) : NOT_CONNECTED,
     // Three states, not two. Every row here is already fresh (stale ones were

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { repoEventsFromDelivery } from "../src/repo/capture";
+import { repoEventsFromDelivery, metricsFromStatus } from "../src/repo/capture";
 import { ENVS } from "./helpers/repo";
 import push from "./fixtures/gh-push.json";
 import prOpened from "./fixtures/gh-pr-opened.json";
@@ -123,5 +123,34 @@ describe("repoEventsFromDelivery — workflow_run and pull_request_review", () =
     expect(repoEventsFromDelivery("pull_request_review", prReview, ENVS)[0]).toMatchObject({
       semantic_key: "gh:review:3001:submitted", kind: "review", number: 480, state: "approved", actor_login: "Darkest-Teddy",
     });
+  });
+});
+
+describe("metricsFromStatus", () => {
+  const status = (context: string, description: string, branch = "main") =>
+    ({ sha: "abc", context, description, state: "success", updated_at: "2026-09-20T09:30:00Z", branches: [{ name: branch }] });
+
+  it("reads the three canopy contexts as numbers", () => {
+    expect(metricsFromStatus(status("canopy/coverage", "78.4"), ENVS)).toEqual([{ metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T09:30:00Z" }]);
+    expect(metricsFromStatus(status("canopy/bundle-kb", "412"), ENVS)[0]).toMatchObject({ metric: "bundle_kb", value: 412 });
+    expect(metricsFromStatus(status("canopy/todo", "43"), ENVS)[0]).toMatchObject({ metric: "todo_count", value: 43 });
+  });
+
+  it("ignores other contexts, non-numbers, and other branches", () => {
+    expect(metricsFromStatus(status("Sapling - sapling", "Success"), ENVS)).toEqual([]);
+    expect(metricsFromStatus(status("canopy/coverage", "n/a"), ENVS)).toEqual([]);
+    expect(metricsFromStatus(status("canopy/coverage", "61.0", "feat/x"), ENVS)).toEqual([]);
+  });
+
+  it("returns [] for junk and for a status with no timestamp", () => {
+    expect(metricsFromStatus(null, ENVS)).toEqual([]);
+    expect(metricsFromStatus({ context: "canopy/coverage", description: "78.4", branches: [{ name: "main" }] }, ENVS)).toEqual([]);
+  });
+
+  // ENVS[0].branch is "main" here too, so this doesn't distinguish the fallback
+  // from the configured value — a second case pins the fallback itself below.
+  it("falls back to \"main\" when no environments are configured", () => {
+    expect(metricsFromStatus(status("canopy/coverage", "61.0", "main"), [])[0]).toMatchObject({ metric: "coverage", value: 61 });
+    expect(metricsFromStatus(status("canopy/coverage", "61.0", "feat/x"), [])).toEqual([]);
   });
 });

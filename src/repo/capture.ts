@@ -3,7 +3,7 @@
 // re-derive the typed columns), never the whole delivery — commit bodies and PR
 // descriptions stay out of D1.
 import type { RepoEnvConfig } from "./config";
-import type { RepoEvent } from "./types";
+import type { RepoEvent, RepoMetric } from "./types";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v !== null && typeof v === "object" ? (v as Obj) : null);
@@ -137,6 +137,33 @@ function fromReview(p: Obj): RepoEvent[] {
     actor_login: str(obj(review.user)?.login), url: str(review.html_url),
     raw: JSON.stringify({ action }), provenance: "webhook", occurred_at: at,
   }];
+}
+
+/** The commit-status contexts the target repo's CI posts (see
+ *  `docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`) — one status per
+ *  metric, `description` carrying the number. */
+const STATUS_METRICS: Record<string, string> = { "canopy/coverage": "coverage", "canopy/bundle-kb": "bundle_kb", "canopy/todo": "todo_count" };
+
+/** A commit status whose description is a number, posted by the target repo's
+ *  CI — a SIBLING derivation to `repoEventsFromDelivery`, not a branch of it:
+ *  a `status` delivery produces `RepoMetric`s, never `RepoEvent` rows. Only a
+ *  status on the FIRST configured environment's branch counts (today "main";
+ *  falls back to "main" when no environment is configured) — a feature
+ *  branch's coverage is not the repo's. An unrelated context (Railway's own
+ *  deploy statuses, CodeRabbit's review statuses — frequent once the webhook
+ *  subscribes to Statuses) is dropped after one cheap map lookup. */
+export function metricsFromStatus(payload: unknown, envs: RepoEnvConfig[]): RepoMetric[] {
+  const p = obj(payload);
+  if (!p) return [];
+  const metric = STATUS_METRICS[str(p.context) ?? ""];
+  if (!metric) return [];
+  const at = str(p.updated_at) ?? str(p.created_at);
+  if (!at) return [];
+  const value = Number(str(p.description));
+  if (!Number.isFinite(value)) return [];
+  const branches = Array.isArray(p.branches) ? p.branches.map((b) => str(obj(b)?.name)) : [];
+  if (!branches.includes(envs[0]?.branch ?? "main")) return [];
+  return [{ metric, env: "", part: "", value, at }];
 }
 
 export function repoEventsFromDelivery(eventName: string, payload: unknown, envs: RepoEnvConfig[]): RepoEvent[] {
