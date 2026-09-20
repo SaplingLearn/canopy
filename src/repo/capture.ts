@@ -22,7 +22,16 @@ function fromPush(p: Obj): RepoEvent[] {
   if (!after) return [];
   const commits = Array.isArray(p.commits) ? p.commits.map(obj).filter((c): c is Obj => c !== null) : [];
   const head = obj(p.head_commit);
-  const at = str(head?.timestamp) ?? str(commits[commits.length - 1]?.timestamp);
+  // A push HAPPENED when GitHub says it did (`repository.pushed_at`, unix
+  // seconds) — not when its head commit was originally authored. A rebase or
+  // cherry-pick carries an old commit timestamp but is pushed just now; using
+  // the commit's own timestamp would land it in a stale day bucket.
+  const pushedAt = num(obj(p.repository)?.pushed_at);
+  // Second-precision, no milliseconds — matches GitHub's own timestamp shape
+  // (every other `occurred_at` on this arm comes straight off the payload).
+  const at = pushedAt !== null
+    ? new Date(pushedAt * 1000).toISOString().replace(/\.\d{3}Z$/, "Z")
+    : str(head?.timestamp) ?? str(commits[commits.length - 1]?.timestamp);
   if (!at) return [];
   return [{
     semantic_key: `gh:push:${after}:${branch}`,

@@ -13,11 +13,22 @@ describe("repoEventsFromDelivery — push", () => {
     expect(ev).toMatchObject({
       semantic_key: "gh:push:becdbac09eaf5d7c73b9f27019c0e43c4444dd7b:main", kind: "push", ref: "main",
       sha: "becdbac09eaf5d7c73b9f27019c0e43c4444dd7b", actor_login: "AndresL230", count: 2,
-      title: "fix window math", provenance: "webhook", occurred_at: "2026-09-20T09:04:41Z",
+      title: "fix window math", provenance: "webhook",
+      // repository.pushed_at (1789895090 unix seconds) converts to this instant —
+      // NOT the head commit's own (earlier-authored) 09:04:41Z timestamp. A
+      // rebase/cherry-pick would otherwise land the push in an old day bucket.
+      occurred_at: "2026-09-20T09:04:50Z",
     });
     // raw keeps a slice, never the whole delivery
     expect(JSON.parse(ev.raw).commits).toHaveLength(3);
     expect(ev.raw).not.toContain("body");
+  });
+
+  it("falls back to the head commit timestamp when repository.pushed_at is absent or not a finite number", () => {
+    const [noRepo] = repoEventsFromDelivery("push", { ...push, repository: undefined }, ENVS);
+    expect(noRepo.occurred_at).toBe("2026-09-20T09:04:41Z");
+    const [junkPushedAt] = repoEventsFromDelivery("push", { ...push, repository: { pushed_at: "not-a-number" } }, ENVS);
+    expect(junkPushedAt.occurred_at).toBe("2026-09-20T09:04:41Z");
   });
 
   it("ignores tag pushes and branch deletions", () => {
