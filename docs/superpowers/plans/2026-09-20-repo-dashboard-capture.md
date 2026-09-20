@@ -1254,6 +1254,30 @@ git commit -m "Reconcile repo capture from the GitHub API, through the gate"
 
 ---
 
+# Phase 1 — shipped (PR #54). What execution changed, and what Phase 2 inherits
+
+Phase 1 was executed task-by-task with per-task reviews and one whole-branch review. **Read this before starting Phase 2 — several Task 7–19 snippets below predate these changes.**
+
+**Changed from the plan text above (the code is the truth):**
+- `prCaptured` is NOT `hasCaptured(db,"pr")`. It is "the `prs_reconciled` snapshot exists", written by `reconcileRepo` only after the open-PR list was fetched and ingested. One webhook PR row must never flip the tiles. *Task 9's `capturedPrs` / `awaiting` snippets must keep this gate.*
+- Week-over-week deltas are emitted only when capture was RECORDING for the whole window: `recordingSince(db, kind)` = `MIN(recorded_at)` (not `occurred_at`). PR tiles need it ≤ `weekAgo`; the commits tile needs it ≤ `twoWeeksAgo`, else `sub: "this week"`. *Apply the same rule to every delta later phases add.*
+- `fromPullRequest` takes `at = updated_at ?? merged_at ?? closed_at`.
+- `RepoContributor.reviews` is `number | null` — `null` until a `review` row was ever captured. *Task 9 sets the count; it must not reintroduce a bare `0`.*
+- Backfilled (`provenance='backfill'`) push rows are excluded from the feed and the P tally (still counted in commit totals and bars). An unrecognized `pr` state drops the row.
+- `reconcileRepo` runs once per Sync — `isFinalBackfillBatch(res)` in `src/tools/backfill.ts` — and its counts join the `/admin/backfill` response as `repo`.
+- The webhook response gained `repo: {captured, unchanged}`; five exact-`toEqual` assertions in `webhook` / `progress` / `summarize` tests were updated. *Every later change to that response shape must grep for them.*
+- `test/env.d.ts` must declare each new `Env` var a test passes to a narrowly-typed function (TS2559 weak-type check) — relevant to Tasks 16–18's new secrets.
+
+**Do FIRST in Phase 2 (parked with rulings in Phase 1):**
+1. Add the missing test by name: a webhook-only `pr` row with no `prs_reconciled` marker leaves the merged-PR fallback tiles in place. (Verified live and by inspection; not yet pinned.)
+2. Push `occurred_at` → `repository.pushed_at` (unix seconds in the push payload) instead of the head commit's timestamp: a rebase or cherry-pick currently lands commits in an old day bucket, and it is the root of the backfill-shadowing edge. Changes `test/fixtures/gh-push.json` and Task 2's assertions — do it before Task 7 adds arms.
+3. `src/repo/reads.ts`: the three window-function reads are `SELECT *` (including `raw`) over every `pr` row with no bound. `synchronize` fires per push to any PR branch. Project only needed columns and bound the scan before volume matters; decide `pr`/`push` retention (today `pruneRepoCapture` covers only `check`).
+4. If a Sync hits `MAX_BACKFILL_BATCHES` (10) while still summarizing, no batch is "final" and the reconcile is skipped until the next click — run it on the capped last batch too, and fix CLAUDE.md's "once per Sync" wording.
+5. The admin route has no `fetchImpl` seam, so "reconcile on the final batch only" is unit-tested as a pure helper, not end-to-end. Task 13 moves the reconcile into cron, where `handleRepoCron` does take `fetchImpl` — cover it there.
+6. Small: hoist `obj`/`str`/`num` in `capture.ts` when Task 7 adds arms; use `db.ts` `ph()` in `store.ts`; comment that `opts.fetchImpl`/`waitUntil` become live in Task 8.
+
+---
+
 # Phase 2 — Deploys, checks, CI runs, reviews (sources C, D, E, F)
 
 **Blocked on the owner adding five webhook events** (see External prerequisites). The code can merge first — unsubscribed events simply never arrive — but nothing lights up until they do. Lights up: environment cards (both deployables), deploy dots, "CI on head", CI failures + 7-day rate, PR checks icon, APPROVED chip, reviews in feed and contributors.
