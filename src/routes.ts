@@ -27,6 +27,8 @@ import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprint
 import { get_plan } from "./tools/plan";
 import { getMyWork } from "./tools/mywork";
 import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
+import { reconcileRepo } from "./repo/github";
+import { repoEnvironments } from "./repo/config";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
 import { createInvite, revokeInvite, listInvites } from "./auth/invites";
@@ -309,6 +311,10 @@ app.post("/admin/backfill", async (c) => {
   if (!isAdmin(c.env, login)) return c.json({ error: "admin only" }, 403);
   const res = await runBackfill(c.env, login);
   if (!res.ok) return c.json({ error: res.error }, 503);
+  // Best-effort: the repo dashboard's history rides the same admin action.
+  if (c.env.GITHUB_SERVICE_TOKEN && c.env.GITHUB_REPO) {
+    await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
+  }
   return c.json(res);
 });
 
