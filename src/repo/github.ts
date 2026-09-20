@@ -8,7 +8,7 @@ import { untitledFailedRuns } from "./reads";
 import type { RepoEnvConfig } from "./config";
 import type { RepoEvent } from "./types";
 import { repoEventsFromDelivery } from "./capture";
-import type { RepoDrift, RepoDriftGroup } from "@shared/repo";
+import type { RepoBranches, RepoDrift, RepoDriftGroup } from "@shared/repo";
 
 /** At most this many `.../jobs` lookups per `reconcileRepo` call, so a first
  *  Sync over 100 untitled failed runs cannot fan out into 100 extra API calls.
@@ -241,13 +241,19 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
     });
   }
 
+  // Branches: every ref, ahead/behind `main` and flagged stale, in ONE
+  // GraphQL page (see computeBranches below). Gated on envs.length the same
+  // way `deployments` is — with nothing configured there is no environment
+  // branch list to exclude and no reason to spend the request.
+  if (envs.length) await safely("branches", () => computeBranches(db, opts, envs, now));
+
   // Branch drift (`<base>...<head>`, e.g. `production...main`), so the
   // Overview strip has data even before any push webhook lands on an
-  // environment branch. `refreshDrift` never throws (its own try/catch
-  // leaves the last good snapshot standing), so this arm's `safely` wrapper
-  // is here for the same reporting consistency as every other arm, not
-  // because it is expected to ever populate `failed`.
-  await safely("drift", () => refreshDrift(db, opts, envs));
+  // environment branch. `computeDrift` (below) THROWS on failure — this arm
+  // calls it directly, not the never-throwing `refreshDrift` wrapper, so a
+  // failing compare lands in `failed` instead of vanishing into a swallowed
+  // catch (Task 11 carry-over fix: it used to be invisible here).
+  await safely("drift", () => computeDrift(db, opts, envs));
 
   return out;
 }
@@ -271,64 +277,145 @@ interface GhCompare { ahead_by: number; behind_by: number; commits: GhCommit[] }
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /**
- * Snapshot the drift between the two environment branches — `envs[0]` is the
- * head (deploys "up front", e.g. `main`), `envs[last]` the base (e.g.
- * `production`) — grouped by the PR that brought each ahead commit. NEVER on
- * the render path: called off a push to either branch (`src/webhook.ts`) and
- * once per `reconcileRepo` Sync, so the Overview strip has data before any
- * push webhook lands. Never throws — GitHub failing leaves the previous
- * snapshot (if any) standing.
+ * Computes and stores the drift snapshot — `envs[0]` is the head (deploys "up
+ * front", e.g. `main`), `envs[last]` the base (e.g. `production`) — grouped by
+ * the PR that brought each ahead commit. THROWS on any GitHub/D1 failure; the
+ * never-throwing `refreshDrift` wrapper below is what callers outside
+ * `reconcileRepo`'s `safely` arm should use.
  */
-export async function refreshDrift(db: DB, opts: GhOpts, envs: RepoEnvConfig[]): Promise<void> {
+async function computeDrift(db: DB, opts: GhOpts, envs: RepoEnvConfig[]): Promise<void> {
   if (envs.length < 2) return;
   const head = envs[0].branch;
   const base = envs[envs.length - 1].branch;
   if (head === base) return;
+  // GitHub's compare only returns the AHEAD side's commits, so the behind
+  // side (base has commits head lacks) needs its own, second compare.
+  const ahead = await ghJson<GhCompare>(opts, `/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+  const behind = ahead.behind_by > 0 ? await ghJson<GhCompare>(opts, `/compare/${encodeURIComponent(head)}...${encodeURIComponent(base)}`) : null;
+
+  const toCommit = (c: GhCommit) => ({ sha: c.sha.slice(0, 7), msg: c.commit.message.split("\n")[0].slice(0, 160), at: c.commit.committer.date });
+  const newestFirst = <T extends { at: string }>(rows: T[]) => rows.sort((a, b) => (a.at < b.at ? 1 : -1));
+
+  // A squash merge ends "(#123)" — the repo's merge style. Anything else is a direct push.
+  const byPr = new Map<number, GhCommit[]>();
+  const direct: GhCommit[] = [];
+  for (const c of ahead.commits) {
+    const m = c.commit.message.split("\n")[0].match(/\(#(\d+)\)\s*$/);
+    if (m) byPr.set(Number(m[1]), [...(byPr.get(Number(m[1])) ?? []), c]);
+    else direct.push(c);
+  }
+  const numbers = [...byPr.keys()];
+  const titles = numbers.length
+    ? await all<{ number: number; title: string | null; actor_login: string | null }>(
+        db,
+        `SELECT number, MAX(title) AS title, MAX(actor_login) AS actor_login FROM repo_events WHERE kind = 'pr' AND number IN (${numbers.map(() => "?").join(",")}) GROUP BY number`,
+        ...numbers
+      )
+    : [];
+
+  const groups: RepoDriftGroup[] = [];
+  for (const [number, commits] of [...byPr.entries()].sort((a, b) => b[0] - a[0])) {
+    const known = titles.find((t) => t.number === number);
+    groups.push({
+      tag: `#${number}`, kind: "pr", title: known?.title ?? commits[0].commit.message.split("\n")[0],
+      meta: `${known?.actor_login ?? commits[0].author?.login ?? "unknown"} · ${plural(commits.length, "commit")}`,
+      commits: newestFirst(commits.map(toCommit)),
+    });
+  }
+  if (direct.length) {
+    groups.push({ tag: "PUSH", kind: "push", title: `Direct pushes to ${head}`, meta: plural(direct.length, "commit"), commits: newestFirst(direct.map(toCommit)) });
+  }
+  if (behind?.commits.length) {
+    groups.push({ tag: "BEHIND", kind: "behind", title: `Only on ${base} — not yet on ${head}`, meta: plural(behind.commits.length, "commit"), commits: newestFirst(behind.commits.map(toCommit)) });
+  }
+
+  const drift: RepoDrift = { head, base, ahead: ahead.ahead_by, behind: ahead.behind_by, groups };
+  await putSnapshot(db, "drift", drift);
+}
+
+/**
+ * Snapshot the drift between the two environment branches. NEVER on the
+ * render path: called off a push to either branch (`src/webhook.ts`) and,
+ * later, from `reconcileRepo` via the throwing `computeDrift` directly (see
+ * above). Never throws — GitHub failing leaves the previous snapshot (if any)
+ * standing.
+ */
+export async function refreshDrift(db: DB, opts: GhOpts, envs: RepoEnvConfig[]): Promise<void> {
   try {
-    // GitHub's compare only returns the AHEAD side's commits, so the behind
-    // side (base has commits head lacks) needs its own, second compare.
-    const ahead = await ghJson<GhCompare>(opts, `/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
-    const behind = ahead.behind_by > 0 ? await ghJson<GhCompare>(opts, `/compare/${encodeURIComponent(head)}...${encodeURIComponent(base)}`) : null;
-
-    const toCommit = (c: GhCommit) => ({ sha: c.sha.slice(0, 7), msg: c.commit.message.split("\n")[0].slice(0, 160), at: c.commit.committer.date });
-    const newestFirst = <T extends { at: string }>(rows: T[]) => rows.sort((a, b) => (a.at < b.at ? 1 : -1));
-
-    // A squash merge ends "(#123)" — the repo's merge style. Anything else is a direct push.
-    const byPr = new Map<number, GhCommit[]>();
-    const direct: GhCommit[] = [];
-    for (const c of ahead.commits) {
-      const m = c.commit.message.split("\n")[0].match(/\(#(\d+)\)\s*$/);
-      if (m) byPr.set(Number(m[1]), [...(byPr.get(Number(m[1])) ?? []), c]);
-      else direct.push(c);
-    }
-    const numbers = [...byPr.keys()];
-    const titles = numbers.length
-      ? await all<{ number: number; title: string | null; actor_login: string | null }>(
-          db,
-          `SELECT number, MAX(title) AS title, MAX(actor_login) AS actor_login FROM repo_events WHERE kind = 'pr' AND number IN (${numbers.map(() => "?").join(",")}) GROUP BY number`,
-          ...numbers
-        )
-      : [];
-
-    const groups: RepoDriftGroup[] = [];
-    for (const [number, commits] of [...byPr.entries()].sort((a, b) => b[0] - a[0])) {
-      const known = titles.find((t) => t.number === number);
-      groups.push({
-        tag: `#${number}`, kind: "pr", title: known?.title ?? commits[0].commit.message.split("\n")[0],
-        meta: `${known?.actor_login ?? commits[0].author?.login ?? "unknown"} · ${plural(commits.length, "commit")}`,
-        commits: newestFirst(commits.map(toCommit)),
-      });
-    }
-    if (direct.length) {
-      groups.push({ tag: "PUSH", kind: "push", title: `Direct pushes to ${head}`, meta: plural(direct.length, "commit"), commits: newestFirst(direct.map(toCommit)) });
-    }
-    if (behind?.commits.length) {
-      groups.push({ tag: "BEHIND", kind: "behind", title: `Only on ${base} — not yet on ${head}`, meta: plural(behind.commits.length, "commit"), commits: newestFirst(behind.commits.map(toCommit)) });
-    }
-
-    const drift: RepoDrift = { head, base, ahead: ahead.ahead_by, behind: ahead.behind_by, groups };
-    await putSnapshot(db, "drift", drift);
+    await computeDrift(db, opts, envs);
   } catch (e) {
     console.error("refreshDrift", e); // the last good snapshot stands
+  }
+}
+
+// ── branches over GraphQL ────────────────────────────────────────────────────
+//
+// `refs(refPrefix:"refs/heads/")` with `compare(headRef:$head)` per ref answers
+// the whole branch list (ahead/behind main, last commit) in one page for up to
+// 100 branches — REST would need one `/compare` request PER branch (74 on the
+// target repo). No `orderBy` clause: `TAG_COMMIT_DATE` orders TAGS, not refs by
+// commit date (verified live) — order is decided client-side below instead.
+//
+// GraphQL gotcha, verified live against the target repo: `Ref.compare` treats
+// THE BRANCH as base and `$head` (main) as head, so `aheadBy` = commits on
+// main the branch lacks (i.e. the branch is BEHIND by that many) and
+// `behindBy` = commits only on the branch (the branch is AHEAD by that many).
+// Inverted below on purpose.
+const REFS_QUERY = `query($owner:String!,$name:String!,$head:String!,$after:String){
+  repository(owner:$owner,name:$name){ refs(refPrefix:"refs/heads/",first:100,after:$after){
+    pageInfo{hasNextPage endCursor}
+    nodes{ name target{ ... on Commit { committedDate } } compare(headRef:$head){ aheadBy behindBy } } } } }`;
+
+interface RefNode { name: string; target: { committedDate?: string | null } | null; compare: { aheadBy: number; behindBy: number } | null }
+interface GqlRefs { repository?: { refs?: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: (RefNode | null)[] } | null } | null }
+
+const STALE_DAYS = 14;
+/** How many rows the snapshot keeps: the live branches first, then a handful
+ *  of the stalest-but-unmerged (`ahead > 0`) ones — the ones worth deleting. A
+ *  fully-merged stale branch (`ahead: 0`) is not worth a row; it is just gone. */
+const BRANCH_ROWS = 8;
+
+/** Computes and stores the branches snapshot. THROWS on any GitHub failure;
+ *  the never-throwing `refreshBranches` wrapper below is what
+ *  `reconcileRepo`'s outside callers (the webhook, later the cron) should use. */
+async function computeBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now: number): Promise<void> {
+  const [owner, name] = opts.repo.split("/");
+  const head = envs[0]?.branch ?? "main";
+  const skip = new Set(envs.map((e) => e.branch));
+  const nodes: RefNode[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 5; page++) { // 500 branches is a ceiling, not a target
+    const resp: GqlRefs = await ghGraphql<GqlRefs>(opts, REFS_QUERY, { owner, name, head, after });
+    const refs = resp?.repository?.refs;
+    if (!refs) throw new Error("graphql: no refs");
+    nodes.push(...refs.nodes.filter((n): n is RefNode => n !== null));
+    if (!refs.pageInfo.hasNextPage) break;
+    after = refs.pageInfo.endCursor;
+  }
+  const cutoff = new Date(now - STALE_DAYS * DAY).toISOString();
+  const rows = nodes
+    .filter((n) => !skip.has(n.name) && n.target?.committedDate)
+    .map((n) => ({
+      name: n.name,
+      at: n.target!.committedDate!,
+      // Inverted on purpose — see the GraphQL gotcha comment above.
+      ahead: n.compare?.behindBy ?? 0,
+      behind: n.compare?.aheadBy ?? 0,
+      stale: n.target!.committedDate! < cutoff,
+    }))
+    .sort((a, b) => (a.at < b.at ? 1 : -1));
+  const stale = rows.filter((r) => r.stale);
+  const fresh = rows.filter((r) => !r.stale);
+  const shown = [...fresh.slice(0, BRANCH_ROWS - Math.min(3, stale.length)), ...stale.filter((r) => r.ahead > 0).slice(0, 3)];
+  const data: RepoBranches = { active: fresh.length, stale: stale.length, rows: shown };
+  await putSnapshot(db, "branches", data);
+}
+
+/** Never throws — GitHub failing leaves the previous snapshot (if any) standing. */
+export async function refreshBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now: number = Date.now()): Promise<void> {
+  try {
+    await computeBranches(db, opts, envs, now);
+  } catch (e) {
+    console.error("refreshBranches", e); // the last good snapshot stands
   }
 }

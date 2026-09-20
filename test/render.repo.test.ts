@@ -87,6 +87,31 @@ describe("repoView — live content", () => {
     expect(html).toContain("MERGED");
   });
 
+  // Task 12: the Branches block was built ahead of the capture landing — this
+  // pins that it renders the snapshot's row shape (name/at/ahead/behind/stale)
+  // and escapes a captured branch name the same way the PR list does.
+  it("renders the branches snapshot, escaping a captured name and flagging STALE", () => {
+    const data = live({
+      branches: {
+        status: "ok",
+        data: {
+          active: 1, stale: 1,
+          rows: [
+            { name: `feature/<script>alert(1)</script>`, at: new Date().toISOString(), ahead: 4, behind: 0, stale: false },
+            { name: "spike/edge-cache", at: "2026-09-04T00:00:00Z", ahead: 7, behind: 31, stale: true },
+          ],
+        },
+      },
+    });
+    const html = repoView(props({ tab: "code", repo: { status: "ok", data } }));
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("+4 / −0 vs main");
+    expect(html).toContain("+7 / −31 vs main");
+    expect(html).toContain("STALE");
+    expect(html).toContain("1 active · 1 stale");
+  });
+
   it("names the PR-list header from what's actually shown, not the sample flag", () => {
     const prRow = (state: "review" | "merged") => ({
       number: 1, title: "PR", url: "https://github.com/o/r/pull/1",

@@ -39,4 +39,19 @@ describe("refreshDrift", () => {
     await expect(refreshDrift(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS)).resolves.toBeUndefined();
     expect(await getSnapshot(env.DB, "drift")).toBeNull();
   });
+
+  it("keeps a PREVIOUSLY-WRITTEN snapshot standing when a later refresh fails", async () => {
+    const ok = (async (u: RequestInfo | URL) => {
+      const url = String(u);
+      if (url.endsWith("/compare/production...main")) return new Response(JSON.stringify({ ahead_by: 1, behind_by: 0, commits: [c("aaaa111", "direct push", "2026-09-20T09:00:00Z")] }), { status: 200 });
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    await refreshDrift(env.DB, { token: "t", repo: "o/r", fetchImpl: ok }, ENVS);
+    const before = await getSnapshot<RepoDrift>(env.DB, "drift");
+    expect(before).not.toBeNull();
+
+    const failing = (async () => new Response("no", { status: 500 })) as typeof fetch;
+    await expect(refreshDrift(env.DB, { token: "t", repo: "o/r", fetchImpl: failing }, ENVS)).resolves.toBeUndefined();
+    expect(await getSnapshot<RepoDrift>(env.DB, "drift")).toEqual(before);
+  });
 });

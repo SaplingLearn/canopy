@@ -1,5 +1,5 @@
 import type {
-  RepoActivity, RepoBars, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
+  RepoActivity, RepoBars, RepoBranches, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
   RepoDrift, RepoEnv, RepoEnvPart, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat, RepoTone,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
@@ -43,7 +43,6 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 /** The sections no capture path feeds yet. One object so the list is auditable. */
 const UNCAPTURED = {
   health: NOT_CONNECTED,
-  branches: NOT_CONNECTED,
   coverage: NOT_CONNECTED, bundle: NOT_CONNECTED,
   usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
   todos: NOT_CONNECTED,
@@ -53,6 +52,7 @@ export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboa
   return {
     repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
     environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
+    branches: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
     sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
   };
@@ -187,6 +187,12 @@ export async function getRepoDashboard(
   const weekAgo = new Date(now - 7 * DAY).toISOString();
   const twoWeeksAgo = new Date(now - 14 * DAY).toISOString();
   const ninetyDaysAgo = new Date(now - RECENT_PR_DAYS * DAY).toISOString();
+
+  // Never on the render path: GitHub's GraphQL refs query is called off
+  // reconcileRepo only — this only reads back the snapshot it wrote. No
+  // snapshot yet → not_connected; a stale one is still shown (a fact as of
+  // its own computedAt), same as `drift` below.
+  const branchSnap = await getSnapshot<RepoBranches>(db, "branches");
 
   const people = await personsByLogin(db);
 
@@ -352,7 +358,11 @@ export async function getRepoDashboard(
           tone: "neutral",
         }
       : { label: "Issues opened", value: openedThisWeek.length, sub: "this week", tone: "neutral" },
-    { label: "Issues closed", value: closedThisWeek.length, sub: "this week", tone: "neutral" },
+    // Never guess: the tile is "Active branches" only once a branches
+    // snapshot exists; until then it keeps its previous content.
+    branchSnap
+      ? { label: "Active branches", value: branchSnap.data.active, sub: `${branchSnap.data.stale} stale`, tone: branchSnap.data.stale ? "warn" : "neutral" }
+      : { label: "Issues closed", value: closedThisWeek.length, sub: "this week", tone: "neutral" },
   ];
 
   // Commits once pushes are captured; merges (what `events` has always had) until then.
@@ -458,6 +468,7 @@ export async function getRepoDashboard(
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
     drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
+    branches: branchSnap ? ok(branchSnap.data) : NOT_CONNECTED,
     // An environment card needs BOTH a configured environment and something
     // captured about it; a configured-but-silent environment is not connected.
     environments: envs.length && anyEnvCapture ? ok(envCards) : NOT_CONNECTED,
