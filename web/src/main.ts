@@ -6,7 +6,7 @@
 import "./canopy.css";
 import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
 import {
-  getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard,
+  getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
@@ -34,6 +34,10 @@ import { initialOnboard } from "./people";
 import { mentionTokenAt, mentionCandidates, applyMention, caretLine, COMMENT_BOX } from "./mentions";
 import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
+import { paint } from "./morph";
+import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
+import { repoUpdatedLabel } from "./repo";
+import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -47,7 +51,9 @@ try {
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
-} catch { /* localStorage unavailable */ }
+  const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
+  for (const g of NAV_GROUPS) if (typeof open[g] === "boolean") state.navOpen[g] = open[g] as boolean;
+} catch { /* localStorage unavailable, or a hand-edited value */ }
 
 if (window.matchMedia) {
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -55,10 +61,100 @@ if (window.matchMedia) {
   const onChange = (ev: MediaQueryListEvent) => { state.systemDark = ev.matches; rerender(); };
   if (mq.addEventListener) mq.addEventListener("change", onChange);
   else mq.addListener(onChange);
+
+  // Below this width the full rail would starve the screen, so it renders collapsed
+  // (the person's own `collapsed` preference is untouched and returns with the room).
+  const narrow = window.matchMedia("(max-width: 900px)");
+  state.narrow = narrow.matches;
+  const onNarrow = (ev: MediaQueryListEvent) => { state.narrow = ev.matches; rerender(); };
+  if (narrow.addEventListener) narrow.addEventListener("change", onNarrow);
+  else narrow.addListener(onNarrow);
 }
 
 // ── render with focus/caret + main-pane scroll preservation ──────────────────
+// ── screen-enter motion ──────────────────────────────────────────────────────
+// A screen's entrance (canopy.css `[data-enter]`) plays when WHAT IS ON SCREEN
+// changes — a new route, or its data arriving — never on the other rerenders (a
+// keystroke, a hover, a badge landing), which would replay it endlessly.
+// rerender() swaps <main> wholesale, so a rerender DURING an entrance would cut
+// it short; instead the clock keeps running and the fresh DOM joins the animation
+// where the old one left off, via a negative animation-delay (`--enter-t`).
+const ENTER_MS = 900;
+let enterKey = "";
+let enterAt = 0;
+let enterTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Whether the screen's main read has landed — its arrival is an entrance too. */
+function screenSettled(): boolean {
+  const ok = (l: { status: string }) => l.status === "ok" || l.status === "error";
+  switch (state.screen) {
+    case "mywork": return ok(state.mywork);
+    case "feed": return ok(state.feed);
+    case "docs": return ok(state.docsList);
+    case "roadmap": return ok(state.roadmap);
+    case "tickets": return ok(state.tickets);
+    case "ticketdetail": return ok(state.ticketDetail);
+    case "sprint": return ok(state.sprintDetail);
+    case "repo": return state.repo.data !== null || state.repo.status === "error";
+    default: return true; // search re-queries per keystroke; the rest load nothing
+  }
+}
+
+function markEnter(): void {
+  const root = mount.firstElementChild as HTMLElement | null;
+  if (!root || state.view !== "app") return;
+  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${screenSettled() ? 1 : 0}`;
+  const now = performance.now();
+  if (key !== enterKey) { enterKey = key; enterAt = now; }
+  const elapsed = now - enterAt;
+  if (elapsed >= ENTER_MS) return;
+  root.setAttribute("data-enter", "1");
+  root.style.setProperty("--enter-t", `${-Math.round(elapsed)}ms`);
+  if (elapsed === 0) countUp(root);
+  // Drop the flag once the entrance is over: a filled animation keeps its element a
+  // stacking context, and nothing should depend on one that is no longer moving.
+  if (enterTimer !== null) clearTimeout(enterTimer);
+  enterTimer = setTimeout(() => {
+    enterTimer = null;
+    const live = mount.firstElementChild as HTMLElement | null;
+    live?.removeAttribute("data-enter");
+    live?.style.removeProperty("--enter-t");
+  }, ENTER_MS - elapsed + 50);
+}
+
+/** Stat figures count up to their value on entrance (`data-count`). */
+function countUp(root: HTMLElement): void {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  const key = enterKey;
+  const els = Array.from(root.querySelectorAll<HTMLElement>("[data-count]"));
+  if (!els.length) return;
+  const start = performance.now();
+  const step = (t: number) => {
+    const k = Math.min(1, (t - start) / 600);
+    const eased = 1 - Math.pow(1 - k, 3);
+    // A rerender replaces these nodes; the new ones already carry the final value.
+    for (const el of els) if (el.isConnected) el.textContent = String(Math.round(Number(el.dataset.count) * eased));
+    if (k < 1 && key === enterKey) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+/** One-shot: a selector to re-animate after the next paint (a range switch, a panel opening). */
+let pendingFlash: string | null = null;
+
+let lastNavGroup: NavGroup | null = null;
+/** The group the app opened on its own (so it may close it again). */
+let autoOpened: NavGroup | null = null;
+
 function rerender(): void {
+  // Entering a group's pages opens its sub-page list, and leaving folds it again —
+  // unless the person opened or closed it by hand, which sticks (and is what persists).
+  const group = state.view === "app" ? navGroupOf(state.screen) : null;
+  if (group !== lastNavGroup) {
+    if (autoOpened && autoOpened !== group) { state.navOpen[autoOpened] = false; autoOpened = null; }
+    if (group && !state.navOpen[group]) { state.navOpen[group] = true; autoOpened = group; }
+    lastNavGroup = group;
+  }
   const active = document.activeElement as HTMLElement | null;
   const field = active?.getAttribute?.("data-field") ?? null;
   let selStart = 0;
@@ -72,14 +168,20 @@ function rerender(): void {
   // The swap below discards the main scroll pane; keep its position when the
   // screen is unchanged so a button low on a long screen doesn't jump to the top.
   const scroll = captureScroll(mount, state.screen);
-  mount.innerHTML = render(state);
+  paint(mount, render(state));
   restoreScroll(mount, scroll, state.screen);
+  markEnter();
+  if (pendingFlash) {
+    for (const el of Array.from(mount.querySelectorAll(pendingFlash))) el.classList.add("cnpy-flash");
+    pendingFlash = null;
+  }
   const onLanding = state.view === "auth" ? state.authStep === "login" : state.screen === "site";
   if (onLanding) mountLandingMotion(mount, state.landingSeen);
   else unmountLandingMotion();
   if (field) {
     const el = mount.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-field="${field}"]`);
-    if (el) {
+    // The sidebar is patched in place, so its search box never lost focus or caret.
+    if (el && el !== document.activeElement) {
       el.focus();
       try { el.setSelectionRange(selStart, selEnd); } catch { /* non-text input */ }
     }
@@ -111,7 +213,7 @@ window.addEventListener("hashchange", () => {
   if (state.view !== "app") return;
   const r = parseHash(location.hash);
   const cur = currentRoute();
-  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId) return;
+  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId && r.repoTab === cur.repoTab) return;
   applyRoute(r);
   loadForScreen(r.screen);
 });
@@ -168,17 +270,24 @@ function resolvedTheme(): "dark" | "light" | "midnight" {
 function persist(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
 }
+// Only what the person chose persists — a list the app opened by itself is not a preference.
+function persistNavOpen(): void {
+  persist("canopy.navOpen", JSON.stringify(autoOpened ? { ...state.navOpen, [autoOpened]: false } : state.navOpen));
+}
 
 // ── screen ↔ URL hash (so a reload stays on the current page) ─────────────────
 // Parsing/serializing lives in ./hash as pure functions (unit-tested); this
 // module is the only one that touches `location`.
 function currentRoute(): Route {
-  return { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
+  const r: Route = { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
+  if (state.screen === "repo") r.repoTab = state.repoTab;
+  return r;
 }
 function applyRoute(r: Route): void {
   state.screen = r.screen;
   state.ticketId = r.ticketId;
   state.sprintId = r.sprintId;
+  if (r.repoTab) state.repoTab = r.repoTab;
 }
 
 // Kick off the data load for a screen (mirrors the go* dispatch cases).
@@ -191,6 +300,7 @@ function loadForScreen(screen: Screen): void {
     case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); break;
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
+    case "repo": loadRepoIfNeeded(); break;
     case "settings": loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); break;
     case "unsubscribe": runUnsubscribe(); break;
     // The queue's sprint group headers and the form/rail menus all read `sprints`.
@@ -253,6 +363,38 @@ function loadMyWorkIfNeeded(): void {
   if (state.mywork.status === "idle") loadMyWork();
   else rerender();
 }
+
+// ── Repo dashboard ───────────────────────────────────────────────────────────
+// A refresh keeps the last payload on screen (the header says "refreshing…");
+// only a first load shows skeletons.
+function loadRepo(): void {
+  state.repo = { status: "loading", data: state.repo.data };
+  rerender();
+  const sample = state.repoSample;
+  const read = sample ? import("./repo-sample").then((m) => m.repoSample()) : getRepoDashboard();
+  read
+    .then((data) => {
+      if (sample !== state.repoSample) return; // switched source mid-flight — the newer load wins
+      state.repo = { status: "ok", data };
+      state.repoFetchedAt = Date.now();
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+      state.repo = { status: "error", data: state.repo.data, error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+}
+function loadRepoIfNeeded(): void {
+  if (state.repo.status === "idle") loadRepo();
+  else rerender();
+}
+// "updated 4m ago" ticks in place — a text write, not a rerender of the screen.
+setInterval(() => {
+  if (state.view !== "app" || state.screen !== "repo") return;
+  const el = mount.querySelector("[data-repo-updated]");
+  if (el) el.textContent = repoUpdatedLabel({ repo: state.repo, fetchedAt: state.repoFetchedAt });
+}, 30_000);
 
 // ── email notifications ──────────────────────────────────────────────────────
 function loadNotifPrefs(): void {
@@ -960,6 +1102,58 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 
     // primary navigation
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
+
+    // ── Repo dashboard ───────────────────────────────────────────────────────
+    case "goRepo": state.screen = "repo"; state.repoTab = "overview"; loadRepoIfNeeded(); return;
+    case "repoRefresh": if (state.repo.status !== "loading") loadRepo(); return;
+    case "repoRange":
+      if (!(REPO_RANGES as readonly string[]).includes(arg ?? "") || arg === state.repoRange) return;
+      state.repoRange = arg as RepoRange;
+      pendingFlash = ".repo-swap";
+      break;
+    case "repoToggleDrift":
+      state.repoDriftOpen = !state.repoDriftOpen;
+      if (state.repoDriftOpen) pendingFlash = ".repo-drift";
+      break;
+    case "repoSampleOn":
+    case "repoSampleOff":
+      state.repoSample = act === "repoSampleOn";
+      state.repo = { status: "idle", data: null };
+      state.repoDriftOpen = false;
+      loadRepo();
+      return;
+
+    // ── sidebar: sub-page lists + the search box ─────────────────────────────
+    case "navToggle": {
+      const g = NAV_GROUPS.find((k) => k === arg);
+      if (!g) return;
+      state.navOpen[g] = !state.navOpen[g];
+      if (autoOpened === g) autoOpened = null;   // a hand on the chevron makes it theirs
+      persistNavOpen();
+      break;
+    }
+    case "navSub": {
+      // `<group>:<page>` — each page is an existing destination, reached in one click.
+      const [g, page = ""] = (arg ?? "").split(":");
+      if (g === "tickets") {
+        if (page === "new") { dispatch("newTicket", null, null); return; }
+        state.qView = page === "board" ? "board" : "table";
+        dispatch("goTickets", null, null);
+        return;
+      }
+      if (g === "roadmap") { state.roadmapTab = page === "narrative" ? "narrative" : "timeline"; dispatch("goRoadmap", null, null); return; }
+      if (g === "repo") { if (!isRepoTab(page)) return; state.screen = "repo"; state.repoTab = page; loadRepoIfNeeded(); return; }
+      if (g === "docs") { state.screen = "docs"; dispatch("setDocSpace", page, null); loadDocsIfNeeded(); return; }
+      return;
+    }
+    case "sideSearch": return; // uncontrolled: the box holds its own text until Enter
+    case "sideSearchFocus": {
+      // A narrow viewport cannot open the rail, so the icon goes to the Search screen.
+      if (state.narrow) { dispatch("goSearch", null, null); return; }
+      if (state.collapsed) { state.collapsed = false; persist("canopy.collapsed", "0"); rerender(); }
+      mount.querySelector<HTMLInputElement>('[data-field="sideSearch"]')?.focus();
+      return;
+    }
     case "goFeed": state.screen = "feed"; loadFeedIfNeeded(); return;
     case "goDocs": state.screen = "docs"; loadDocsIfNeeded(); return;
     case "goRoadmap": state.screen = "roadmap"; state.sprintId = null; loadRoadmapIfNeeded(); loadFeedIfNeeded(); return;
@@ -1288,6 +1482,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "toggleCollapse":
       state.collapsed = !state.collapsed;
       persist("canopy.collapsed", state.collapsed ? "1" : "0");
+      railTip(null);
       break;
     case "cycleTheme": {
       // header button steps through the three concrete themes; settings can also pick "system".
@@ -1819,6 +2014,44 @@ mount.addEventListener("keydown", (e) => {
     default: break;
   }
 });
+
+// ── sidebar: ⌘K / Ctrl+K, the search box, and the collapsed-rail tooltip ──────
+document.addEventListener("keydown", (e) => {
+  if (state.view !== "app" || e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  e.preventDefault();
+  dispatch("sideSearchFocus", null, null);
+});
+mount.addEventListener("keydown", (e) => {
+  const box = (e.target as Element | null)?.closest?.<HTMLInputElement>('[data-field="sideSearch"]');
+  if (!box) return;
+  if (e.key === "Escape") { box.value = ""; box.blur(); return; }
+  if (e.key !== "Enter") return;
+  const q = box.value.trim();
+  if (!q) return;
+  e.preventDefault();
+  box.value = "";
+  box.blur();
+  state.searchQuery = q;
+  state.screen = "search";
+  loadSearch();
+});
+
+// The rail's labels are gone when it is collapsed, so each row names itself in a
+// tooltip. It is positioned here rather than in CSS because the nav list scrolls,
+// and a scroll container clips anything that hangs outside it.
+function railTip(row: HTMLElement | null): void {
+  const tip = mount.querySelector<HTMLElement>(".cnpy-tip");
+  if (!tip) return;
+  if (!row || !(state.collapsed || state.narrow)) { tip.removeAttribute("data-on"); return; }
+  const r = row.getBoundingClientRect();
+  tip.textContent = row.dataset.tip ?? "";
+  tip.style.top = `${Math.round(r.top + r.height / 2)}px`;
+  tip.setAttribute("data-on", "1");
+}
+mount.addEventListener("mouseover", (e) => railTip((e.target as Element | null)?.closest?.<HTMLElement>(".cnpy-aside [data-tip]") ?? null));
+mount.addEventListener("focusin", (e) => railTip((e.target as Element | null)?.closest?.<HTMLElement>(".cnpy-aside [data-tip]") ?? null));
+mount.addEventListener("focusout", () => railTip(null));
+mount.addEventListener("mouseleave", () => railTip(null));
 
 // Escape closes the landing page's sign-in dialog, wherever focus is.
 document.addEventListener("keydown", (e) => {

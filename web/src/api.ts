@@ -15,6 +15,7 @@ import type {
   TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate,
 } from "@shared/tickets";
 import type { DashboardData } from "@shared/dashboard";
+import type { RepoDashboard } from "@shared/repo";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
 
@@ -187,6 +188,11 @@ export function adminBackfill(): Promise<{
 
 export function getMyDashboard(): Promise<DashboardData> {
   return getJson<DashboardData>("/me/dashboard");
+}
+
+/** The Repo dashboard — a D1-only projection; uncaptured sections arrive `not_connected`. */
+export function getRepoDashboard(): Promise<RepoDashboard> {
+  return getJson<RepoDashboard>("/repo/dashboard");
 }
 
 // The Triage "Proposals" queue = staged doc versions newer than the live doc.

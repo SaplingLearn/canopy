@@ -54,7 +54,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 
 - `shared/` — the ONLY shared layer (imported via the `@shared` alias by `src/` and `web/`):
   `contract.ts` (Zod ingest contract), `vocabulary.ts` (controlled vocab), `rows.ts` (one type per D1 table),
-  `dashboard.ts` (the My Work DTO shared by the Worker and web), `notifications.ts` (the digest DTOs), and the
+  `dashboard.ts` (the My Work DTO shared by the Worker and web), `repo.ts` (the Repo dashboard DTO — zod-free,
+  since the SPA imports `REPO_TABS` as a value), `notifications.ts` (the digest DTOs), and the
   tickets pair-per-domain: `tickets.ts` / `sprints.ts` (zod rows, DTOs, payloads, `parseTicketLink`,
   `toSprintView`) over `tickets-core.ts` / `sprints-core.ts`. **The `*-core.ts` split is a rule**: anything
   the SPA imports as a VALUE (`canTransition` / `legalMoves` / `TICKET_STATUS_LABEL` / `isOpenStatus`,
@@ -63,7 +64,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
 - `src/` — the Worker. `index.ts` (fetch entry: `/mcp` by bearer, `/webhook/github` by HMAC, everything
   else to the Hono app; plus the `scheduled()` progress backstop), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
-  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
+  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `repo.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
   Email notifications section), `db.ts` (D1 helpers), `auth/` (`persons.ts` — the identity root;
   `google.ts` — second provider; `onboard.ts` — the sign-in fork + onboarding cookie; `invites.ts`),
   `env.ts`.
@@ -86,11 +87,14 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0026_token_hint` [`mcp_tokens.token_hint` — the clear-text label Settings lists a token by]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
-  plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
+  the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
   `web/src/markdown.ts` renders PR summaries, the roadmap narrative and a sprint description as styled HTML;
   `web/src/notifications.ts` holds the Settings › Email notifications and Maintenance › Notifications views;
   `web/src/tickets.ts` + `web/src/sprints.ts` are the (purely presentational) tickets/sprint components, and
-  `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`).
+  `web/src/hash.ts` is the hash-route seam (`parseHash` / `hashForRoute` — `#tickets/7`, `#sprints/3`,
+  `#repo/<tab>`). `web/src/repo.ts` is the Repo dashboard (ported from the Claude Design `Canopy Repo
+  Dashboard.dc.html`), `web/src/repo-sample.ts` its design-placeholder set (a dynamic import, never in the main
+  bundle), and `web/src/sidebar.ts` + `web/src/morph.ts` the sidebar — see "Sidebar & motion" below.
   Signed out, the app renders the **landing page** (`web/src/landing.ts`, ported from the Claude Design
   `Canopy Site.dc.html`); its nav's Sign in opens the GitHub/Google dialog, and its in-page links scroll
   rather than set the hash (the hash is the route and the sign-in return-to). Signed IN, the sidebar logo
@@ -308,6 +312,41 @@ its fallback is a content-less marker row (`model='excerpt'`, null structured co
 that renders a "No summary recorded" placeholder. Stored as columns on `pr_summaries` /
 `issue_summaries` and regenerable via Sync (a row is "done" only when
 `model != 'excerpt' AND title IS NOT NULL`) — never truth, never generated at render.
+
+**The Repo dashboard** (`GET /repo/dashboard` → `getRepoDashboard` in `src/tools/repo.ts`; screen `#repo`,
+`#repo/code|ci|usage|planning`) is the same class of read as My Work: D1-only, session-cookie, never a 500
+(a throw yields `emptyRepoDashboard(repo, degraded:true)`), and NOT an MCP tool. Every block travels as a
+`RepoSection<T>` = `ok` / `empty` / `not_connected`. What D1 can answer is live — merged/closed PRs, the
+week-over-week tiles (open issues/bugs are the LATEST snapshot per issue as of now vs 7 days ago, read with
+`json_extract` so issue bodies never leave D1; open tickets are a live count with a net 7-day delta from
+`ticket_events`), 14 UTC days of merges, the activity feed, contributors, open issues by label, and the sprint
+a person marked `active` (the Roadmap's ticket progress). **Everything with no capture path is
+`not_connected`, never guessed** — environments, drift, health, branches, deploys, CI failures, coverage,
+bundle, usage, Cloudflare, hosting, TODO counts (the `UNCAPTURED` object is the auditable list). Adding a
+capture path = flip one section there to `ok`; the screen already renders every section's live shape. The
+capture names a PR's AUTHOR and an issue's subject, not who merged/closed — so the feed never claims an actor
+it does not have. "Preview with sample data" swaps in `repo-sample.ts` client-side (session-only, labelled
+on screen); it never touches the Worker.
+
+## Sidebar & motion — the `<aside>` outlives rerenders
+
+`rerender()` swaps the app wholesale, which is fatal for a transition: a width, a rotating chevron or an
+opening sub-page list can only animate on an element that SURVIVES the state change. So `web/src/morph.ts`
+`paint()` patches the `<aside>` in place and swaps only `<main>` (the seam is `.cnpy-shell`). That only works
+because **the sidebar's structure is stable** (`web/src/sidebar.ts`): every label, badge, dot, chevron and
+sub-page list is ALWAYS emitted, and collapsed / open / active are attributes and classes that `canopy.css`
+animates (`data-collapsed`, `.cnpy-sub[data-open]`, `.is-active`, `data-n="0"` hides a badge). Emitting a
+node conditionally there swaps it out from under its own animation — `test/render.sidebar.test.ts` pins the
+element tree across every state. `data-keep` marks a script-owned node (the collapsed-rail tooltip) the
+patcher leaves alone. A sub-page list the app opened on entry folds again on leaving; one opened by hand
+sticks and is what persists (`canopy.navOpen`). Below 900px the rail renders collapsed (`state.narrow`)
+without touching the saved preference. Search is the box at the top of the rail (⌘K / Ctrl+K), not a nav row.
+
+Screen entrances are `[data-enter]` (set by `markEnter()` in `main.ts` only when the route changed or the
+screen's main read landed — never on a keystroke). `--enter-t` is a NEGATIVE animation-delay, so a rerender
+mid-entrance joins the animation where the old DOM left off. Hooks: `.cnpy-rise` + `--i`, `.cnpy-stagger`
+(lists), `.repo-bar` / `.repo-fill` / `.repo-spark`, `data-count` (count-up). In-place changes use the
+one-shot `pendingFlash`. All of it is off under `prefers-reduced-motion`.
 
 ## Email notifications — a read-side projection, never a writer (spec: `docs/superpowers/specs/2026-09-11-canopy-email.md`)
 

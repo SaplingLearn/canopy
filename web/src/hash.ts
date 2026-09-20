@@ -6,12 +6,15 @@
 //   #tickets/new      → the new-ticket form
 //   #tickets/<id>     → one ticket's detail
 //   #sprints/<id>     → one sprint's screen
+//   #repo             → the Repo dashboard's Overview
+//   #repo/<tab>       → one of its other tabs (code / ci / usage / planning)
 //   #<screen>         → every other screen, named exactly as the Screen union
 //                       (`#site` is the landing page, reopened from inside the app)
 // Anything unrecognised falls back to My Work — the same rule the app has always
 // had for a junk hash.
 
 import type { Screen } from "./render";
+import { isRepoTab, type RepoTab } from "@shared/repo";
 
 /** Every screen addressable by its bare name (`#feed`). The compound ticket /
  *  sprint routes are parsed separately below. */
@@ -26,6 +29,8 @@ export interface Route {
   ticketId: number | null;
   /** Set only on `sprint`. */
   sprintId: number | null;
+  /** Set only on `repo` (absent everywhere else, so older routes compare equal). */
+  repoTab?: RepoTab;
 }
 
 /** A positive integer path segment, or null (so `#tickets/abc` is not a detail route). */
@@ -56,6 +61,12 @@ export function parseHash(hash: string): Route {
     if (id !== null) return { screen: "sprint", ticketId: null, sprintId: id };
     return none;
   }
+  if (parts[0] === "repo") {
+    if (parts.length === 1) return { screen: "repo", ticketId: null, sprintId: null, repoTab: "overview" };
+    // `#repo/overview` is not canonical (the bare `#repo` is), but it still resolves.
+    if (parts.length === 2 && isRepoTab(parts[1])) return { screen: "repo", ticketId: null, sprintId: null, repoTab: parts[1] };
+    return none;
+  }
   if (parts.length === 1 && (PLAIN_SCREENS as string[]).includes(parts[0])) {
     return { screen: parts[0] as Screen, ticketId: null, sprintId: null };
   }
@@ -67,6 +78,7 @@ export function parseHash(hash: string): Route {
 export function hashForRoute(r: Route): string {
   if (r.screen === "ticketdetail") return r.ticketId !== null ? `#tickets/${r.ticketId}` : "#tickets";
   if (r.screen === "newticket") return "#tickets/new";
+  if (r.screen === "repo") return !r.repoTab || r.repoTab === "overview" ? "#repo" : `#repo/${r.repoTab}`;
   if (r.screen === "sprint") return r.sprintId !== null ? `#sprints/${r.sprintId}` : "#roadmap";
   return `#${r.screen}`;
 }

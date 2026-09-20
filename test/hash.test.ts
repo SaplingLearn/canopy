@@ -66,8 +66,21 @@ describe("hashForRoute", () => {
       { screen: "mywork", ticketId: null, sprintId: null },
       { screen: "settings", ticketId: null, sprintId: null },
       { screen: "site", ticketId: null, sprintId: null }, // the landing page, reopened from the sidebar logo
+      { screen: "repo", ticketId: null, sprintId: null, repoTab: "overview" },
+      { screen: "repo", ticketId: null, sprintId: null, repoTab: "ci" },
     ] as const;
     for (const r of routes) expect(parseHash(hashForRoute(r))).toEqual(r);
+  });
+
+  it("routes the Repo dashboard's tabs, with the bare #repo as Overview", () => {
+    expect(parseHash("#repo")).toEqual({ screen: "repo", ticketId: null, sprintId: null, repoTab: "overview" });
+    expect(parseHash("#repo/planning")).toEqual({ screen: "repo", ticketId: null, sprintId: null, repoTab: "planning" });
+    expect(parseHash("#repo/overview").repoTab).toBe("overview");
+    expect(hashForRoute({ screen: "repo", ticketId: null, sprintId: null, repoTab: "overview" })).toBe("#repo");
+    expect(hashForRoute({ screen: "repo", ticketId: null, sprintId: null, repoTab: "usage" })).toBe("#repo/usage");
+    // An unknown tab is a junk hash like any other.
+    expect(parseHash("#repo/nope").screen).toBe("mywork");
+    expect(parseHash("#repo/ci/extra").screen).toBe("mywork");
   });
 
   it("degrades to the parent screen when the id is missing", () => {

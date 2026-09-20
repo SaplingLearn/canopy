@@ -25,18 +25,121 @@ input, select { font-family: inherit; }
 /* Midnight = the original high-contrast black + neon-green theme (pre-Sapling), kept as an option. */
 [data-cnpy-theme="midnight"] { --bg:#000000; --fg:#ffffff; --fg-70:rgba(255,255,255,0.70); --fg-55:rgba(255,255,255,0.55); --fg-40:rgba(255,255,255,0.40); --border:rgba(255,255,255,0.11); --border-strong:rgba(255,255,255,0.20); --hover:rgba(255,255,255,0.055); --accent:#2BFF88; --accent-fg:#00130a; --accent-soft:rgba(43,255,136,0.13); --green:#2BFF88; --amber:#FFB454; --blue:#74A9FF; --red:#FF6B6B; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
 
-.cnpy-aside { width:248px; flex:none; display:flex; flex-direction:column; border-right:1px solid var(--border); background:var(--bg); transition:width .18s ease; }
+/* ── sidebar ─────────────────────────────────────────────────────────────────
+   Ported from `Canopy Repo Dashboard.dc.html`. The <aside> outlives rerenders
+   (web/src/morph.ts patches it in place), so every state below is an attribute
+   or class flip on a LIVING element and therefore animates: the rail width, the
+   labels, the section headers folding into hairlines, the sub-page lists, the
+   chevrons, the active row.
+
+   One easing, one duration, so the pieces move as a single gesture. Labels fade
+   FAST on the way out (they would otherwise be seen squeezed) and LATE on the way
+   in (they arrive once there is room for them). */
+.cnpy-aside { --side-t:.24s; --side-e:cubic-bezier(.4,0,.2,1); width:216px; flex:none; display:flex; flex-direction:column; border-right:1px solid var(--border); background:var(--bg); transition:width var(--side-t) var(--side-e); position:relative; z-index:2; }
 [data-collapsed="1"] .cnpy-aside { width:64px; }
-.cnpy-nav { display:flex; align-items:center; gap:11px; width:100%; padding:9px 11px; border-radius:8px; font-size:13.5px; font-weight:500; position:relative; color:var(--fg-55); text-align:left; }
-.cnpy-nav:hover { color:var(--fg-70); background:var(--hover); }
-[data-collapsed="1"] .cnpy-nav { justify-content:center; padding:9px 0; }
-/* Active nav item. The three ticket screens all light Tickets; a sprint is a
-   Roadmap child, so it lights Roadmap. */
-[data-screen="mywork"] .cnpy-nav.n-mywork, [data-screen="feed"] .cnpy-nav.n-feed, [data-screen="docs"] .cnpy-nav.n-docs, [data-screen="roadmap"] .cnpy-nav.n-roadmap, [data-screen="review"] .cnpy-nav.n-review, [data-screen="maintenance"] .cnpy-nav.n-maintenance, [data-screen="search"] .cnpy-nav.n-search, [data-screen="tickets"] .cnpy-nav.n-tickets, [data-screen="ticketdetail"] .cnpy-nav.n-tickets, [data-screen="newticket"] .cnpy-nav.n-tickets, [data-screen="sprint"] .cnpy-nav.n-roadmap { background:var(--accent-soft); color:var(--accent); }
-.cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:9px; }
+.cnpy-aside button:focus-visible, .cnpy-search:focus-within { outline:2px solid color-mix(in srgb,var(--accent) 70%,transparent); outline-offset:-2px; }
+
+/* anything that only exists in the expanded rail */
+.cnpy-lbl { transition:opacity .16s ease .1s; }
+[data-collapsed="1"] .cnpy-lbl { opacity:0; pointer-events:none; transition:opacity .09s ease; }
+
+.cnpy-logo { display:flex; align-items:center; padding:14px 14px 10px 16px; min-height:50px; transition:padding var(--side-t) var(--side-e); }
+[data-collapsed="1"] .cnpy-logo { padding-left:20px; padding-right:0; }
+.cnpy-logo-b { display:flex; align-items:center; gap:10px; overflow:hidden; padding:0; color:inherit; border-radius:7px; min-width:0; }
+.cnpy-logo-b svg { transition:transform .3s cubic-bezier(.34,1.56,.64,1); }
+.cnpy-logo-b:hover svg { transform:scale(1.08) rotate(-4deg); }
+.cnpy-logo-t { font-size:18px; font-weight:600; letter-spacing:-0.02em; white-space:nowrap; }
+
+.cnpy-navlist { display:flex; flex-direction:column; gap:2px; padding:0 10px 5px; flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.cnpy-navlist::-webkit-scrollbar { display:none; }
+
+.cnpy-searchwrap { padding:8px 1px 3px; }
+.cnpy-search { display:flex; align-items:center; gap:7px; padding:6px 9px; border:1px solid var(--border); border-radius:7px; color:var(--fg-40); cursor:text; overflow:hidden; transition:border-color .12s ease, color .12s ease, background .15s ease, padding var(--side-t) var(--side-e); }
+.cnpy-search:hover { border-color:var(--border-strong); }
+.cnpy-search:focus-within { border-color:var(--border-strong); color:var(--fg-70); }
+.cnpy-search.is-active { background:var(--hover); color:var(--fg); }
+.cnpy-search .cnpy-nav-ic { flex:none; }
+.cnpy-search-in { flex:1; min-width:0; background:none; border:none; outline:none; color:var(--fg); font-size:11.5px; font-family:inherit; padding:0; }
+.cnpy-search-in::placeholder { color:var(--fg-40); }
+.cnpy-kbd { font-family:var(--mono); font-size:10px; border:1px solid var(--border); border-radius:4px; padding:0 5px; color:var(--fg-40); flex:none; white-space:nowrap; }
+.cnpy-search:focus-within .cnpy-kbd { opacity:0; }
+[data-collapsed="1"] .cnpy-search { padding-left:13.5px; padding-right:0; cursor:pointer; }
+
+/* Section header → the collapsed rail's hairline divider, in one element. */
+.cnpy-sec { position:relative; flex:none; height:23px; padding:4px 10px 0; overflow:hidden; font-family:var(--mono); font-size:9.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--fg-40); white-space:nowrap; transition:height var(--side-t) var(--side-e), padding var(--side-t) var(--side-e); }
+.cnpy-sec.is-first { height:27px; padding-top:8px; }
+.cnpy-sec::after { content:""; position:absolute; left:8px; right:8px; top:7px; height:1px; background:var(--border); opacity:0; transition:opacity var(--side-t) ease; }
+.cnpy-sec.is-first::after { top:4px; }
+[data-collapsed="1"] .cnpy-sec { height:10px; }
+[data-collapsed="1"] .cnpy-sec.is-first { height:7px; }
+[data-collapsed="1"] .cnpy-sec::after { opacity:1; }
+
+.cnpy-navrow { display:flex; align-items:center; flex:none; border-radius:8px; transition:background .15s ease; }
+.cnpy-navrow:hover { background:var(--hover); }
+.cnpy-navrow.is-active { background:var(--hover); }
+.cnpy-nav-i { position:relative; display:flex; align-items:center; gap:11px; flex:1; min-width:0; width:100%; padding:6px 10px; border-radius:7px; font-size:12px; font-weight:500; color:var(--fg-55); text-align:left; overflow:hidden; transition:color .12s ease, padding var(--side-t) var(--side-e); }
+.cnpy-navrow:hover .cnpy-nav-i { color:var(--fg-70); }
+.cnpy-navrow.is-active .cnpy-nav-i { color:var(--fg); }
+.cnpy-nav-ic { flex:none; transition:transform .2s cubic-bezier(.34,1.56,.64,1); }
+.cnpy-nav-i:active .cnpy-nav-ic { transform:scale(.88); }
+.cnpy-nav-t { white-space:nowrap; flex:1; min-width:0; text-align:left; }
+[data-collapsed="1"] .cnpy-nav-i { padding:8px 0 8px 15px; }
+
+.cnpy-badge { font-family:var(--mono); font-size:10.5px; font-weight:600; flex:none; color:var(--fg-40); }
+.cnpy-badge.is-accent { height:16px; line-height:16px; padding:0 6px; border-radius:999px; color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); background:var(--accent-soft); }
+.cnpy-badge[data-n="0"], .cnpy-dot[data-n="0"] { display:none; }
+/* the collapsed rail keeps the signal as a dot on the icon's shoulder */
+.cnpy-dot { position:absolute; left:26px; top:5px; width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--bg); opacity:0; transform:scale(.4); transition:opacity .16s ease, transform .2s cubic-bezier(.34,1.56,.64,1); pointer-events:none; }
+[data-collapsed="1"] .cnpy-dot { opacity:1; transform:none; transition-delay:.12s; }
+
+.cnpy-chev { flex:none; width:22px; height:26px; margin-right:6px; display:grid; place-items:center; color:var(--fg-40); opacity:.8; border-radius:6px; overflow:hidden; transition:opacity .16s ease .1s, color .12s ease, width var(--side-t) var(--side-e), margin var(--side-t) var(--side-e); }
+.cnpy-chev:hover { opacity:1; color:var(--fg-70); }
+.cnpy-navrow.is-active .cnpy-chev { color:var(--fg-55); }
+.cnpy-chev svg { transition:transform .2s var(--side-e); }
+.cnpy-chev[aria-expanded="true"] svg { transform:rotate(90deg); }
+[data-collapsed="1"] .cnpy-chev { width:0; margin-right:0; opacity:0; pointer-events:none; transition:opacity .09s ease, width var(--side-t) var(--side-e), margin var(--side-t) var(--side-e); }
+
+/* sub-pages: 0fr ↔ 1fr is the one way to animate to an intrinsic height */
+.cnpy-sub { display:grid; grid-template-rows:0fr; flex:none; transition:grid-template-rows var(--side-t) var(--side-e); }
+.cnpy-sub[data-open="1"] { grid-template-rows:1fr; }
+[data-collapsed="1"] .cnpy-sub { grid-template-rows:0fr; }
+.cnpy-sub-clip { overflow:hidden; min-height:0; }
+.cnpy-sub-list { display:flex; flex-direction:column; gap:1px; padding:1px 0 3px 9px; margin-left:18px; border-left:1px solid var(--border); opacity:0; transform:translateY(-4px); transition:opacity .16s ease, transform var(--side-t) var(--side-e); }
+.cnpy-sub[data-open="1"] .cnpy-sub-list { opacity:1; transform:none; transition-delay:.04s; }
+[data-collapsed="1"] .cnpy-sub .cnpy-sub-list { opacity:0; }
+.cnpy-sub-i { position:relative; display:block; width:100%; text-align:left; padding:3px 8px 3px 10px; border-radius:6px; font-size:11.5px; color:var(--fg-55); white-space:nowrap; transition:color .12s ease, transform .15s ease; }
+.cnpy-sub-i:hover { color:var(--fg); transform:translateX(1px); }
+.cnpy-sub-i.is-active { color:var(--fg); font-weight:500; }
+/* the active page marks its stretch of the list's rule */
+.cnpy-sub-i::before { content:""; position:absolute; left:-10px; top:50%; width:1px; height:0; background:var(--fg-70); transform:translateY(-50%); transition:height .2s var(--side-e); }
+.cnpy-sub-i.is-active::before { height:14px; }
+
+.cnpy-collapse { padding:0 10px 6px; flex:none; }
+.cnpy-collapse .cnpy-navrow, .cnpy-collapse .cnpy-nav-i { border-radius:7px; }
+.cnpy-collapse .cnpy-nav-i { font-size:11.5px; color:var(--fg-40); transition:color .12s ease, background .15s ease, padding var(--side-t) var(--side-e); }
+.cnpy-collapse .cnpy-nav-i:hover { color:var(--fg-70); background:var(--hover); }
+.cnpy-collapse .cnpy-nav-ic { transition:transform .32s var(--side-e); }
+[data-collapsed="1"] .cnpy-collapse .cnpy-nav-ic { transform:scaleX(-1); }
+/* The viewport is too narrow for the full rail: it stays collapsed, so the toggle goes. */
+[data-narrow="1"] .cnpy-collapse { display:none; }
+
+.cnpy-ghost { padding:0 21px 8px; font-size:11px; color:var(--fg-40); white-space:nowrap; overflow:hidden; flex:none; }
+.cnpy-foot { padding:10px; border-top:1px solid var(--border); flex:none; }
+.cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:9px; text-align:left; overflow:hidden; transition:background .15s ease, padding var(--side-t) var(--side-e); }
 .cnpy-chip:hover { background:var(--hover); }
-[data-collapsed="1"] .cnpy-chip { justify-content:center; padding:6px 0; }
+.cnpy-chip:hover svg.cnpy-lbl { transform:rotate(45deg); }
+.cnpy-chip svg.cnpy-lbl { transition:opacity .16s ease .1s, transform .4s var(--side-e); }
+.cnpy-chip-t { overflow:hidden; flex:1; min-width:0; }
+.cnpy-chip-n { font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cnpy-chip-h { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.4; }
+[data-collapsed="1"] .cnpy-chip { padding-left:10px; padding-right:0; }
 [data-screen="settings"] .cnpy-chip { background:var(--hover); }
+
+/* Collapsed-rail tooltip. Positioned by main.ts (the nav list scrolls, and a
+   scroll container clips — so it cannot be a CSS ::after on the row). */
+.cnpy-tip { position:fixed; left:72px; top:0; z-index:60; padding:5px 9px; border-radius:7px; border:1px solid var(--border-strong); background:var(--bg); color:var(--fg); font-size:11.5px; font-weight:500; white-space:nowrap; box-shadow:0 8px 24px rgba(0,0,0,.28); pointer-events:none; opacity:0; transform:translate(-4px,-50%); transition:opacity .12s ease, transform .16s var(--side-e); }
+.cnpy-tip[data-on="1"] { opacity:1; transform:translate(0,-50%); }
+
 .cnpy-achip { padding:5px 11px; border-radius:7px; font-size:12.5px; font-weight:500; border:1px solid var(--border); color:var(--fg-55); background:transparent; transition:border-color .12s ease; white-space:nowrap; }
 .cnpy-achip:hover { border-color:var(--border-strong); }
 [data-author="all"] .cnpy-achip.a-all, [data-author="jose-a"] .cnpy-achip.a-jose-a, [data-author="meilin"] .cnpy-achip.a-meilin, [data-author="dev-raj"] .cnpy-achip.a-dev-raj, [data-author="sanaok"] .cnpy-achip.a-sanaok { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
@@ -249,6 +352,83 @@ input, select { font-family: inherit; }
 .cnpy-sw.is-on i { box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--c); }
 .cnpy-sw.is-on span { color:var(--fg); }
 .cnpy-sw.compact { padding:6px 2px; } .cnpy-sw.compact i { width:22px; height:22px; } .cnpy-sw.compact span { display:none; }
+
+/* ── motion: screen entrances ────────────────────────────────────────────────
+   `[data-enter]` is set by main.ts only when what is on screen CHANGED (a new
+   route, or its data arriving) — so none of this replays on a keystroke.
+   `--enter-t` is a negative delay: a rerender mid-entrance swaps <main>, and the
+   new DOM joins the animation where the old one left off instead of restarting.
+   Everything animates `both`-filled from its resting state, so with no
+   `[data-enter]` (or with reduced motion) the page is simply there. */
+@keyframes cnpy-screen { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@keyframes cnpy-rise { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes cnpy-grow-y { from { transform:scaleY(0); } to { transform:none; } }
+@keyframes cnpy-grow-x { from { transform:scaleX(0); } to { transform:none; } }
+@keyframes cnpy-wipe { from { clip-path:inset(0 100% 0 0); } to { clip-path:inset(0 0 0 0); } }
+@keyframes cnpy-dot { from { opacity:0; transform:scale(.2); } to { opacity:1; transform:none; } }
+@keyframes cnpy-shimmer { 0% { opacity:.45; } 50% { opacity:.95; } 100% { opacity:.45; } }
+@keyframes cnpy-pulse { 0% { box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 45%,transparent); } 100% { box-shadow:0 0 0 7px color-mix(in srgb,var(--c) 0%,transparent); } }
+
+[data-enter] #cnpy-main > * { animation:cnpy-screen .32s cubic-bezier(.2,.7,.2,1) both; animation-delay:var(--enter-t, 0ms); }
+[data-enter] header h1, [data-enter] header h1 + span { animation:cnpy-screen .28s ease both; animation-delay:var(--enter-t, 0ms); }
+[data-enter] .cnpy-rise { animation:cnpy-rise .42s cubic-bezier(.2,.7,.2,1) both; animation-delay:calc(var(--i, 0) * 45ms + 40ms + var(--enter-t, 0ms)); }
+/* lists cascade in: the first dozen rows step, the rest arrive together */
+[data-enter] .cnpy-stagger > * { animation:cnpy-rise .36s cubic-bezier(.2,.7,.2,1) both; animation-delay:calc(var(--n, 12) * 28ms + 60ms + var(--enter-t, 0ms)); }
+[data-enter] .cnpy-stagger > :nth-child(1) { --n:0; } [data-enter] .cnpy-stagger > :nth-child(2) { --n:1; }
+[data-enter] .cnpy-stagger > :nth-child(3) { --n:2; } [data-enter] .cnpy-stagger > :nth-child(4) { --n:3; }
+[data-enter] .cnpy-stagger > :nth-child(5) { --n:4; } [data-enter] .cnpy-stagger > :nth-child(6) { --n:5; }
+[data-enter] .cnpy-stagger > :nth-child(7) { --n:6; } [data-enter] .cnpy-stagger > :nth-child(8) { --n:7; }
+[data-enter] .cnpy-stagger > :nth-child(9) { --n:8; } [data-enter] .cnpy-stagger > :nth-child(10) { --n:9; }
+[data-enter] .cnpy-stagger > :nth-child(11) { --n:10; } [data-enter] .cnpy-stagger > :nth-child(12) { --n:11; }
+/* one-shot: main.ts adds this after an in-place change (a range switch, a panel opening) */
+.cnpy-flash { animation:cnpy-rise .3s cubic-bezier(.2,.7,.2,1) both; }
+
+/* chrome that is swapped with <main> still eases its hover/press */
+.cnpy-iconbtn, .cnpy-outlinebtn { transition:background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease; }
+.cnpy-iconbtn:active, .cnpy-outlinebtn:active, .cnpy-accentbtn:active { transform:scale(.96); }
+
+/* ── Repo dashboard (web/src/repo.ts) ────────────────────────────────────────── */
+.repo-row { transition:background .14s ease; }
+.repo-row:hover { background:var(--hover); text-decoration:none; }
+.repo-strip { transition:background .14s ease; }
+.repo-strip:hover { background:var(--hover); }
+.repo-chev { transition:transform .2s cubic-bezier(.4,0,.2,1); }
+.repo-link { color:var(--accent); text-decoration:none; }
+.repo-link:hover { text-decoration:underline; text-underline-offset:3px; }
+.repo-quiet { color:inherit; transition:color .12s ease; }
+.repo-quiet:hover { color:var(--fg); }
+.repo-textbtn:hover { text-decoration:underline; text-underline-offset:3px; }
+.repo-seg button { transition:background .15s ease, color .15s ease; }
+.repo-seg button:hover { color:var(--fg-70); }
+.repo-shimmer { animation:cnpy-shimmer 1.4s ease infinite; }
+.repo-pulse { animation:cnpy-pulse 1.8s ease-out infinite; }
+
+.repo-drift { display:grid; grid-template-rows:0fr; }
+.repo-drift[data-open="1"] { grid-template-rows:1fr; }
+
+.repo-bar { transform-box:fill-box; transform-origin:50% 100%; transition:opacity .15s ease; }
+.repo-bar:hover { opacity:1; }
+[data-enter] .repo-bar { animation:cnpy-grow-y .5s cubic-bezier(.2,.7,.2,1) both; animation-delay:calc(var(--i, 0) * 22ms + 160ms + var(--enter-t, 0ms)); }
+.repo-fill { transform-origin:0 50%; }
+[data-enter] .repo-fill { animation:cnpy-grow-x .7s cubic-bezier(.2,.7,.2,1) both; animation-delay:calc(var(--i, 0) * 35ms + 180ms + var(--enter-t, 0ms)); }
+[data-enter] .repo-spark, .cnpy-flash .repo-spark { animation:cnpy-wipe .8s cubic-bezier(.4,0,.2,1) both; animation-delay:calc(160ms + var(--enter-t, 0ms)); }
+.cnpy-flash .repo-spark { animation-delay:0ms; }
+
+.repo-dot { transition:box-shadow .15s ease, transform .15s ease; }
+.repo-dot:hover, .repo-dot:focus-visible { box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 12%,transparent); transform:scale(1.12); outline:none; }
+[data-enter] .repo-dot { animation:cnpy-dot .3s cubic-bezier(.34,1.56,.64,1) both; animation-delay:calc(var(--i, 0) * 30ms + 140ms + var(--enter-t, 0ms)); }
+.repo-tip { position:absolute; bottom:24px; left:50%; z-index:30; display:block; background:var(--bg); border:1px solid var(--border-strong); border-radius:9px; padding:9px 12px; box-shadow:0 8px 30px rgba(0,0,0,.35); white-space:nowrap; pointer-events:none; opacity:0; visibility:hidden; transform:translate(-50%,6px) scale(.98); transition:opacity .15s ease, transform .15s ease, visibility 0s .15s; }
+.repo-dotwrap:hover .repo-tip, .repo-dot:focus-visible + .repo-tip { opacity:1; visibility:visible; transform:translate(-50%,0); transition-delay:0s; }
+
+/* the panel's two-up splits stack on a laptop-and-below width */
+@container (max-width: 760px) { .repo-split { grid-template-columns:minmax(0,1fr) !important; } .repo-split-r { border-left:none !important; border-top:1px solid var(--border); } .repo-tiles { grid-template-columns:repeat(2,minmax(0,1fr)) !important; } }
+.repo-panel { container-type:inline-size; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cnpy-aside, .cnpy-aside *, .cnpy-aside *::before, .cnpy-aside *::after { transition:none !important; }
+  [data-enter] *, .cnpy-flash, .cnpy-flash *, .repo-shimmer, .repo-pulse { animation:none !important; }
+  .repo-tip, .repo-dot, .repo-row, .repo-chev { transition:none !important; }
+}
 
 /* ── landing (signed-out screen, web/src/landing.ts) ──────────────────────────
    Ported from Canopy Site.dc.html. The page rides the app's three themes; these
