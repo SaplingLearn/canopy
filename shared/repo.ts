@@ -119,7 +119,8 @@ export interface RepoSprint {
   total: number;
   pct: number;
 }
-export interface RepoContributor { person: RepoPerson; merged: number; closed: number }
+/** The design's P · M · R: pushes, merged PRs, reviews — this week. */
+export interface RepoContributor { person: RepoPerson; pushes: number; merged: number; reviews: number }
 export interface RepoLabels { total: number; rows: { name: string; count: number }[] }
 export interface RepoTodos { count: number; delta: number; since: string; trend: number[] }
 

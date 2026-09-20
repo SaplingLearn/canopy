@@ -5,6 +5,8 @@ import type {
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
 import { list_sprints } from "./sprints";
+import { hasCaptured, prStatesAsOf, recentPrRows, commitsByDay, pushRowsSince } from "../repo/reads";
+import type { RepoEventRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
 // no live GitHub, no per-user token, nothing written. It reads what the webhook
@@ -177,6 +179,18 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   const openThen = await openIssuesAsOf(db, weekAgo);
   const tickets = await ticketCounts(db, weekAgo);
 
+  // ── repo capture (sources A, B) ───────────────────────────────────────────
+  const prCaptured = await hasCaptured(db, "pr");
+  const isOpen = (r: RepoEventRow) => r.state === "draft" || r.state === "review";
+  const prsNow = prCaptured ? (await prStatesAsOf(db, nowAt)).filter(isOpen) : [];
+  const prsThen = prCaptured ? (await prStatesAsOf(db, weekAgo)).filter(isOpen) : [];
+  const awaiting = (rows: RepoEventRow[]) => rows.filter((r) => r.state === "review").length;
+  const pushes = await pushRowsSince(db, twoWeeksAgo);
+  const pushesThisWeek = pushes.filter((p) => p.occurred_at > weekAgo);
+  const sum = (rows: RepoEventRow[]) => rows.reduce((n, r) => n + (r.count ?? 0), 0);
+  const commitsThisWeek = sum(pushesThisWeek);
+  const commitsLastWeek = sum(pushes.filter((p) => p.occurred_at <= weekAgo));
+
   const issueEvents = await all<IssueRow>(
     db,
     `SELECT ref_number, subject_login, ${AT} AS at,
@@ -195,29 +209,47 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
   // ── Overview tiles ────────────────────────────────────────────────────────
   const bugsNow = openNow.filter(isBug).length;
   const bugsThen = openThen.filter(isBug).length;
-  const stats: RepoStat[] = [
-    { label: "Merged PRs", value: mergedThisWeek.length, delta: mergedThisWeek.length - mergedLastWeek.length, tone: "neutral" },
+  const issueTiles: RepoStat[] = [
     { label: "Open issues", value: openNow.length, delta: openNow.length - openThen.length, tone: backlogTone(openNow.length - openThen.length, false) },
     { label: "Open bugs", value: bugsNow, delta: bugsNow - bugsThen, tone: backlogTone(bugsNow - bugsThen, true) },
-    { label: "Open tickets", value: tickets.open, delta: tickets.delta, tone: backlogTone(tickets.delta, false) },
   ];
+  // Until PR state has been captured (or backfilled) an "Open PRs: 0" would be a lie.
+  const stats: RepoStat[] = prCaptured
+    ? [
+        { label: "Open PRs", value: prsNow.length, delta: prsNow.length - prsThen.length, tone: "neutral" },
+        { label: "Awaiting review", value: awaiting(prsNow), delta: awaiting(prsNow) - awaiting(prsThen), tone: "neutral" },
+        ...issueTiles,
+      ]
+    : [
+        { label: "Merged PRs", value: mergedThisWeek.length, delta: mergedThisWeek.length - mergedLastWeek.length, tone: "neutral" },
+        ...issueTiles,
+        { label: "Open tickets", value: tickets.open, delta: tickets.delta, tone: backlogTone(tickets.delta, false) },
+      ];
 
   // ── Code ──────────────────────────────────────────────────────────────────
   const mergers = new Set(mergedThisWeek.map((p) => p.subject_login.toLowerCase())).size;
+  const commitDelta = commitsThisWeek - commitsLastWeek;
   const codeStats: RepoCodeStat[] = [
+    prCaptured
+      ? { label: "Open PRs", value: prsNow.length, sub: `${awaiting(prsNow)} awaiting review`, tone: "neutral" }
+      : { label: "Closed unmerged", value: closedUnmerged.length, sub: "this week", tone: "neutral" },
     { label: "Merged this week", value: mergedThisWeek.length, sub: mergers === 0 ? "this week" : mergers === 1 ? "by 1 person" : `by ${mergers} people`, tone: "neutral" },
-    { label: "Closed unmerged", value: closedUnmerged.length, sub: "this week", tone: "neutral" },
-    { label: "Issues opened", value: openedThisWeek.length, sub: "this week", tone: "neutral" },
+    pushes.length
+      ? { label: "Commits this week", value: commitsThisWeek, sub: `${commitDelta >= 0 ? "▲" : "▼"} ${Math.abs(commitDelta)} vs last week`, tone: "neutral" }
+      : { label: "Issues opened", value: openedThisWeek.length, sub: "this week", tone: "neutral" },
     { label: "Issues closed", value: closedThisWeek.length, sub: "this week", tone: "neutral" },
   ];
 
+  // Commits once pushes are captured; merges (what `events` has always had) until then.
+  const commitDays = pushes.length ? await commitsByDay(db, twoWeeksAgo) : null;
   const perDay = new Map<string, number>();
   for (const p of merged) perDay.set(p.at.slice(0, 10), (perDay.get(p.at.slice(0, 10)) ?? 0) + 1);
-  const days = lastDays(now, BAR_DAYS).map((date) => ({ date, count: perDay.get(date) ?? 0 }));
+  const days = lastDays(now, BAR_DAYS).map((date) => ({ date, count: (commitDays ?? perDay).get(date) ?? 0 }));
   const barTotal = days.reduce((n, d) => n + d.count, 0);
+  const noun = commitDays ? "commit" : "merged PR";
   const bars: RepoBars = {
-    title: `Merge activity — last ${BAR_DAYS} days`,
-    note: `${barTotal} merged PR${barTotal === 1 ? "" : "s"} · all branches`,
+    title: `${commitDays ? "Commit" : "Merge"} activity — last ${BAR_DAYS} days`,
+    note: `${barTotal} ${noun}${barTotal === 1 ? "" : "s"} · all branches`,
     days,
   };
 
@@ -230,22 +262,28 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     url: p.url, at: p.at,
   }));
   const issueActivity = issueEvents.map((e) => activityOf(people, e)).filter((a): a is RepoActivity => a !== null);
-  const activity = prActivity.concat(issueActivity).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, ACTIVITY_LIMIT);
+  const pushActivity: RepoActivity[] = pushes.slice(0, ACTIVITY_LIMIT).map((p) => ({
+    kind: "push" as const, actor: p.actor_login ? personOf(people, p.actor_login) : null,
+    text: `pushed ${p.count ?? 0} commit${p.count === 1 ? "" : "s"} to ${p.ref ?? "a branch"}`, url: p.url, at: p.occurred_at,
+  }));
+  const activity = prActivity.concat(issueActivity, pushActivity)
+    .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, ACTIVITY_LIMIT);
 
   // ── Team & Planning ───────────────────────────────────────────────────────
-  const tally = new Map<string, { login: string; merged: number; closed: number }>();
-  const bump = (login: string, key: "merged" | "closed") => {
+  const tally = new Map<string, { login: string; pushes: number; merged: number; reviews: number }>();
+  const bump = (login: string, key: "pushes" | "merged" | "reviews") => {
     const k = login.toLowerCase();
-    const row = tally.get(k) ?? { login, merged: 0, closed: 0 };
+    const row = tally.get(k) ?? { login, pushes: 0, merged: 0, reviews: 0 };
     row[key] += 1;
     tally.set(k, row);
   };
+  // A bot's pushes are not a person's week.
+  for (const p of pushesThisWeek) if (p.actor_login && !p.actor_login.endsWith("[bot]")) bump(p.actor_login, "pushes");
   for (const p of mergedThisWeek) bump(p.subject_login, "merged");
-  for (const e of closedThisWeek) bump(e.subject_login, "closed");
   const contributors: RepoContributor[] = [...tally.values()]
-    .sort((a, b) => b.merged - a.merged || b.closed - a.closed || a.login.localeCompare(b.login))
+    .sort((a, b) => (b.pushes + b.merged + b.reviews) - (a.pushes + a.merged + a.reviews) || a.login.localeCompare(b.login))
     .slice(0, CONTRIBUTOR_LIMIT)
-    .map((t) => ({ person: personOf(people, t.login), merged: t.merged, closed: t.closed }));
+    .map((t) => ({ person: personOf(people, t.login), pushes: t.pushes, merged: t.merged, reviews: t.reviews }));
 
   const byLabel = new Map<string, number>();
   for (const i of openNow) for (const l of i.labels) byLabel.set(l, (byLabel.get(l) ?? 0) + 1);
@@ -261,13 +299,23 @@ export async function getRepoDashboard(db: DB, repo: string, now: number = Date.
     ? { id: current.id, label: current.label, due: current.due, closed: current.progress.closed, total: current.progress.total, pct: current.progress.pct }
     : null;
 
+  const PR_STATES = ["draft", "review", "approved", "merged", "closed"] as const;
+  const capturedPrs: RepoPr[] = prCaptured
+    ? (await recentPrRows(db, PR_LIMIT)).map((r) => ({
+        number: r.number ?? 0, title: r.title ?? `PR #${r.number}`, url: r.url ?? "",
+        author: personOf(people, r.actor_login ?? "unknown"), branch: r.ref,
+        state: (PR_STATES as readonly string[]).includes(r.state ?? "") ? (r.state as RepoPr["state"]) : "review",
+        checks: null, at: r.occurred_at,
+      }))
+    : listPrs.map((p) => prOf(people, p));
+
   const some = <T>(rows: T[]): RepoSection<T[]> => (rows.length ? ok(rows) : EMPTY);
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
     stats: ok(stats),
     codeStats: ok(codeStats),
     bars: barTotal > 0 ? ok(bars) : EMPTY,
-    prs: some(listPrs.map((p) => prOf(people, p))),
+    prs: some(capturedPrs),
     activity: some(activity),
     sprint: sprint ? ok(sprint) : EMPTY,
     contributors: some(contributors),

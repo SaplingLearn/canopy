@@ -3,12 +3,13 @@ import { env } from "cloudflare:test";
 import { app } from "../src/routes";
 import { createSession } from "../src/auth/session";
 import { hmacSeal } from "../src/auth/crypto";
-import { ingestEvent } from "../src/consumer";
+import { ingestEvent, ingestRepoEvent } from "../src/consumer";
 import { getRepoDashboard } from "../src/tools/repo";
 import { create_sprint, set_sprint_active } from "../src/tools/sprints";
 import { seedPerson } from "./helpers/persons";
 import type { CapturedEvent } from "@shared/contract";
 import type { RepoDashboard } from "@shared/repo";
+import type { RepoEvent } from "../src/repo/types";
 import { SprintCreate } from "@shared/sprints";
 
 const NOW = Date.parse("2026-09-20T12:00:00Z");
@@ -103,8 +104,8 @@ describe("getRepoDashboard — a D1-only projection", () => {
     expect(JSON.stringify(d)).not.toContain("a long body");
 
     const code = data(d.codeStats);
-    expect(code[0]).toMatchObject({ label: "Merged this week", value: 3, sub: "by 2 people" });
-    expect(code[1]).toMatchObject({ label: "Closed unmerged", value: 1 });
+    expect(code[0]).toMatchObject({ label: "Closed unmerged", value: 1 });
+    expect(code[1]).toMatchObject({ label: "Merged this week", value: 3, sub: "by 2 people" });
   });
 
   it("buckets merges into 14 UTC days, oldest first", async () => {
@@ -157,7 +158,7 @@ describe("getRepoDashboard — a D1-only projection", () => {
       issueEvent(9, "b", ago(1), "closed", "closed"),
     ]);
     const rows = data((await getRepoDashboard(env.DB, "o/r", NOW)).contributors);
-    expect(rows.map((r) => [r.person.login, r.merged, r.closed])).toEqual([["a", 2, 0], ["b", 1, 1]]);
+    expect(rows.map((r) => [r.person.login, r.pushes, r.merged, r.reviews])).toEqual([["a", 0, 2, 0], ["b", 0, 1, 0]]);
   });
 
   it("the current sprint is the one a person marked active, with the Roadmap's ticket progress", async () => {
@@ -185,5 +186,62 @@ describe("GET /repo/dashboard", () => {
     expect(d.prs.status).toBe("ok");
     expect(d.deploys.status).toBe("not_connected");
     expect(d.sample).toBeUndefined();
+  });
+});
+
+const prRow = (number: number, state: string, at: string, over: Partial<RepoEvent> = {}): RepoEvent => ({
+  semantic_key: `gh:prs:${number}:${state}:${at}`, kind: "pr", number, state, ref: `feat/${number}`, sha: `sha${number}`,
+  actor_login: "jose-a", title: `PR ${number}`, url: `https://github.com/o/r/pull/${number}`, raw: "{}", provenance: "webhook", occurred_at: at, ...over,
+});
+const pushRow = (sha: string, ref: string, count: number, at: string, actor = "jose-a"): RepoEvent => ({
+  semantic_key: `gh:push:${sha}:${ref}`, kind: "push", ref, sha, actor_login: actor, count, title: `commit ${sha}`, raw: "{}", provenance: "webhook", occurred_at: at,
+});
+const ingestRepo = async (rows: RepoEvent[]) => { for (const r of rows) await ingestRepoEvent(env.DB, r); };
+
+describe("getRepoDashboard — pushes and PR state (sources A, B)", () => {
+  it("counts OPEN PRs from the latest state per PR, with a week-ago delta", async () => {
+    await ingestRepo([
+      prRow(1, "review", ago(10)),                       // open then and now
+      prRow(2, "review", ago(9)), prRow(2, "merged", ago(2)), // open a week ago, merged since
+      prRow(3, "draft", ago(1)),                         // new this week, draft
+      prRow(4, "review", ago(1)),
+    ]);
+    const [openPrs, awaiting] = data((await getRepoDashboard(env.DB, "o/r", NOW)).stats);
+    expect(openPrs).toMatchObject({ label: "Open PRs", value: 3, delta: 1 });       // was {1,2}, now {1,3,4}
+    expect(awaiting).toMatchObject({ label: "Awaiting review", value: 2, delta: 0 }); // non-draft open: was {1,2}, now {1,4}
+  });
+
+  it("lists open and recent PRs with their head branch and state", async () => {
+    await seedPerson("jose-a");
+    await ingestRepo([prRow(7, "draft", ago(3)), prRow(7, "review", ago(1)), prRow(8, "merged", ago(2))]);
+    const prs = data((await getRepoDashboard(env.DB, "o/r", NOW)).prs);
+    expect(prs.map((p) => [p.number, p.state, p.branch])).toEqual([[7, "review", "feat/7"], [8, "merged", "feat/8"]]);
+    expect(prs[0].author.handle).toBe("jose-a");
+  });
+
+  it("draws the 14-day bars from COMMITS once pushes are captured", async () => {
+    await ingestRepo([pushRow("a1", "main", 3, ago(0, 2)), pushRow("a2", "feat/x", 2, ago(0, 3)), pushRow("a3", "main", 4, ago(13))]);
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    const bars = data(d.bars);
+    expect(bars.title).toBe("Commit activity — last 14 days");
+    expect(bars.days[13].count).toBe(5);
+    expect(bars.days[0].count).toBe(4);
+    expect(bars.note).toBe("9 commits · all branches");
+    expect(data(d.codeStats).find((s) => s.label === "Commits this week")).toMatchObject({ value: 5 });
+  });
+
+  it("puts pushes in the feed and in the contributor columns", async () => {
+    await seedPerson("jose-a");
+    await ingestRepo([pushRow("a1", "fix/sse-auth", 1, ago(0, 1)), pushRow("a2", "main", 3, ago(0, 2))]);
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    const feed = data(d.activity);
+    expect(feed[0]).toMatchObject({ kind: "push", text: "pushed 1 commit to fix/sse-auth", actor: { handle: "jose-a" } });
+    expect(feed[1].text).toBe("pushed 3 commits to main");
+    expect(data(d.contributors)[0]).toMatchObject({ pushes: 2, merged: 0, reviews: 0 });
+  });
+
+  it("before any PR capture exists, keeps the merged-PR tiles instead of claiming 0 open PRs", async () => {
+    const labels = data((await getRepoDashboard(env.DB, "o/r", NOW)).stats).map((s) => s.label);
+    expect(labels).toEqual(["Merged PRs", "Open issues", "Open bugs", "Open tickets"]);
   });
 });

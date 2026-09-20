@@ -147,8 +147,8 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     hosting: { status: "not_connected" },
 
     sprint: { status: "ok", data: { id: 0, label: "M6 — Notifications GA", due: new Date(now + 12 * DAY).toISOString().slice(0, 10), closed: 21, total: 34, pct: 62 } },
-    contributors: { status: "ok", data: ([["jose-a", 14, 3], ["meilin", 11, 4], ["dev-raj", 9, 2], ["sanaok", 7, 1], ["priya-k", 6, 2], ["tom-h", 4, 1], ["ana-r", 3, 0], ["kenji-m", 2, 1]] as [string, number, number][])
-      .map(([login, merged, closed]) => ({ person: person(login), merged, closed })) },
+    contributors: { status: "ok", data: ([["jose-a", 14, 3, 6], ["meilin", 11, 4, 8], ["dev-raj", 9, 2, 3], ["sanaok", 7, 1, 5], ["priya-k", 6, 2, 2], ["tom-h", 4, 1, 1], ["ana-r", 3, 0, 4], ["kenji-m", 2, 1, 0]] as [string, number, number, number][])
+      .map(([login, pushes, merged, reviews]) => ({ person: person(login), pushes, merged, reviews })) },
     labels: { status: "ok", data: { total: 24, rows: [{ name: "enhancement", count: 9 }, { name: "bug", count: 6 }, { name: "infra", count: 4 }, { name: "docs", count: 3 }, { name: "design", count: 2 }] } },
     todos: { status: "ok", data: { count: 43, delta: -18, since: "Aug 1", trend: [61, 58, 59, 54, 50, 51, 47, 44, 45, 43] } },
   };
