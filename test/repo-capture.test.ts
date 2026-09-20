@@ -4,6 +4,10 @@ import { ENVS } from "./helpers/repo";
 import push from "./fixtures/gh-push.json";
 import prOpened from "./fixtures/gh-pr-opened.json";
 import prMerged from "./fixtures/gh-pr-merged.json";
+import deployStatus from "./fixtures/gh-deployment-status.json";
+import checkRun from "./fixtures/gh-check-run.json";
+import workflowRun from "./fixtures/gh-workflow-run.json";
+import prReview from "./fixtures/gh-pr-review.json";
 
 
 describe("repoEventsFromDelivery — push", () => {
@@ -70,5 +74,54 @@ describe("repoEventsFromDelivery — pull_request", () => {
     const [ev] = repoEventsFromDelivery("pull_request", prMerged, ENVS);
     expect(ev).toMatchObject({ kind: "pr", state: "merged" });
     expect(ev.occurred_at).toBe((prMerged as { pull_request: { merged_at: string } }).pull_request.merged_at);
+  });
+});
+
+describe("repoEventsFromDelivery — deployment_status (Railway backend)", () => {
+  it("maps the GitHub environment onto the configured env key", () => {
+    const [ev] = repoEventsFromDelivery("deployment_status", deployStatus, ENVS);
+    expect(ev).toMatchObject({
+      semantic_key: "gh:deploy:7001:success", kind: "deploy", number: 7001, env: "staging", part: "backend",
+      sha: "becdbac09eaf5d7c73b9f27019c0e43c4444dd7b", state: "success", name: "Sapling / staging",
+      actor_login: "railway-app[bot]", occurred_at: "2026-09-20T09:05:34Z",
+    });
+  });
+
+  it("skips an environment nobody configured (a preview env is not staging)", () => {
+    const other = { ...deployStatus, deployment: { ...deployStatus.deployment, environment: "Sapling / pr-482" } };
+    expect(repoEventsFromDelivery("deployment_status", other, ENVS)).toEqual([]);
+  });
+});
+
+describe("repoEventsFromDelivery — check_run", () => {
+  it("a Workers Builds check ON THE ENV BRANCH is a frontend deploy", () => {
+    const [ev] = repoEventsFromDelivery("check_run", checkRun, ENVS);
+    expect(ev).toMatchObject({ semantic_key: "gh:check:5001:completed", kind: "check", number: 5001, ref: "main", name: "Workers Builds: frontend-staging", state: "success", env: "staging", part: "frontend", occurred_at: "2026-09-20T09:06:32Z" });
+  });
+
+  it("the same check on another branch is a preview build — a check, not a deploy", () => {
+    const preview = { ...checkRun, check_run: { ...checkRun.check_run, check_suite: { head_branch: "feat/x" } } };
+    expect(repoEventsFromDelivery("check_run", preview, ENVS)[0]).toMatchObject({ kind: "check", env: null, part: null });
+  });
+
+  it("created → pending; other actions are ignored", () => {
+    const created = { action: "created", check_run: { ...checkRun.check_run, status: "queued", conclusion: null, completed_at: null } };
+    expect(repoEventsFromDelivery("check_run", created, ENVS)[0]).toMatchObject({ semantic_key: "gh:check:5001:created", state: "pending", occurred_at: "2026-09-20T09:05:00Z" });
+    expect(repoEventsFromDelivery("check_run", { ...checkRun, action: "rerequested" }, ENVS)).toEqual([]);
+  });
+});
+
+describe("repoEventsFromDelivery — workflow_run and pull_request_review", () => {
+  it("captures only completed runs, keyed by run + attempt", () => {
+    expect(repoEventsFromDelivery("workflow_run", workflowRun, ENVS)[0]).toMatchObject({
+      semantic_key: "gh:run:35501310333:1", kind: "run", number: 35501310333, name: "e2e (browser lane)", ref: "main", state: "failure", count: 1, actor_login: "AndresL230",
+    });
+    expect(repoEventsFromDelivery("workflow_run", { ...workflowRun, action: "requested" }, ENVS)).toEqual([]);
+  });
+
+  it("captures a submitted review", () => {
+    expect(repoEventsFromDelivery("pull_request_review", prReview, ENVS)[0]).toMatchObject({
+      semantic_key: "gh:review:3001:submitted", kind: "review", number: 480, state: "approved", actor_login: "Darkest-Teddy",
+    });
   });
 });

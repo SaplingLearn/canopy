@@ -291,7 +291,7 @@ async function progressSeam(db: DB, payload: unknown): Promise<void> {
 /** Deliveries the My Work capture (`events`) reads. */
 const WORK_EVENT_NAMES = ["pull_request", "issues"];
 /** Deliveries the repo dashboard capture (`repo_events`) reads. Later phases append. */
-export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push"];
+export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push", "pull_request_review", "deployment_status", "check_run", "workflow_run"];
 
 // ---------------------------------------------------------------------------
 // The webhook branch. HMAC-verify the raw body BEFORE anything else (a bad or

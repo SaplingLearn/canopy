@@ -1,0 +1,5 @@
+{
+  "action": "submitted",
+  "review": { "id": 3001, "state": "approved", "submitted_at": "2026-09-20T10:00:00Z", "html_url": "https://github.com/SaplingLearn/sapling/pull/480#pullrequestreview-3001", "user": { "login": "Darkest-Teddy" } },
+  "pull_request": { "number": 480 }
+}
