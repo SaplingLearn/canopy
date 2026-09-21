@@ -235,6 +235,30 @@ export interface RepoDashboard {
   todos: RepoSection<RepoTodos>;
 }
 
+// ── Which section belongs to which tab — ONE mapping, two readers ────────────
+/** Every key of `RepoDashboard` that is a section (not the header fields). */
+export type RepoSectionName = {
+  [K in keyof RepoDashboard]-?: RepoDashboard[K] extends RepoSection<unknown> ? K : never;
+}[keyof RepoDashboard];
+
+/** The sections each tab shows, in screen order. Read by the screen
+ *  (`web/src/repo.ts`, the "not connected" footer) and by the MCP
+ *  `get_repo_dashboard` tool's `tab` filter (`src/tools/repo-agent.ts`), so an
+ *  agent asking for a tab gets exactly what a person sees on it. */
+export const REPO_TAB_SECTIONS = {
+  overview: ["environments", "drift", "stats", "health"],
+  code: ["codeStats", "bars", "prs", "branches"],
+  ci: ["deploys", "ciFailures", "coverage", "bundle", "activity"],
+  usage: ["usage", "cloudflare", "hosting", "product"],
+  planning: ["sprint", "contributors", "labels", "todos"],
+} as const satisfies Record<RepoTab, readonly RepoSectionName[]>;
+
+/** Compile-time: a section added to `RepoDashboard` must be given a tab above. */
+type AssertTrue<T extends true> = T;
+export type RepoSectionsAllMapped = AssertTrue<
+  [RepoSectionName] extends [(typeof REPO_TAB_SECTIONS)[RepoTab][number]] ? true : false
+>;
+
 // ── "Poll usage now" (POST /admin/poll-usage) — TYPES ONLY, nothing the SPA bundles ──
 /** One environment's outcome from one hourly usage poller. `written` = NEW
  *  `repo_metrics` rows — `0` on `ok` means those hours were already stored, and

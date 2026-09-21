@@ -19,6 +19,9 @@ import {
   agentAddTicketLink, agentSetTicketSprint, agentSetTicketParent,
 } from "./tools/tickets-agent";
 import { getMyWork, list_events } from "./tools/mywork";
+import { getRepoDashboardForAgent } from "./tools/repo-agent";
+import { repoEnvironments } from "./repo/config";
+import { REPO_RANGES, REPO_TAB_SECTIONS, type RepoTab } from "@shared/repo";
 import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload } from "@shared/contract";
@@ -284,6 +287,30 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "Recent captured GitHub events (raw log behind My Work and roadmap progress). Filter by type/subject. Read-only.",
     { type: z.enum(["pr_merged", "pr_closed", "issue"]).optional(), subject: z.string().optional(), limit: z.number().optional() },
     async (args) => runTool(() => list_events(env.DB, args))
+  );
+
+  // ── The Repo dashboard: a READ, for every principal ────────────────────────
+  //
+  // Not admin-gated, like the ticket/sprint reads: it exposes nothing a signed-in
+  // member cannot already see at #repo, and nothing per-user. It is the SAME
+  // projection GET /repo/dashboard serves (getRepoDashboard — D1 only, nothing on
+  // that path fetches), reshaped for an agent's context in tools/repo-agent.ts.
+  // READ-ONLY: "Poll usage now" (POST /admin/poll-usage) and Sync GitHub
+  // (POST /admin/backfill) stay session-cookie + admin routes, NEVER MCP tools.
+  server.tool(
+    "get_repo_dashboard",
+    "The Repo dashboard for the org's main repository: environments and deploys, CI, code activity, usage (requests, errors, hosting, active users), the app's product metrics, and planning — read from Canopy's own database, never live GitHub. Every section is `ok`, `empty` (connected, nothing to show) or `not_connected` (never captured): treat anything not `ok` as unknown, never as zero. Optional `tab` (overview | code | ci | usage | planning) returns only the sections that tab shows; `range` (24h | 7d | 30d, default 7d) picks the one view the usage / cloudflare / product sections return; `include_trends` (default false) adds the sparkline `trend` arrays and the drift per-commit breakdown — leave it off unless you need the series. Returns { repo, generatedAt, degraded, tab, range, sections }; `degraded: true` means a database read failed and the sections fell back. Read-only and safe to call freely.",
+    {
+      tab: z.enum(Object.keys(REPO_TAB_SECTIONS) as [RepoTab, ...RepoTab[]]).optional(),
+      range: z.enum(REPO_RANGES).optional(),
+      include_trends: z.boolean().optional(),
+    },
+    async ({ tab, range, include_trends }) =>
+      runTool(() =>
+        getRepoDashboardForAgent(env.DB, env.GITHUB_REPO ?? "", repoEnvironments(env), {
+          tab, range, includeTrends: include_trends,
+        })
+      ),
   );
 
   server.tool(

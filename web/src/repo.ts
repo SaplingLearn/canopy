@@ -13,7 +13,7 @@
 // an unrelated reason never replays them.
 
 import {
-  REPO_RANGES, REPO_TABS,
+  REPO_RANGES, REPO_TABS, REPO_TAB_SECTIONS,
   type RepoActivity, type RepoActivityKind, type RepoDashboard, type RepoPerson, type RepoPr, type RepoPrState,
   type RepoProductEnv, type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
   type PollOutcome, type UsagePollResult, type UsagePollSource,
@@ -714,14 +714,9 @@ const SCREEN_LABEL: Record<RepoTab, string> = { overview: "Overview", code: "Cod
 function hasUncaptured(p: RepoProps): boolean {
   const d = p.repo.data;
   if (!d) return false;
-  const by: Record<RepoTab, RepoSection<unknown>[]> = {
-    overview: [d.environments, d.drift, d.stats, d.health],
-    code: [d.codeStats, d.bars, d.prs, d.branches],
-    ci: [d.deploys, d.ciFailures, d.coverage, d.bundle, d.activity],
-    usage: [d.usage, d.cloudflare, d.hosting, d.product ?? { status: "not_connected" }],
-    planning: [d.sprint, d.contributors, d.labels, d.todos],
-  };
-  return by[p.tab].some((s) => s.status === "not_connected");
+  // The ONE section→tab mapping (shared with the MCP `get_repo_dashboard` tool).
+  // `?? not_connected`: a payload from before a section existed lacks its key.
+  return REPO_TAB_SECTIONS[p.tab].some((k) => ((d[k] as RepoSection<unknown> | undefined)?.status ?? "not_connected") === "not_connected");
 }
 
 export function repoView(p: RepoProps): string {
