@@ -126,12 +126,17 @@ export interface RepoActivity {
 }
 
 // ── Usage ───────────────────────────────────────────────────────────────────
+// Requests/errors come from Cloudflare analytics, active users from the target
+// app's own metrics endpoint — different sources that connect independently,
+// so each metric travels as its own nullable value: `null` = not connected for
+// THAT metric, never a guessed number next to its live neighbours.
+export interface RepoUsageMetric { value: string; trend: number[]; tone: RepoTone }
 export interface RepoUsageEnv {
   name: string;
   host: string;
-  requests: string; requestsTrend: number[];
-  errorRate: number; errorTrend: number[]; errorTone: RepoTone;
-  users: string; usersTrend: number[];
+  requests: RepoUsageMetric | null;
+  errorRate: RepoUsageMetric | null;
+  users: RepoUsageMetric | null;
 }
 export interface RepoCfRow { env: string; label: string; value: string }
 export interface RepoHosting { env: string; cpu: string; memory: string }

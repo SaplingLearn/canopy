@@ -149,6 +149,28 @@ describe("repoView — live content", () => {
     expect(repoView(props({ tab: "usage", range: "30d", repo: { status: "ok", data } }))).toContain("5.1M");
   });
 
+  it("a usage metric with no source says so in place, without blanking its neighbours", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "12.4K", trend: [1, 2, 3], tone: "neutral" as const }, errorRate: { value: "2.41%", trend: [1, 2], tone: "warn" as const }, users: null };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } } });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    expect(html).toContain("12.4K");
+    expect(html).toContain("Active users");
+    expect(html).toContain("not connected");
+  });
+
+  it("a usage env with every metric unconnected still renders its name, host, and three not-connected rows", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null };
+    const data = live({
+      usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } },
+      cloudflare: EMPTY, hosting: EMPTY,
+    });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    expect(html).toContain("staging");
+    expect(html).toContain("staging.saplinglearn.com");
+    expect((html.match(/not connected/g) ?? []).length).toBe(3);
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
   it("M11: renders a null reviews count as an em dash, excluded from the bar width", () => {
     const person = (login: string): RepoPerson => ({ login, handle: login, name: null, color: null });
     const data = live({

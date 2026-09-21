@@ -15,7 +15,7 @@
 import {
   REPO_RANGES, REPO_TABS,
   type RepoActivity, type RepoActivityKind, type RepoDashboard, type RepoPerson, type RepoPr, type RepoPrState,
-  type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv,
+  type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
 } from "@shared/repo";
 import type { Loadable } from "./render";
 import { esc, attr, statusBadge } from "./ui";
@@ -427,18 +427,27 @@ function ciTab(p: RepoProps): string {
 }
 
 // ── Usage ────────────────────────────────────────────────────────────────────
+// A `null` metric keeps its label row (so the block never collapses or shifts
+// its neighbours) and shows a quiet "not connected" where the value would be
+// — no sparkline element, no empty-state box. `spark()` already renders
+// nothing under 2 trend points, so a connected-but-thin metric just shows its
+// value with no line.
 function usageEnv(e: RepoUsageEnv, i: number): string {
-  const metric = (label: string, value: string, trend: number[], stroke: string, valueColor = ""): string =>
+  const metric = (label: string, m: RepoUsageMetric | null, stroke: string, valueColor = ""): string =>
     `<div style="${TOP};padding:12px 0">
-      <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL_SM}">${label}</span><span style="font-family:var(--mono);font-size:17px;font-weight:600;white-space:nowrap;${valueColor ? `color:${valueColor}` : ""}">${esc(value)}</span></div>
-      ${spark(trend, stroke, 40, 8)}
+      <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL_SM}">${label}</span>${
+        m
+          ? `<span style="font-family:var(--mono);font-size:17px;font-weight:600;white-space:nowrap;${valueColor ? `color:${valueColor}` : ""}">${esc(m.value)}</span>`
+          : `<span style="font-size:11.5px;color:var(--fg-40)">not connected</span>`
+      }</div>
+      ${m ? spark(m.trend, stroke, 40, 8) : ""}
     </div>`;
-  const errC = TONE[e.errorTone === "neutral" ? "good" : e.errorTone];
+  const errC = e.errorRate ? TONE[e.errorRate.tone === "neutral" ? "good" : e.errorRate.tone] : "";
   return `<div style="padding:18px 20px 4px;min-width:0;${i ? LEFT : ""}">
     <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><span style="font-size:15px;font-weight:600;flex:1">${esc(e.name)}</span><span style="font-family:var(--mono);font-size:10px;color:var(--fg-40)">${esc(e.host)}</span></div>
-    ${metric("Requests", e.requests, e.requestsTrend, "var(--accent)")}
-    ${metric("Error rate", `${e.errorRate.toFixed(2)}%`, e.errorTrend, errC, errC)}
-    ${metric("Active users", e.users, e.usersTrend, "var(--blue)")}
+    ${metric("Requests", e.requests, "var(--accent)")}
+    ${metric("Error rate", e.errorRate, errC, errC)}
+    ${metric("Active users", e.users, "var(--blue)")}
   </div>`;
 }
 
@@ -447,15 +456,15 @@ function usageTab(p: RepoProps): string {
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
-  const usage = sec(p, (d) => d.usage, { nc: "App usage isn't connected — requests, error rate and active users need an analytics source.", empty: "No usage recorded for this window.", lines: 4 }, (u) =>
+  const usage = sec(p, (d) => d.usage, { nc: "App usage isn't connected — requests and error rate wait on Cloudflare analytics; active users wait on the app's own metrics endpoint.", empty: "No usage recorded for this window.", lines: 4 }, (u) =>
     `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
-  const cf = sec(p, (d) => d.cloudflare, { nc: "Workers and D1 metrics read from Cloudflare analytics, which isn't connected for this repo yet.", empty: "No Cloudflare metrics for this window." }, (c) =>
+  const cf = sec(p, (d) => d.cloudflare, { nc: "The Cloudflare panel — and the requests/error metrics above — wait on a Cloudflare analytics token that isn't connected for this repo yet.", empty: "No Cloudflare metrics for this window." }, (c) =>
     `<div class="repo-swap">${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(w.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">${esc(w.label)}</span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right">${esc(w.value)}</span>
     </div>`).join("")}</div>`);
-  const hosting = sec(p, (d) => d.hosting, { nc: "Hosting metrics read from Cloudflare analytics, which isn't connected for this repo yet.", empty: "No hosting metrics recorded." }, (rows) =>
+  const hosting = sec(p, (d) => d.hosting, { nc: "Hosting metrics wait on Railway tokens that aren't connected for this repo yet.", empty: "No hosting metrics recorded." }, (rows) =>
     rows.map((h) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(h.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">CPU <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${esc(h.cpu)}</span></span>
@@ -468,11 +477,11 @@ function usageTab(p: RepoProps): string {
     <div ${rise(1)}>${usageLive ? usage : `<div style="padding:6px 20px">${usage}</div>`}</div>
     <div ${rise(2, `display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));${TOP};flex:1`)}>
       <div style="padding:18px 20px;min-width:0;display:flex;flex-direction:column">
-        <div style="${LABEL};margin-bottom:8px">Cloudflare — Workers &amp; D1</div>
+        <div style="${LABEL};margin-bottom:8px">Cloudflare — frontend Workers</div>
         ${cf}
       </div>
       <div style="padding:18px 20px;${LEFT};min-width:0;display:flex;flex-direction:column">
-        <div style="${LABEL}">Hosting — CPU &amp; memory</div>
+        <div style="${LABEL}">Hosting — Railway backend</div>
         ${hosting}
       </div>
     </div>`;

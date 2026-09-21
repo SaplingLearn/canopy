@@ -6,7 +6,7 @@
 // labels it "sample data" for as long as it is showing.
 
 import type {
-  RepoDashboard, RepoDeployRow, RepoEnvPart, RepoPartName, RepoPerson, RepoRange, RepoUsageEnv, RepoCfRow,
+  RepoDashboard, RepoDeployRow, RepoEnvPart, RepoPartName, RepoPerson, RepoRange, RepoUsageEnv, RepoUsageMetric, RepoCfRow,
   RepoActivityKind, RepoPrState,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
@@ -79,21 +79,30 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
       return { part, host: PART[part][1], sha, deployedAt: at(ms), deployedBy: by, result };
     });
 
+  // Requests/error rate/active users connect independently (Cloudflare
+  // analytics vs. the app's own metrics endpoint) — the sample keeps them all
+  // live to show the section's finished shape; `tone: "neutral"` on
+  // requests/users is a required field, not a color decision (only the error
+  // metric's tone drives its value color).
+  const metric = (value: string, trend: number[], tone: RepoUsageMetric["tone"]): RepoUsageMetric => ({ value, trend, tone });
   const env = (name: string, host: string, d: { req: string; reqA: number[]; err: number; errA: number[]; users: string; usersA: number[] }, warn: boolean): RepoUsageEnv => ({
-    name, host, requests: d.req, requestsTrend: d.reqA, errorRate: d.err, errorTrend: d.errA, errorTone: warn ? "warn" : "good", users: d.users, usersTrend: d.usersA,
+    name, host,
+    requests: metric(d.req, d.reqA, "neutral"),
+    errorRate: metric(`${d.err.toFixed(2)}%`, d.errA, warn ? "warn" : "good"),
+    users: metric(d.users, d.usersA, "neutral"),
   });
   const usage: Record<RepoRange, RepoUsageEnv[]> = {
     "24h": [
       env("staging", "staging.saplinglearn.com", { req: "12.4K", reqA: [8, 11, 9, 14, 12, 18, 22, 17, 13, 15, 19, 16], err: 2.41, errA: [0.4, 0.6, 0.5, 1.1, 2.8, 3.4, 2.9, 2.2, 2.6, 2.4, 2.5, 2.4], users: "6", usersA: [2, 3, 3, 4, 5, 6, 6, 5, 4, 5, 6, 6] }, true),
-      env("main", "app.saplinglearn.com", { req: "168K", reqA: [110, 125, 140, 160, 175, 190, 210, 195, 180, 170, 165, 172], err: 0.18, errA: [0.2, 0.15, 0.2, 0.18, 0.22, 0.16, 0.14, 0.19, 0.2, 0.17, 0.18, 0.18], users: "74", usersA: [40, 52, 61, 70, 78, 82, 85, 80, 76, 72, 70, 74] }, false),
+      env("production", "saplinglearn.com", { req: "168K", reqA: [110, 125, 140, 160, 175, 190, 210, 195, 180, 170, 165, 172], err: 0.18, errA: [0.2, 0.15, 0.2, 0.18, 0.22, 0.16, 0.14, 0.19, 0.2, 0.17, 0.18, 0.18], users: "74", usersA: [40, 52, 61, 70, 78, 82, 85, 80, 76, 72, 70, 74] }, false),
     ],
     "7d": [
       env("staging", "staging.saplinglearn.com", { req: "86.2K", reqA: [10, 12, 14, 11, 16, 13, 12], err: 2.41, errA: [0.5, 0.7, 0.6, 0.9, 1.8, 2.6, 2.4], users: "9", usersA: [5, 6, 7, 6, 8, 9, 9] }, true),
-      env("main", "app.saplinglearn.com", { req: "1.24M", reqA: [150, 165, 172, 180, 176, 190, 184], err: 0.21, errA: [0.24, 0.2, 0.19, 0.25, 0.22, 0.18, 0.21], users: "318", usersA: [265, 280, 296, 305, 312, 322, 318] }, false),
+      env("production", "saplinglearn.com", { req: "1.24M", reqA: [150, 165, 172, 180, 176, 190, 184], err: 0.21, errA: [0.24, 0.2, 0.19, 0.25, 0.22, 0.18, 0.21], users: "318", usersA: [265, 280, 296, 305, 312, 322, 318] }, false),
     ],
     "30d": [
       env("staging", "staging.saplinglearn.com", { req: "402K", reqA: [9, 11, 12, 10, 13, 12, 14, 13, 15, 12, 14, 16, 13, 12], err: 1.12, errA: [0.6, 0.5, 0.8, 0.7, 0.6, 0.9, 0.8, 0.7, 1, 0.9, 1.4, 2, 2.6, 2.4], users: "9", usersA: [6, 6, 7, 7, 8, 7, 8, 8, 9, 8, 9, 9, 9, 9] }, true),
-      env("main", "app.saplinglearn.com", { req: "5.1M", reqA: [120, 132, 140, 150, 148, 158, 164, 170, 168, 176, 182, 188, 186, 184], err: 0.24, errA: [0.3, 0.28, 0.26, 0.3, 0.25, 0.22, 0.24, 0.26, 0.23, 0.2, 0.22, 0.21, 0.2, 0.21], users: "318", usersA: [210, 226, 240, 252, 260, 272, 280, 290, 296, 304, 310, 318, 315, 318] }, false),
+      env("production", "saplinglearn.com", { req: "5.1M", reqA: [120, 132, 140, 150, 148, 158, 164, 170, 168, 176, 182, 188, 186, 184], err: 0.24, errA: [0.3, 0.28, 0.26, 0.3, 0.25, 0.22, 0.24, 0.26, 0.23, 0.2, 0.22, 0.21, 0.2, 0.21], users: "318", usersA: [210, 226, 240, 252, 260, 272, 280, 290, 296, 304, 310, 318, 315, 318] }, false),
     ],
   };
   const cf = (rows: [string, string, string][]): RepoCfRow[] => rows.map(([e, label, value]) => ({ env: e, label, value }));
@@ -161,10 +170,13 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     activity: { status: "ok", data: evRows.map(([kind, login, text, ms]) => ({ kind, actor: login ? person(login) : null, text, url: null, at: at(ms) })) },
 
     usage: { status: "ok", data: usage },
+    // The target app has no D1 (it runs on Supabase) — this panel is the
+    // frontend Workers only, so its second row is Workers errors, not D1
+    // reads. Values are ~0.2–2% of the same row's requests.
     cloudflare: { status: "ok", data: {
-      "24h": cf([["staging", "Workers requests", "13.1K"], ["staging", "D1 reads", "29.4K"], ["main", "Workers requests", "181K"], ["main", "D1 reads", "672K"]]),
-      "7d": cf([["staging", "Workers requests", "92.0K"], ["staging", "D1 reads", "210K"], ["main", "Workers requests", "1.31M"], ["main", "D1 reads", "4.8M"]]),
-      "30d": cf([["staging", "Workers requests", "428K"], ["staging", "D1 reads", "960K"], ["main", "Workers requests", "5.4M"], ["main", "D1 reads", "19.6M"]]),
+      "24h": cf([["staging", "Workers requests", "13.1K"], ["staging", "Workers errors", "231"], ["production", "Workers requests", "181K"], ["production", "Workers errors", "289"]]),
+      "7d": cf([["staging", "Workers requests", "92.0K"], ["staging", "Workers errors", "1.84K"], ["production", "Workers requests", "1.31M"], ["production", "Workers errors", "2.62K"]]),
+      "30d": cf([["staging", "Workers requests", "428K"], ["staging", "Workers errors", "4.28K"], ["production", "Workers requests", "5.4M"], ["production", "Workers errors", "12.9K"]]),
     } },
     // The design itself leaves hosting unconnected — it is where the state is shown.
     hosting: { status: "not_connected" },
