@@ -2,7 +2,7 @@ import {
   REPO_RANGES,
   type RepoActivity, type RepoBars, type RepoBranches, type RepoCfRow, type RepoCodeStat, type RepoContributor,
   type RepoDashboard, type RepoDeploy, type RepoDeployRow, type RepoDrift, type RepoEnv, type RepoEnvPart,
-  type RepoHealth, type RepoLabels, type RepoPerson, type RepoPr, type RepoRange, type RepoSection, type RepoSprint,
+  type RepoHealth, type RepoHosting, type RepoLabels, type RepoPerson, type RepoPr, type RepoRange, type RepoSection, type RepoSprint,
   type RepoStat, type RepoTodos, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
@@ -31,13 +31,15 @@ import { CF_POLLED, type RepoEventRow, type RepoPrRow } from "../repo/types";
 // `cf_errors` the repo cron's minute-0 tick polls from Cloudflare's analytics
 // API (src/repo/poll.ts), read back here in ONE statement — beside the poll's
 // `cf_polled` snapshot, which bounds how far a missing hour may be drawn as 0.
+// The hosting block (Task 17) rides that SAME statement: hourly `rw_cpu` /
+// `rw_mem_mb` the minute-0 tick polls from Railway, the latest point per
+// environment picked out in memory and shown only while it is current.
 //
-// Everything Canopy has NO capture path for — today only hosting (and, inside
-// the usage section, each environment's active users) — is returned as
-// `not_connected`, never guessed (the `UNCAPTURED` object below is the
-// auditable list). Adding a capture path later means
-// flipping ONE section here from `not_connected` to `ok`; the screen already
-// renders every section's live shape.
+// Every SECTION now has a capture path, so the `UNCAPTURED` object that used to
+// list the ones without is gone with its last entry (hosting). What Canopy
+// still has NO capture path for is one metric INSIDE the usage section — each
+// environment's active users — returned as `users: null`, never guessed. A
+// section with a capture path that has not landed yet is still `not_connected`.
 
 const DAY = 86_400_000;
 const PR_LIMIT = 8;
@@ -59,21 +61,22 @@ const ok = <T>(data: T): RepoSection<T> => ({ status: "ok", data });
 const EMPTY = { status: "empty" } as const;
 const NOT_CONNECTED = { status: "not_connected" } as const;
 
-/** The sections no capture path feeds yet. One object so the list is auditable. */
-const UNCAPTURED = {
-  hosting: NOT_CONNECTED,
-} as const;
-
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
-    repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
-    usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED,
+    repo, generatedAt: nowIso(), degraded,
+    usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
     environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
     branches: NOT_CONNECTED, health: NOT_CONNECTED, coverage: NOT_CONNECTED, bundle: NOT_CONNECTED, todos: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
     sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
   };
 }
+
+/** A hosting figure is shown as CURRENT, so it must be: the Railway poll
+ *  (src/repo/poll.ts) is hourly and stores complete hours only, so a healthy
+ *  poller's newest point is 1–2 hours old. Past 3 hours the poll has stopped —
+ *  the cell reads "—" rather than pass an old gauge off as now. */
+const HOSTING_STALE_MS = 3 * 3_600_000;
 
 /** Each environment ships two deployables, on two different hosts. */
 const HOSTS = { backend: "Railway", frontend: "Cloudflare" } as const;
@@ -197,6 +200,11 @@ const HOUR = 3_600_000;
  *  `active_users_*` gauges have no writer yet (Task 18) — reading them now
  *  costs nothing and keeps `users: null` until one exists. */
 const USAGE_METRICS = ["cf_requests", "cf_errors", "active_users_24h", "active_users_7d", "active_users_30d"];
+/** The hosting block's two gauges — appended to the SAME one read, never a
+ *  statement per environment. Kept apart from `USAGE_METRICS` because the two
+ *  sources share a read but not a STATE: a Railway row says nothing about
+ *  whether usage is connected, and the other way round. */
+const HOSTING_METRICS = ["rw_cpu", "rw_mem_mb"];
 /** A range is its last N COMPLETE hours, cut into equal buckets that END at the
  *  last complete hour — so every bucket of a range covers the same span, and
  *  the newest one is never a half-finished UTC day drawn as a drop. */
@@ -308,6 +316,37 @@ function projectUsage(
     }
   }
   return { usage, cloudflare, anyUsage };
+}
+
+/**
+ * The hosting block, derived IN MEMORY from the same read (`rows`, ascending by
+ * `at`): per configured environment, the LATEST `rw_cpu` / `rw_mem_mb` of its
+ * backend — each shown only when that point is at most `HOSTING_STALE_MS` old,
+ * else "—". An environment with neither figure current is left out, so an
+ * empty list means nothing current anywhere (the caller decides `empty` vs
+ * `not_connected`).
+ */
+function projectHosting(
+  rows: { metric: string; env: string; part: string; at: string; value: number }[], envs: RepoEnvConfig[], now: number
+): RepoHosting[] {
+  const out: RepoHosting[] = [];
+  for (const cfg of envs) {
+    const current = (metric: string): number | null => {
+      let latest: { t: number; value: number } | null = null;
+      for (const r of rows) {
+        if (r.metric !== metric || r.env !== cfg.key || r.part !== "backend") continue;
+        const t = Date.parse(r.at);
+        // `t <= now`: a point stamped ahead of the clock is not a current reading.
+        if (Number.isFinite(t) && t <= now && (!latest || t >= latest.t)) latest = { t, value: r.value };
+      }
+      return latest && now - latest.t <= HOSTING_STALE_MS ? latest.value : null;
+    };
+    const cpu = current("rw_cpu");
+    const mem = current("rw_mem_mb");
+    if (cpu === null && mem === null) continue;
+    out.push({ env: cfg.label, cpu: cpu === null ? "—" : `${cpu.toFixed(2)} vCPU`, memory: mem === null ? "—" : `${Math.round(mem)} MB` });
+  }
+  return out;
 }
 
 /** `YYYY-MM-DD` (UTC) for each of the last `n` days, oldest first. */
@@ -718,10 +757,14 @@ export async function getRepoDashboard(
   // The `cf_polled` snapshot (how far each environment's polls have looked —
   // what entitles a missing hour to be drawn as 0) is ONE more read, issued
   // beside the first and never per environment.
+  // The hosting block's `rw_*` gauges (Task 17) ride the SAME statement, and its
+  // three states mirror health's: `ok` with a CURRENT figure for any
+  // environment, `empty` when an `rw_*` row has ever landed but none is current
+  // (the Railway poll has stopped), `not_connected` when none ever did.
   const usageEnd = Math.floor(now / HOUR) * HOUR;
   const [usageRows, polledSnap] = envs.length
     ? await Promise.all([
-        metricsSince(db, USAGE_METRICS, new Date(usageEnd - USAGE_RANGES["30d"].hours * HOUR).toISOString()),
+        metricsSince(db, [...USAGE_METRICS, ...HOSTING_METRICS], new Date(usageEnd - USAGE_RANGES["30d"].hours * HOUR).toISOString()),
         getSnapshot<unknown>(db, CF_POLLED),
       ])
     : [[], null];
@@ -729,12 +772,17 @@ export async function getRepoDashboard(
   const used = projectUsage(usageRows, envs, usageEnd, polled);
   // Gated on the WIDEST range; a narrower one may legitimately hold no rows.
   const anyCf = used.cloudflare["30d"].length > 0;
-  const usageEver = envs.length && (!used.anyUsage || !anyCf) ? await metricsEver(db, USAGE_METRICS) : new Set<string>();
+  const hosting = projectHosting(usageRows, envs, now);
+  const ever = envs.length && (!used.anyUsage || !anyCf || !hosting.length)
+    ? await metricsEver(db, [...USAGE_METRICS, ...HOSTING_METRICS])
+    : new Set<string>();
+  const everAny = (metrics: string[]) => metrics.some((m) => ever.has(m));
 
   return {
-    repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
-    usage: used.anyUsage ? ok(used.usage) : usageEver.size ? EMPTY : NOT_CONNECTED,
-    cloudflare: anyCf ? ok(used.cloudflare) : usageEver.has("cf_requests") ? EMPTY : NOT_CONNECTED,
+    repo, generatedAt: nowAt, degraded: false,
+    usage: used.anyUsage ? ok(used.usage) : everAny(USAGE_METRICS) ? EMPTY : NOT_CONNECTED,
+    cloudflare: anyCf ? ok(used.cloudflare) : ever.has("cf_requests") ? EMPTY : NOT_CONNECTED,
+    hosting: hosting.length ? ok(hosting) : everAny(HOSTING_METRICS) ? EMPTY : NOT_CONNECTED,
     coverage, bundle, todos,
     drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
     branches: branchSnap ? ok(branchSnap.data) : NOT_CONNECTED,

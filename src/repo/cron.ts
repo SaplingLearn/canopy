@@ -4,12 +4,26 @@
 // trigger, so the trigger count stays at three (Cloudflare bills per Worker).
 import type { Env } from "../env";
 import { recomputeAllProgress } from "../tools/progress";
-import { repoEnvironments } from "./config";
+import { repoEnvironments, type RepoEnvConfig } from "./config";
 import { reconcileRepo } from "./github";
-import { pingHealth, pollCloudflare } from "./poll";
+import { pingHealth, pollCloudflare, pollRailway } from "./poll";
 import { pruneRepoCapture } from "./store";
 
 export const REPO_CRON = "*/10 * * * *";
+
+/** Each environment's Railway PROJECT token, keyed by `cfg.key`: the secret
+ *  named `RAILWAY_TOKEN_<KEY>` (key upper-cased, anything outside A–Z/0–9 → `_`)
+ *  — `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION`. A project token
+ *  reaches ONE environment, so there is no shared one; a third environment is
+ *  its secret and nothing here. The ONE place `Env` is indexed by a computed
+ *  name — hence the narrow cast, and the string check on what comes back. */
+function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, string | undefined> {
+  const bag = env as unknown as Record<string, unknown>;
+  return Object.fromEntries(envs.map((cfg) => {
+    const value = bag[`RAILWAY_TOKEN_${cfg.key.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
+    return [cfg.key, typeof value === "string" && value ? value : undefined];
+  }));
+}
 
 /**
  * The repo trigger's dispatcher. REPO_CRON gives six ticks an hour and the jobs
@@ -20,10 +34,15 @@ export const REPO_CRON = "*/10 * * * *";
  *
  *   every tick   health pings — 2 per environment (`pingHealth`), 4 today.
  *   :00          the hourly-polls slot, and nothing else may run on this
- *                tick. Today: `pollCloudflare` — 1 GraphQL request per
- *                environment (2 today), skipped entirely unless BOTH
- *                `CF_ANALYTICS_TOKEN` and `CF_ANALYTICS_ACCOUNT_ID` are set.
- *                Phase 5's later pollers join it here.
+ *                tick. Today two pollers, each its own `safely` arm:
+ *                `pollCloudflare` — 1 GraphQL request per environment (2
+ *                today), skipped entirely unless BOTH `CF_ANALYTICS_TOKEN` and
+ *                `CF_ANALYTICS_ACCOUNT_ID` are set; and `pollRailway` — 1
+ *                GraphQL request per environment that HAS a project token
+ *                (`RAILWAY_TOKEN_<KEY>`, ≤2 today), skipped entirely when none
+ *                does. So this tick is health 2N + Cloudflare N + Railway N =
+ *                4N requests for N environments: 8 today. Phase 5's last
+ *                poller joins it here.
  *   :10 (h%6)    `recomputeAllProgress` — UNBOUNDED: `fetchGithubRefProgress`
  *                issues one request per issue number of every array-ref
  *                sprint, so it gets an invocation to itself.
@@ -61,6 +80,12 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
     const { CF_ANALYTICS_TOKEN: token, CF_ANALYTICS_ACCOUNT_ID: accountId } = env;
     if (token && accountId) {
       await safely("cloudflare", () => pollCloudflare(env.DB, { token, accountId }, envs, scheduledTime, fetchImpl));
+    }
+    // Railway: a token PER environment; an environment without one is skipped
+    // inside the poller, and with none at all the poller is not called.
+    const railway = railwayTokens(env, envs);
+    if (Object.values(railway).some(Boolean)) {
+      await safely("railway", () => pollRailway(env.DB, railway, envs, scheduledTime, fetchImpl));
     }
     return;
   }

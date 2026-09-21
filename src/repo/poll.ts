@@ -1,6 +1,7 @@
-// Scheduled pulls for the repo dashboard. Each writes repo_metrics (the
-// Cloudflare poll also its `cf_polled` snapshot); none may throw
-// — a dead target or a bad token costs one data point, never the cron tick.
+// Scheduled pulls for the repo dashboard — health pings, Cloudflare Workers
+// analytics, Railway CPU/memory. Each writes repo_metrics (the Cloudflare poll
+// also its `cf_polled` snapshot); none may throw — a dead target or a bad token
+// costs one data point, never the cron tick.
 import type { DB } from "../db";
 import type { RepoEnvConfig } from "./config";
 import { getSnapshot, putMetric, putSnapshot } from "./store";
@@ -158,5 +159,96 @@ export async function pollCloudflare(
     if (advanced) await putSnapshot(db, CF_POLLED, bounds, new Date(now).toISOString());
   } catch (e) {
     console.error("pollCloudflare", CF_POLLED, e);
+  }
+}
+
+// ── Railway CPU and memory (source L) ────────────────────────────────────────
+const RW_GRAPHQL = "https://backboard.railway.com/graphql/v2";
+const RW_TIMEOUT_MS = 10_000;
+const RW_HOURS = 3;
+const RW_QUERY = `query($e:String!,$s:String!,$start:DateTime!){metrics(environmentId:$e,serviceId:$s,startDate:$start,measurements:[CPU_USAGE,MEMORY_USAGE_GB],sampleRateSeconds:3600){measurement values{ts value}}}`;
+/** Railway measurement → the metric it is stored as, the ceiling above which a
+ *  value is not believed (1024 vCPU / 4096 GB — sanity bounds, far past any
+ *  plan), and the unit it is stored in: CPU as vCPU, memory as MB to one
+ *  decimal (Railway reports GB). Anything not named here is ignored. */
+const RW_MEASUREMENTS: Record<string, { metric: string; max: number; store: (v: number) => number }> = {
+  CPU_USAGE: { metric: "rw_cpu", max: 1024, store: (v) => v },
+  MEMORY_USAGE_GB: { metric: "rw_mem_mb", max: 4096, store: (v) => Math.round(v * 1024 * 10) / 10 },
+};
+
+/**
+ * Hourly `rw_cpu` (vCPU) / `rw_mem_mb` per environment's BACKEND service,
+ * `env` = the config key, `part` = "backend".
+ *
+ * `tokens[cfg.key]` is THAT environment's Railway PROJECT token — one token
+ * reaches one environment of one project, and it travels as
+ * `Project-Access-Token`, never `Authorization` (that header is for account /
+ * workspace tokens; a project token is refused there). An environment with no
+ * token, no `railwayEnvironmentId` or no `railwayServiceId` is skipped; the
+ * others still poll. NOTHING here may log a token: only `cfg.key` and the
+ * error's message reach the console, and the message is scrubbed of every
+ * token in the map in case a failure ever quotes the request back.
+ *
+ * Only COMPLETE hours are stored: `putMetric` is first-write-wins, so a partial
+ * sample written once is permanent — any value stamped at or after the current
+ * hour's floor is skipped and picked up by a later tick instead. (Unlike
+ * Cloudflare's counts these are gauges averaged per sample, so there is no
+ * ingestion-lag undercount and no extra hour of lag.) The window asked for is
+ * the 3 hours before that floor: the overlap heals a missed tick, `INSERT OR
+ * IGNORE` dedupes it. Each sample is bucketed to its hour, so the UNIQUE key
+ * holds one point per hour whatever second Railway stamps it with.
+ *
+ * Never throws. One request per environment, sequentially (2 today). A non-2xx,
+ * a thrown fetch, a 200 whose body carries a non-empty `errors` array (how
+ * GraphQL reports a failure — including a token this query is not permitted
+ * to) or a body with no metrics list is logged and costs THAT environment this
+ * tick's points — `data` beside `errors` is never read — and the loop moves on;
+ * the hosting block then stays `not_connected`, never guessed. A malformed or
+ * implausible value is skipped on its own and never aborts the rows after it.
+ */
+export async function pollRailway(
+  db: DB, tokens: Record<string, string | undefined>, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  const to = Math.floor(now / HOUR) * HOUR;
+  const from = to - RW_HOURS * HOUR;
+  for (const cfg of envs) {
+    const token = tokens[cfg.key];
+    if (!token || !cfg.railwayEnvironmentId || !cfg.railwayServiceId) continue;
+    try {
+      const res = await fetchImpl(RW_GRAPHQL, {
+        method: "POST",
+        signal: AbortSignal.timeout(RW_TIMEOUT_MS),
+        headers: { "Project-Access-Token": token, "content-type": "application/json", "user-agent": "canopy-hosting" },
+        body: JSON.stringify({ query: RW_QUERY, variables: { e: cfg.railwayEnvironmentId, s: cfg.railwayServiceId, start: new Date(from).toISOString() } }),
+      });
+      if (!res.ok) throw new Error(`railway metrics ${res.status}`);
+      const body = record(await res.json());
+      if (Array.isArray(body.errors) && body.errors.length) {
+        throw new Error(`railway metrics: ${String(record(body.errors[0]).message ?? "graphql error").slice(0, 200)}`);
+      }
+      const series = record(body.data).metrics;
+      if (!Array.isArray(series)) throw new Error("railway metrics: no metrics in the response");
+      for (const entry of series) {
+        const { measurement, values } = record(entry);
+        const spec = typeof measurement === "string" && Object.hasOwn(RW_MEASUREMENTS, measurement) ? RW_MEASUREMENTS[measurement] : null;
+        if (!spec || !Array.isArray(values)) continue;
+        for (const v of values) {
+          const { ts, value } = record(v);
+          // `ts` is unix SECONDS. A partial hour (>= `to`), anything before the
+          // window asked for, and anything that is not a plausible gauge reading
+          // is skipped — never stored, never NaN.
+          if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) continue;
+          const at = Math.floor((ts * 1000) / HOUR) * HOUR;
+          if (!Number.isFinite(at) || at < from || at >= to) continue;
+          if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > spec.max) continue;
+          await putMetric(db, { metric: spec.metric, env: cfg.key, part: "backend", value: spec.store(value), at: new Date(at).toISOString() });
+        }
+      }
+    } catch (e) {
+      // The message only — never the error object, the request init or a header.
+      let message = e instanceof Error ? e.message : String(e);
+      for (const secret of Object.values(tokens)) if (secret) message = message.split(secret).join("[redacted]");
+      console.error("pollRailway", cfg.key, message);
+    }
   }
 }

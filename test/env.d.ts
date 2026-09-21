@@ -24,6 +24,8 @@ declare global {
       REPO_ENVIRONMENTS?: string;
       CF_ANALYTICS_TOKEN?: string;
       CF_ANALYTICS_ACCOUNT_ID?: string;
+      RAILWAY_TOKEN_STAGING?: string;
+      RAILWAY_TOKEN_PRODUCTION?: string;
     }
   }
 }

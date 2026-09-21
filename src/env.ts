@@ -21,4 +21,11 @@ export interface Env {
   // CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID — those are the names the wrangler CLI authenticates with.
   CF_ANALYTICS_TOKEN?: string;      // Cloudflare API token with Account Analytics: Read
   CF_ANALYTICS_ACCOUNT_ID?: string; // the Cloudflare account tag the frontend Workers live under
+  // SECRETS — Railway PROJECT tokens, ONE PER ENVIRONMENT (a project token is bound to a single environment of a
+  // single project), named `RAILWAY_TOKEN_<cfg.key upper-cased>` and sent as `Project-Access-Token`, never as a
+  // bearer. Absent → the hourly Railway poll (src/repo/poll.ts) skips THAT environment; absent both → it is not
+  // called and the hosting block stays not_connected. Railway has no read-only scope: these are NOT read-only.
+  // A third environment needs only its secret (src/repo/cron.ts looks the name up) — plus a line here for the type.
+  RAILWAY_TOKEN_STAGING?: string;
+  RAILWAY_TOKEN_PRODUCTION?: string;
 }

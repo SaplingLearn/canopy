@@ -431,14 +431,17 @@ function ciTab(p: RepoProps): string {
 // its neighbours) and shows a quiet "not connected" where the value would be
 // — no sparkline element, no empty-state box. `spark()` already renders
 // nothing under 2 trend points, so a connected-but-thin metric just shows its
-// value with no line.
+// value with no line. ONE `null` is not unconnected: `errorRate` is null while
+// `requests` is live when the range simply holds no request to take a rate of
+// (src/tools/repo.ts) — that reads a quiet "—" in the same muted slot, never
+// "not connected".
 function usageEnv(e: RepoUsageEnv, i: number): string {
-  const metric = (label: string, m: RepoUsageMetric | null, stroke: string, valueColor = ""): string =>
+  const metric = (label: string, m: RepoUsageMetric | null, stroke: string, valueColor = "", absent = "not connected"): string =>
     `<div style="${TOP};padding:12px 0">
       <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL_SM}">${label}</span>${
         m
           ? `<span style="font-family:var(--mono);font-size:17px;font-weight:600;white-space:nowrap;${valueColor ? `color:${valueColor}` : ""}">${esc(m.value)}</span>`
-          : `<span style="font-size:11.5px;color:var(--fg-40)">not connected</span>`
+          : `<span style="font-size:11.5px;color:var(--fg-40)">${absent}</span>`
       }</div>
       ${m ? spark(m.trend, stroke, 40, 8) : ""}
     </div>`;
@@ -446,7 +449,7 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
   return `<div style="padding:18px 20px 4px;min-width:0;${i ? LEFT : ""}">
     <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><span style="font-size:15px;font-weight:600;flex:1">${esc(e.name)}</span><span style="font-family:var(--mono);font-size:10px;color:var(--fg-40)">${esc(e.host)}</span></div>
     ${metric("Requests", e.requests, "var(--accent)")}
-    ${metric("Error rate", e.errorRate, errC, errC)}
+    ${metric("Error rate", e.errorRate, errC, errC, e.requests ? "—" : "not connected")}
     ${metric("Active users", e.users, "var(--blue)")}
   </div>`;
 }
@@ -466,7 +469,7 @@ function usageTab(p: RepoProps): string {
       <span style="font-size:12.5px;color:var(--fg-55)">${esc(w.label)}</span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right">${esc(w.value)}</span>
     </div>`).join("")}</div>`);
-  const hosting = sec(p, (d) => d.hosting, { nc: "Hosting metrics wait on Railway tokens that aren't connected for this repo yet.", empty: "No hosting metrics recorded." }, (rows) =>
+  const hosting = sec(p, (d) => d.hosting, { nc: "Hosting metrics wait on Railway tokens that aren't connected for this repo yet.", empty: "No fresh hosting reading — the last Railway sample is over 3 hours old." }, (rows) =>
     rows.map((h) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(h.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">CPU <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${esc(h.cpu)}</span></span>

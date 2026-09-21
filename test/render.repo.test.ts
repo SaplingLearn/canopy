@@ -171,6 +171,43 @@ describe("repoView — live content", () => {
     expect(html).not.toMatch(/undefined|NaN/);
   });
 
+  // Task 16b: `errorRate: null` beside LIVE requests is not "not connected" —
+  // the source is connected, there were simply no requests to take a rate of.
+  it("an error rate with nothing to take a rate of reads a quiet dash, not 'not connected'", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "0", trend: [0, 0, 0], tone: "neutral" as const }, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
+    expect(errRow).toContain(">—<");
+    expect(errRow).not.toContain("not connected");
+    expect(errRow).not.toContain("<svg"); // no sparkline for a rate that does not exist
+    expect(html).not.toContain("not connected"); // nothing on this card is unconnected
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("an error rate whose requests are ALSO unconnected still says 'not connected'", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
+    expect(errRow).toContain("not connected");
+    expect(errRow).not.toContain(">—<");
+    expect((html.match(/not connected/g) ?? []).length).toBe(2);
+  });
+
+  // Task 17: the hosting block's three states.
+  it("hosting renders its rows when live, and says the reading is stale — not absent — when empty", () => {
+    const rows = [{ env: "staging", cpu: "0.12 vCPU", memory: "410 MB" }, { env: "production", cpu: "—", memory: "2048 MB" }];
+    const okHtml = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ hosting: { status: "ok", data: rows } }) } }));
+    expect(okHtml).toContain("Hosting — Railway backend");
+    expect(okHtml).toContain("0.12 vCPU");
+    expect(okHtml).toContain("2048 MB");
+    const stale = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ hosting: EMPTY }) } }));
+    expect(stale).toContain("No fresh hosting reading — the last Railway sample is over 3 hours old.");
+    const never = repoView(props({ tab: "usage", repo: { status: "ok", data: live() } }));
+    expect(never).not.toContain("No fresh hosting reading");
+  });
+
   // Task 16: the Cloudflare panel is `ok` once the WIDEST range has rows, so a
   // narrower range can legitimately be empty — say so, never a blank panel.
   it("a Cloudflare range with no rows says so instead of rendering a blank panel", () => {
