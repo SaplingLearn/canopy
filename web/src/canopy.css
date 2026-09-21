@@ -107,8 +107,9 @@ input, select { font-family: inherit; }
 .cnpy-sub-list { display:flex; flex-direction:column; gap:1px; padding:2px 0 4px 10px; margin-left:19px; border-left:1px solid var(--border); opacity:0; transform:translateY(-4px); transition:opacity .16s ease, transform var(--side-t) var(--side-e); }
 .cnpy-sub[data-open="1"] .cnpy-sub-list { opacity:1; transform:none; transition-delay:.04s; }
 [data-collapsed="1"] .cnpy-sub .cnpy-sub-list { opacity:0; }
-.cnpy-sub-i { position:relative; display:block; width:100%; text-align:left; padding:5px 8px 5px 10px; border-radius:6px; font-size:12.5px; color:var(--fg-55); white-space:nowrap; transition:color .12s ease, transform .15s ease; }
-.cnpy-sub-i:hover { color:var(--fg); transform:translateX(1px); }
+.cnpy-sub-i { position:relative; display:block; width:100%; text-align:left; padding:5px 8px 5px 10px; border-radius:6px; font-size:12.5px; color:var(--fg-55); white-space:nowrap; transition:color .12s ease; }
+/* Hover changes COLOUR only — a sub-page row never moves or resizes under the cursor. */
+.cnpy-sub-i:hover { color:var(--fg); }
 .cnpy-sub-i.is-active { color:var(--fg); font-weight:500; }
 /* the active page marks its stretch of the list's rule */
 .cnpy-sub-i::before { content:""; position:absolute; left:-11px; top:50%; width:1px; height:0; background:var(--fg-70); transform:translateY(-50%); transition:height .2s var(--side-e); }

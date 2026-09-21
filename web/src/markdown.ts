@@ -2,10 +2,12 @@ import { marked, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 import { REPO_URL } from "./github";
 import { slugifyHeading } from "./outline";
+import { issueRefStart, matchIssueRef } from "./issue-ref";
 
 marked.setOptions({ gfm: true, breaks: false });
 
-// Auto-link bare GitHub issue/PR refs like #123 in prose. Runs as an inline extension, so
+// Auto-link GitHub issue/PR refs in prose — bare `#123` (this org's main repo) and
+// `owner/repo#123` (that repo; see issue-ref.ts). Runs as an inline extension, so
 // it skips code spans/blocks (tokenized separately) and its output is still DOMPurify-sanitized.
 marked.use({
   extensions: [
@@ -13,17 +15,19 @@ marked.use({
       name: "issueRef",
       level: "inline",
       start(src: string) {
-        const i = src.indexOf("#");
-        return i < 0 ? undefined : i;
+        return issueRefStart(src);
       },
       tokenizer(src: string) {
-        const m = /^#(\d+)\b/.exec(src);
-        if (m) return { type: "issueRef", raw: m[0], num: m[1] } as Tokens.Generic;
+        const ref = matchIssueRef(src, REPO_URL);
+        if (ref) return { type: "issueRef", raw: ref.raw, href: ref.href, text: ref.text } as Tokens.Generic;
         return undefined;
       },
       renderer(token) {
-        const num = (token as Tokens.Generic).num as string;
-        return `<a href="${REPO_URL}/issues/${num}" target="_blank" rel="noopener">#${num}</a>`;
+        // `href` is built from a strict owner/repo#N match and `text` is that same
+        // match — no quotes or angle brackets can occur — and the result still
+        // passes through DOMPurify with everything else.
+        const { href, text } = token as unknown as { href: string; text: string };
+        return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
       },
     },
   ],
