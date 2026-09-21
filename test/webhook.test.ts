@@ -16,6 +16,7 @@ import issueClosed from "./fixtures/gh-issue-closed.json";
 import pushFixture from "./fixtures/gh-push.json";
 import prOpened from "./fixtures/gh-pr-opened.json";
 import workflowRun from "./fixtures/gh-workflow-run.json";
+import statusFixture from "./fixtures/gh-status.json";
 import type { Summarizer, PrSummary, IssueSummary } from "../src/tools/summarize";
 import type { IssueSummaryRow } from "@shared/rows";
 import type { RepoEventRow } from "../src/repo/types";
@@ -331,6 +332,50 @@ describe("handleGithubWebhook — repo capture runs beside the My Work capture",
     expect(calls).toBe(0);
     const row = await all<{ title: string | null }>(env.DB, `SELECT title FROM repo_events WHERE kind = 'run'`);
     expect(row).toEqual([{ title: null }]);
+  });
+});
+
+// Task 14: `status` deliveries feed `repo_metrics` directly — never
+// `repoEventsFromDelivery`'s row path, and never `events`.
+describe("handleGithubWebhook — status capture (coverage/bundle/TODO metrics)", () => {
+  // M13: exercise these against a CONFIGURED REPO_ENVIRONMENTS (as the drift
+  // tests below do), not the bare test env's implicit fallback — the branch
+  // match must be pinned to the actual config, not to "main" by coincidence.
+  const withEnvs = { ...env, REPO_ENVIRONMENTS: JSON.stringify(ENVS) } as Env;
+
+  it("a canopy/coverage status writes one repo_metrics row, counted in repo.captured; redelivery → unchanged", async () => {
+    const res = await postWebhook("status", statusFixture, withEnvs);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, captured: 0, unchanged: 0, repo: { captured: 1, unchanged: 0 } });
+    expect(await all<EventRow>(env.DB, `SELECT * FROM events`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM repo_events`)).toHaveLength(0);
+    const rows = await all<{ metric: string; value: number }>(env.DB, `SELECT metric, value FROM repo_metrics`);
+    expect(rows).toEqual([{ metric: "coverage", value: 78.4 }]);
+
+    const again = await postWebhook("status", statusFixture, withEnvs);
+    expect(await again.json()).toEqual({ ok: true, captured: 0, unchanged: 0, repo: { captured: 0, unchanged: 1 } });
+    expect(await all(env.DB, `SELECT * FROM repo_metrics`)).toHaveLength(1);
+  });
+
+  // Commit statuses from other apps (Railway, CodeRabbit) arrive constantly
+  // once the webhook is subscribed to Statuses — an unrelated context must
+  // cost nothing beyond one cheap parse: zero repo_metrics rows written.
+  it("a status with an unrelated context writes nothing", async () => {
+    const other = { ...statusFixture, context: "Railway", description: "Deploy succeeded" };
+    const res = await postWebhook("status", other, withEnvs);
+    expect(await res.json()).toEqual({ ok: true, captured: 0, unchanged: 0, repo: { captured: 0, unchanged: 0 } });
+    expect(await all(env.DB, `SELECT * FROM repo_metrics`)).toHaveLength(0);
+    expect(await all(env.DB, `SELECT * FROM repo_events`)).toHaveLength(0);
+  });
+
+  // M13: "main" only counts when it IS the first configured environment's
+  // branch. When the first environment ships from a different branch, a
+  // status naming "main" is just another off-branch status — dropped.
+  it("a status on main is dropped when the first configured environment's branch is not main", async () => {
+    const otherFirst = { ...env, REPO_ENVIRONMENTS: JSON.stringify([{ ...ENVS[0], branch: "release" }, ENVS[1]]) } as Env;
+    const res = await postWebhook("status", statusFixture, otherFirst);
+    expect(await res.json()).toEqual({ ok: true, captured: 0, unchanged: 0, repo: { captured: 0, unchanged: 0 } });
+    expect(await all(env.DB, `SELECT * FROM repo_metrics`)).toHaveLength(0);
   });
 });
 

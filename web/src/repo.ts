@@ -65,7 +65,11 @@ export function sparkPoints(arr: number[], w = 100, h = 26, pad = 3): string {
   return arr.map((v, i) => `${((i / (arr.length - 1)) * w).toFixed(1)},${(h - pad - ((v - mn) / rg) * (h - 2 * pad)).toFixed(1)}`).join(" ");
 }
 
+// M11: `sparkPoints` returns "" for fewer than 2 points — a line needs two
+// ends. Rendering the box anyway drew an empty sparkline; render nothing at
+// all instead, same as the CI-failures block already does for `rate: null`.
 const spark = (trend: number[], stroke: string, height: number, mt = 10): string =>
+  trend.length < 2 ? "" :
   `<div class="repo-spark" style="margin-top:${mt}px"><svg viewBox="0 0 100 26" preserveAspectRatio="none" style="width:100%;height:${height}px;display:block"><polyline points="${sparkPoints(trend)}" fill="none" stroke="${stroke}" stroke-width="1.6" vector-effect="non-scaling-stroke"></polyline></svg></div>`;
 
 /** "▲ 2" / "▼ 3" / "—" — the design's week-over-week delta. */
@@ -337,10 +341,13 @@ function activityRow(a: RepoActivity, now: number): string {
   </div>`;
 }
 
+// `t.delta` is "" once the window can't support a trend claim (see
+// `windowDelta` in src/tools/repo.ts) — render the note alone then, with no
+// delta span and no stray leading space.
 const trendBlock = (title: string, t: RepoTrend, stroke: string): string =>
   `<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">${title}</span><span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap">${esc(t.value)}</span></div>
   ${spark(t.trend, stroke, 44)}
-  <div style="font-size:11.5px;color:var(--fg-40);margin-top:6px"><span style="font-family:var(--mono);color:${TONE[t.tone]}">${esc(t.delta)}</span> ${esc(t.note)}</div>`;
+  <div style="font-size:11.5px;color:var(--fg-40);margin-top:6px">${t.delta ? `<span style="font-family:var(--mono);color:${TONE[t.tone]}">${esc(t.delta)}</span> ` : ""}${esc(t.note)}</div>`;
 const titled = (title: string, body: string): string => `<div style="${LABEL}">${title}</div>${body}`;
 
 function ciTab(p: RepoProps): string {
@@ -384,10 +391,13 @@ function ciTab(p: RepoProps): string {
       <span style="text-align:right;white-space:nowrap"><span style="font-size:11px;color:var(--fg-40)">${esc(ago(r.at, now))} · </span><a href="${attr(safeUrl(r.url))}" target="_blank" rel="noopener" class="repo-link" style="font-size:11.5px">Logs ↗</a></span>
     </div>`).join("")}</div>`);
 
+  // I2: `empty` now means "a reading has landed before, just not in the
+  // window" (src/tools/repo.ts checks `latestMetric` on the empty path) — the
+  // copy says so, rather than implying nothing has ever been reported.
   const cov = okData(p, (d) => d.coverage);
-  const coverage = sec(p, (d) => d.coverage, { nc: "Coverage isn't connected — no CI report is ingested yet.", empty: "No coverage recorded.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
+  const coverage = sec(p, (d) => d.coverage, { nc: "Coverage isn't connected — no CI report is ingested yet.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
   const bun = okData(p, (d) => d.bundle);
-  const bundle = sec(p, (d) => d.bundle, { nc: "Bundle size isn't connected — no build report is ingested yet.", empty: "No bundle sizes recorded.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
+  const bundle = sec(p, (d) => d.bundle, { nc: "Bundle size isn't connected — no build report is ingested yet.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
 
   const activity = sec(p, (d) => d.activity, { nc: "The activity feed isn't connected.", empty: "No repo events captured yet.", lines: 4 }, (rows) =>
     `<div class="cnpy-scroll" style="max-height:236px;overflow-y:auto">${rows.map((a) => activityRow(a, now)).join("")}</div>`);
@@ -512,14 +522,19 @@ function planningTab(p: RepoProps): string {
     }).join("");
   });
 
-  const todos = sec(p, (d) => d.todos, { nc: "TODO / FIXME counts aren't connected — nothing scans the source tree yet.", empty: "No counts recorded." }, (t) =>
+  // `t.delta` is null once the window can't support a trend claim (see
+  // `windowDelta` in src/tools/repo.ts) — the count/sparkline still show, but
+  // no delta chip and no "since" text (there is nothing to date it from).
+  // I2: `empty` now means "a count has landed before, just not in the last 90
+  // days", not "nothing has ever scanned this".
+  const todos = sec(p, (d) => d.todos, { nc: "TODO / FIXME counts aren't connected — nothing scans the source tree yet.", empty: "No count reported in the last 90 days." }, (t) =>
     `<div style="display:flex;align-items:baseline;gap:12px;margin-top:10px">
       <span data-count="${t.count}" style="font-family:var(--mono);font-size:31px;font-weight:600;letter-spacing:-0.02em">${t.count}</span>
-      <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
-      <span style="font-size:11px;color:var(--fg-40)">since ${esc(t.since)}</span>
+      ${t.delta === null ? "" : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
+      <span style="font-size:11px;color:var(--fg-40)">since ${esc(t.since)}</span>`}
     </div>
     ${spark(t.trend, "var(--fg-55)", 52, 12)}
-    <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">counted nightly across <span style="font-family:var(--mono);font-size:11px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 4px">src/</span> and <span style="font-family:var(--mono);font-size:11px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 4px">web/</span></div>`);
+    <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">counted by CI on each push to main</div>`);
 
   return `<div ${rise(0, `padding:20px 22px`)}>${sprintLive ? sprint : `<div style="${LABEL}">Current sprint</div>${sprint}`}</div>
     <div ${rise(1, `display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));${TOP};flex:1`)}>

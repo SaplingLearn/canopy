@@ -109,6 +109,11 @@ export interface RepoCiFailure { workflow: string; branch: string; job: string; 
  *  empty `trend`) means "not enough capture yet"; `rows` are the failures
  *  themselves, facts, and are always listed. */
 export interface RepoCiFailures { rate: number | null; trend: number[]; rows: RepoCiFailure[] }
+/** `delta` is `""` until the window holds ≥2 points whose first and last are
+ *  ≥7 days apart (see `windowDelta` in `src/tools/repo.ts`) — a single
+ *  reading, or two readings less than a week apart, cannot support a trend
+ *  claim. `""` renders no delta text (and no sparkline at all below 2 points —
+ *  see `sparkPoints`/`spark` in `web/src/repo.ts`); `value`/`trend` still show. */
 export interface RepoTrend { value: string; trend: number[]; delta: string; tone: RepoTone; note: string }
 export type RepoActivityKind = "push" | "merge" | "deploy" | "issue" | "close" | "release" | "review";
 export interface RepoActivity {
@@ -145,7 +150,11 @@ export interface RepoSprint {
  *  exists yet) — never a guessed 0. */
 export interface RepoContributor { person: RepoPerson; pushes: number; merged: number; reviews: number | null }
 export interface RepoLabels { total: number; rows: { name: string; count: number }[] }
-export interface RepoTodos { count: number; delta: number; since: string; trend: number[] }
+/** `delta`/`since` are `null`/`""` until the window holds ≥2 points whose
+ *  first and last are ≥7 days apart (see `windowDelta` in `src/tools/repo.ts`)
+ *  — a single reading, or two readings a day apart, cannot support a trend
+ *  claim. `null` renders no delta and no "since" text, count/trend still show. */
+export interface RepoTodos { count: number; delta: number | null; since: string; trend: number[] }
 
 export interface RepoDashboard {
   /** `GITHUB_REPO`, e.g. "SaplingLearn/sapling". */

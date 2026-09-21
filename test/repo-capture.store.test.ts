@@ -56,6 +56,20 @@ describe("snapshots and metrics", () => {
     expect(await latestMetric(env.DB, "health_ms", "staging", "backend")).toEqual({ at: "2026-09-20T10:10:00.000Z", value: 148 });
   });
 
+  // M1 (Task 14): `metricSeries` compares `at >= sinceIso` as a raw string —
+  // its FIRST production caller (the coverage/bundle/TODO reads) passes a
+  // caller-computed bound that may lack milliseconds, which would otherwise
+  // sort AFTER a normalised "…000Z" row of the same instant and wrongly
+  // exclude it.
+  it("normalises its `sinceIso` bound the same way `at` is stored, and returns [] for an unparseable one", async () => {
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T09:30:00Z" });
+    // Bound given WITHOUT milliseconds — the point above is stored WITH them
+    // ("2026-09-20T09:30:00.000Z"). A raw-string compare would exclude it.
+    expect(await metricSeries(env.DB, "coverage", "", "", "2026-09-20T09:30:00Z"))
+      .toEqual([{ at: "2026-09-20T09:30:00.000Z", value: 78.4 }]);
+    expect(await metricSeries(env.DB, "coverage", "", "", "not a date")).toEqual([]);
+  });
+
   it("the same instant written in two formats is ONE row, and an unparseable `at` is skipped", async () => {
     const m = { metric: "health_up", env: "staging", part: "backend", value: 1 };
     await putMetric(env.DB, { ...m, at: "2026-09-20T10:00:00Z" });

@@ -36,21 +36,35 @@ function normaliseAt(at: string): string | null {
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
 
-/** First write wins: a redelivered status or a double-fired cron is a no-op. */
-export async function putMetric(db: DB, m: RepoMetric): Promise<void> {
+/** First write wins: a redelivered status or a double-fired cron is a no-op.
+ *  Returns whether a NEW row was written — false for an unparseable `at` or an
+ *  already-recorded (metric, env, part, at). The webhook's `status` capture
+ *  (Task 14) uses this to count only newly-captured metrics into
+ *  `repo.captured`, a redelivery into `repo.unchanged` — the same shape
+ *  `ingestRepoEvent` reports for every other repo-capture kind. */
+export async function putMetric(db: DB, m: RepoMetric): Promise<boolean> {
   const at = normaliseAt(m.at);
   if (at === null) {
     console.error("putMetric: unparseable at", m.metric, m.at);
-    return;
+    return false;
   }
-  await run(db, `INSERT OR IGNORE INTO repo_metrics (metric, env, part, value, at) VALUES (?, ?, ?, ?, ?)`,
+  const res = await run(db, `INSERT OR IGNORE INTO repo_metrics (metric, env, part, value, at) VALUES (?, ?, ?, ?, ?)`,
     m.metric, m.env, m.part, m.value, at);
+  return res.meta.changes > 0;
 }
 
+/** `sinceIso` is normalised the SAME way `at` is stored before comparing — its
+ *  first production caller (src/tools/repo.ts's coverage/bundle/TODO reads)
+ *  computes a bound (`new Date(now - N*DAY).toISOString()`) that may lack the
+ *  milliseconds every stored `at` carries; compared as raw strings, "…00Z"
+ *  sorts AFTER "…00.000Z" and would wrongly exclude that exact instant. An
+ *  unparseable bound returns [] rather than every row ever written. */
 export async function metricSeries(db: DB, metric: string, env: string, part: string, sinceIso: string): Promise<{ at: string; value: number }[]> {
+  const since = normaliseAt(sinceIso);
+  if (since === null) return [];
   return all<{ at: string; value: number }>(db,
     `SELECT at, value FROM repo_metrics WHERE metric = ? AND env = ? AND part = ? AND at >= ? ORDER BY at ASC`,
-    metric, env, part, sinceIso);
+    metric, env, part, since);
 }
 
 export async function latestMetric(db: DB, metric: string, env: string, part: string): Promise<{ at: string; value: number } | null> {
