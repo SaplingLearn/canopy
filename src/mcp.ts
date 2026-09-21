@@ -295,7 +295,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   // member cannot already see at #repo, and nothing per-user. It is the SAME
   // projection GET /repo/dashboard serves (getRepoDashboard — D1 only, nothing on
   // that path fetches), reshaped for an agent's context in tools/repo-agent.ts.
-  // READ-ONLY: "Poll usage now" (POST /admin/poll-usage) and Sync GitHub
+  // READ-ONLY: "Poll now" (POST /admin/poll; the older POST /admin/poll-usage) and Sync GitHub
   // (POST /admin/backfill) stay session-cookie + admin routes, NEVER MCP tools.
   server.tool(
     "get_repo_dashboard",

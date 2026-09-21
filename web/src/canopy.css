@@ -617,7 +617,8 @@ input, select { font-family: inherit; }
 /* canopy.css classes, by the radius each declares above. */
 [data-cnpy-theme] .cnpy-kbd,
 [data-cnpy-theme] .cnpy-treechev { border-radius:calc(4px * var(--corner-scale)) !important; }
-[data-cnpy-theme] .cnpy-md code { border-radius:calc(5px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-md code,
+[data-cnpy-theme] .cnpy-md-inline code { border-radius:calc(5px * var(--corner-scale)) !important; }
 [data-cnpy-theme] .cnpy-chev,
 [data-cnpy-theme] .cnpy-sub-i,
 [data-cnpy-theme] .cnpy-outline-item,

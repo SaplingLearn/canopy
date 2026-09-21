@@ -13,7 +13,8 @@
 // A section's STATUS is never touched: `not_connected` and `empty` pass through
 // as they are — unknown is never coerced into a zero or an empty list.
 //
-// READ-ONLY. The on-demand poll (`POST /admin/poll-usage`) and Sync GitHub stay
+// READ-ONLY. The on-demand refresh (`POST /admin/poll`, and the narrower older
+// `POST /admin/poll-usage`) and Sync GitHub stay
 // session-cookie + admin routes and are never MCP tools.
 
 import {
