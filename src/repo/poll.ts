@@ -2,10 +2,25 @@
 // analytics, Railway CPU/memory, Sapling's active users. Each writes
 // repo_metrics (the Cloudflare poll also its `cf_polled` snapshot); none may
 // throw — a dead target or a bad token costs one data point, never the cron tick.
+import type { PollOutcome } from "@shared/repo";
 import type { DB } from "../db";
 import type { RepoEnvConfig } from "./config";
 import { getSnapshot, putMetric, putSnapshot } from "./store";
 import { CF_POLLED, CF_POLL_HOURS, cfCovered, type CfPolled } from "./types";
+
+export type { PollOutcome };
+
+/** What the three HOURLY pollers below hand back — one entry per configured
+ *  environment each CONSIDERED, in config order — so an admin's on-demand run
+ *  (`POST /admin/poll-usage`) can show what the cron only logs. `written` is
+ *  NEW `repo_metrics` rows (`putMetric` says whether it wrote one): `0` on an
+ *  `ok` is a re-poll of hours already stored, not a fault. A `failed` detail is
+ *  the SAME scrubbed message the poller logs, cut to `DETAIL_CHARS`; a
+ *  `skipped` detail names what is missing, never a secret's value. */
+const DETAIL_CHARS = 200;
+const okOutcome = (env: string, written: number): PollOutcome => ({ env, status: "ok", written });
+const failedOutcome = (env: string, message: string): PollOutcome => ({ env, status: "failed", written: 0, detail: message.slice(0, DETAIL_CHARS) });
+const skippedOutcome = (env: string, detail: string): PollOutcome => ({ env, status: "skipped", written: 0, detail });
 
 const TEN_MIN = 600_000;
 const PING_TIMEOUT_MS = 8_000;
@@ -68,6 +83,43 @@ const CF_QUERY = `query($a: string!, $s: string!, $from: Time!, $to: Time!) {
   } }
 }`;
 
+/** What a NON-2xx said about itself, as `: <reason>` (or `""`): the status alone
+ *  ("cloudflare analytics 400") hid the real cause in production. The body is
+ *  read as text; when it is JSON carrying `errors[0].message` that message is
+ *  the reason, with `errors[0].code` (a number or a string) as ` [code]`;
+ *  otherwise the raw text's start. One line, and SCRUBBED BEFORE IT IS CUT —
+ *  with the caller's own scrub, the same one its log line goes through —
+ *  because cutting first could leave half a token behind. Never throws: a body
+ *  that cannot be read, or is not JSON, costs only the reason. */
+const REASON_CHARS = 300;
+const RAW_REASON_CHARS = 120;
+async function failureReason(res: Response, scrub: (s: string) => string): Promise<string> {
+  let text = "";
+  try { text = await res.text(); } catch { return ""; }
+  const oneLine = (v: string) => scrub(v.replace(/\s+/g, " ").trim());
+  let reason = "";
+  try {
+    const errors = record(JSON.parse(text)).errors;
+    const { message, code } = record(Array.isArray(errors) ? errors[0] : null);
+    if (typeof message === "string" && message.trim()) {
+      reason = oneLine(`${message}${typeof code === "number" || typeof code === "string" ? ` [${code}]` : ""}`).slice(0, REASON_CHARS);
+    }
+  } catch { /* not JSON: the raw text below */ }
+  if (!reason) reason = oneLine(text).slice(0, RAW_REASON_CHARS);
+  return reason ? `: ${reason}` : "";
+}
+
+/** Cloudflare's three auth statuses, as FIXED hints (never derived from the
+ *  secret): it answers 400 when the Authorization value is not token-shaped at
+ *  all (quotes, spaces, a Global API Key, an account id, empty), 401 when it is
+ *  token-shaped but wrong, 403 when the token is real but lacks the permission.
+ *  Appended AFTER the message is cut, so a long body never costs the hint. */
+const CF_STATUS_HINTS: Record<number, string> = {
+  400: " — the token value is malformed (quotes, spaces, or not an API token)",
+  401: " — the token is not valid",
+  403: " — the token lacks Account Analytics: Read",
+};
+
 const record = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
 /** A count Cloudflare reported: a finite, non-negative number — anything else is not a count. */
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
@@ -86,7 +138,10 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
  * is INCLUSIVE, so the bucket AT `to` can come back and is skipped here, as is
  * anything outside the window.
  *
- * Never throws. One request per environment, sequentially (2 today). A non-2xx,
+ * Never throws, and returns one `PollOutcome` per environment (an environment
+ * naming no Worker is `skipped`, never fetched). A non-2xx says WHY — the
+ * body's own reason (`failureReason`) and, for 400/401/403, a fixed hint. One
+ * request per environment, sequentially (2 today). A non-2xx,
  * a thrown fetch, a 200 whose body carries a non-empty `errors` array (how
  * GraphQL reports a failure) or a body with no account in it (nothing was
  * looked at) is logged and costs THAT environment this tick's points — `data`
@@ -113,20 +168,31 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
  */
 export async function pollCloudflare(
   db: DB, cf: { token: string; accountId: string }, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
-): Promise<void> {
+): Promise<PollOutcome[]> {
   const to = Math.floor(now / HOUR) * HOUR - HOUR;
   const from = to - CF_POLL_HOURS * HOUR;
   const succeeded: string[] = [];
+  const outcomes: PollOutcome[] = [];
+  // The ONE scrub of this poller — the log line, the outcome's `detail` and a
+  // non-2xx body's reason all go through it. The token, and the ACCOUNT ID too:
+  // Cloudflare's own errors can name the account they refused, and the detail
+  // is what `POST /admin/poll-usage` hands to the browser.
+  const scrub = (s: string) => [cf.token, cf.accountId].reduce((m, secret) => (secret ? m.split(secret).join("[redacted]") : m), s);
   for (const cfg of envs) {
-    if (!cfg.worker) continue;
+    if (!cfg.worker) { outcomes.push(skippedOutcome(cfg.key, "no worker configured")); continue; }
+    let hint = "";
     try {
+      let written = 0;
       const res = await fetchImpl(CF_GRAPHQL, {
         method: "POST",
         signal: AbortSignal.timeout(CF_TIMEOUT_MS),
         headers: { authorization: `Bearer ${cf.token}`, "content-type": "application/json", "user-agent": "canopy-analytics" },
         body: JSON.stringify({ query: CF_QUERY, variables: { a: cf.accountId, s: cfg.worker, from: new Date(from).toISOString(), to: new Date(to).toISOString() } }),
       });
-      if (!res.ok) throw new Error(`cloudflare analytics ${res.status}`);
+      if (!res.ok) {
+        hint = CF_STATUS_HINTS[res.status] ?? "";
+        throw new Error(`cloudflare analytics ${res.status}${await failureReason(res, scrub)}`);
+      }
       const body = record(await res.json());
       if (Array.isArray(body.errors) && body.errors.length) {
         throw new Error(`cloudflare analytics: ${String(record(body.errors[0]).message ?? "graphql error").slice(0, 200)}`);
@@ -150,19 +216,23 @@ export async function pollCloudflare(
         // first malformed in-window hour and end this poll's covered `to` there.
         if (!Number.isFinite(at) || at < from || at >= to || requests === null || errors === null) continue;
         const iso = new Date(at).toISOString();
-        await putMetric(db, { metric: "cf_requests", env: cfg.key, part: "frontend", value: requests, at: iso });
-        await putMetric(db, { metric: "cf_errors", env: cfg.key, part: "frontend", value: errors, at: iso });
+        if (await putMetric(db, { metric: "cf_requests", env: cfg.key, part: "frontend", value: requests, at: iso })) written++;
+        if (await putMetric(db, { metric: "cf_errors", env: cfg.key, part: "frontend", value: errors, at: iso })) written++;
       }
       succeeded.push(cfg.key);
+      outcomes.push(okOutcome(cfg.key, written));
     } catch (e) {
       // The message only — never the error object, the request init or a header
       // — scrubbed of the token in case a failure ever quotes the request back
       // (the same rule `pollRailway` and `pollSaplingMetrics` keep below).
-      const message = e instanceof Error ? e.message : String(e);
-      console.error("pollCloudflare", cfg.key, (cf.token ? message.split(cf.token).join("[redacted]") : message).slice(0, 200));
+      // Scrubbed, THEN cut, THEN the fixed hint: the log line and the outcome's
+      // `detail` are one string.
+      const scrubbed = scrub(e instanceof Error ? e.message : String(e)).slice(0, 200) + hint;
+      console.error("pollCloudflare", cfg.key, scrubbed);
+      outcomes.push({ env: cfg.key, status: "failed", written: 0, detail: scrubbed });
     }
   }
-  if (!succeeded.length) return;
+  if (!succeeded.length) return outcomes;
   try {
     // A read-modify-write with no lock, which is safe only because ticks do not
     // overlap (hourly, against ~10s timeouts per environment) — and a lost update
@@ -181,6 +251,7 @@ export async function pollCloudflare(
   } catch (e) {
     console.error("pollCloudflare", CF_POLLED, e);
   }
+  return outcomes;
 }
 
 // ── Railway CPU and memory (source L) ────────────────────────────────────────
@@ -205,8 +276,9 @@ const RW_MEASUREMENTS: Record<string, { metric: string; max: number; store: (v: 
  * reaches one environment of one project, and it travels as
  * `Project-Access-Token`, never `Authorization` (that header is for account /
  * workspace tokens; a project token is refused there). An environment with no
- * token, no `railwayEnvironmentId` or no `railwayServiceId` is skipped; the
- * others still poll. NOTHING here may log a token: only `cfg.key` and the
+ * token, no `railwayEnvironmentId` or no `railwayServiceId` is skipped (its
+ * outcome names WHICH is missing, never a value); the others still poll.
+ * NOTHING here may log a token: only `cfg.key` and the
  * error's message reach the console, and the message is scrubbed of every
  * token in the map in case a failure ever quotes the request back.
  *
@@ -221,7 +293,9 @@ const RW_MEASUREMENTS: Record<string, { metric: string; max: number; store: (v: 
  * one response holds several valid samples for one bucket, the LATEST `ts`
  * is the one written (see the pick below), not whichever came first.
  *
- * Never throws. One request per environment, sequentially (2 today). A non-2xx,
+ * Never throws, and returns one `PollOutcome` per environment. A non-2xx says
+ * WHY (`failureReason` — the body's own message, scrubbed). One request per
+ * environment, sequentially (2 today). A non-2xx,
  * a thrown fetch, a 200 whose body carries a non-empty `errors` array (how
  * GraphQL reports a failure — including a token this query is not permitted
  * to) or a body with no metrics list is logged and costs THAT environment this
@@ -231,12 +305,18 @@ const RW_MEASUREMENTS: Record<string, { metric: string; max: number; store: (v: 
  */
 export async function pollRailway(
   db: DB, tokens: Record<string, string | undefined>, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
-): Promise<void> {
+): Promise<PollOutcome[]> {
   const to = Math.floor(now / HOUR) * HOUR;
   const from = to - RW_HOURS * HOUR;
+  const outcomes: PollOutcome[] = [];
+  // The ONE scrub of this poller: EVERY token in the map, not just this environment's.
+  const scrub = (s: string) => Object.values(tokens).reduce<string>((m, secret) => (secret ? m.split(secret).join("[redacted]") : m), s);
   for (const cfg of envs) {
     const token = tokens[cfg.key];
-    if (!token || !cfg.railwayEnvironmentId || !cfg.railwayServiceId) continue;
+    if (!token || !cfg.railwayEnvironmentId || !cfg.railwayServiceId) {
+      outcomes.push(skippedOutcome(cfg.key, !token ? "no project token" : !cfg.railwayEnvironmentId ? "no railwayEnvironmentId" : "no railwayServiceId"));
+      continue;
+    }
     try {
       const res = await fetchImpl(RW_GRAPHQL, {
         method: "POST",
@@ -244,7 +324,7 @@ export async function pollRailway(
         headers: { "Project-Access-Token": token, "content-type": "application/json", "user-agent": "canopy-hosting" },
         body: JSON.stringify({ query: RW_QUERY, variables: { e: cfg.railwayEnvironmentId, s: cfg.railwayServiceId, start: new Date(from).toISOString() } }),
       });
-      if (!res.ok) throw new Error(`railway metrics ${res.status}`);
+      if (!res.ok) throw new Error(`railway metrics ${res.status}${await failureReason(res, scrub)}`);
       const body = record(await res.json());
       if (Array.isArray(body.errors) && body.errors.length) {
         throw new Error(`railway metrics: ${String(record(body.errors[0]).message ?? "graphql error").slice(0, 200)}`);
@@ -278,16 +358,19 @@ export async function pollRailway(
           if (!held || ts > held.ts) picked.set(key, { metric: spec.metric, at, ts, value: spec.store(value) });
         }
       }
+      let written = 0;
       for (const p of picked.values()) {
-        await putMetric(db, { metric: p.metric, env: cfg.key, part: "backend", value: p.value, at: new Date(p.at).toISOString() });
+        if (await putMetric(db, { metric: p.metric, env: cfg.key, part: "backend", value: p.value, at: new Date(p.at).toISOString() })) written++;
       }
+      outcomes.push(okOutcome(cfg.key, written));
     } catch (e) {
       // The message only — never the error object, the request init or a header.
-      let message = e instanceof Error ? e.message : String(e);
-      for (const secret of Object.values(tokens)) if (secret) message = message.split(secret).join("[redacted]");
+      const message = scrub(e instanceof Error ? e.message : String(e));
       console.error("pollRailway", cfg.key, message);
+      outcomes.push(failedOutcome(cfg.key, message)); // the logged message, cut to DETAIL_CHARS
     }
   }
+  return outcomes;
 }
 
 // ── Sapling active users (source M) ──────────────────────────────────────────
@@ -347,7 +430,9 @@ function saplingActiveUsers(body: unknown): { values: number[] } | { refused: st
  * the moment it is taken, the hour is only its label, and `INSERT OR IGNORE`
  * keeps the FIRST reading of each hour.
  *
- * Never throws. One request per environment, sequentially (2 today). Anything
+ * Never throws, and returns one `PollOutcome` per environment — a non-https
+ * `apiUrl` is `skipped` (still logged, never fetched), every other refusal is
+ * `failed`. One request per environment, sequentially (2 today). Anything
  * but a valid 200 — a non-200, a thrown fetch, a body that is not JSON or fails
  * `saplingActiveUsers` — is logged and writes NOTHING for that environment this
  * tick; the loop moves on, and Active users reads "not connected" — or, once a
@@ -356,17 +441,20 @@ function saplingActiveUsers(body: unknown): { values: number[] } | { refused: st
  */
 export async function pollSaplingMetrics(
   db: DB, token: string, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
-): Promise<void> {
+): Promise<PollOutcome[]> {
   const at = new Date(Math.floor(now / HOUR) * HOUR).toISOString();
+  const outcomes: PollOutcome[] = [];
   // Scrubbed BEFORE it is cut: cutting first could leave half a token behind.
   const scrub = (s: string) => (token ? s.split(token).join("[redacted]") : s);
   const excerpt = (s: string) => scrub(s).slice(0, SAPLING_BODY_LOG_CHARS);
   for (const cfg of envs) {
+    let fetched = false;
     try {
       const base = cfg.apiUrl.replace(/\/+$/, "");
       let protocol = "";
       try { protocol = new URL(base).protocol; } catch { /* not a URL: refused below */ }
       if (protocol !== "https:") throw new Error("apiUrl is not an https URL — not fetched");
+      fetched = true;
       const res = await fetchImpl(base + SAPLING_METRICS_PATH, {
         method: "GET",
         redirect: "manual",
@@ -379,12 +467,19 @@ export async function pollSaplingMetrics(
       try { body = JSON.parse(text); } catch { throw new Error(`body is not JSON: ${excerpt(text)}`); }
       const parsed = saplingActiveUsers(body);
       if ("refused" in parsed) throw new Error(`${parsed.refused}: ${excerpt(text)}`);
+      let written = 0;
       for (const [i, range] of SAPLING_RANGES.entries()) {
-        await putMetric(db, { metric: `active_users_${range}`, env: cfg.key, part: "", value: parsed.values[i], at });
+        if (await putMetric(db, { metric: `active_users_${range}`, env: cfg.key, part: "", value: parsed.values[i], at })) written++;
       }
+      outcomes.push(okOutcome(cfg.key, written));
     } catch (e) {
       // The message only — never the error object, the request init or a header.
-      console.error("pollSaplingMetrics", cfg.key, scrub(e instanceof Error ? e.message : String(e)).slice(0, 200));
+      const message = scrub(e instanceof Error ? e.message : String(e)).slice(0, 200);
+      console.error("pollSaplingMetrics", cfg.key, message);
+      // Refused BEFORE any request (the only throw above `fetched`) is a
+      // configuration gap, not a failed poll.
+      outcomes.push(fetched ? failedOutcome(cfg.key, message) : skippedOutcome(cfg.key, "apiUrl is not https"));
     }
   }
+  return outcomes;
 }

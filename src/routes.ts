@@ -29,6 +29,7 @@ import { getMyWork } from "./tools/mywork";
 import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
 import { reconcileRepo, type ReconcileResult } from "./repo/github";
 import { repoEnvironments } from "./repo/config";
+import { runUsagePolls } from "./repo/cron";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
 import { createInvite, revokeInvite, listInvites } from "./auth/invites";
@@ -332,6 +333,24 @@ app.post("/admin/backfill", async (c) => {
     repo = await reconcileRepo(c.env.DB, { token: c.env.GITHUB_SERVICE_TOKEN, repo: c.env.GITHUB_REPO }, repoEnvironments(c.env)).catch(() => undefined);
   }
   return c.json(repo ? { ...res, repo } : res);
+});
+
+// ADMIN action (session-gated + admin-gated, NEVER an MCP tool): "Poll usage
+// now" — run the three hourly usage pollers on demand and SEE the outcome,
+// instead of waiting up to an hour for the repo cron's minute-0 tick and reading
+// a log line. The SAME function as that tick (`runUsagePolls`), so it is
+// idempotent with it: the pollers key on the hour floor and every write is
+// INSERT OR IGNORE. 3N subrequests for N environments (6 today). No request
+// body. 200 even when every source failed — the body says so; it carries
+// per-environment outcomes and NEVER a token, a header or an account id (a
+// `detail` is the poller's own scrubbed log message). Never a 500.
+app.post("/admin/poll-usage", async (c) => {
+  if (!isAdmin(c.env, c.get("principal").handle)) return c.json({ error: "admin only" }, 403);
+  try {
+    return c.json(await runUsagePolls(c.env, Date.now()));
+  } catch {
+    return c.json({ error: "poll failed" }, 502);
+  }
 });
 
 // ── Tickets (session-cookie only, NEVER MCP): the one queue the whole org files

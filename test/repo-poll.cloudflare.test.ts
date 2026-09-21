@@ -69,13 +69,13 @@ describe("pollCloudflare", () => {
 
   it("a rejected token writes nothing and does not throw", async () => {
     const fetchImpl = (async () => json({ errors: [{ message: "unauthorized" }] }, 403)) as typeof fetch;
-    await expect(pollCloudflare(env.DB, { token: "bad", accountId: "acct" }, ENVS, NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollCloudflare(env.DB, { token: "bad", accountId: "acct" }, ENVS, NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect(await stored()).toEqual([]);
   });
 
   it("a thrown fetch writes nothing and does not throw", async () => {
     const fetchImpl = (async () => { throw new Error("connect timeout"); }) as typeof fetch;
-    await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect(await stored()).toEqual([]);
   });
 
@@ -88,7 +88,7 @@ describe("pollCloudflare", () => {
         ? json({ errors: [{ message: "unknown field" }], ...cfBody([hourRow("2026-09-20T10:00:00Z", 1, 1)]) })
         : json(cfBody([hourRow("2026-09-20T10:00:00Z", 640, 3)]));
     }) as typeof fetch;
-    await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect((await stored()).map((r) => [r.env, r.metric, r.value])).toEqual([["production", "cf_errors", 3], ["production", "cf_requests", 640]]);
   });
 
@@ -117,7 +117,7 @@ describe("pollCloudflare", () => {
       { dimensions: { datetimeHour: "2026-09-20T09:00:00Z" }, sum: null },
       hourRow("2026-09-20T10:00:00Z", 500, 12),
     ]))) as typeof fetch;
-    await expect(pollCloudflare(env.DB, CF, [ENVS[0]], NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollCloudflare(env.DB, CF, [ENVS[0]], NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect((await stored()).map((r) => [r.metric, r.value, r.at])).toEqual([
       ["cf_errors", 12, "2026-09-20T10:00:00.000Z"], ["cf_requests", 500, "2026-09-20T10:00:00.000Z"],
     ]);
@@ -149,10 +149,155 @@ describe("pollCloudflare", () => {
 
   it("a body with no accounts (wrong account id) writes nothing and does not throw", async () => {
     const fetchImpl = (async () => json({ data: { viewer: { accounts: [] } } })) as typeof fetch;
-    await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect(await stored()).toEqual([]);
     // Nothing was looked at — no account matched — so nothing is "polled through".
     expect(await polled()).toBeNull();
+  });
+});
+
+// ── outcomes ("Poll usage now") ──────────────────────────────────────────────
+// The poller reports one outcome per environment it considered, so an admin's
+// on-demand run can SHOW what the cron only logs.
+describe("pollCloudflare — outcomes", () => {
+  // A realistic token: the file's one-letter `CF.token` ("t") is scrubbed out of every message it appears in.
+  const CF = { token: "cf-token", accountId: "acct" };
+  const rows = [hourRow("2026-09-20T09:00:00Z", 500, 12), hourRow("2026-09-20T10:00:00Z", 640, 3)];
+
+  it("ok with the NEW rows written, and ok with 0 on a repeat of the same hours", async () => {
+    const fetchImpl = (async () => json(cfBody(rows))) as typeof fetch;
+    expect(await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).toEqual([
+      { env: "staging", status: "ok", written: 4 },
+      { env: "production", status: "ok", written: 4 },
+    ]);
+    expect(await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).toEqual([
+      { env: "staging", status: "ok", written: 0 },
+      { env: "production", status: "ok", written: 0 },
+    ]);
+  });
+
+  it("failed on a non-2xx, carrying the logged message", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const out = await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, (async () => new Response("", { status: 500 })) as typeof fetch);
+      expect(out).toEqual([{ env: "staging", status: "failed", written: 0, detail: "cloudflare analytics 500" }]);
+      expect(spy.mock.calls).toEqual([["pollCloudflare", "staging", "cloudflare analytics 500"]]);
+    } finally { spy.mockRestore(); }
+  });
+
+  // A production finding: "cloudflare analytics 400" alone hid the real cause.
+  // A non-2xx now says what the BODY said — errors[0].message and its code — and
+  // Cloudflare's three auth statuses each carry a FIXED hint (never derived
+  // from the secret): 400 = the Authorization value is not token-shaped at all,
+  // 401 = token-shaped but wrong, 403 = a real token without the permission.
+  describe("a non-2xx says why", () => {
+    const failing = async (status: number, body: string, cf = CF) => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const out = await pollCloudflare(env.DB, cf, [ENVS[0]], NOW, (async () => new Response(body, { status })) as typeof fetch);
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({ env: "staging", status: "failed", written: 0 });
+        expect(spy.mock.calls).toEqual([["pollCloudflare", "staging", out[0].detail]]); // the log and the detail are ONE string
+        return out[0].detail!;
+      } finally { spy.mockRestore(); }
+    };
+    const AUTH_FAILED = JSON.stringify({ success: false, errors: [{ code: 9106, message: "Authentication failed (status: 400)" }] });
+
+    it("400: the body's message and code, plus the malformed-token hint", async () => {
+      expect(await failing(400, AUTH_FAILED)).toBe(
+        "cloudflare analytics 400: Authentication failed (status: 400) [9106] — the token value is malformed (quotes, spaces, or not an API token)");
+    });
+
+    it("401 and 403 carry their own hints; any other status carries none", async () => {
+      expect(await failing(401, JSON.stringify({ errors: [{ code: "10000", message: "Authentication error" }] }))).toBe(
+        "cloudflare analytics 401: Authentication error [10000] — the token is not valid");
+      expect(await failing(403, JSON.stringify({ errors: [{ message: "not entitled" }] }))).toBe(
+        "cloudflare analytics 403: not entitled — the token lacks Account Analytics: Read");
+      expect(await failing(429, JSON.stringify({ errors: [{ code: { nested: 1 }, message: "slow down" }] }))).toBe("cloudflare analytics 429: slow down");
+    });
+
+    it("a body that ECHOES the token (or the account id) yields a detail without it — scrubbed before it is cut", async () => {
+      const secret = { token: "cf-s3cret-token", accountId: "acct-1d-9f3b" };
+      const json400 = await failing(400, JSON.stringify({ errors: [{ code: 9106, message: `bad header: Bearer ${secret.token} for ${secret.accountId}` }] }), secret);
+      expect(json400).toContain("bad header: Bearer [redacted] for [redacted] [9106]");
+      // Raw text, with the token STRADDLING the raw-text cut: cutting first would leave half of it behind.
+      const raw = await failing(400, `${"x".repeat(110)}${secret.token} tail`, secret);
+      expect(raw).not.toContain("cf-s3");
+      expect(raw).toContain("[redacted]");
+      for (const d of [json400, raw]) { expect(d).not.toContain(secret.token); expect(d).not.toContain(secret.accountId); }
+    });
+
+    it("a non-JSON body does not throw: the raw text's start, one line; and the hint survives a long body", async () => {
+      expect(await failing(502, "<html>\n  <body>Bad   gateway</body></html>")).toBe("cloudflare analytics 502: <html> <body>Bad gateway</body></html>");
+      const long = await failing(403, "y".repeat(5000));
+      expect(long).toMatch(/^cloudflare analytics 403: y{120} — the token lacks Account Analytics: Read$/);
+      const longJson = await failing(400, JSON.stringify({ errors: [{ message: "z".repeat(5000) }] }));
+      expect(longJson).toMatch(/ — the token value is malformed \(quotes, spaces, or not an API token\)$/);
+      expect(longJson.length).toBeLessThan(300);
+    });
+
+    it("a body that cannot be read does not throw either", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const broken = { ok: false, status: 503, text: async () => { throw new Error("stream closed"); } } as unknown as Response;
+        const out = await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, (async () => broken) as typeof fetch);
+        expect(out).toEqual([{ env: "staging", status: "failed", written: 0, detail: "cloudflare analytics 503" }]);
+      } finally { spy.mockRestore(); }
+    });
+  });
+
+  it("failed on a 200 body carrying `errors`, for THAT environment only", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        const s = (JSON.parse(String(init?.body)) as { variables: { s: string } }).variables.s;
+        return s === "frontend-staging" ? json({ errors: [{ message: "unknown field" }] }) : json(cfBody(rows));
+      }) as typeof fetch;
+      expect(await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).toEqual([
+        { env: "staging", status: "failed", written: 0, detail: "cloudflare analytics: unknown field" },
+        { env: "production", status: "ok", written: 4 },
+      ]);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("the detail is the SCRUBBED message — a failure quoting the token back never carries it", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const secret = { token: "cf-s3cret-token", accountId: "acct" };
+      const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        throw new Error(`request failed: ${JSON.stringify(init?.headers)}`);
+      }) as typeof fetch;
+      const out = await pollCloudflare(env.DB, secret, [ENVS[0]], NOW, fetchImpl);
+      expect(out[0].status).toBe("failed");
+      expect(JSON.stringify(out)).not.toContain("cf-s3cret-token");
+      expect(out[0].detail).toContain("[redacted]");
+      expect(out[0].detail).toBe(spy.mock.calls[0][2]);
+    } finally { spy.mockRestore(); }
+  });
+
+  // Cloudflare's own errors can name the account they refused ("account <tag>
+  // is not authorized…"), and the detail travels to the browser — so the ONE
+  // scrub covers the account id as well as the token.
+  it("the scrub covers the account id too — in the detail and in the log", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const secret = { token: "cf-s3cret-token", accountId: "acct-1d-9f3b" };
+      const fetchImpl = (async () => json({ errors: [{ message: "account acct-1d-9f3b is not authorized for cf-s3cret-token" }] })) as typeof fetch;
+      const out = await pollCloudflare(env.DB, secret, [ENVS[0]], NOW, fetchImpl);
+      expect(out[0].detail).toBe("cloudflare analytics: account [redacted] is not authorized for [redacted]");
+      expect(spy.mock.calls).toEqual([["pollCloudflare", "staging", out[0].detail]]);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("skipped for an environment that names no Worker — never fetched", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => { calls++; return json(cfBody(rows)); }) as typeof fetch;
+    const out = await pollCloudflare(env.DB, CF, [{ ...ENVS[0], worker: "" }, ENVS[1]], NOW, fetchImpl);
+    expect(out).toEqual([
+      { env: "staging", status: "skipped", written: 0, detail: "no worker configured" },
+      { env: "production", status: "ok", written: 4 },
+    ]);
+    expect(calls).toBe(1);
   });
 });
 
