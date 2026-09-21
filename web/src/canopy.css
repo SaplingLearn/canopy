@@ -107,8 +107,9 @@ input, select { font-family: inherit; }
 .cnpy-sub-list { display:flex; flex-direction:column; gap:1px; padding:2px 0 4px 10px; margin-left:19px; border-left:1px solid var(--border); opacity:0; transform:translateY(-4px); transition:opacity .16s ease, transform var(--side-t) var(--side-e); }
 .cnpy-sub[data-open="1"] .cnpy-sub-list { opacity:1; transform:none; transition-delay:.04s; }
 [data-collapsed="1"] .cnpy-sub .cnpy-sub-list { opacity:0; }
-.cnpy-sub-i { position:relative; display:block; width:100%; text-align:left; padding:5px 8px 5px 10px; border-radius:6px; font-size:12.5px; color:var(--fg-55); white-space:nowrap; transition:color .12s ease, transform .15s ease; }
-.cnpy-sub-i:hover { color:var(--fg); transform:translateX(1px); }
+.cnpy-sub-i { position:relative; display:block; width:100%; text-align:left; padding:5px 8px 5px 10px; border-radius:6px; font-size:12.5px; color:var(--fg-55); white-space:nowrap; transition:color .12s ease; }
+/* Hover changes COLOUR only — a sub-page row never moves or resizes under the cursor. */
+.cnpy-sub-i:hover { color:var(--fg); }
 .cnpy-sub-i.is-active { color:var(--fg); font-weight:500; }
 /* the active page marks its stretch of the list's rule */
 .cnpy-sub-i::before { content:""; position:absolute; left:-11px; top:50%; width:1px; height:0; background:var(--fg-70); transform:translateY(-50%); transition:height .2s var(--side-e); }
@@ -227,6 +228,15 @@ input, select { font-family: inherit; }
 .cnpy-accentbtn:active { transform:translateY(1px); }
 .cnpy-outlinebtn { transition:all .12s ease; }
 .cnpy-outlinebtn:hover { background:var(--hover); color:var(--fg); }
+/* The ticket status trigger is the status pill itself (tickets.ts statusControl):
+   no box around it — the ring takes the pill's own colour. */
+.cnpy-statusbtn { transition:box-shadow .14s ease, filter .14s ease; }
+.cnpy-statusbtn:hover, .cnpy-statusbtn[aria-expanded="true"] { box-shadow:0 0 0 3px color-mix(in srgb, currentColor 16%, transparent); filter:brightness(1.12); }
+.cnpy-statusbtn:focus-visible { outline:none; box-shadow:0 0 0 3px color-mix(in srgb, currentColor 30%, transparent); }
+.cnpy-statusbtn svg { transition:transform .16s ease; }
+.cnpy-statusbtn[aria-expanded="true"] svg { transform:rotate(180deg); }
+/* A ticket body is markdown, but a typed single line break still breaks. */
+.cnpy-td-body p { white-space:pre-line; }
 .cnpy-ghostbtn { transition:all .12s ease; }
 .cnpy-ghostbtn:hover { border-color:var(--border-strong); color:var(--fg); }
 .cnpy-iconbtn { transition:background .12s ease, color .12s ease; }
@@ -428,6 +438,7 @@ input, select { font-family: inherit; }
   .cnpy-aside, .cnpy-aside *, .cnpy-aside *::before, .cnpy-aside *::after { transition:none !important; }
   [data-enter] *, .cnpy-flash, .cnpy-flash *, .repo-shimmer, .repo-pulse { animation:none !important; }
   .repo-tip, .repo-dot, .repo-row, .repo-chev { transition:none !important; }
+  .cnpy-statusbtn, .cnpy-statusbtn svg { transition:none !important; }
 }
 
 /* ── landing (signed-out screen, web/src/landing.ts) ──────────────────────────

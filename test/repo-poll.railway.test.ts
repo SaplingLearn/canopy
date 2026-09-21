@@ -140,13 +140,13 @@ describe("pollRailway", () => {
   ])("%s costs THAT environment only, and never throws", async (_name, failure) => {
     const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) =>
       envOf(init) === "env-0" ? failure() : json(rwBody([{ ts: ts(1), value: 0.12 }], [{ ts: ts(1), value: 0.4 }]))) as typeof fetch;
-    await expect(pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect((await stored()).map((r) => [r.env, r.metric])).toEqual([["production", "rw_cpu"], ["production", "rw_mem_mb"]]);
   });
 
   it("a thrown fetch writes nothing and does not throw", async () => {
     const fetchImpl = (async () => { throw new Error("connect timeout"); }) as typeof fetch;
-    await expect(pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect(await stored()).toEqual([]);
   });
 
@@ -159,10 +159,15 @@ describe("pollRailway", () => {
       }) as typeof fetch;
       await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl);
       await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, (async () => json({ errors: [{ message: "bad token tok-staging tok-production" }] })) as typeof fetch);
+      // A token STRADDLING the 200-char cut of the 200-with-`errors` arm: cutting
+      // before scrubbing would leave its first half in the log AND in the detail.
+      const straddle = await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, (async () => json({ errors: [{ message: `${"p".repeat(192)}tok-staging tok-production` }] })) as typeof fetch);
       expect(spy).toHaveBeenCalled();
       const logged = JSON.stringify(spy.mock.calls.map((c) => c.map((a) => (a instanceof Error ? `${a.message} ${a.stack}` : a))));
       expect(logged).not.toContain("tok-staging");
       expect(logged).not.toContain("tok-production");
+      expect(logged).not.toContain("tok-st");
+      expect(JSON.stringify(straddle)).not.toContain("tok-");
     } finally {
       spy.mockRestore();
     }
@@ -181,10 +186,88 @@ describe("pollRailway", () => {
       { measurement: "CPU_USAGE", values: "none" },
       null,
     ] } })) as typeof fetch;
-    await expect(pollRailway(env.DB, TOKENS, [WITH_IDS[0]], NOW, fetchImpl)).resolves.toBeUndefined();
+    await expect(pollRailway(env.DB, TOKENS, [WITH_IDS[0]], NOW, fetchImpl)).resolves.toEqual(expect.any(Array));
     expect((await stored()).map((r) => [r.metric, r.value, r.at])).toEqual([
       ["rw_cpu", 0.25, "2026-09-20T10:00:00.000Z"], ["rw_mem_mb", 1536, "2026-09-20T11:00:00.000Z"],
     ]);
+  });
+});
+
+// ── outcomes ("Poll usage now") ──────────────────────────────────────────────
+describe("pollRailway — outcomes", () => {
+  const good = () => json(rwBody([{ ts: ts(1), value: 0.12 }], [{ ts: ts(1), value: 0.4 }]));
+
+  it("ok with the NEW rows written, and ok with 0 on a repeat of the same hours", async () => {
+    const fetchImpl = (async () => good()) as typeof fetch;
+    expect(await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).toEqual([
+      { env: "staging", status: "ok", written: 2 },
+      { env: "production", status: "ok", written: 2 },
+    ]);
+    expect(await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).toEqual([
+      { env: "staging", status: "ok", written: 0 },
+      { env: "production", status: "ok", written: 0 },
+    ]);
+  });
+
+  it("failed on a non-2xx and on a 200 carrying `errors`, each with the logged message", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) =>
+        envOf(init) === "env-0" ? new Response("", { status: 401 }) : json({ errors: [{ message: "Not Authorized" }] })) as typeof fetch;
+      expect(await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl)).toEqual([
+        { env: "staging", status: "failed", written: 0, detail: "railway metrics 401" },
+        { env: "production", status: "failed", written: 0, detail: "railway metrics: Not Authorized" },
+      ]);
+      expect(spy.mock.calls).toEqual([
+        ["pollRailway", "staging", "railway metrics 401"],
+        ["pollRailway", "production", "railway metrics: Not Authorized"],
+      ]);
+    } finally { spy.mockRestore(); }
+  });
+
+  // The same production finding as Cloudflare's: the status alone hid the cause.
+  it("a non-2xx says what the body said — errors[0].message (+ code), else the raw text's start — scrubbed, never throwing", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const details = async (status: number, body: string) => {
+        const out = await pollRailway(env.DB, TOKENS, [WITH_IDS[0]], NOW, (async () => new Response(body, { status })) as typeof fetch);
+        expect(out).toHaveLength(1);
+        expect(spy.mock.calls.at(-1)).toEqual(["pollRailway", "staging", out[0].detail]);
+        return out[0].detail;
+      };
+      expect(await details(401, JSON.stringify({ errors: [{ message: "Not Authorized" }] }))).toBe("railway metrics 401: Not Authorized");
+      expect(await details(400, JSON.stringify({ errors: [{ message: "Problem processing request", code: "BAD_INPUT" }] }))).toBe("railway metrics 400: Problem processing request [BAD_INPUT]");
+      expect(await details(502, "<html>bad gateway</html>")).toBe("railway metrics 502: <html>bad gateway</html>");
+      const echoed = await details(401, `${"x".repeat(110)}tok-staging and tok-production`);
+      expect(echoed).not.toContain("tok-");
+      expect(echoed).toContain("[redacted]");
+    } finally { spy.mockRestore(); }
+  });
+
+  it("the detail is scrubbed of EVERY token in the map and truncated", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const fetchImpl = (async () => { throw new Error(`echo tok-staging tok-production ${"x".repeat(400)}`); }) as typeof fetch;
+      const out = await pollRailway(env.DB, TOKENS, [WITH_IDS[0]], NOW, fetchImpl);
+      expect(out[0].status).toBe("failed");
+      expect(out[0].detail).toMatch(/^echo \[redacted\] \[redacted\] x+$/);
+      expect(out[0].detail!.length).toBeLessThanOrEqual(200);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("skipped — and never fetched — without a token, an environment id or a service id; the detail names which, never a value", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => { calls++; return good(); }) as typeof fetch;
+    const envs = [WITH_IDS[0], { ...WITH_IDS[1], railwayServiceId: undefined }, { ...WITH_IDS[1], key: "third", railwayEnvironmentId: undefined }, { ...WITH_IDS[0], key: "fourth" }];
+    const out = await pollRailway(env.DB, { staging: undefined, production: "tok-production", third: "tok-third", fourth: "tok-fourth" }, envs, NOW, fetchImpl);
+    expect(out).toEqual([
+      { env: "staging", status: "skipped", written: 0, detail: "no project token" },
+      { env: "production", status: "skipped", written: 0, detail: "no railwayServiceId" },
+      { env: "third", status: "skipped", written: 0, detail: "no railwayEnvironmentId" },
+      { env: "fourth", status: "ok", written: 2 },
+    ]);
+    expect(calls).toBe(1);
+    expect(JSON.stringify(out)).not.toContain("tok-");
   });
 });
 

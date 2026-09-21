@@ -34,7 +34,7 @@ const stored = () => all<{ metric: string; env: string; part: string; value: num
 /** Staging answers `body`; production is a plain 404 (the endpoint not built there). */
 const stagingAnswers = (respond: () => Response) => (async (u: RequestInfo | URL) =>
   String(u) === STAGING_URL ? respond() : new Response("nope", { status: 404 })) as typeof fetch;
-const quietly = async (fn: () => Promise<void>) => {
+const quietly = async (fn: () => Promise<unknown>) => {
   const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try { await fn(); return spy.mock.calls.slice(); } finally { spy.mockRestore(); }
 };
@@ -189,6 +189,49 @@ describe("pollSaplingMetrics", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ── outcomes ("Poll usage now") ──────────────────────────────────────────────
+describe("pollSaplingMetrics — outcomes", () => {
+  /** Run quietly, handing back BOTH the outcomes and what was logged. */
+  const run = async (fn: () => ReturnType<typeof pollSaplingMetrics>) => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try { return { out: await fn(), logged: spy.mock.calls.slice() }; } finally { spy.mockRestore(); }
+  };
+
+  it("ok with the NEW rows written, ok with 0 inside the same hour, and failed on a non-200", async () => {
+    const fetchImpl = stagingAnswers(() => json(users(6, 9, 9)));
+    const first = await run(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl));
+    expect(first.out).toEqual([
+      { env: "staging", status: "ok", written: 3 },
+      { env: "production", status: "failed", written: 0, detail: "HTTP 404" },
+    ]);
+    expect(first.logged).toEqual([["pollSaplingMetrics", "production", "HTTP 404"]]);
+    const again = await run(() => pollSaplingMetrics(env.DB, "s3cret", [ENVS[0]], NOW + 20 * 60_000, fetchImpl));
+    expect(again.out).toEqual([{ env: "staging", status: "ok", written: 0 }]);
+  });
+
+  it("failed on a refused 200 body — the detail is the logged, scrubbed message", async () => {
+    const { out, logged } = await run(() => pollSaplingMetrics(env.DB, "s3cret", [ENVS[0]], NOW,
+      (async () => new Response(`{"active_users":null,"echo":"s3cret"}`, { status: 200 })) as typeof fetch));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ env: "staging", status: "failed", written: 0 });
+    expect(out[0].detail).toBe(logged[0][2]);
+    expect(out[0].detail).toContain("no active_users object");
+    expect(out[0].detail).not.toContain("s3cret");
+  });
+
+  it("skipped — never fetched — for an apiUrl that is not https", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => { calls++; return json(users(6, 9, 9)); }) as typeof fetch;
+    const envs = [{ ...ENVS[0], apiUrl: "http://api.staging.saplinglearn.com" }, ENVS[1]];
+    const { out } = await run(() => pollSaplingMetrics(env.DB, "s3cret", envs, NOW, fetchImpl));
+    expect(out).toEqual([
+      { env: "staging", status: "skipped", written: 0, detail: "apiUrl is not https" },
+      { env: "production", status: "ok", written: 3 },
+    ]);
+    expect(calls).toBe(1);
   });
 });
 

@@ -2,6 +2,7 @@
 // fire time (cron expressions are static UTC — the cadence lives in code, not
 // in wrangler.toml). This replaced the old "0 */6 * * *" progress-only
 // trigger, so the trigger count stays at three (Cloudflare bills per Worker).
+import type { PollOutcome, UsagePollResult, UsagePollSource } from "@shared/repo";
 import type { Env } from "../env";
 import { recomputeAllProgress } from "../tools/progress";
 import { repoEnvironments, type RepoEnvConfig } from "./config";
@@ -26,6 +27,64 @@ export function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, s
   }));
 }
 
+export type { UsagePollResult };
+
+/** What a source reports when its arm threw — the pollers never throw, so this
+ *  should be unreachable; it names no cause on purpose (nothing unscrubbed may
+ *  reach the response). */
+const UNEXPECTED: PollOutcome[] = [{ env: "*", status: "failed", written: 0, detail: "unexpected error" }];
+
+/**
+ * The three HOURLY usage pollers, in one place: the repo cron's minute-0 tick
+ * calls this, and so does the admin-only `POST /admin/poll-usage` ("Poll usage
+ * now") — ONE function, so an on-demand run is the cron's own run, with its
+ * outcomes handed back instead of only logged. A source whose credentials are
+ * absent is `"not_configured"` and is not called (its sections stay
+ * `not_connected`); each of the others runs in its OWN guarded arm — a throw
+ * (the pollers never throw, so: unreachable) is logged exactly as the cron's
+ * `safely` logs it and reported as `UNEXPECTED`, never skipping the next.
+ *
+ * `now` may be ANY instant: every poller keys its window on the HOUR FLOOR of
+ * `now`, and every write is `INSERT OR IGNORE` (`putMetric`, first-write-wins),
+ * so an on-demand run at :37 asks for the same hours and writes the same rows
+ * the :00 tick of that hour did — idempotent with the cron, in either order.
+ *
+ * Subrequests: Cloudflare N + Railway ≤N + Sapling N = 3N for N environments
+ * (6 today), no health pings — far inside the 50 of one invocation.
+ *
+ * The result carries outcomes and NEVER a token, a header or an account id: a
+ * `detail` is a poller's scrubbed, truncated message, or a few fixed words.
+ */
+export async function runUsagePolls(env: Env, now: number, fetchImpl?: typeof fetch): Promise<UsagePollResult> {
+  const envs = repoEnvironments(env);
+  const arm = async (label: string, fn: () => Promise<PollOutcome[]>): Promise<UsagePollSource> => {
+    try {
+      return await fn();
+    } catch (e) {
+      console.error("repo cron", label, e);
+      return UNEXPECTED;
+    }
+  };
+  // Cloudflare: BOTH values, or not called.
+  const { CF_ANALYTICS_TOKEN: token, CF_ANALYTICS_ACCOUNT_ID: accountId } = env;
+  const cloudflare = token && accountId
+    ? await arm("cloudflare", () => pollCloudflare(env.DB, { token, accountId }, envs, now, fetchImpl))
+    : "not_configured";
+  // Railway: a token PER environment; an environment without one is skipped
+  // inside the poller, and with none at all the poller is not called.
+  const tokens = railwayTokens(env, envs);
+  const railway = Object.values(tokens).some(Boolean)
+    ? await arm("railway", () => pollRailway(env.DB, tokens, envs, now, fetchImpl))
+    : "not_configured";
+  // Sapling's active users: ONE token for every environment. Absent or empty
+  // → not called, and Active users stays "not connected".
+  const saplingToken = env.SAPLING_METRICS_TOKEN;
+  const sapling = saplingToken
+    ? await arm("sapling", () => pollSaplingMetrics(env.DB, saplingToken, envs, now, fetchImpl))
+    : "not_configured";
+  return { cloudflare, railway, sapling };
+}
+
 /**
  * The repo trigger's dispatcher. REPO_CRON gives six ticks an hour and the jobs
  * are spread ACROSS them — ONE heavy job per invocation, never stacked.
@@ -34,8 +93,10 @@ export function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, s
  * calls do not count) on the free plan, so the budget, counted from the code:
  *
  *   every tick   health pings — 2 per environment (`pingHealth`), 4 today.
- *   :00          the hourly-polls slot, and nothing else may run on this
- *                tick. Three pollers, each its own `safely` arm (one failing
+ *   :00          the hourly-polls slot (`runUsagePolls` above — the same
+ *                function the admin's "Poll usage now" runs), and nothing else
+ *                may run on this tick. Three pollers, each its own guarded
+ *                arm (one failing
  *                never skips another): `pollCloudflare` — 1 GraphQL request
  *                per environment (2 today), skipped entirely unless BOTH
  *                `CF_ANALYTICS_TOKEN` and `CF_ANALYTICS_ACCOUNT_ID` are set;
@@ -89,22 +150,9 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
     // The hourly polls — and NOTHING else may join this tick: the slot exists
     // so these pollers get an invocation of their own. Each is skipped entirely
     // when its credentials are absent (its sections then stay not_connected).
-    const { CF_ANALYTICS_TOKEN: token, CF_ANALYTICS_ACCOUNT_ID: accountId } = env;
-    if (token && accountId) {
-      await safely("cloudflare", () => pollCloudflare(env.DB, { token, accountId }, envs, scheduledTime, fetchImpl));
-    }
-    // Railway: a token PER environment; an environment without one is skipped
-    // inside the poller, and with none at all the poller is not called.
-    const railway = railwayTokens(env, envs);
-    if (Object.values(railway).some(Boolean)) {
-      await safely("railway", () => pollRailway(env.DB, railway, envs, scheduledTime, fetchImpl));
-    }
-    // Sapling's active users: ONE token for every environment. Absent or empty
-    // → not called, and Active users stays "not connected".
-    const sapling = env.SAPLING_METRICS_TOKEN;
-    if (sapling) {
-      await safely("sapling", () => pollSaplingMetrics(env.DB, sapling, envs, scheduledTime, fetchImpl));
-    }
+    // The outcomes are for the on-demand route; the pollers already log every
+    // failure, so the cron logs nothing new.
+    await safely("usage polls", () => runUsagePolls(env, scheduledTime, fetchImpl));
     return;
   }
 

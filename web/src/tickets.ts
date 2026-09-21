@@ -22,6 +22,7 @@ import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "./api";
 import { esc, attr, relTime, primaryBtn, WORK_SHELL } from "./ui";
 import { personChip } from "./people";
+import { renderMarkdown } from "./markdown";
 import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 
 // ── shared atoms ─────────────────────────────────────────────────────────────
@@ -540,12 +541,27 @@ function statusControl(status: TicketStatus, open: boolean, anchor: StatusMenuAn
       : `<button data-act="ticketStatus" data-arg="${s}" class="${MENU_ROW_CLASS}" style="${row}">${ticketPill(s)}${checkMark(false)}</button>`;
   }).join("");
   const menu = open ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:172px;min-width:100%">${rows}</div>` : "";
-  return `<div style="position:relative">
-    <button data-act="ticketStatusMenu" data-arg="${anchor}" title="Set status" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:5px 9px 5px 7px;border-radius:9px;border:1px solid var(--border-strong);transition:all .12s ease">
-      ${ticketPill(status)}
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;color:var(--fg-40)"><path d="m6 9 6 6 6-6"></path></svg>
+  // The trigger IS the pill — same tint as `ticketPill`, with the chevron inside
+  // it. It used to be the pill nested in an outlined button, which read as a chip
+  // sitting in a box; the affordance is now the chevron plus a ring in the
+  // status's own colour on hover / while open (`.cnpy-statusbtn`).
+  return `<div style="position:relative;display:inline-flex">
+    <button data-act="ticketStatusMenu" data-arg="${anchor}" title="Set status" aria-haspopup="menu" aria-expanded="${open ? "true" : "false"}" class="cnpy-statusbtn" style="${ticketPillStyle(status)};display:inline-flex;align-items:center;gap:5px;padding:3px 6px 3px 8px;cursor:pointer">
+      ${esc(TICKET_STATUS_LABEL[status].toUpperCase())}
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" style="flex:none;opacity:.7"><path d="m6 9 6 6 6-6"></path></svg>
     </button>${menu}
   </div>`;
+}
+
+/** The ticket body is markdown — people paste lists, bold and links into it,
+ *  and agents file tickets in markdown — so it goes through `renderMarkdown`
+ *  (marked + DOMPurify), the same sanitizing pipeline as a doc body or a sprint
+ *  description, and is NEVER additionally esc()'d. `.cnpy-td-body` keeps a
+ *  typed single line break inside a paragraph (`white-space:pre-line` on `p`),
+ *  which the old `pre-wrap` text block did and plain markdown would swallow. */
+function ticketBody(body: string): string {
+  if (!body.trim()) return "";
+  return `<div class="cnpy-md cnpy-td-body" style="font-size:13.5px;line-height:1.65;color:var(--fg-70);max-width:640px">${renderMarkdown(body)}</div>`;
 }
 
 function linkedWorkBlock(p: TicketDetailProps): string {
@@ -795,7 +811,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
     </div>
     <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px;min-height:calc(${CARD_MIN_H} - 92px)">
       <div style="min-width:0;display:flex;flex-direction:column">
-        <div style="font-size:13.5px;line-height:1.65;color:var(--fg-70);white-space:pre-wrap;max-width:640px">${esc(t.body)}</div>
+        ${ticketBody(t.body)}
         ${linkedWorkBlock(p)}
         ${threadBlock(p)}
       </div>

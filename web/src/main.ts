@@ -10,7 +10,7 @@ import {
   completeSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
-  getMe, logout, mintMcpToken, adminBackfill,
+  getMe, logout, mintMcpToken, adminBackfill, adminPollUsage,
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
@@ -147,6 +147,10 @@ let lastNavGroup: NavGroup | null = null;
 let autoOpened: NavGroup | null = null;
 
 function rerender(): void {
+  // The "Poll now" result is session-only and belongs to the Repo screen: leaving
+  // it (any route, or signing out) clears it, and an in-flight poll's answer is
+  // then dropped on arrival (runRepoPoll checks it is still the one polling).
+  if (state.repoPoll && (state.view !== "app" || state.screen !== "repo")) state.repoPoll = null;
   // Entering a group's pages opens its sub-page list, and leaving folds it again —
   // unless the person opened or closed it by hand, which sticks (and is what persists).
   const group = state.view === "app" ? navGroupOf(state.screen) : null;
@@ -384,6 +388,29 @@ function loadRepo(): void {
       state.repo = { status: "error", data: state.repo.data, error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
+}
+// "Poll now" (admins, Usage tab): run the three hourly usage pollers on demand,
+// then re-read the dashboard so whatever they wrote is on screen, with the
+// per-source outcomes in a strip under the APP USAGE header. Never in sample
+// mode — that never touches the Worker. A failed request (network / 403 / 502)
+// is one line in the same strip; no alert(), no flash().
+async function runRepoPoll(): Promise<void> {
+  if (!state.me?.admin || state.repoSample || state.repoPoll?.status === "polling") return;
+  state.repoPoll = { status: "polling" };
+  rerender();
+  try {
+    const result = await adminPollUsage();
+    if (state.repoPoll?.status !== "polling") return; // left the screen (or went to sample data) meanwhile
+    state.repoPoll = { status: "done", result };
+    pendingFlash = ".repo-poll-strip";
+    loadRepo(); // rerenders now (the strip, "refreshing…") and again when the fresh projection lands
+  } catch (e) {
+    if (e instanceof Unauthorized) { state.repoPoll = null; state.view = "auth"; state.authStep = "login"; rerender(); return; }
+    if (state.repoPoll?.status !== "polling") return;
+    state.repoPoll = { status: "error" };
+    pendingFlash = ".repo-poll-strip";
+    rerender();
+  }
 }
 function loadRepoIfNeeded(): void {
   if (state.repo.status === "idle") loadRepo();
@@ -1119,9 +1146,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.repoDriftOpen = !state.repoDriftOpen;
       if (state.repoDriftOpen) pendingFlash = ".repo-drift";
       break;
+    case "repoPollNow": runRepoPoll(); return;
+    case "repoPollDismiss": state.repoPoll = null; break;
     case "repoSampleOn":
     case "repoSampleOff":
       state.repoSample = act === "repoSampleOn";
+      state.repoPoll = null; // a poll result describes the LIVE sources, not the sample set
       state.repo = { status: "idle", data: null };
       state.repoDriftOpen = false;
       loadRepo();
