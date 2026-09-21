@@ -93,6 +93,9 @@ input, select { font-family: inherit; }
 [data-collapsed="1"] .cnpy-dot { opacity:1; transform:none; transition-delay:.12s; }
 
 .cnpy-chev { flex:none; width:24px; height:30px; margin-right:6px; display:grid; place-items:center; color:var(--fg-40); opacity:.8; border-radius:6px; overflow:hidden; transition:opacity .16s ease .1s, color .12s ease, width var(--side-t) var(--side-e), margin var(--side-t) var(--side-e); }
+/* A <button>'s UA padding (1px 6px) kept the collapsed, width:0 chevron ~12px wide, which
+   narrowed its row and clipped the rail's badge dot to a sliver. */
+.cnpy-chev { padding:0; }
 .cnpy-chev:hover { opacity:1; color:var(--fg-70); }
 .cnpy-navrow.is-active .cnpy-chev { color:var(--fg-55); }
 .cnpy-chev svg { transition:transform .2s var(--side-e); }
@@ -435,6 +438,7 @@ input, select { font-family: inherit; }
 [data-enter] .repo-spark, .cnpy-flash .repo-spark { animation:cnpy-wipe .8s cubic-bezier(.4,0,.2,1) both; animation-delay:calc(160ms + var(--enter-t, 0ms)); }
 .cnpy-flash .repo-spark { animation-delay:0ms; }
 
+.repo-gdot { display:inline-block; width:.6em; height:.6em; border-radius:50%; background:currentColor; vertical-align:.05em; }
 .repo-dot { transition:box-shadow .15s ease, transform .15s ease; }
 .repo-dot:hover, .repo-dot:focus-visible { box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 12%,transparent); transform:scale(1.12); outline:none; }
 [data-enter] .repo-dot { animation:cnpy-dot .3s cubic-bezier(.34,1.56,.64,1) both; animation-delay:calc(var(--i, 0) * 30ms + 140ms + var(--enter-t, 0ms)); }
@@ -590,6 +594,103 @@ input, select { font-family: inherit; }
 /* nav: a hairline and soft shadow once the page scrolls under it */
 .site-nav { border-bottom:1px solid transparent; transition:border-color .3s ease, box-shadow .3s ease; }
 .site-nav[data-scrolled] { border-bottom-color:var(--border); box-shadow:0 12px 32px -24px rgba(0,0,0,.4); }
+
+/* ── corners: tightened ──────────────────────────────────────────────────────
+   Canopy's corners are TIGHTER than the design file's: every radius is shrunk by one
+   factor, --corner-scale, so a card stays rounder than a chip and the hierarchy of the
+   design survives at a crisper size. 1 would restore the design's values, 0 would
+   square everything; the values above stay verbatim and this layer scales them.
+
+   Nearly every radius is an INLINE style in a TS template, so this takes !important
+   (it outranks a non-important inline declaration), and CSS cannot read a radius back
+   to scale it — so each radius the app USES has a rule keyed on its value: the classes
+   below by name, inline styles by `[style*="border-radius:Npx"]`. The base rule zeroes
+   everything first, so an edge that was square stays square (joined panels, table
+   cells, a quote's ruled edge) and a value nobody listed fails SQUARE, never full-round.
+   test/render.corners.test.ts fails when a radius in use has no rule here. Circles
+   and pills scale to a capped radius (at most a quarter of the box), so a 7px dot
+   reads as a small rounded square, not a circle again. */
+[data-cnpy-theme] { --corner-scale:.4; }
+[data-cnpy-theme] *,
+[data-cnpy-theme] *::before,
+[data-cnpy-theme] *::after { border-radius:0 !important; }
+/* canopy.css classes, by the radius each declares above. */
+[data-cnpy-theme] .cnpy-kbd,
+[data-cnpy-theme] .cnpy-treechev { border-radius:calc(4px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-md code { border-radius:calc(5px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-chev,
+[data-cnpy-theme] .cnpy-sub-i,
+[data-cnpy-theme] .cnpy-outline-item,
+[data-cnpy-theme] .cnpy-grouplink { border-radius:calc(6px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-logo-b,
+[data-cnpy-theme] .cnpy-collapse .cnpy-navrow,
+[data-cnpy-theme] .cnpy-collapse .cnpy-nav-i,
+[data-cnpy-theme] .cnpy-tip,
+[data-cnpy-theme] .cnpy-achip,
+[data-cnpy-theme] .cnpy-tree,
+[data-cnpy-theme] .cnpy-select,
+[data-cnpy-theme] .site-navlink { border-radius:calc(7px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-search,
+[data-cnpy-theme] .cnpy-navrow,
+[data-cnpy-theme] .cnpy-nav-i,
+[data-cnpy-theme] .site-iconbtn { border-radius:calc(8px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-chip,
+[data-cnpy-theme] .repo-tip,
+[data-cnpy-theme] .site-btn { border-radius:calc(9px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-md img,
+[data-cnpy-theme] .cnpy-sw { border-radius:calc(10px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-titem,
+[data-cnpy-theme] .cnpy-code,
+[data-cnpy-theme] .cnpy-md pre { border-radius:calc(11px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-tile { border-radius:calc(16px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-badge.is-accent,
+[data-cnpy-theme] .cnpy-dot,
+[data-cnpy-theme] .cnpy-sw i,
+[data-cnpy-theme] .repo-gdot { border-radius:min(calc(12px * var(--corner-scale)), 25%) !important; }
+[data-cnpy-theme] .cnpy-md blockquote { border-radius:0 calc(8px * var(--corner-scale)) calc(8px * var(--corner-scale)) 0 !important; }
+[data-cnpy-theme] .cnpy-md .cnpy-code pre { border-radius:0 !important; }
+[data-cnpy-theme] .cnpy-selbar { border-radius:inherit !important; }
+/* A rule of its own: an engine that rejects the pseudo-element drops only this one. */
+[data-cnpy-theme] .cnpy-scroll::-webkit-scrollbar-thumb { border-radius:calc(8px * var(--corner-scale)) !important; }
+/* Inline styles, by value. AFTER the classes on purpose: equal specificity, so an
+   inline radius beats its element's class radius here exactly as it does unscaled. */
+[data-cnpy-theme] [style*="border-radius:3px"] { border-radius:calc(3px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:4px"] { border-radius:calc(4px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:5px"] { border-radius:calc(5px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:6px"] { border-radius:calc(6px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:7px"] { border-radius:calc(7px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:8px"] { border-radius:calc(8px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:9px"] { border-radius:calc(9px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:10px"] { border-radius:calc(10px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:11px"] { border-radius:calc(11px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:12px"] { border-radius:calc(12px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:13px"] { border-radius:calc(13px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:14px"] { border-radius:calc(14px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:16px"] { border-radius:calc(16px * var(--corner-scale)) !important; }
+[data-cnpy-theme] [style*="border-radius:50%"],
+[data-cnpy-theme] [style*="border-radius:999px"] { border-radius:min(calc(12px * var(--corner-scale)), 25%) !important; }
+
+/* What a circle got away with and a near-square does not. Each rule below was found by
+   comparing every surface before and after the tightening. */
+/* Halos: a ring around a dot or an avatar reads as a soft glow; around a near-square
+   it reads as a bevel or a checkbox frame. They go flat. */
+[data-cnpy-theme] .cnpy-av { box-shadow:none !important; }
+[data-cnpy-theme] .cnpy-av-anon { border-color:transparent !important; background:color-mix(in srgb,var(--fg) 14%,transparent) !important; }
+[data-cnpy-theme] .cnpy-dot { box-shadow:none; }
+[data-cnpy-theme] .repo-envdot { box-shadow:none !important; width:8px !important; height:8px !important; }
+/* A growing boxy frame is not a pulse; a boxy LED blinks instead. */
+[data-cnpy-theme] .repo-envdot.repo-pulse { animation:cnpy-blink 1.4s ease-in-out infinite; }
+@keyframes cnpy-blink { 50% { opacity:.3; } }
+/* Overlapping near-squares merge into one two-tone tile; side by side they stay two people. */
+[data-cnpy-theme] .cnpy-avstack > span { box-shadow:none !important; }
+[data-cnpy-theme] .cnpy-avstack > span + span { margin-left:2px !important; }
+/* A check in a bordered near-square is a checkbox. The status badges become filled tiles. */
+[data-cnpy-theme] .cnpy-seal { border-color:transparent !important; background:var(--hover); }
+/* The compact swatch's selected frame is narrower than the swatch's own ring: two
+   crossed rectangles. The ring alone marks the choice. */
+[data-cnpy-theme] .cnpy-sw.compact.is-on,
+[data-cnpy-theme] .cnpy-sw.compact:hover { border-color:transparent; background:transparent; }
+[data-cnpy-theme] .cnpy-sw.compact:not(.is-on):hover i { box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--border-strong); }
 
 @media (prefers-reduced-motion: reduce) {
   .site-rv, .site-st { opacity:1 !important; translate:none !important; scale:none !important; }

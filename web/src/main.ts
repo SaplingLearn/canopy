@@ -4,7 +4,7 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, isCorners, type AppState, type Screen } from "./render";
+import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint,
@@ -45,12 +45,10 @@ const mount = root;
 
 const state: AppState = initialState();
 
-// ── persisted client prefs (theme, corners + sidebar only; not backend state) ─
+// ── persisted client prefs (theme + sidebar only; not backend state) ─────────
 try {
   const t = localStorage.getItem("canopy.theme");
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
-  const k = localStorage.getItem("canopy.corners");
-  if (isCorners(k)) state.corners = k;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
   const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
@@ -1531,7 +1529,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
-    // chrome: theme, corners + sidebar
+    // chrome: theme + sidebar
     case "toggleCollapse":
       state.collapsed = !state.collapsed;
       persist("canopy.collapsed", state.collapsed ? "1" : "0");
@@ -1549,12 +1547,6 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (arg === "dark" || arg === "light" || arg === "midnight" || arg === "system") {
         state.theme = arg;
         persist("canopy.theme", arg);
-      }
-      break;
-    case "setCorners":
-      if (isCorners(arg)) {
-        state.corners = arg;
-        persist("canopy.corners", arg);
       }
       break;
 

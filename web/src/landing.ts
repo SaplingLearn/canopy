@@ -139,7 +139,7 @@ function hero(): string {
   const hl = (inner: string, kind: "add" | "del", start: number) => `<div class="site-hl hl-${kind}" style="padding:1px 12px;${at(start)}"><span>${inner}</span></div>`;
   const paneHead = (label: string) => `<div style="padding:7px 12px;border-bottom:1px solid var(--border);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">${label}</div>`;
   const diffTab = (label: string, on: boolean) => `<span style="padding:3px 9px;border-radius:6px;font-size:10.5px;font-weight:500;${on ? "border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft)" : "border:1px solid var(--border);color:var(--fg-55)"}">${label}</span>`;
-  const dot = `<span style="width:10px;height:10px;border-radius:50%;background:var(--border-strong)"></span>`;
+  const dot = `<span style="width:10px;height:10px;border-radius:50%;background:var(--border-strong);flex:none"></span>`;
 
   return `<header id="site-top" style="max-width:1120px;margin:0 auto;padding:96px 24px 0;text-align:center">
     <div ${rv("hero-copy", "rv-static")}>
@@ -402,7 +402,7 @@ function tour(): string {
       </div>
       ${ticket(0, "Onboarding checklist is stale", "Docs · 3 comments · latest: “@maya can you confirm the SSO step?”", prio("P1", "amber"), initials("SO", 22, "9px"))}
       ${ticket(1, "Rate limiting on the public API", "Backend · ↳ 2 sub-tickets · sprint: Hardening", prio("P0", "red"), initials("LP", 22, "9px"))}
-      ${ticket(2, "Email digest lands twice on Mondays", "Notifications · unassigned · 1 comment", prio("P2", "fg-55"), `<span style="width:22px;height:22px;border-radius:50%;border:1px dashed var(--border-strong);flex:none"></span>`, true)}`;
+      ${ticket(2, "Email digest lands twice on Mondays", "Notifications · unassigned · 1 comment", prio("P2", "fg-55"), `<span style="width:22px;height:22px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;font-size:8px;font-weight:600;color:var(--fg-40);flex:none">–</span>`, true)}`;
 
   const sprint = (i: number, title: string, badge: string, meta: string, pct: number, count: string) => `<div class="site-st" style="border:1px solid var(--border);border-radius:10px;padding:13px 16px;${at(S + i * 150)}">
       <div style="display:flex;align-items:center;gap:9px"><span style="font-size:13px;font-weight:600">${title}</span>${badge}</div>

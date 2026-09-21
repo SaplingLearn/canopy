@@ -50,6 +50,9 @@ const TOP = "border-top:1px solid var(--border)";
 const LEFT = "border-left:1px solid var(--border)";
 
 const TONE: Record<RepoTone, string> = { neutral: "var(--fg-55)", good: "var(--green)", warn: "var(--amber)", bad: "var(--red)" };
+/** A status dot beside the ✓ / ✕ glyphs, drawn as an element rather than a "●" character
+ *  so the corners layer shapes it like every other dot (canopy.css .repo-gdot). */
+const GDOT = `<span class="repo-gdot" aria-hidden="true"></span>`;
 
 /** Stagger index for the enter animation. */
 const rise = (i: number, style = "", cls = ""): string => `class="cnpy-rise${cls ? ` ${cls}` : ""}" style="--i:${i};${style}"`;
@@ -169,7 +172,7 @@ export function repoControls(p: RepoProps): string {
   const envs = okData(p, (d) => d.environments) ?? [];
   const pills = envs.map((e) => {
     const c = TONE[e.tone];
-    return `<span title="${attr(`${e.name} — ${e.pill.toLowerCase()}`)}" style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;white-space:nowrap;color:var(--fg-70)"><span class="${e.tone === "good" || e.tone === "neutral" ? "" : "repo-pulse"}" style="--c:${c};width:7px;height:7px;border-radius:50%;background:${c};box-shadow:0 0 0 3px color-mix(in srgb,${c} 16%,transparent)"></span>${esc(e.name)}</span>`;
+    return `<span title="${attr(`${e.name} — ${e.pill.toLowerCase()}`)}" style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;white-space:nowrap;color:var(--fg-70)"><span class="repo-envdot${e.tone === "good" || e.tone === "neutral" ? "" : " repo-pulse"}" style="--c:${c};width:7px;height:7px;border-radius:50%;background:${c};box-shadow:0 0 0 3px color-mix(in srgb,${c} 16%,transparent)"></span>${esc(e.name)}</span>`;
   }).join("");
   const busy = p.repo.status === "loading";
   // "Poll now" sits beside the refresh icon on EVERY tab and in every state of
@@ -214,7 +217,7 @@ function overviewTab(p: RepoProps): string {
           pt.sha
             ? `<div style="font-size:13.5px;line-height:1.6;color:var(--fg-70);display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="${CODE}">${esc(pt.sha)}</span><span style="font-size:12px;color:var(--fg-40);white-space:nowrap">${esc(ago(pt.deployedAt ?? "", now))} ago · by ${esc(pt.deployedBy ?? "unknown")} · ${esc(pt.host)}</span>${pt.result === "fail" ? `<span style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--red)">FAILED</span>` : ""}</div>`
             : `<div style="font-size:12.5px;color:var(--fg-40)">No ${esc(pt.host)} deploy captured yet</div>`)).join("")}
-        ${kv("CI on head", `<div style="font-size:13.5px;line-height:1.6;display:flex;align-items:center;gap:7px;color:${TONE[e.ciTone]}"><span style="font-family:var(--mono);font-size:13px">${e.ciTone === "good" ? "✓" : e.ciTone === "bad" ? "✕" : "●"}</span>${esc(e.ci)}</div>`)}
+        ${kv("CI on head", `<div style="font-size:13.5px;line-height:1.6;display:flex;align-items:center;gap:7px;color:${TONE[e.ciTone]}"><span style="font-family:var(--mono);font-size:13px">${e.ciTone === "good" ? "✓" : e.ciTone === "bad" ? "✕" : GDOT}</span>${esc(e.ci)}</div>`)}
         ${kv("URL", `<div style="font-size:13.5px;line-height:1.6"><a href="${attr(safeUrl(e.url))}" target="_blank" rel="noopener" class="repo-link" style="font-family:var(--mono);font-size:12.5px">${esc(e.url.replace(/^https?:\/\//, ""))} ↗</a></div>`)}
       </div>`;
     }).join("")}</div>`);
@@ -283,7 +286,7 @@ const PR_STATE: Record<RepoPrState, [string, string | null]> = {
   draft: ["DRAFT", null], review: ["IN REVIEW", "var(--blue)"], approved: ["APPROVED", "var(--green)"],
   merged: ["MERGED", "var(--accent)"], closed: ["CLOSED", null],
 };
-const CHECKS = { pass: ["✓", "var(--green)", "all checks passing"], fail: ["✕", "var(--red)", "checks failing"], run: ["●", "var(--amber)", "checks running"] } as const;
+const CHECKS = { pass: ["✓", "var(--green)", "all checks passing"], fail: ["✕", "var(--red)", "checks failing"], run: [GDOT, "var(--amber)", "checks running"] } as const;
 
 function prRow(pr: RepoPr, now: number): string {
   const [text, color] = PR_STATE[pr.state];

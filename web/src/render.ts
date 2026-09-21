@@ -42,10 +42,6 @@ export type Screen =
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
   | "repo";
 
-/** Corner style, persisted client-side like the theme (`canopy.corners`). */
-export type Corners = "rounded" | "sharp";
-export const isCorners = (v: unknown): v is Corners => v === "rounded" || v === "sharp";
-
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
   status: "idle" | "loading" | "ok" | "error" | "unauth";
@@ -71,8 +67,6 @@ export interface AppState {
   mywork: Loadable<DashboardData | null>;
   screen: Screen;
   theme: "dark" | "light" | "midnight" | "system";
-  /** Corner style — "sharp" squares every corner in the app (canopy.css, the corners layer). */
-  corners: Corners;
   systemDark: boolean;
   collapsed: boolean;
   /** The viewport is too narrow for the full rail — it renders collapsed regardless of `collapsed`. */
@@ -232,7 +226,7 @@ export function initialState(): AppState {
     inviteDraft: "",
     me: null,
     screen: "mywork",
-    theme: "dark", corners: "rounded", systemDark: true,
+    theme: "dark", systemDark: true,
     collapsed: false,
     narrow: false,
     navOpen: { ...NAV_CLOSED },
@@ -427,7 +421,7 @@ function authView(s: AppState): string {
 function nonmemberCard(): string {
   return `<div style="width:400px">
     <div style="border:1px solid var(--border);border-radius:14px;padding:34px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center">
-      <div style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55)">
+      <div class="cnpy-seal" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55)">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
       </div>
       <div>
@@ -435,7 +429,7 @@ function nonmemberCard(): string {
         <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Your GitHub account isn't a member of the <span style="font-family:var(--mono);font-size:12.5px">SaplingLearn</span> organization, so there's nothing here for you yet.</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;padding:9px 14px 9px 9px;border:1px solid var(--border);border-radius:999px">
-        <div style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">OS</div>
+        <div class="cnpy-av cnpy-av-anon" style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">OS</div>
         <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono)">octo-stranger</div></div>
       </div>
       <button data-act="backToLogin" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Sign out &amp; switch account</button>
@@ -446,7 +440,7 @@ function nonmemberCard(): string {
 function notInvitedCard(email: string | null): string {
   return `<div style="width:400px">
     <div style="border:1px solid var(--border);border-radius:14px;padding:34px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center">
-      <div style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55)">
+      <div class="cnpy-seal" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55)">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
       </div>
       <div>
@@ -454,7 +448,7 @@ function notInvitedCard(email: string | null): string {
         <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Canopy is limited to the Sapling team. Ask an admin to invite <span style="font-family:var(--mono);font-size:12.5px">${esc(email ?? "your address")}</span>, then sign in again.</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;padding:9px 14px 9px 9px;border:1px solid var(--border);border-radius:999px">
-        <div style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">${esc(initialsOf(email ?? "?"))}</div>
+        <div class="cnpy-av cnpy-av-anon" style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">${esc(initialsOf(email ?? "?"))}</div>
         <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in with Google as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono)">${esc(email ?? "unknown")}</div></div>
       </div>
       <button data-act="signInGoogleSwitch" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Try a different account</button>
@@ -1221,8 +1215,6 @@ function guideView(s: AppState): string {
 
 // ── settings ─────────────────────────────────────────────────────────────────
 const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
-const APPEAR_SUB = "font-size:12.5px;font-weight:500;color:var(--fg-70);margin-bottom:9px";
-const APPEAR_HINT = "font-size:11.5px;color:var(--fg-40);margin-top:10px";
 
 /** Handle-check status wording, shared with onboarding's STATUS map (people.ts) —
  *  "same" (draft equals the current handle) and "idle" both render blank. */
@@ -1352,16 +1344,6 @@ function settingsView(s: AppState): string {
       : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`;
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
-  // The glyphs are PATHS, not <rect rx>: the sharp layer zeroes every rect's rx, which
-  // would square the "Rounded" preview itself.
-  const cornerCards = ([
-    ["rounded", "Rounded", `<path d="M4 20v-8.5A7.5 7.5 0 0 1 11.5 4H20"></path>`],
-    ["sharp", "Sharp", `<path d="M4 20V4h16"></path>`],
-  ] as const).map(([k, label, glyph]) => {
-    const sel = s.corners === k;
-    const style = `display:flex;align-items:center;justify-content:center;gap:9px;padding:13px 8px;border-radius:11px;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};background:${sel ? "var(--accent-soft)" : "transparent"};color:${sel ? "var(--accent)" : "var(--fg-70)"}`;
-    return `<button data-act="setCorners" data-arg="${k}" class="cnpy-themecard" aria-pressed="${sel}" style="${style}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="miter">${glyph}</svg><span style="font-size:13px;font-weight:500">${label}</span></button>`;
-  }).join("");
 
   const copied = s.tokenCopied;
   const copyBtn = copied
@@ -1410,18 +1392,8 @@ function settingsView(s: AppState): string {
 
     <section class="cnpy-tile cnpy-set-appear">
       <div style="${SECTION_LABEL}">Appearance</div>
-      <div class="cnpy-set-looks">
-        <div>
-          <div style="${APPEAR_SUB}">Theme</div>
-          <div class="cnpy-set-themes">${themeCards}</div>
-          <div style="${APPEAR_HINT}">System follows your operating system's appearance.</div>
-        </div>
-        <div>
-          <div style="${APPEAR_SUB}">Corners</div>
-          <div class="cnpy-set-corners">${cornerCards}</div>
-          <div style="${APPEAR_HINT}">Sharp squares every corner — cards, buttons, avatars, charts.</div>
-        </div>
-      </div>
+      <div class="cnpy-set-themes">${themeCards}</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
     </section>
   </div></div>`;
 }
@@ -1805,7 +1777,7 @@ function backfillSyncModal(sync: BackfillSyncState): string {
 
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
-  return `<div data-cnpy-theme="${themeAttr}" data-cnpy-corners="${s.corners}" data-screen="${s.screen}" data-collapsed="${railCollapsed(s) ? "1" : "0"}" data-narrow="${s.narrow ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
+  return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${railCollapsed(s) ? "1" : "0"}" data-narrow="${s.narrow ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
     ${s.view === "auth" ? authView(s) : s.screen === "site" ? landingView({ dark: resolved(s) !== "light", signInOpen: false, signedIn: true, seen: s.landingSeen }) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}

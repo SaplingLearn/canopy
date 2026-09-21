@@ -34,12 +34,12 @@ export function handleTag(p: { handle: string; color: PersonColor } | null, fall
 export function personChip(p: { handle: string; name?: string | null; color: PersonColor; avatar_url?: string | null } | null, size: number, fallback: string): string {
   const font = Math.max(9, Math.round(size * 0.36));
   if (!p) {
-    return `<div style="width:${size}px;height:${size}px;border-radius:50%;border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center;font-size:${font}px;font-weight:600;color:var(--fg);flex:none">${esc(initialsOf(fallback))}</div>`;
+    return `<div class="cnpy-av cnpy-av-anon" style="width:${size}px;height:${size}px;border-radius:50%;border:1px solid var(--border-strong);background:color-mix(in srgb,var(--fg) 7%,transparent);display:grid;place-items:center;font-size:${font}px;font-weight:600;color:var(--fg);flex:none">${esc(initialsOf(fallback))}</div>`;
   }
   const inner = p.avatar_url
     ? `<img src="${attr(p.avatar_url)}" width="${size}" height="${size}" alt="" style="display:block;width:100%;height:100%;border-radius:50%;object-fit:cover" />`
     : esc(initialsOfName(p.name, p.handle));
-  return `<div title="${attr(p.name ?? p.handle)}" style="--c:var(--p-${p.color});width:${size}px;height:${size}px;border-radius:50%;background:var(--c);box-shadow:0 0 0 1.5px color-mix(in srgb,var(--c) 45%,transparent);display:grid;place-items:center;font-size:${font}px;font-weight:600;color:#fff;flex:none;overflow:hidden">${inner}</div>`;
+  return `<div class="cnpy-av" title="${attr(p.name ?? p.handle)}" style="--c:var(--p-${p.color});width:${size}px;height:${size}px;border-radius:50%;background:var(--c);box-shadow:0 0 0 1.5px color-mix(in srgb,var(--c) 45%,transparent);display:grid;place-items:center;font-size:${font}px;font-weight:600;color:#fff;flex:none;overflow:hidden">${inner}</div>`;
 }
 
 export function swatches(act: string, selected: PersonColor, compact = false): string {

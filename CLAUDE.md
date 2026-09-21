@@ -929,6 +929,19 @@ mid-entrance joins the animation where the old DOM left off. Hooks: `.cnpy-rise`
 (lists), `.repo-bar` / `.repo-fill` / `.repo-spark`, `data-count` (count-up). In-place changes use the
 one-shot `pendingFlash`. All of it is off under `prefers-reduced-motion`.
 
+## Corners — tighter than the design file
+
+Every radius renders at `--corner-scale` (`.4`) of its authored value: ONE block at the end of
+`web/src/canopy.css` zeroes everything with `!important` (the radii are INLINE styles in the TS templates, and
+only `!important` outranks those), then restores each radius the app uses at `calc(<its value> *
+var(--corner-scale))` — canopy.css classes by name, inline styles by `[style*="border-radius:Npx"]` — and
+circles/pills at `min(calc(12px * scale), 25%)`, so dots and avatars are small rounded squares. The authored
+values stay as written (`1` restores them, `0` squares everything). So a NEW radius value or a new class with a
+radius needs a line in that block, else it renders square; `test/render.corners.test.ts` fails until it has one.
+A shape that only reads right as a CIRCLE (a halo ring, an overlapping avatar stack, a check in a bordered circle)
+needs a hook class and a rule in that block (`.cnpy-av`, `.cnpy-avstack`, `.cnpy-seal`, `.repo-envdot`, …), and
+a status dot must be an element, never a `●` character (`GDOT` in `repo.ts`).
+
 ## Email notifications — a read-side projection, never a writer (spec: `docs/superpowers/specs/2026-09-11-canopy-email.md`)
 
 Digests are assembled from D1 and sent via Resend; the pipeline never writes to the store (only to its own
