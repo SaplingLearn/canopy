@@ -185,7 +185,7 @@ export function repoControls(p: RepoProps): string {
   const canPoll = canPollRepo(p);
   const polling = p.poll?.status === "polling";
   const pollBtn = canPoll
-    ? `<button data-act="repoPollNow" title="${POLL_TITLE}" aria-label="${polling ? "Polling every source" : POLL_TITLE}" class="cnpy-outlinebtn repo-pollbtn"${polling ? ' disabled aria-busy="true"' : ""} style="height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--border);display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:500;white-space:nowrap;color:var(--fg-55);${polling ? "opacity:.6;cursor:default;pointer-events:none" : ""}">
+    ? `<button data-act="repoPollNow" title="${polling ? "Polling…" : POLL_TITLE}" aria-label="${polling ? "Polling…" : POLL_TITLE}" class="cnpy-outlinebtn repo-pollbtn"${polling ? ' disabled aria-busy="true"' : ""} style="height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--border);display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:500;white-space:nowrap;color:var(--fg-55);${polling ? "opacity:.6;cursor:default;pointer-events:none" : ""}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none${polling ? ";animation:cnpy-spin .8s linear infinite" : ""}">${polling ? `<path d="M21 12a9 9 0 1 1-9-9"></path>` : `<path d="M3 12h4l3-8 4 16 3-8h4"></path>`}</svg><span class="repo-pollbtn-label">${polling ? "Polling…" : "Poll now"}</span>
     </button>`
     : "";
@@ -748,14 +748,16 @@ function productSection(p: RepoProps, i: number): string {
     </div>`;
 }
 
-// ── "Poll now" — the admin's on-demand refresh of EVERY source the dashboard shows ──
+// ── "Poll now" — the admin's on-demand refresh of health, usage and GitHub ──
 // (POST /admin/poll: health pings, the three usage pollers, the GitHub reconcile.)
 // "App metrics": the app's own endpoint answers active users AND product metrics in one response.
 const POLL_SOURCES: ["cloudflare" | "railway" | "sapling", string][] = [["cloudflare", "Cloudflare"], ["railway", "Railway"], ["sapling", "App metrics"]];
 const MUTED = "var(--fg-40)";
-/** The two top-bar controls say different things: one re-reads D1, one goes out to every source. */
+/** The two top-bar controls say different things: one re-reads D1, one goes out to the sources. */
 const REFRESH_TITLE = "Reload from Canopy's database";
-const POLL_TITLE = "Poll every source now (admin)";
+// TRUE, not tidy: the issue-derived blocks (open issues / bugs, issues by label,
+// the feed's issue lines) read `events`, which only Sync GitHub refreshes.
+const POLL_TITLE = "Poll deploys, CI, usage and health now (admin) — issues refresh with Sync GitHub";
 /** The poll result belongs to the Repo SCREEN, not to one of its tabs: it is kept
  *  while the person is anywhere on Repo and dropped the moment they are not
  *  (main.ts applies this on every rerender, so an in-flight poll's answer is

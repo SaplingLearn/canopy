@@ -30,6 +30,23 @@ export function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, s
 
 export type { RepoRefreshResult, UsagePollResult };
 
+/** What this module LOGS for an arm that threw: the error's MESSAGE — never the
+ *  Error object, so no stack — with every secret this module hands to a fetch
+ *  scrubbed out of it. Literal, empty-guarded replacement (`scrubbedMessage`),
+ *  one secret after another; nothing downstream cuts the string, so no cut can
+ *  leave half a token behind. "These arms never throw" was the argument for
+ *  logging the raw error in src/repo/github.ts too, and it was wrong there:
+ *  the progress arm fetches GitHub with the service token, and a thrown fetch
+ *  can quote its own `authorization` header back. */
+function scrubbedLog(e: unknown, env: Env): string {
+  const bag = env as unknown as Record<string, unknown>;
+  const secrets = [
+    env.GITHUB_SERVICE_TOKEN, env.CF_ANALYTICS_TOKEN, env.CF_ANALYTICS_ACCOUNT_ID, env.SAPLING_METRICS_TOKEN,
+    ...Object.keys(bag).filter((k) => k.startsWith("RAILWAY_TOKEN_")).map((k) => bag[k]),
+  ].filter((v): v is string => typeof v === "string" && v.length > 0);
+  return secrets.reduce((message, secret) => scrubbedMessage(message, secret), scrubbedMessage(e, ""));
+}
+
 /** What a source reports when its arm threw — the pollers never throw, so this
  *  should be unreachable; it names no cause on purpose (nothing unscrubbed may
  *  reach the response). */
@@ -62,7 +79,7 @@ export async function runUsagePolls(env: Env, now: number, fetchImpl?: typeof fe
     try {
       return await fn();
     } catch (e) {
-      console.error("repo cron", label, e);
+      console.error("repo cron", label, scrubbedLog(e, env));
       return UNEXPECTED;
     }
   };
@@ -96,13 +113,14 @@ export const refreshSubrequests = (n: number): number => 19 + 7 * n;
 export const BUDGET_SKIP = "skipped: would exceed the subrequest budget";
 
 /**
- * EVERYTHING the Repo dashboard shows, refreshed on demand — the function
+ * What the Repo dashboard POLLS for, refreshed on demand — the function
  * behind the admin's "Poll now" (`POST /admin/poll`). Three sources, in this
  * order, each in its OWN guarded arm (a failure in one never skips another):
  *
- *   health   `pingHealth`, stamped to the MINUTE (see `HEALTH_ON_DEMAND_BUCKET_MS`
- *            — inside the cron's ten-minute bucket a first-write-wins reading
- *            would be dropped). `"not_configured"` with no environment.
+ *   health   `pingHealth`, stamped to the SECOND (see `HEALTH_ON_DEMAND_BUCKET_MS`
+ *            — floored to the cron's bucket, or even to its minute, a
+ *            first-write-wins reading is dropped). `"not_configured"` with no
+ *            environment.
  *   usage    `runUsagePolls`, unchanged — Cloudflare, Railway, the app's metrics.
  *   github   `reconcileRepo` with the service token: deploys, checks, runs,
  *            branches, drift, open PRs, env heads, the `canopy/*` commit
@@ -129,7 +147,12 @@ export const BUDGET_SKIP = "skipped: would exceed the subrequest budget";
  *   `pruneRepoCapture`      maintenance, not a refresh — nothing on screen
  *                           changes because old rows were deleted.
  *   `runBackfill`/summaries that is "Sync GitHub": My Work's capture, with its
- *                           own Gemini budget loop.
+ *                           own Gemini budget loop. It is ALSO the only
+ *                           non-webhook writer of the `events` issue snapshots,
+ *                           so the Overview's Open issues / Open bugs tiles and
+ *                           deltas, Planning's issues by label and the feed's
+ *                           issue lines do NOT move on a poll — they refresh
+ *                           with Sync GitHub. The button's title says so.
  *
  * The result carries outcomes and NEVER a token, a header or an account id:
  * health details are fixed words, usage details are the pollers' scrubbed
@@ -145,7 +168,7 @@ export async function runRepoRefresh(env: Env, now: number, fetchImpl?: typeof f
     try {
       health = await pingHealth(env.DB, envs, now, fetchImpl, HEALTH_ON_DEMAND_BUCKET_MS);
     } catch (e) {
-      console.error("repo refresh", "health", e instanceof Error ? e.message : String(e));
+      console.error("repo refresh", "health", scrubbedLog(e, env));
       health = UNEXPECTED;
     }
   }
@@ -155,8 +178,8 @@ export async function runRepoRefresh(env: Env, now: number, fetchImpl?: typeof f
     usage = await runUsagePolls(env, now, fetchImpl);
   } catch (e) {
     // Unreachable today (runUsagePolls is total, and its arms scrub their own
-    // logs) — so the message is NOT logged: nothing here knows what to scrub.
-    console.error("repo refresh", "usage", e instanceof Error ? e.name : "error");
+    // logs) — the message is logged with every secret scrubbed all the same.
+    console.error("repo refresh", "usage", scrubbedLog(e, env));
     usage = { cloudflare: UNEXPECTED, railway: UNEXPECTED, sapling: UNEXPECTED };
   }
 
@@ -171,7 +194,7 @@ export async function runRepoRefresh(env: Env, now: number, fetchImpl?: typeof f
         if (res.failed.length) console.error("repo refresh reconcile: arms failed", res.failed);
         github = { written: res.written, unchanged: res.unchanged, failed: res.failed };
       } catch (e) {
-        console.error("repo refresh", "github", scrubbedMessage(e, token));
+        console.error("repo refresh", "github", scrubbedLog(e, env));
         github = { written: 0, unchanged: 0, failed: ["unexpected error"] };
       }
     }
@@ -186,10 +209,17 @@ export async function runRepoRefresh(env: Env, now: number, fetchImpl?: typeof f
  *  are CORRECT — the lock only stops a pile-up (two admins, a double click from
  *  two tabs) from spending the subrequest budget twice for nothing. */
 export const REFRESH_LOCK = "refresh_lock";
-/** Longer than a refresh with every fetch hanging (≈ 64 s of pollers for two
- *  environments is the known worst case, plus reconcile); a lock older than
- *  this is a run that died without its `finally`, and is ignored. */
-export const REFRESH_LOCK_MS = 90_000;
+/** How long a lock is honoured. It outlives the REALISTIC worst case — a
+ *  refresh is seconds when GitHub answers, and even with every poller hanging
+ *  to its timeout (≈ 64 s for two environments) plus a slow reconcile it stays
+ *  well inside three minutes — but NOT the theoretical one: every fetch is
+ *  bounded (8–15 s each), and 23 GitHub reads all timing out is ≈ 6 minutes.
+ *  So a run CAN overrun its lock, and then a second run may start beside it.
+ *  Correctness holds: every write is idempotent, and the overrun run's release
+ *  is a no-op because the row's `json` is no longer its own. Only budget is
+ *  wasted. A lock older than this is otherwise a run that died without its
+ *  `finally`, and is ignored. */
+export const REFRESH_LOCK_MS = 180_000;
 
 export type LockedRefresh =
   | { ok: true; result: RepoRefreshResult }
@@ -201,7 +231,8 @@ export type LockedRefresh =
  * cannot both win; `changes = 0` means a live lock stands, and the caller gets
  * its `since` without running anything. Released in a `finally` (so a thrown
  * arm cannot strand it), and only when the row is still OURS: a run that
- * outlived its own lock must not delete the lock of the run that replaced it.
+ * outlived its own lock (see `REFRESH_LOCK_MS` — possible, merely wasteful)
+ * must not delete the lock of the run that replaced it.
  */
 export async function runLockedRepoRefresh(env: Env, by: string, now: number, fetchImpl?: typeof fetch, refresh: typeof runRepoRefresh = runRepoRefresh): Promise<LockedRefresh> {
   const at = new Date(now).toISOString();
@@ -278,7 +309,7 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
     try {
       await fn();
     } catch (e) {
-      console.error("repo cron", label, e);
+      console.error("repo cron", label, scrubbedLog(e, env));
     }
   };
 

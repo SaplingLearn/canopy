@@ -51,12 +51,18 @@ const PING_TIMEOUT_MS = 8_000;
  *
  *  `bucketMs` is the width `at` is floored to. The cron leaves it at ten
  *  minutes (a double-fired tick is a no-op). The on-demand run passes ONE
- *  MINUTE: `putMetric` is first-write-wins, so inside the cron's own bucket an
- *  on-demand reading would be dropped and the screen would keep showing the
- *  tick's — a finer bucket lands a NEWER row, which `latestHealth` (the only
- *  reader, latest row per target) picks up; a double click within the minute
- *  is still a no-op. Health rows are pruned at 45 days either way. */
-export const HEALTH_ON_DEMAND_BUCKET_MS = 60_000;
+ *  SECOND: `putMetric` is first-write-wins, so a reading floored to the cron's
+ *  bucket would be dropped and the screen would keep showing the tick's — and
+ *  a ONE-MINUTE floor still collided with it for the whole of the tick's own
+ *  minute (`:X0:00`–`:X0:59` floors to the tick's `at` either way): a real
+ *  "down" shown in the strip was dropped and the pill stayed HEALTHY. A second
+ *  lands a NEWER row, which `latestHealth` (the only reader, latest row per
+ *  target) picks up. The floor no longer guards a double fire on this path —
+ *  the refresh lock does, and more strictly (`REFRESH_LOCK_MS`). Second-stamped
+ *  rows read and prune like any other (`at` is one normalised format; pruned at
+ *  45 days): a poll every 2 minutes for a day is 720 × 2 rows per target —
+ *  5,760 rows for two environments, beside the cron's own 1,152. */
+export const HEALTH_ON_DEMAND_BUCKET_MS = 1_000;
 export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch, bucketMs: number = TEN_MIN): Promise<PollOutcome[]> {
   const at = new Date(Math.floor(now / bucketMs) * bucketMs).toISOString();
   const targets = envs.flatMap((cfg) =>
@@ -319,7 +325,8 @@ export async function pollCloudflare(
     }
     if (changed) await putSnapshot(db, CF_POLLED, bounds as CfPolled, new Date(now).toISOString());
   } catch (e) {
-    console.error("pollCloudflare", CF_POLLED, e);
+    // The message only, scrubbed — the rule every other log line in this file keeps.
+    console.error("pollCloudflare", CF_POLLED, scrub(e instanceof Error ? e.message : String(e)));
   }
   return outcomes;
 }
