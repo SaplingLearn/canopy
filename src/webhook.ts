@@ -257,7 +257,7 @@ export function progressFromIssueEvent(
 
 // Task 4: parse the PR event's own `raw` (its title/body — nothing else) and
 // store a capture-time summary. `summarizer` is already resolved by the
-// caller (opts?.summarizer ?? (env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null));
+// caller (an explicit `opts.summarizer` — null included — else the env's Gemini one, else null);
 // storePrSummary itself never throws, so a summary failure never fails capture.
 async function summarizePrSeam(db: DB, summarizer: Summarizer<PrSummary> | null, event: CapturedEvent): Promise<void> {
   const parsed = JSON.parse(event.raw) as { pr: { number: number; title: string; body: string | null } };
@@ -294,7 +294,8 @@ async function progressSeam(db: DB, payload: unknown): Promise<void> {
 const WORK_EVENT_NAMES = ["pull_request", "issues"];
 /** Deliveries the repo dashboard capture (`repo_events`) reads. `status` (Task
  *  14) is a sibling arm: it feeds `repo_metrics`, not `repo_events` — see the
- *  branch below. Later phases append. */
+ *  branch below. The list is complete for the five-phase capture plan; GitHub
+ *  only delivers the ones the repo's webhook is SUBSCRIBED to. */
 export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push", "pull_request_review", "deployment_status", "check_run", "workflow_run", "status"];
 
 // ---------------------------------------------------------------------------
@@ -349,11 +350,17 @@ export async function handleGithubWebhook(
       if (res.outcome !== "written") { unchanged++; continue; }
       captured++;
       if (ev.event_type === "pr_merged" || ev.event_type === "pr_closed") {
-        const summarizer = opts?.summarizer ?? (env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null);
+        // `!== undefined`, not `??`: an EXPLICIT `summarizer: null` means "no
+        // summarizer" — `??` skips null as well and fell through to the env one.
+        const summarizer = opts?.summarizer !== undefined
+          ? opts.summarizer
+          : env.GEMINI_API_KEY ? geminiPrSummarizer(env.GEMINI_API_KEY) : null;
         await summarizePrSeam(env.DB, summarizer, ev);
       } else if (ev.event_type === "issue") {
         await progressSeam(env.DB, payload);
-        const issueSummarizer = opts?.issueSummarizer ?? (env.GEMINI_API_KEY ? geminiIssueSummarizer(env.GEMINI_API_KEY) : null);
+        const issueSummarizer = opts?.issueSummarizer !== undefined
+          ? opts.issueSummarizer
+          : env.GEMINI_API_KEY ? geminiIssueSummarizer(env.GEMINI_API_KEY) : null;
         await summarizeIssueSeam(env.DB, issueSummarizer, ev);
       }
     }

@@ -78,7 +78,7 @@ describe("getRepoDashboard — a D1-only projection", () => {
     expect(data(d.stats).map((s) => s.value)).toEqual([0, 0, 0, 0]);
   });
 
-  it("sections with no capture path are not_connected — never guessed", async () => {
+  it("on a cold start every captured section is not_connected — never guessed", async () => {
     const d = await getRepoDashboard(env.DB, "o/r", NOW);
     for (const k of ["environments", "drift", "health", "branches", "deploys", "ciFailures", "coverage", "bundle", "usage", "cloudflare", "hosting", "todos"] as const) {
       expect(d[k].status, k).toBe("not_connected");
@@ -178,7 +178,7 @@ describe("getRepoDashboard — a D1-only projection", () => {
     expect(feed[2].text).toBe("#10 “PR 10” by @jose-a was merged");
   });
 
-  it("contributors tally this week's merges per login, not issue closes — and reviews stay null (no capture path yet)", async () => {
+  it("contributors tally this week's merges per login, not issue closes — and reviews stay null (no review row captured)", async () => {
     await ingestAll([
       prEvent(1, "a", ago(1)), prEvent(2, "a", ago(2)), prEvent(3, "b", ago(1)),
       prEvent(4, "b", ago(12)), // outside the week

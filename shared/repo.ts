@@ -96,7 +96,11 @@ export interface RepoPr {
   at: string;
 }
 export interface RepoBranch { name: string; at: string; ahead: number; behind: number; stale: boolean }
-export interface RepoBranches { active: number; stale: number; rows: RepoBranch[] }
+/** `head` is the branch every row's ahead/behind was compared against (the
+ *  first configured environment's branch). It is a stored snapshot, so one
+ *  written before `head` was recorded lacks it — the screen then shows the
+ *  counts with no "vs …" rather than guess a branch name. */
+export interface RepoBranches { active: number; stale: number; head?: string; rows: RepoBranch[] }
 
 // ── CI & Deploys ────────────────────────────────────────────────────────────
 export interface RepoDeploy { sha: string; at: string; by: string; result: "ok" | "fail" | "cancel" }
@@ -126,12 +130,24 @@ export interface RepoActivity {
 }
 
 // ── Usage ───────────────────────────────────────────────────────────────────
+// Requests/errors come from Cloudflare analytics, active users from the target
+// app's own metrics endpoint — different sources that connect independently,
+// so each metric travels as its own nullable value: `null` = nothing to show
+// for THAT metric in this range, never a guessed number next to its live
+// neighbours. A `null` alone does not say WHY — never connected, no point in
+// this range, a poll that stopped, a reading gone stale — so `seen` travels
+// beside it: whether that environment's source has reported AT ALL inside the
+// render's one 30-day read. `null` + seen = connected and quiet ("no recent
+// reading"); `null` + not seen = "not connected". The same for every range.
+export interface RepoUsageMetric { value: string; trend: number[]; tone: RepoTone }
 export interface RepoUsageEnv {
   name: string;
   host: string;
-  requests: string; requestsTrend: number[];
-  errorRate: number; errorTrend: number[]; errorTone: RepoTone;
-  users: string; usersTrend: number[];
+  requests: RepoUsageMetric | null;
+  /** Follows `seen.requests` — it is derived from the same Cloudflare series. */
+  errorRate: RepoUsageMetric | null;
+  users: RepoUsageMetric | null;
+  seen: { requests: boolean; users: boolean };
 }
 export interface RepoCfRow { env: string; label: string; value: string }
 export interface RepoHosting { env: string; cpu: string; memory: string }

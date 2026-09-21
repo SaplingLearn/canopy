@@ -22,7 +22,7 @@
 - **Cron triggers stay at three.** Replace `0 */6 * * *` with `*/10 * * * *` and gate work by minute/hour in code. Cloudflare weekday fields are `1-7`/`SUN-SAT`, never `0`; a bad cron fails the deploy AFTER the Worker uploads.
 - **A push to `main` auto-deploys prod.** Each phase is one PR; apply its migration to prod (`npm run db:migrate:remote`, needs `CLOUDFLARE_ACCOUNT_ID`) BEFORE merging.
 - New web tests must be listed in BOTH `tsconfig.worker.json` `exclude` and `tsconfig.web.json` `include`.
-- `npm run typecheck` does not run inside `npm test` — run both. One `summarize.test.ts` failure is environmental when `GEMINI_API_KEY` is in `.dev.vars`.
+- `npm run typecheck` does not run inside `npm test` — run both. Since Phase 5 the suite is fully green — the vitest pool blanks every network-enabling secret — so any failure is real.
 - Commit messages: imperative sentence, body explains why; end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 
 ## Spec (inline) — verified facts about `SaplingLearn/sapling` (2026-09-20)
@@ -2864,3 +2864,101 @@ Cron (hourly block): `if (env.SAPLING_METRICS_TOKEN) await safely("sapling", () 
 **Known limits, stated rather than hidden:** "Awaiting review" a week ago ignores approvals (review history before capture is unknowable). Backfilled commits count 1 per commit and only cover the stretch before push capture began. Bundle size stays `not_connected` unless the owner accepts a CI build step. Railway's and Cloudflare's GraphQL shapes are verified by a manual call in-task before the parser is trusted, because neither schema is vendored here.
 
 **Type consistency** — `RepoEvent`/`RepoEventRow`/`RepoMetric` (T1) are used unchanged through T18; `getRepoDashboard(db, repo, now?, envs?)` gains its 4th parameter in T9 and every later test passes it; `RepoContributor` changes once (T4), `RepoEnv`/`RepoDeployRow` once (T9), `RepoUsageEnv` once (T15), each with its screen and sample update in the same task.
+
+---
+
+# Phases 2–5 — shipped. What execution changed, and what remains for the owner
+
+Executed like Phase 1: task-by-task with per-task reviews, one whole-branch review and ONE fix wave per phase.
+Commit ranges: Phase 2 `6ae379f..d6dff2b`, Phase 3 `d6dff2b..82b3c65`, Phase 4 `6f19cb7..c7625b5`, Phase 5
+from `300b14f` (branch `feat/repo-capture-phase5`). **Where a Task 7–19 snippet above disagrees with this
+section or with the code, the code is the truth** — `CLAUDE.md`'s Repo dashboard section describes the result.
+
+**Phase 2 (Tasks 7–10) — changed from the plan text:**
+- Deployments are ONE GraphQL request filtered by environment name with `statuses(first:10)` inline, not
+  `GET /deployments` + one `/statuses` call each (21 subrequests → 1). Each status is re-wrapped into the
+  webhook's payload shape and goes back through the pure capture arm. Verified live: `databaseId` equals the
+  REST deployment id; `state` arrives UPPERCASE; a Bot creator's login lacks its `[bot]` suffix.
+- `reconcileRepo` returns `{ written, unchanged, failed: string[] }` — `failed` names every arm that threw,
+  surfaced in the `/admin/backfill` response. It also runs on the batch that hits the SPA's 10-batch cap
+  (`isFinalBackfillBatch(res, batch, of)`), closing the Phase 1 "no final batch" gap.
+- Environment heads are an `env_heads` SNAPSHOT, not synthetic `push` rows (a Sync between a push and its
+  webhook shadowed the real push and inflated commit totals). `branchHeads` takes the newer of snapshot and
+  latest push, compared as parsed instants.
+- `RepoCiFailures.rate` is `number | null` and `trend` may be `[]` until `run` capture predates the week; the
+  failures LIST is never gated (returning `empty` would render a false "No CI failures this week").
+- ONE policy for non-decisive conclusions (`foldResult` / `checkState`); `HEALTHY` needs head checks captured,
+  none failing and no failed part — a deploy with no checks is `UNKNOWN`. A Workers Builds check is assigned
+  to an environment by NAME + HEAD SHA. The failing-job label pass drains a BACKLOG of ≤5 untitled failed runs.
+- Pushers and per-sha check states are resolved with one grouped query each, never per row.
+
+**Phase 3 (Tasks 11–13) — changed:**
+- The cron is ONE `*/10` trigger with ONE heavy job per invocation (50-subrequest cap): every tick health;
+  minute 0 the hourly polls; hours % 6 → `:10` progress backstop, `:20` reconcile, `:30` prune. Stacking them
+  on one tick is what killed the reconcile. The budget arithmetic lives at the dispatcher.
+- `computeDrift` / `computeBranches` THROW (so `failed` names them and the last good snapshot survives);
+  `refreshDrift` / `refreshBranches` are the never-throwing wrappers. The branches arm runs even with no
+  environments configured; its query drops `orderBy`; the 5-page cap throws instead of under-reporting; the
+  stale slice picks the OLDEST three. GraphQL's `Ref.compare` ahead/behind arrive inverted and are flipped.
+- `health` has three states — `empty` when pings exist but all are over 30 minutes old. ONE query reads all
+  health rows; pings run concurrently. ONE `repo_metrics.at` format, normalised in `putMetric`.
+- `check` rows are pruned only `WHERE part IS NULL` (a frontend deploy IS a `check` row); `deployHistories`
+  is bounded to 90 days instead.
+
+**Phase 4 (Task 14) — changed:**
+- `status` is a SIBLING arm (`metricsFromStatus` → `repo_metrics`), not a `RepoEvent`. `description` must be
+  a strict decimal inside a per-metric range; a dropped `canopy/*` point is `console.warn`ed once.
+- A delta needs ≥2 points spanning ≥7 days; the TODO window is 90 days. A metric that has gone quiet reads
+  `empty`, never-reported reads `not_connected`. `metricSeries` normalises its `sinceIso` bound.
+- The CI steps are a spec doc (`docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`), not a PR this repo
+  can carry: job-level `permissions`, `continue-on-error`, no fabricated 0 KB bundle.
+
+**Phase 5 (Tasks 15–19) — changed:**
+- `CF_ANALYTICS_ACCOUNT_ID` is a SECRET, not a `[vars]` entry (the owner had created it as one; a var and a
+  secret with one binding name fail the deploy). Neither Cloudflare name uses the `CLOUDFLARE_*` prefix.
+- The Cloudflare poll window LAGS one hour, and a `cf_polled` snapshot records how far each environment's
+  polls have looked: a missing hour is drawn as 0 only up to that bound (Task 16b, added before T16's review).
+- The Usage tab is ONE `metricsSince` statement over 30 days, sliced in memory (the plan looped 18
+  `metricSeries` calls); hosting and active users ride it. A "current" gauge must be ≤ 3 hours old. Hourly
+  usage metrics get 100-day retention.
+- Railway auth is a PROJECT token PER ENVIRONMENT sent as `Project-Access-Token` (owner input; supersedes the
+  plan's bearer/account token). Only complete hours are stored; within one response the LATEST `ts` per
+  metric per hour bucket wins (Task 19). `railwayServiceId` / `railwayEnvironmentId` live in
+  `REPO_ENVIRONMENTS` — found from Railway's own commit-status URL, not secrets.
+- Active users: `redirect: "manual"`, https only, and the WHOLE response is refused unless all three windows
+  are non-negative integers that nest. Task 18 Step 4 became a spec doc
+  (`docs/superpowers/specs/2026-09-20-sapling-metrics-endpoint.md`); no issue was filed on the other repo.
+- The `UNCAPTURED` object is gone — every section has a capture path; `not_connected` copy now names what
+  each section is waiting on.
+
+**Phase 5 final-review fix wave — changed:**
+- The vitest pool BLANKS every network secret (`vitest.config.ts`): a local `.dev.vars` had been leaking
+  `GEMINI_API_KEY` into the pool, so webhook tests called the live Gemini API. An explicit `summarizer: null`
+  now means "no summarizer". The suite is fully green — the "one environmental failure" carve-out is gone.
+- `cf_polled` is a covered INTERVAL `{ from, to }` per environment, not one bound: a gap longer than the poll
+  window restarts `from`, and the projection starts the series at the covered interval when a hole lies
+  before it — a poll outage is never drawn as quiet hours. A legacy string reads as `{ bound − 3h, bound }`.
+  The drawn series also starts at the first WHOLE bucket.
+- `RepoUsageEnv.seen` separates "connected, nothing recent" ("no recent reading") from "not connected".
+- `metricsSince` takes groups with their own bounds (one statement still); the 7d / 30d users trends are
+  thinned to the last reading per 6-hour block / UTC day; the branches snapshot records its `head`.
+
+**Known limits, carried rather than fixed:** the Cloudflare and Railway query shapes were built to the
+documentation and never verified live (a refusal writes nothing). With NO `cf_polled` marker at all, a gap
+between two real Cloudflare points still fills as zeros, and a malformed in-window Cloudflare row still counts
+its hour as polled. `seen` looks back 30 days only. `env_heads` is replaced wholesale, so one failed head fetch drops that
+branch's entry until the next reconcile. Reviews have no backfill arm. Nothing on screen says how old a
+drift/branches snapshot is.
+
+**What remains for the owner:**
+- [ ] On `SaplingLearn/sapling` → Settings → Webhooks → the Canopy hook: subscribe **Deployment statuses, Check
+  runs, Workflow runs, Pull request reviews, Statuses** (beside Pushes and Pull requests, which Phase 1 needs).
+- [ ] Merge the CI-steps change into `SaplingLearn/sapling` so CI posts `canopy/coverage`, `canopy/todo` (and
+  optionally `canopy/bundle-kb`).
+- [ ] Build `GET /api/internal/metrics` in Sapling to the contract doc; set the same `SAPLING_METRICS_TOKEN`
+  on both sides.
+- [ ] `wrangler secret put` for `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN_STAGING`,
+  `RAILWAY_TOKEN_PRODUCTION`, `SAPLING_METRICS_TOKEN`; then check the Worker log after the next `:00` tick —
+  the first live Cloudflare and Railway polls are the verification of their query shapes.
+- [ ] After merging, run `wrangler triggers deploy`: a Workers Builds deploy did not update the cron schedule
+  (observed 2026-09-20).

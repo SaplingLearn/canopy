@@ -14,7 +14,7 @@ import wranglerToml from "../wrangler.toml?raw";
 import { all, run, nowIso } from "../src/db";
 import { ingestRepoEvent } from "../src/consumer";
 import { pingHealth } from "../src/repo/poll";
-import { handleRepoCron, REPO_CRON } from "../src/repo/cron";
+import { handleRepoCron, railwayTokens, REPO_CRON } from "../src/repo/cron";
 import { getRepoDashboard } from "../src/tools/repo";
 import { getSnapshot, putMetric } from "../src/repo/store";
 import { ENVS, fakeGithub } from "./helpers/repo";
@@ -29,8 +29,11 @@ const RECONCILE_TICK = Date.parse("2026-09-20T12:20:00Z");// reconcileRepo, alon
 const PRUNE_TICK = Date.parse("2026-09-20T12:30:00Z");    // pruneRepoCapture (D1 only)
 const NOT_SIX = Date.parse("2026-09-20T13:20:00Z");       // the same minute, a non-6-hourly hour
 
+/** `SAPLING_METRICS_TOKEN` is pinned absent unless a test sets it: a local `.dev.vars` must not decide a request count. */
 const ghEnv = (over: Partial<Env> = {}): Env =>
-  ({ ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r", ...over }) as unknown as Env;
+  ({ ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r", SAPLING_METRICS_TOKEN: undefined, ...over }) as unknown as Env;
+/** Both Railway project tokens pinned absent: a local `.dev.vars` must not decide a test. */
+const NO_RAILWAY = { RAILWAY_TOKEN_STAGING: undefined, RAILWAY_TOKEN_PRODUCTION: undefined } as const;
 const okFetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
 const snapshots = () => all(env.DB, `SELECT 1 FROM repo_snapshots`);
 const progressRows = () => all(env.DB, `SELECT 1 FROM sprint_progress`);
@@ -156,15 +159,271 @@ describe("handleRepoCron", () => {
     expect(await snapshots()).toHaveLength(0);
   });
 
-  it("at minute 0 only health runs — the hourly-polls slot carries no heavy job yet", async () => {
+  it("at minute 0 only health runs when no hourly poller is configured — never a 6-hourly heavy job", async () => {
     await seedSprint();
     // A GitHub that would answer every arm: nothing may run here regardless.
     const gh = fakeGithub({ "/issues/1": { state: "closed" } });
-    await handleRepoCron(ghEnv(), HOURLY, gh.fetchImpl);
+    // Both analytics secrets pinned absent: a local `.dev.vars` must not decide this test.
+    await handleRepoCron(ghEnv({ CF_ANALYTICS_TOKEN: undefined, CF_ANALYTICS_ACCOUNT_ID: undefined, ...NO_RAILWAY }), HOURLY, gh.fetchImpl);
     expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
     expect(await snapshots()).toHaveLength(0);
     expect(await progressRows()).toHaveLength(0);
     expect(gh.calls).toHaveLength(4); // the four health pings, nothing else
+  });
+
+  // Task 16: the hourly-polls slot. Cloudflare analytics runs at minute 0 ONLY,
+  // and only when BOTH the token and the account id are set.
+  describe("the hourly Cloudflare analytics poll", () => {
+    const CF_URL = "https://api.cloudflare.com/client/v4/graphql";
+    const cfEnv = (over: Partial<Env> = {}): Env =>
+      ghEnv({ REPO_ENVIRONMENTS: JSON.stringify(ENVS), CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct", ...NO_RAILWAY, ...over });
+    /** Health pings answer 200; the analytics endpoint answers one complete hour. */
+    const recorder = () => {
+      const calls: string[] = [];
+      const fetchImpl = (async (u: RequestInfo | URL) => {
+        calls.push(String(u));
+        if (String(u) !== CF_URL) return new Response("ok", { status: 200 });
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [{ workersInvocationsAdaptive: [
+          { dimensions: { datetimeHour: "2026-09-20T10:00:00Z" }, sum: { requests: 640, errors: 3 } },
+        ] }] } } }), { status: 200 });
+      }) as typeof fetch;
+      return { calls, fetchImpl, cf: () => calls.filter((c) => c === CF_URL) };
+    };
+    const cfRows = () => all<{ env: string; metric: string; value: number }>(env.DB, `SELECT env, metric, value FROM repo_metrics WHERE metric LIKE 'cf_%' ORDER BY env, metric`);
+
+    it("at minute 0 with both values set, polls once per environment and stores the hour", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv(), HOURLY, r.fetchImpl);
+      expect(r.cf()).toHaveLength(2);
+      expect(r.calls).toHaveLength(6); // 4 health pings + 2 analytics queries — far under the 50 cap
+      expect(await cfRows()).toEqual([
+        { env: "production", metric: "cf_errors", value: 3 }, { env: "production", metric: "cf_requests", value: 640 },
+        { env: "staging", metric: "cf_errors", value: 3 }, { env: "staging", metric: "cf_requests", value: 640 },
+      ]);
+      // Still nothing ELSE on this tick: the only snapshot is the poll's own
+      // polled-through marker (Task 16b), none of reconcileRepo's.
+      expect(await all(env.DB, `SELECT kind FROM repo_snapshots`)).toEqual([{ kind: "cf_polled" }]);
+    });
+
+    it("at minute 10 it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv(), PROGRESS_TICK, r.fetchImpl);
+      expect(r.cf()).toHaveLength(0);
+      expect(await cfRows()).toEqual([]);
+    });
+
+    it("with the token absent it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv({ CF_ANALYTICS_TOKEN: undefined }), HOURLY, r.fetchImpl);
+      expect(r.cf()).toHaveLength(0);
+      expect(await cfRows()).toEqual([]);
+    });
+
+    it("with the account id absent it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv({ CF_ANALYTICS_ACCOUNT_ID: undefined }), HOURLY, r.fetchImpl);
+      expect(r.cf()).toHaveLength(0);
+    });
+
+    it("an analytics endpoint that throws never costs the tick", async () => {
+      const fetchImpl = (async (u: RequestInfo | URL) => {
+        if (String(u) === CF_URL) throw new Error("connect timeout");
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+      await expect(handleRepoCron(cfEnv(), HOURLY, fetchImpl)).resolves.toBeUndefined();
+      expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
+    });
+  });
+
+  // Task 17: Railway joins the SAME minute-0 slot, as its own arm. Each
+  // environment authenticates with ITS OWN project token (`RAILWAY_TOKEN_<KEY>`).
+  describe("the hourly Railway poll", () => {
+    const RW_URL = "https://backboard.railway.com/graphql/v2";
+    const RW_ENVS = ENVS.map((e, i) => ({ ...e, railwayEnvironmentId: `env-${i}`, railwayServiceId: "svc" }));
+    const rwEnv = (over: Partial<Env> = {}): Env =>
+      ghEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(RW_ENVS), CF_ANALYTICS_TOKEN: undefined, CF_ANALYTICS_ACCOUNT_ID: undefined,
+        RAILWAY_TOKEN_STAGING: "tok-staging", RAILWAY_TOKEN_PRODUCTION: "tok-production", ...over,
+      });
+    /** Health pings answer 200; Railway answers one complete hour (11:00Z). */
+    const recorder = () => {
+      const calls: string[] = [];
+      const tokens: Record<string, string | null> = {};
+      const fetchImpl = (async (u: RequestInfo | URL, init?: RequestInit) => {
+        calls.push(String(u));
+        if (String(u) !== RW_URL) return new Response("ok", { status: 200 });
+        const e = (JSON.parse(String(init?.body)) as { variables: { e: string } }).variables.e;
+        tokens[e] = new Headers(init?.headers).get("project-access-token");
+        return new Response(JSON.stringify({ data: { metrics: [
+          { measurement: "CPU_USAGE", values: [{ ts: 1789902000, value: 0.12 }] },
+          { measurement: "MEMORY_USAGE_GB", values: [{ ts: 1789902000, value: 0.4 }] },
+        ] } }), { status: 200 });
+      }) as typeof fetch;
+      return { calls, tokens, fetchImpl, rw: () => calls.filter((c) => c === RW_URL) };
+    };
+    const rwRows = () => all<{ env: string; metric: string; value: number }>(env.DB, `SELECT env, metric, value FROM repo_metrics WHERE metric LIKE 'rw_%' ORDER BY env, metric`);
+
+    it("at minute 0 polls once per environment, each with its own token, and stores the hour", async () => {
+      const r = recorder();
+      await handleRepoCron(rwEnv(), HOURLY, r.fetchImpl);
+      expect(r.rw()).toHaveLength(2);
+      expect(r.calls).toHaveLength(6); // 4 health pings + 2 Railway queries
+      expect(r.tokens).toEqual({ "env-0": "tok-staging", "env-1": "tok-production" });
+      expect(await rwRows()).toEqual([
+        { env: "production", metric: "rw_cpu", value: 0.12 }, { env: "production", metric: "rw_mem_mb", value: 409.6 },
+        { env: "staging", metric: "rw_cpu", value: 0.12 }, { env: "staging", metric: "rw_mem_mb", value: 409.6 },
+      ]);
+      expect(await snapshots()).toHaveLength(0); // still nothing ELSE on this tick
+    });
+
+    it("shares the slot with Cloudflare: health 2N + Cloudflare N + Railway N requests", async () => {
+      const r = recorder();
+      await handleRepoCron(rwEnv({ CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct" }), HOURLY, r.fetchImpl);
+      expect(r.calls).toHaveLength(8);
+      expect(r.rw()).toHaveLength(2);
+    });
+
+    it("at minute 10 it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(rwEnv(), PROGRESS_TICK, r.fetchImpl);
+      expect(r.rw()).toHaveLength(0);
+      expect(await rwRows()).toEqual([]);
+    });
+
+    it("an environment with no token is skipped while the other still polls", async () => {
+      const r = recorder();
+      await handleRepoCron(rwEnv({ RAILWAY_TOKEN_STAGING: undefined }), HOURLY, r.fetchImpl);
+      expect(r.tokens).toEqual({ "env-1": "tok-production" });
+      expect((await rwRows()).map((x) => x.env)).toEqual(["production", "production"]);
+    });
+
+    it("with no token at all it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(rwEnv(NO_RAILWAY), HOURLY, r.fetchImpl);
+      expect(r.rw()).toHaveLength(0);
+      expect(await rwRows()).toEqual([]);
+    });
+
+    // The secret's NAME is computed from the environment key: upper-cased, and
+    // anything outside A–Z/0–9 becomes `_` — `pre-prod` → RAILWAY_TOKEN_PRE_PROD.
+    it("railwayTokens maps an odd environment key to its secret name, and keeps only non-empty strings", () => {
+      const cfg = (key: string) => ({ ...ENVS[0], key });
+      const bag = {
+        RAILWAY_TOKEN_STAGING: "tok-staging", RAILWAY_TOKEN_PRE_PROD: "tok-pre-prod", RAILWAY_TOKEN_EU_WEST_2: "tok-eu",
+        RAILWAY_TOKEN_EMPTY: "", RAILWAY_TOKEN_NUMERIC: 42, "RAILWAY_TOKEN_pre-prod": "never read",
+      } as unknown as Env;
+      expect(railwayTokens(bag, ["staging", "pre-prod", "eu.west 2", "empty", "numeric", "absent"].map(cfg))).toEqual({
+        staging: "tok-staging", "pre-prod": "tok-pre-prod", "eu.west 2": "tok-eu",
+        empty: undefined, numeric: undefined, absent: undefined,
+      });
+    });
+
+    it("through the cron: a hyphenated key polls with RAILWAY_TOKEN_PRE_PROD", async () => {
+      const r = recorder();
+      const odd = [{ ...RW_ENVS[0], key: "pre-prod" }];
+      await handleRepoCron(rwEnv({ REPO_ENVIRONMENTS: JSON.stringify(odd), ...NO_RAILWAY, RAILWAY_TOKEN_PRE_PROD: "tok-pre-prod" } as Partial<Env>), HOURLY, r.fetchImpl);
+      expect(r.tokens).toEqual({ "env-0": "tok-pre-prod" });
+      expect((await rwRows()).map((x) => x.env)).toEqual(["pre-prod", "pre-prod"]);
+    });
+
+    it("a Railway endpoint that throws never costs the tick", async () => {
+      const fetchImpl = (async (u: RequestInfo | URL) => {
+        if (String(u) === RW_URL) throw new Error("connect timeout");
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+      await expect(handleRepoCron(rwEnv(), HOURLY, fetchImpl)).resolves.toBeUndefined();
+      expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
+    });
+  });
+
+  // Task 18: the slot's third poller. Sapling's active users run at minute 0
+  // ONLY, and only when `SAPLING_METRICS_TOKEN` is set (and not empty).
+  describe("the hourly Sapling active-users poll", () => {
+    const METRICS_PATH = "/api/internal/metrics";
+    const RW_URL = "https://backboard.railway.com/graphql/v2";
+    const CF_URL = "https://api.cloudflare.com/client/v4/graphql";
+    const spEnv = (over: Partial<Env> = {}): Env =>
+      ghEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(ENVS), CF_ANALYTICS_TOKEN: undefined, CF_ANALYTICS_ACCOUNT_ID: undefined,
+        ...NO_RAILWAY, SAPLING_METRICS_TOKEN: "s3cret", ...over,
+      });
+    /** Health pings answer 200; Sapling answers its three windows; `broken` URLs throw. */
+    const recorder = (broken: string[] = []) => {
+      const calls: string[] = [];
+      const auth: (string | null)[] = [];
+      const fetchImpl = (async (u: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(u);
+        calls.push(url);
+        if (broken.includes(url)) throw new Error("connect timeout");
+        if (!url.endsWith(METRICS_PATH)) return new Response("ok", { status: 200 });
+        auth.push(new Headers(init?.headers).get("authorization"));
+        return new Response(JSON.stringify({ active_users: { "24h": 74, "7d": 318, "30d": 318 } }), { status: 200 });
+      }) as typeof fetch;
+      return { calls, auth, fetchImpl, sapling: () => calls.filter((c) => c.endsWith(METRICS_PATH)) };
+    };
+    const spRows = () => all<{ env: string; metric: string; value: number; at: string }>(env.DB,
+      `SELECT env, metric, value, at FROM repo_metrics WHERE metric LIKE 'active_users_%' ORDER BY env, metric`);
+
+    it("at minute 0 with the token, asks each environment's backend once and stores the hour", async () => {
+      const r = recorder();
+      await handleRepoCron(spEnv(), HOURLY, r.fetchImpl);
+      expect(r.sapling()).toEqual([
+        "https://api.staging.saplinglearn.com/api/internal/metrics", "https://api.saplinglearn.com/api/internal/metrics",
+      ]);
+      expect(r.auth).toEqual(["Bearer s3cret", "Bearer s3cret"]);
+      expect(r.calls).toHaveLength(6); // 4 health pings + 2 Sapling requests
+      const at = "2026-09-20T12:00:00.000Z";
+      expect(await spRows()).toEqual([
+        { env: "production", metric: "active_users_24h", value: 74, at }, { env: "production", metric: "active_users_30d", value: 318, at },
+        { env: "production", metric: "active_users_7d", value: 318, at },
+        { env: "staging", metric: "active_users_24h", value: 74, at }, { env: "staging", metric: "active_users_30d", value: 318, at },
+        { env: "staging", metric: "active_users_7d", value: 318, at },
+      ]);
+      expect(await snapshots()).toHaveLength(0); // still nothing ELSE on this tick
+    });
+
+    it("the full slot: health 2N + Cloudflare N + Railway N + Sapling N = 5N requests", async () => {
+      const r = recorder();
+      await handleRepoCron(spEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(ENVS.map((e, i) => ({ ...e, railwayEnvironmentId: `env-${i}`, railwayServiceId: "svc" }))),
+        CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct",
+        RAILWAY_TOKEN_STAGING: "tok-staging", RAILWAY_TOKEN_PRODUCTION: "tok-production",
+      }), HOURLY, r.fetchImpl);
+      expect(r.calls).toHaveLength(10);
+      expect(r.sapling()).toHaveLength(2);
+    });
+
+    it("at minute 10 it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(spEnv(), PROGRESS_TICK, r.fetchImpl);
+      expect(r.sapling()).toHaveLength(0);
+      expect(await spRows()).toEqual([]);
+    });
+
+    it.each([["absent", undefined], ["empty", ""]])("with the token %s it is not called", async (_name, token) => {
+      const r = recorder();
+      await handleRepoCron(spEnv({ SAPLING_METRICS_TOKEN: token }), HOURLY, r.fetchImpl);
+      expect(r.sapling()).toHaveLength(0);
+      expect(r.calls).toHaveLength(4); // the health pings, nothing else
+      expect(await spRows()).toEqual([]);
+    });
+
+    it("a Sapling endpoint that throws never costs the tick", async () => {
+      const r = recorder(["https://api.staging.saplinglearn.com/api/internal/metrics", "https://api.saplinglearn.com/api/internal/metrics"]);
+      await expect(handleRepoCron(spEnv(), HOURLY, r.fetchImpl)).resolves.toBeUndefined();
+      expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
+      expect(await spRows()).toEqual([]);
+    });
+
+    it("Cloudflare and Railway both failing do not skip it", async () => {
+      const r = recorder([CF_URL, RW_URL]);
+      await handleRepoCron(spEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(ENVS.map((e, i) => ({ ...e, railwayEnvironmentId: `env-${i}`, railwayServiceId: "svc" }))),
+        CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct",
+        RAILWAY_TOKEN_STAGING: "tok-staging", RAILWAY_TOKEN_PRODUCTION: "tok-production",
+      }), HOURLY, r.fetchImpl);
+      expect(await spRows()).toHaveLength(6);
+    });
   });
 
   it("at :10 of a 6-hourly hour the progress backstop runs, and the reconcile does not", async () => {

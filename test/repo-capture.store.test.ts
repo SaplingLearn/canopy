@@ -3,7 +3,7 @@ import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { ingestRepoEvent } from "../src/consumer";
 import { repoEnvironments } from "../src/repo/config";
-import { putSnapshot, getSnapshot, putMetric, metricSeries, latestMetric, pruneRepoCapture } from "../src/repo/store";
+import { putSnapshot, getSnapshot, putMetric, metricSeries, metricsSince, metricsEver, latestMetric, pruneRepoCapture } from "../src/repo/store";
 import type { RepoEvent, RepoEventRow } from "../src/repo/types";
 
 const push = (over: Partial<RepoEvent> = {}): RepoEvent => ({
@@ -70,6 +70,57 @@ describe("snapshots and metrics", () => {
     expect(await metricSeries(env.DB, "coverage", "", "", "not a date")).toEqual([]);
   });
 
+  // Task 16: the Usage tab reads every usage series of every environment in ONE
+  // statement and slices the ranges in memory. P5-4: the read takes GROUPS, each
+  // with its own bound, so a gauge that only needs 3 hours does not drag 30 days.
+  it("metricsSince returns several metrics across envs in one ordered read, bound normalised like metricSeries", async () => {
+    await putMetric(env.DB, { metric: "cf_requests", env: "production", part: "frontend", value: 9, at: "2026-09-20T11:00:00Z" });
+    await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 5, at: "2026-09-20T09:00:00Z" });
+    await putMetric(env.DB, { metric: "cf_errors", env: "staging", part: "frontend", value: 1, at: "2026-09-20T10:00:00Z" });
+    await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 4, at: "2026-09-20T08:00:00Z" }); // before the bound
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T10:30:00Z" });                  // not asked for
+    // Bound WITHOUT milliseconds, equal to a stored instant — a raw compare would drop it.
+    expect(await metricsSince(env.DB, [{ metrics: ["cf_requests", "cf_errors"], since: "2026-09-20T09:00:00Z" }])).toEqual([
+      { metric: "cf_requests", env: "staging", part: "frontend", at: "2026-09-20T09:00:00.000Z", value: 5 },
+      { metric: "cf_errors", env: "staging", part: "frontend", at: "2026-09-20T10:00:00.000Z", value: 1 },
+      { metric: "cf_requests", env: "production", part: "frontend", at: "2026-09-20T11:00:00.000Z", value: 9 },
+    ]);
+    expect(await metricsSince(env.DB, [{ metrics: ["cf_requests"], since: "not a date" }])).toEqual([]);
+    expect(await metricsSince(env.DB, [{ metrics: [], since: "2026-09-20T09:00:00Z" }])).toEqual([]);
+    expect(await metricsSince(env.DB, [])).toEqual([]);
+  });
+
+  it("metricsSince applies EACH group's bound independently, in one ordered result", async () => {
+    // Two days old: inside cf_requests' 30-day bound, outside rw_cpu's 3-hour one.
+    await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 7, at: "2026-09-18T10:00:00Z" });
+    await putMetric(env.DB, { metric: "rw_cpu", env: "staging", part: "backend", value: 0.4, at: "2026-09-18T10:00:00Z" });
+    await putMetric(env.DB, { metric: "rw_cpu", env: "staging", part: "backend", value: 0.5, at: "2026-09-20T09:00:00Z" });
+    await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 3, at: "2026-09-18T10:00:00Z" }); // outside its 24h
+    await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 4, at: "2026-09-20T10:00:00Z" });
+    const rows = await metricsSince(env.DB, [
+      { metrics: ["cf_requests"], since: "2026-08-21T10:00:00Z" },
+      { metrics: ["active_users_24h"], since: "2026-09-19T10:00:00Z" },
+      { metrics: ["rw_cpu"], since: "2026-09-20T07:00:00Z" },
+    ]);
+    expect(rows.map((r) => [r.metric, r.at, r.value])).toEqual([
+      ["cf_requests", "2026-09-18T10:00:00.000Z", 7],
+      ["rw_cpu", "2026-09-20T09:00:00.000Z", 0.5],
+      ["active_users_24h", "2026-09-20T10:00:00.000Z", 4],
+    ]);
+    // An unparseable bound drops ITS group only — never widens it to "everything".
+    expect((await metricsSince(env.DB, [
+      { metrics: ["cf_requests"], since: "2026-08-21T10:00:00Z" },
+      { metrics: ["rw_cpu"], since: "not a date" },
+    ])).map((r) => r.metric)).toEqual(["cf_requests"]);
+  });
+
+  it("metricsEver names which of the asked metrics have EVER landed, whatever their age or env", async () => {
+    expect(await metricsEver(env.DB, ["cf_requests", "active_users_7d"])).toEqual(new Set());
+    await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 5, at: "2020-01-01T00:00:00Z" });
+    expect(await metricsEver(env.DB, ["cf_requests", "active_users_7d"])).toEqual(new Set(["cf_requests"]));
+    expect(await metricsEver(env.DB, [])).toEqual(new Set());
+  });
+
   it("the same instant written in two formats is ONE row, and an unparseable `at` is skipped", async () => {
     const m = { metric: "health_up", env: "staging", part: "backend", value: 1 };
     await putMetric(env.DB, { ...m, at: "2026-09-20T10:00:00Z" });
@@ -104,5 +155,30 @@ describe("snapshots and metrics", () => {
     await pruneRepoCapture(env.DB, now);
     const kept = await all<{ semantic_key: string }>(env.DB, `SELECT semantic_key FROM repo_events`);
     expect(kept.map((r) => r.semantic_key)).toEqual(["frontend-deploy"]);
+  });
+
+  // Task 16: hourly usage series (Cloudflare analytics, later Railway and the
+  // active-user gauges) are read over 30 days at most — 100 days is ample, and
+  // without a bound two environments add ~35,000 rows a year.
+  it("prunes hourly usage metrics past 100 days, keeps younger ones and never touches a slow metric", async () => {
+    const now = Date.parse("2026-09-20T12:00:00Z");
+    const daysAgo = (n: number) => new Date(now - n * 86_400_000).toISOString();
+    for (const metric of ["cf_requests", "cf_errors", "rw_cpu", "active_users_7d"]) {
+      await putMetric(env.DB, { metric, env: "staging", part: "frontend", value: 1, at: daysAgo(101) });
+      await putMetric(env.DB, { metric, env: "staging", part: "frontend", value: 2, at: daysAgo(99) });
+    }
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 78.4, at: daysAgo(400) });
+    // A metric that merely CONTAINS a usage prefix is not a usage metric.
+    await putMetric(env.DB, { metric: "xcf_requests", env: "", part: "", value: 1, at: daysAgo(400) });
+    // The 45-day rule is unchanged: a 60-day-old ping still goes, a 60-day-old usage point stays.
+    await putMetric(env.DB, { metric: "health_up", env: "staging", part: "frontend", value: 1, at: daysAgo(60) });
+    await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 3, at: daysAgo(60) });
+    await pruneRepoCapture(env.DB, now);
+    const kept = await all<{ metric: string; value: number }>(env.DB, `SELECT metric, value FROM repo_metrics ORDER BY metric, at`);
+    expect(kept).toEqual([
+      { metric: "active_users_7d", value: 2 }, { metric: "cf_errors", value: 2 },
+      { metric: "cf_requests", value: 2 }, { metric: "cf_requests", value: 3 },
+      { metric: "coverage", value: 78.4 }, { metric: "rw_cpu", value: 2 }, { metric: "xcf_requests", value: 1 },
+    ]);
   });
 });

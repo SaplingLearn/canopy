@@ -9,6 +9,13 @@ const DAY = 86_400_000;
 const FAST_METRICS = ["health_up", "health_ms"];
 const FAST_KINDS = ["check"];
 const FAST_RETENTION_DAYS = 45;
+/** Hourly usage series — Cloudflare analytics (`cf_*`), and the Railway
+ *  (`rw_*`) and active-user (`active_users_*`) gauges later tasks add. The Usage
+ *  tab reads 30 days at most, so 100 days is ample; unbounded, two environments
+ *  add ~35,000 rows a year. GLOB, not LIKE: in LIKE `_` is itself a wildcard
+ *  (`cf_%` would also match `cfx…`), and GLOB is case-sensitive like the names. */
+const USAGE_METRIC_GLOBS = ["cf_*", "rw_*", "active_users_*"];
+const USAGE_RETENTION_DAYS = 100;
 
 export async function putSnapshot(db: DB, kind: string, data: unknown, now: string = nowIso()): Promise<void> {
   await run(db,
@@ -67,6 +74,48 @@ export async function metricSeries(db: DB, metric: string, env: string, part: st
     metric, env, part, since);
 }
 
+/** One bound for a set of metric names — see `metricsSince`. */
+export interface MetricGroup { metrics: string[]; since: string }
+
+/** Several series in ONE statement — every (env, part) of every named metric,
+ *  ascending by `at`. The Usage tab's read: the caller asks ONCE and slices the
+ *  ranges in memory, instead of a `metricSeries` per range × environment ×
+ *  metric. Each GROUP carries its own bound (`WHERE (metric IN (…) AND at >= ?)
+ *  OR (…)`), so a gauge that is only ever read for its last 3 hours does not
+ *  drag 30 days of rows through the render beside a series that needs them.
+ *  Each bound is normalised exactly as `metricSeries` normalises its own (see
+ *  above); a group with an unparseable bound, or no metric names, is DROPPED —
+ *  never widened — and with no usable group the answer is []. */
+export async function metricsSince(db: DB, groups: MetricGroup[]): Promise<{ metric: string; env: string; part: string; at: string; value: number }[]> {
+  const clauses: string[] = [];
+  const binds: string[] = [];
+  for (const g of groups) {
+    const since = normaliseAt(g.since);
+    if (since === null || !g.metrics.length) continue;
+    clauses.push(`(metric IN (${ph(g.metrics.length)}) AND at >= ?)`);
+    binds.push(...g.metrics, since);
+  }
+  if (!clauses.length) return [];
+  return all<{ metric: string; env: string; part: string; at: string; value: number }>(db,
+    `SELECT metric, env, part, at, value FROM repo_metrics WHERE ${clauses.join(" OR ")} ORDER BY at ASC, id ASC`,
+    ...binds);
+}
+
+/** Which of `metrics` have EVER landed — any env, any part, any age. ONE
+ *  statement, an index seek per name (`idx_repo_metrics_series` leads with
+ *  `metric`), never a scan of the series. It is what separates a section that
+ *  is `empty` (the source reported before and has gone quiet) from one that is
+ *  `not_connected` — the many-metric sibling of the `latestMetric` existence
+ *  check the coverage/bundle/TODO sections make. */
+export async function metricsEver(db: DB, metrics: string[]): Promise<Set<string>> {
+  if (!metrics.length) return new Set();
+  const rows = await all<{ metric: string }>(db,
+    `WITH asked(metric) AS (VALUES ${metrics.map(() => "(?)").join(", ")})
+     SELECT metric FROM asked WHERE EXISTS (SELECT 1 FROM repo_metrics r WHERE r.metric = asked.metric)`,
+    ...metrics);
+  return new Set(rows.map((r) => r.metric));
+}
+
 export async function latestMetric(db: DB, metric: string, env: string, part: string): Promise<{ at: string; value: number } | null> {
   return first<{ at: string; value: number }>(db,
     `SELECT at, value FROM repo_metrics WHERE metric = ? AND env = ? AND part = ? ORDER BY at DESC LIMIT 1`, metric, env, part);
@@ -91,6 +140,10 @@ export async function latestHealth(db: DB): Promise<Map<string, { at: string; va
 export async function pruneRepoCapture(db: DB, now: number): Promise<void> {
   const cutoff = new Date(now - FAST_RETENTION_DAYS * DAY).toISOString();
   await run(db, `DELETE FROM repo_metrics WHERE metric IN (${ph(FAST_METRICS.length)}) AND at < ?`, ...FAST_METRICS, cutoff);
+  // Hourly usage series get their own, longer bound. Every other metric
+  // (coverage, bundle_kb, todo_count) matches neither rule and is kept forever.
+  const usageCutoff = new Date(now - USAGE_RETENTION_DAYS * DAY).toISOString();
+  await run(db, `DELETE FROM repo_metrics WHERE (${USAGE_METRIC_GLOBS.map(() => "metric GLOB ?").join(" OR ")}) AND at < ?`, ...USAGE_METRIC_GLOBS, usageCutoff);
   // `part IS NULL` only: a `check` row carrying a `part` (a Workers Builds run
   // tagged as a frontend deploy — see the migration's column notes) is a
   // DEPLOY record and must be kept forever like `deploy` rows, or the

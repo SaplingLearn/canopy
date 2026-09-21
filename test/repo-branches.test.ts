@@ -23,7 +23,9 @@ describe("refreshBranches", () => {
 
     await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS, NOW);
     const snap = (await getSnapshot<RepoBranches>(env.DB, "branches"))!.data;
-    expect(snap).toMatchObject({ active: 1, stale: 1 });
+    // P5-8: the snapshot NAMES the branch its ahead/behind were compared against,
+    // so the screen never has to assume it was `main`.
+    expect(snap).toMatchObject({ active: 1, stale: 1, head: "main" });
     expect(snap.rows).toEqual([
       { name: "feature/usage-rollup", at: "2026-09-20T11:36:00Z", ahead: 4, behind: 0, stale: false },
       { name: "spike/edge-cache", at: "2026-09-04T00:00:00Z", ahead: 7, behind: 31, stale: true },
@@ -83,6 +85,19 @@ describe("refreshBranches", () => {
 
   // M10: 5 pages is a ceiling, not a target — a repo past it would silently
   // report a partial branch list as if it were the whole one. Throw instead, so
+  it("records the FIRST configured environment's branch as head — whatever it is called — and `main` with none configured", async () => {
+    const refs = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)).variables.head as string);
+      return new Response(JSON.stringify({ data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node("feature/x", "2026-09-19T00:00:00Z", 0, 1)] } } } }), { status: 200 });
+    }) as typeof fetch;
+    const seen: string[] = [];
+    await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl: refs }, [{ ...ENVS[0], branch: "develop" }, ENVS[1]], NOW);
+    expect((await getSnapshot<RepoBranches>(env.DB, "branches"))!.data.head).toBe("develop");
+    await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl: refs }, [], NOW);
+    expect((await getSnapshot<RepoBranches>(env.DB, "branches"))!.data.head).toBe("main");
+    expect(seen).toEqual(["develop", "main"]); // the recorded head IS the one the compare was asked for
+  });
+
   // the arm lands in reconcileRepo's `failed[]` and the last good snapshot stands.
   it("throws rather than under-reporting when the refs still have a next page after the last one", async () => {
     await refreshBranches(env.DB, { token: "t", repo: "o/r", fetchImpl: (async () => new Response(JSON.stringify({ data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node("feature/x", "2026-09-19T00:00:00Z", 0, 1)] } } } }), { status: 200 })) as typeof fetch }, ENVS, NOW);

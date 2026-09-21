@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { all, run, nowIso } from "../src/db";
 import type { EventRow } from "@shared/rows";
@@ -283,6 +283,34 @@ describe("handleGithubWebhook — repo capture runs beside the My Work capture",
     expect(await all<EventRow>(env.DB, `SELECT event_type FROM events`)).toEqual([{ event_type: "pr_merged" }]);
     const kinds = await all<{ state: string }>(env.DB, `SELECT state FROM repo_events WHERE kind = 'pr' ORDER BY id`);
     expect(kinds.map((k) => k.state)).toEqual(["review", "merged"]);
+  });
+
+  // P5-1: `??` skips null as well as undefined, so an explicit `summarizer: null`
+  // used to fall through to the env-resolved (network) summarizer. The global
+  // fetch is stubbed so a regression fails HERE instead of reaching Google.
+  it("an explicit summarizer: null means NO summarizer, even with GEMINI_API_KEY set", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("{}", { status: 500 }));
+    try {
+      const keyed = { ...env, GEMINI_API_KEY: "test-key" } as unknown as Env;
+      await postWebhook("pull_request", prMerged, keyed, { summarizer: null });
+      await postWebhook("issues", issueAssigned, keyed, { issueSummarizer: null });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    expect(await all<{ model: string }>(env.DB, `SELECT model FROM pr_summaries`)).toEqual([{ model: "excerpt" }]);
+    expect(await all<{ model: string }>(env.DB, `SELECT model FROM issue_summaries`)).toEqual([{ model: "excerpt" }]);
+  });
+
+  it("the pool blanks GEMINI_API_KEY, so a default delivery resolves no summarizer", async () => {
+    expect(env.GEMINI_API_KEY ?? "").toBe("");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("{}", { status: 500 }));
+    try {
+      await postWebhook("pull_request", prMerged);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("a push never reaches the issue summarizer", async () => {

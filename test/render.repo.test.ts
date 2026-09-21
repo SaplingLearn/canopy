@@ -39,11 +39,75 @@ describe("repoView — section states", () => {
     }
   });
 
-  it("shows 'Source not connected' for a section with no capture path, with no dead button", () => {
+  // P5-12: the banner says EVERY section shows placeholder values — so none may
+  // sit unconnected (telling a previewer to set a secret), and two numbers the
+  // real projection derives from one sum may not disagree.
+  it("the sample set has no unconnected section, and its Cloudflare panel agrees with its Requests metric", () => {
+    const data = repoSample();
+    for (const [key, value] of Object.entries(data)) {
+      if (value && typeof value === "object" && "status" in value) expect((value as { status: string }).status, key).toBe("ok");
+    }
+    const okOf = <T>(s: { status: string; data?: T }) => (s as { data: T }).data;
+    expect(okOf(data.hosting).map((h) => h.env)).toEqual(["staging", "production"]);
+    for (const range of ["24h", "7d", "30d"] as const) {
+      for (const e of okOf(data.usage)[range]) {
+        const row = okOf(data.cloudflare)[range].find((r) => r.env === e.name && r.label === "Workers requests");
+        expect(row?.value, `${range} ${e.name}`).toBe(e.requests?.value);
+      }
+    }
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data }, sample: true }));
+    expect(html).not.toContain("Source not connected");
+    expect(html).not.toContain("RAILWAY_TOKEN");
+  });
+
+  it("shows 'Source not connected' for a section nothing has been captured for, with no dead button", () => {
     const html = repoView(props({ tab: "usage" }));
     expect((html.match(/Source not connected/g) ?? []).length).toBe(3);
     expect(html).not.toContain("Connect Cloudflare");
     expect(html).toContain('data-act="repoSampleOn"');
+  });
+
+  // Every section has a capture path now, so an unconnected one names what that
+  // path is still WAITING on (a setting/secret by name, a webhook event, the
+  // repo's CI, Sync GitHub) — never that no path exists, never a connect flow.
+  it("a not-connected section says what its capture is waiting on, in the owner's terms", () => {
+    const tab = (t: RepoProps["tab"]) => repoView(props({ tab: t }));
+    const overview = tab("overview"), code = tab("code"), ci = tab("ci"), usage = tab("usage"), planning = tab("planning");
+    expect(overview).toContain("Cards appear once REPO_ENVIRONMENTS lists an environment");
+    expect(overview).toContain("The repo cron pings each environment in REPO_ENVIRONMENTS every 10 minutes");
+    expect(code).toContain("No branch snapshot yet. One is taken when an admin runs Sync GitHub and by the 6-hourly GitHub reconcile — both need GITHUB_SERVICE_TOKEN.");
+    expect(ci).toContain("Deploys arrive when the GitHub webhook delivers deployment_status and check_run events, or when an admin runs Sync GitHub");
+    expect(ci).toContain("Runs arrive when the GitHub webhook delivers workflow_run events, or when an admin runs Sync GitHub.");
+    // P5-8: no branch NAME — the screen does not know which branch the first environment deploys from.
+    expect(ci).toContain("posts a canopy/coverage commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(usage).toContain("hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID)");
+    expect(usage).toContain("metrics endpoint (SAPLING_METRICS_TOKEN)");
+    expect(usage).toContain("RAILWAY_TOKEN_&lt;ENVIRONMENT&gt; secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.");
+    expect(planning).toContain("posts a canopy/todo commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect([ci, planning].join("\n")).not.toContain("push to main");
+
+    const all = [overview, code, ci, usage, planning].join("\n");
+    for (const stale of ["no capture path", "aren&#39;t captured", "nothing pings", "nothing scans", "not refs", "is ingested yet", "for this repo yet"]) {
+      expect(all, stale).not.toContain(stale);
+    }
+    // The page-level legend says the same thing: nothing captured YET, not "no path".
+    expect(overview).toContain("have had nothing captured yet — each says what it is waiting on.");
+  });
+
+  // P5-9: the Worker emits `bars` as ok / empty only, so it carries no
+  // not-connected copy of its own. The type still allows the state; if it ever
+  // arrived it gets the generic line, never a sentence about a missing source.
+  it("bars has no bespoke not-connected copy — the generic line covers a state the Worker never sends", () => {
+    const html = repoView(props({ tab: "code", repo: { status: "ok", data: live({ bars: NC }) } }));
+    expect(html).not.toContain("Commit activity isn&#39;t connected.");
+    expect(html).not.toContain("Commit activity isn't connected.");
+    expect(html).toContain("Nothing has been captured for this section yet.");
+    expect(html).not.toMatch(/undefined/);
+  });
+
+  it("an empty activity chart claims neither commits nor merges", () => {
+    expect(repoView(props({ tab: "code" }))).toContain("No commits or merges in the last 14 days.");
   });
 
   it("shows 'Nothing here yet' for a connected section with no rows", () => {
@@ -95,7 +159,7 @@ describe("repoView — live content", () => {
       branches: {
         status: "ok",
         data: {
-          active: 1, stale: 1,
+          active: 1, stale: 1, head: "develop",
           rows: [
             { name: `feature/<script>alert(1)</script>`, at: new Date().toISOString(), ahead: 4, behind: 0, stale: false },
             { name: "spike/edge-cache", at: "2026-09-04T00:00:00Z", ahead: 7, behind: 31, stale: true },
@@ -106,10 +170,21 @@ describe("repoView — live content", () => {
     const html = repoView(props({ tab: "code", repo: { status: "ok", data } }));
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("+4 / −0 vs main");
-    expect(html).toContain("+7 / −31 vs main");
+    // P5-8: the comparison branch is the snapshot's own `head`, never an assumed `main`.
+    expect(html).toContain("+4 / −0 vs develop");
+    expect(html).toContain("+7 / −31 vs develop");
+    expect(html).not.toContain("vs main");
     expect(html).toContain("STALE");
     expect(html).toContain("1 active · 1 stale");
+  });
+
+  it("a branches snapshot written before `head` was recorded shows the counts with NO 'vs …' — never a guessed branch; a captured head is escaped", () => {
+    const row = { name: "feature/x", at: new Date().toISOString(), ahead: 4, behind: 2, stale: false };
+    const old = repoView(props({ tab: "code", repo: { status: "ok", data: live({ branches: { status: "ok", data: { active: 1, stale: 0, rows: [row] } } }) } }));
+    expect(old).toContain("+4 / −2<");
+    expect(old).not.toMatch(/vs (main|undefined)/);
+    const odd = repoView(props({ tab: "code", repo: { status: "ok", data: live({ branches: { status: "ok", data: { active: 1, stale: 0, head: "<b>x</b>", rows: [row] } } }) } }));
+    expect(odd).toContain("vs &lt;b&gt;x&lt;/b&gt;");
   });
 
   it("names the PR-list header from what's actually shown, not the sample flag", () => {
@@ -147,6 +222,108 @@ describe("repoView — live content", () => {
     const data = repoSample();
     expect(repoView(props({ tab: "usage", range: "24h", repo: { status: "ok", data } }))).toContain("12.4K");
     expect(repoView(props({ tab: "usage", range: "30d", repo: { status: "ok", data } }))).toContain("5.1M");
+  });
+
+  it("a usage metric with no source says so in place, without blanking its neighbours", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "12.4K", trend: [1, 2, 3], tone: "neutral" as const }, errorRate: { value: "2.41%", trend: [1, 2], tone: "warn" as const }, users: null, seen: { requests: true, users: false } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } } });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    expect(html).toContain("12.4K");
+    expect(html).toContain("Active users");
+    expect(html).toContain("not connected");
+  });
+
+  it("a usage env with every metric unconnected still renders its name, host, and three not-connected rows", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: false, users: false } };
+    const data = live({
+      usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } },
+      cloudflare: EMPTY, hosting: EMPTY,
+    });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    expect(html).toContain("staging");
+    expect(html).toContain("staging.saplinglearn.com");
+    expect((html.match(/not connected/g) ?? []).length).toBe(3);
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  // Task 16b: `errorRate: null` beside LIVE requests is not "not connected" —
+  // the source is connected, there were simply no requests to take a rate of.
+  it("an error rate with nothing to take a rate of reads a quiet dash, not 'not connected'", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "0", trend: [0, 0, 0], tone: "neutral" as const }, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const }, seen: { requests: true, users: true } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
+    expect(errRow).toContain(">—<");
+    expect(errRow).not.toContain("not connected");
+    expect(errRow).not.toContain("<svg"); // no sparkline for a rate that does not exist
+    expect(html).not.toContain("not connected"); // nothing on this card is unconnected
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("an error rate whose requests are ALSO unconnected still says 'not connected'", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const }, seen: { requests: false, users: true } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
+    expect(errRow).toContain("not connected");
+    expect(errRow).not.toContain(">—<");
+    expect((html.match(/not connected/g) ?? []).length).toBe(2);
+  });
+
+  // P5-2: a null metric whose source HAS reported (inside the 30-day read) is
+  // connected and quiet — saying "not connected" there was false.
+  it("a null metric whose source has been seen reads 'no recent reading', never 'not connected'", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: true, users: true } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    expect((html.match(/no recent reading/g) ?? []).length).toBe(3); // requests, error rate (follows requests), users
+    expect(html).not.toContain("not connected");
+    expect(html).not.toMatch(/undefined|NaN|<svg viewBox="0 0 100 26"/);
+  });
+
+  it("the two labels sit side by side: requests seen and quiet, users never connected", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: true, users: false } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    const row = (from: string, to: string) => html.slice(html.indexOf(from), html.indexOf(to));
+    expect(row("Requests", "Error rate")).toContain("no recent reading");
+    expect(row("Error rate", "Active users")).toContain("no recent reading");
+    const usersRow = html.slice(html.indexOf("Active users"));
+    expect(usersRow).toContain("not connected");
+    expect(usersRow).not.toContain("no recent reading");
+  });
+
+  it("usage empty says the polls have gone quiet — never that nothing was recorded in 30 days", () => {
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ usage: EMPTY }) } }));
+    expect(html).toContain("No current usage reading — the hourly polls have gone quiet.");
+    expect(html).not.toContain("No usage recorded in the last 30 days.");
+  });
+
+  // Task 17: the hosting block's three states.
+  it("hosting renders its rows when live, and says the reading is stale — not absent — when empty", () => {
+    const rows = [{ env: "staging", cpu: "0.12 vCPU", memory: "410 MB" }, { env: "production", cpu: "—", memory: "2048 MB" }];
+    const okHtml = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ hosting: { status: "ok", data: rows } }) } }));
+    expect(okHtml).toContain("Hosting — Railway backend");
+    expect(okHtml).toContain("0.12 vCPU");
+    expect(okHtml).toContain("2048 MB");
+    const stale = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ hosting: EMPTY }) } }));
+    expect(stale).toContain("No fresh hosting reading — the last Railway sample is over 3 hours old.");
+    const never = repoView(props({ tab: "usage", repo: { status: "ok", data: live() } }));
+    expect(never).not.toContain("No fresh hosting reading");
+  });
+
+  // Task 16: the Cloudflare panel is `ok` once the WIDEST range has rows, so a
+  // narrower range can legitimately be empty — say so, never a blank panel.
+  it("a Cloudflare range with no rows says so instead of rendering a blank panel", () => {
+    const rows = [{ env: "staging", label: "Workers requests", value: "2.50M" }];
+    const data = live({ cloudflare: { status: "ok", data: { "24h": [], "7d": rows, "30d": rows } } });
+    const quiet = repoView(props({ tab: "usage", range: "24h", repo: { status: "ok", data } }));
+    // Not "No requests": that claims zero traffic for a range a poll may never have covered.
+    expect(quiet).toContain("Nothing recorded in this range.");
+    expect(quiet).not.toContain("No requests in this range.");
+    const week = repoView(props({ tab: "usage", range: "7d", repo: { status: "ok", data } }));
+    expect(week).toContain("2.50M");
+    expect(week).not.toContain("Nothing recorded in this range.");
   });
 
   it("M11: renders a null reviews count as an em dash, excluded from the bar width", () => {
@@ -246,6 +423,9 @@ describe("repoView — live content", () => {
     expect(html).toContain("−18");
     expect(html).toContain("since Aug 1");
     expect(html).toContain("repo-spark");
+    // P5-8: the footnote names no branch either.
+    expect(html).toContain("counted by CI on each push to the default environment branch");
+    expect(html).not.toContain("push to main");
   });
 
   it("links the current sprint to its screen", () => {
