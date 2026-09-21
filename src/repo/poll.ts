@@ -42,15 +42,30 @@ const PING_TIMEOUT_MS = 8_000;
  *
  *  `at` is the 10-minute bucket the whole ping run shares; `putMetric`
  *  normalises it, and every read of `repo_metrics` (`latestMetric` /
- *  `metricSeries` / `latestHealth`) compares that one format as a raw string. */
-export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const at = new Date(Math.floor(now / TEN_MIN) * TEN_MIN).toISOString();
+ *  `metricSeries` / `latestHealth`) compares that one format as a raw string.
+ *
+ *  Returns one `PollOutcome` per TARGET (`part` set), in config order — the
+ *  cron ignores it; the admin's "Poll now" shows it. `ok` = up; `failed` = down,
+ *  its `detail` a few FIXED words (`timeout` / `HTTP <status>` / `unreachable`)
+ *  — never the thrown error's text, never a URL. `written` = new rows (0–2).
+ *
+ *  `bucketMs` is the width `at` is floored to. The cron leaves it at ten
+ *  minutes (a double-fired tick is a no-op). The on-demand run passes ONE
+ *  MINUTE: `putMetric` is first-write-wins, so inside the cron's own bucket an
+ *  on-demand reading would be dropped and the screen would keep showing the
+ *  tick's — a finer bucket lands a NEWER row, which `latestHealth` (the only
+ *  reader, latest row per target) picks up; a double click within the minute
+ *  is still a no-op. Health rows are pruned at 45 days either way. */
+export const HEALTH_ON_DEMAND_BUCKET_MS = 60_000;
+export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch, bucketMs: number = TEN_MIN): Promise<PollOutcome[]> {
+  const at = new Date(Math.floor(now / bucketMs) * bucketMs).toISOString();
   const targets = envs.flatMap((cfg) =>
     ([["frontend", cfg.frontendUrl], ["backend", cfg.apiUrl + cfg.healthPath]] as const).map(([part, url]) => ({ env: cfg.key, part, url }))
   );
   const readings = await Promise.all(targets.map(async (t) => {
     const started = Date.now();
     let up = 0;
+    let why = "";
     try {
       const res = await fetchImpl(t.url, {
         method: "GET",
@@ -59,15 +74,22 @@ export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fet
         headers: { "user-agent": "canopy-health" },
       });
       up = res.ok ? 1 : 0;
-    } catch {
+      if (!up) why = `HTTP ${res.status}`;
+    } catch (e) {
       up = 0; // a thrown fetch (timeout, DNS, connection refused) is "down", never an exception out of the cron
+      why = e instanceof Error && e.name === "TimeoutError" ? "timeout" : "unreachable";
     }
-    return { ...t, up, ms: Date.now() - started };
+    return { ...t, up, why, ms: Date.now() - started };
   }));
+  const out: PollOutcome[] = [];
   for (const r of readings) {
-    await putMetric(db, { metric: "health_up", env: r.env, part: r.part, value: r.up, at });
-    await putMetric(db, { metric: "health_ms", env: r.env, part: r.part, value: r.ms, at });
+    const wrote = [
+      await putMetric(db, { metric: "health_up", env: r.env, part: r.part, value: r.up, at }),
+      await putMetric(db, { metric: "health_ms", env: r.env, part: r.part, value: r.ms, at }),
+    ].filter(Boolean).length;
+    out.push(r.up ? { env: r.env, part: r.part, status: "ok", written: wrote } : { env: r.env, part: r.part, status: "failed", written: wrote, detail: r.why });
   }
+  return out;
 }
 
 // ── Cloudflare Workers analytics (source K) ──────────────────────────────────

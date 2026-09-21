@@ -242,7 +242,26 @@ export interface RepoDashboard {
  *  is the poller's scrubbed, truncated message: a failure reason (`failed`),
  *  what is not configured (`skipped`), or — on `ok` — the product keys the poll
  *  dropped, by name. Never a token, a header or an id. */
-export interface PollOutcome { env: string; status: "ok" | "failed" | "skipped"; written: number; detail?: string }
+export interface PollOutcome {
+  env: string; status: "ok" | "failed" | "skipped"; written: number; detail?: string;
+  /** Health pings only — which of the environment's two deployables the target is. */
+  part?: "frontend" | "backend";
+}
 /** Per source; `"not_configured"` = that source's secret(s) are absent. */
 export type UsagePollSource = PollOutcome[] | "not_configured";
 export interface UsagePollResult { cloudflare: UsagePollSource; railway: UsagePollSource; sapling: UsagePollSource }
+
+// ── "Poll now" (POST /admin/poll) — every source the dashboard shows, on demand. TYPES ONLY ──
+/** `reconcileRepo`'s own result: `failed` holds ARM NAMES (`"deployments"`,
+ *  `"runs"`, …) or one fixed phrase — never an error message, never a secret. */
+export interface RepoRefreshGithub { written: number; unchanged: number; failed: string[] }
+/** `UsagePollResult`'s three sources plus the two the usage poll never ran.
+ *  `health` is one `PollOutcome` per TARGET (two per environment, `part` set):
+ *  `ok` = up, `failed` = down with a few fixed words (`timeout` / `HTTP 503` /
+ *  `unreachable`), `written` = new `repo_metrics` rows; `"not_configured"` = no
+ *  environment in `REPO_ENVIRONMENTS`. `github` is `"not_configured"` without
+ *  `GITHUB_SERVICE_TOKEN` + `GITHUB_REPO`. */
+export interface RepoRefreshResult extends UsagePollResult {
+  health: UsagePollSource;
+  github: RepoRefreshGithub | "not_configured";
+}

@@ -26,6 +26,15 @@ export interface GhOpts { token: string; repo: string; fetchImpl?: typeof fetch 
 export interface ReconcileResult { written: number; unchanged: number; failed: string[] }
 
 const DAY = 86_400_000;
+/** What this module LOGS for a failed GitHub read: the error's MESSAGE with the
+ *  service token scrubbed — never the Error object. A thrown fetch, or a
+ *  GraphQL `errors` body, may quote the request (and so the `authorization`
+ *  header) back, and `ghGraphql` puts that body's message in what it throws.
+ *  The result objects never needed this: `failed` holds arm NAMES only. */
+export const scrubbedMessage = (e: unknown, token: string): string => {
+  const message = e instanceof Error ? e.message : String(e);
+  return token ? message.split(token).join("[redacted]") : message;
+};
 const HEADERS = (token: string) => ({ authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "canopy-worker" });
 
 export async function ghJson<T>(opts: GhOpts, path: string): Promise<T> {
@@ -120,7 +129,7 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
   // deployments read blew up" (each name appears at most once).
   const safely = async (arm: string, fn: () => Promise<void>) => {
     try { await fn(); } catch (e) {
-      console.error("reconcileRepo", arm, e);
+      console.error("reconcileRepo", arm, scrubbedMessage(e, opts.token));
       if (!out.failed.includes(arm)) out.failed.push(arm);
     }
   };
@@ -272,7 +281,7 @@ export async function fillFailedJob(db: DB, opts: GhOpts, runId: number, semanti
     const step = job.steps?.find((s) => s.conclusion === "failure")?.name;
     await run(db, `UPDATE repo_events SET title = ? WHERE semantic_key = ?`, step ? `${job.name} · ${step}` : job.name, semanticKey);
   } catch (e) {
-    console.error("fillFailedJob", runId, e);
+    console.error("fillFailedJob", runId, scrubbedMessage(e, opts.token));
   }
 }
 
@@ -355,7 +364,7 @@ export async function refreshDrift(db: DB, opts: GhOpts, envs: RepoEnvConfig[]):
   try {
     await computeDrift(db, opts, envs);
   } catch (e) {
-    console.error("refreshDrift", e); // the last good snapshot stands
+    console.error("refreshDrift", scrubbedMessage(e, opts.token)); // the last good snapshot stands
   }
 }
 
@@ -445,6 +454,6 @@ export async function refreshBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[
   try {
     await computeBranches(db, opts, envs, now);
   } catch (e) {
-    console.error("refreshBranches", e); // the last good snapshot stands
+    console.error("refreshBranches", scrubbedMessage(e, opts.token)); // the last good snapshot stands
   }
 }
