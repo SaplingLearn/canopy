@@ -43,6 +43,7 @@ export function fakeGithub(routes: Record<string, unknown>): { fetchImpl: typeof
   const graphql: GraphqlCall[] = [];
   const EMPTY_REFS = { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } };
   const EMPTY_DEPLOYMENTS = { data: { repository: { deployments: { nodes: [] } } } };
+  const EMPTY_REVIEWS = { data: { repository: { pullRequests: { nodes: [] } } } };
   const EMPTY_COMPARE = { ahead_by: 0, behind_by: 0, commits: [] };
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -51,11 +52,13 @@ export function fakeGithub(routes: Record<string, unknown>): { fetchImpl: typeof
       const call = JSON.parse(String(init?.body ?? "{}")) as GraphqlCall;
       graphql.push(call);
       const isRefs = typeof call.query === "string" && call.query.includes("refs(refPrefix");
-      const key = isRefs ? "refsGraphql" : "graphql";
-      const body = key in routes ? routes[key] : isRefs ? EMPTY_REFS : EMPTY_DEPLOYMENTS;
+      // The PR-reviews query (`"reviewsGraphql"`) is the third to share the URL.
+      const isReviews = typeof call.query === "string" && call.query.includes("pullRequests(");
+      const key = isRefs ? "refsGraphql" : isReviews ? "reviewsGraphql" : "graphql";
+      const body = key in routes ? routes[key] : isRefs ? EMPTY_REFS : isReviews ? EMPTY_REVIEWS : EMPTY_DEPLOYMENTS;
       return new Response(JSON.stringify(body), { status: 200 });
     }
-    const hit = Object.keys(routes).find((k) => k !== "graphql" && k !== "refsGraphql" && url.includes(k));
+    const hit = Object.keys(routes).find((k) => k !== "graphql" && k !== "refsGraphql" && k !== "reviewsGraphql" && url.includes(k));
     if (hit) return new Response(JSON.stringify(routes[hit]), { status: 200 });
     return new Response(JSON.stringify(url.includes("/compare/") ? EMPTY_COMPARE : []), { status: 200 });
   }) as typeof fetch;

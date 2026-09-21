@@ -4,13 +4,13 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
+import { render, initialState, firstDocForSpace, docReaderHtml, isCorners, type AppState, type Screen } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
-  getMe, logout, mintMcpToken, adminBackfill, adminPollUsage,
+  getMe, logout, mintMcpToken, adminBackfill, adminPoll,
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
@@ -36,7 +36,7 @@ import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
 import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
-import { repoUpdatedLabel } from "./repo";
+import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
 
 const root = document.getElementById("app");
@@ -45,10 +45,12 @@ const mount = root;
 
 const state: AppState = initialState();
 
-// ── persisted client prefs (theme + sidebar only; not backend state) ─────────
+// ── persisted client prefs (theme, corners + sidebar only; not backend state) ─
 try {
   const t = localStorage.getItem("canopy.theme");
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
+  const k = localStorage.getItem("canopy.corners");
+  if (isCorners(k)) state.corners = k;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
   const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
@@ -128,12 +130,16 @@ function countUp(root: HTMLElement): void {
   const key = enterKey;
   const els = Array.from(root.querySelectorAll<HTMLElement>("[data-count]"));
   if (!els.length) return;
+  // A compacted or dollar figure ("1.4K", "$29.61") counts up in its own format
+  // (`data-count-fmt`) and LANDS on the text it was rendered with — the Worker's
+  // string, never a re-derivation of it.
+  const finals = els.map((el) => el.textContent ?? "");
   const start = performance.now();
   const step = (t: number) => {
     const k = Math.min(1, (t - start) / 600);
     const eased = 1 - Math.pow(1 - k, 3);
     // A rerender replaces these nodes; the new ones already carry the final value.
-    for (const el of els) if (el.isConnected) el.textContent = String(Math.round(Number(el.dataset.count) * eased));
+    els.forEach((el, i) => { if (el.isConnected) el.textContent = k >= 1 ? finals[i] : formatCount(Number(el.dataset.count) * eased, el.dataset.countFmt); });
     if (k < 1 && key === enterKey) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -150,7 +156,8 @@ function rerender(): void {
   // The "Poll now" result is session-only and belongs to the Repo screen: leaving
   // it (any route, or signing out) clears it, and an in-flight poll's answer is
   // then dropped on arrival (runRepoPoll checks it is still the one polling).
-  if (state.repoPoll && (state.view !== "app" || state.screen !== "repo")) state.repoPoll = null;
+  // Switching between the Repo TABS keeps it — the strip renders on all five.
+  state.repoPoll = repoPollFor(state.repoPoll, state.view === "app" && state.screen === "repo");
   // Entering a group's pages opens its sub-page list, and leaving folds it again —
   // unless the person opened or closed it by hand, which sticks (and is what persists).
   const group = state.view === "app" ? navGroupOf(state.screen) : null;
@@ -389,17 +396,23 @@ function loadRepo(): void {
       rerender();
     });
 }
-// "Poll now" (admins, Usage tab): run the three hourly usage pollers on demand,
-// then re-read the dashboard so whatever they wrote is on screen, with the
-// per-source outcomes in a strip under the APP USAGE header. Never in sample
-// mode — that never touches the Worker. A failed request (network / 403 / 502)
-// is one line in the same strip; no alert(), no flash().
+// "Poll now" (admins, the Repo top bar — every tab): refresh every source the
+// dashboard shows (health pings, the usage pollers, the GitHub reconcile), then
+// re-read the dashboard so whatever they wrote is on screen, with the per-source
+// outcomes in a strip at the top of whichever tab is open — it survives a tab
+// switch and is cleared on leaving the Repo screen (`rerender`). Never in sample
+// mode — that never touches the Worker. A second click while one is in flight
+// does nothing. A 409 (another refresh holds the lock) and a failed request
+// (network / 403 / 502) are each one line in the same strip; no alert(), no
+// flash(). The reload keeps the payload on screen, so the entrance key does not
+// change and the screen entrance is NOT replayed — only the strip flashes
+// (`pendingFlash`, off under reduced motion).
 async function runRepoPoll(): Promise<void> {
   if (!state.me?.admin || state.repoSample || state.repoPoll?.status === "polling") return;
   state.repoPoll = { status: "polling" };
   rerender();
   try {
-    const result = await adminPollUsage();
+    const result = await adminPoll();
     if (state.repoPoll?.status !== "polling") return; // left the screen (or went to sample data) meanwhile
     state.repoPoll = { status: "done", result };
     pendingFlash = ".repo-poll-strip";
@@ -407,7 +420,7 @@ async function runRepoPoll(): Promise<void> {
   } catch (e) {
     if (e instanceof Unauthorized) { state.repoPoll = null; state.view = "auth"; state.authStep = "login"; rerender(); return; }
     if (state.repoPoll?.status !== "polling") return;
-    state.repoPoll = { status: "error" };
+    state.repoPoll = { status: e instanceof ApiError && e.status === 409 ? "busy" : "error" };
     pendingFlash = ".repo-poll-strip";
     rerender();
   }
@@ -1142,6 +1155,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.repoRange = arg as RepoRange;
       pendingFlash = ".repo-swap";
       break;
+    case "repoProductEnv":
+      // Session-only, like the range. Only the Product body cross-fades — never the whole screen.
+      if (!arg || arg === state.repoProductEnv) return;
+      state.repoProductEnv = arg;
+      pendingFlash = ".repo-pswap";
+      break;
     case "repoToggleDrift":
       state.repoDriftOpen = !state.repoDriftOpen;
       if (state.repoDriftOpen) pendingFlash = ".repo-drift";
@@ -1512,7 +1531,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
-    // chrome: theme + sidebar
+    // chrome: theme, corners + sidebar
     case "toggleCollapse":
       state.collapsed = !state.collapsed;
       persist("canopy.collapsed", state.collapsed ? "1" : "0");
@@ -1530,6 +1549,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (arg === "dark" || arg === "light" || arg === "midnight" || arg === "system") {
         state.theme = arg;
         persist("canopy.theme", arg);
+      }
+      break;
+    case "setCorners":
+      if (isCorners(arg)) {
+        state.corners = arg;
+        persist("canopy.corners", arg);
       }
       break;
 

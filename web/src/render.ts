@@ -42,6 +42,10 @@ export type Screen =
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
   | "repo";
 
+/** Corner style, persisted client-side like the theme (`canopy.corners`). */
+export type Corners = "rounded" | "sharp";
+export const isCorners = (v: unknown): v is Corners => v === "rounded" || v === "sharp";
+
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
   status: "idle" | "loading" | "ok" | "error" | "unauth";
@@ -67,6 +71,8 @@ export interface AppState {
   mywork: Loadable<DashboardData | null>;
   screen: Screen;
   theme: "dark" | "light" | "midnight" | "system";
+  /** Corner style — "sharp" squares every corner in the app (canopy.css, the corners layer). */
+  corners: Corners;
   systemDark: boolean;
   collapsed: boolean;
   /** The viewport is too narrow for the full rail — it renders collapsed regardless of `collapsed`. */
@@ -77,6 +83,8 @@ export interface AppState {
   repo: Loadable<RepoDashboard | null>;
   repoTab: RepoTab;
   repoRange: RepoRange;
+  /** Usage › Product: the environment picked this session (null = the default one). */
+  repoProductEnv: string | null;
   repoDriftOpen: boolean;
   /** When `repo` last loaded (ms) — the header's "updated Xm ago". */
   repoFetchedAt: number | null;
@@ -224,12 +232,12 @@ export function initialState(): AppState {
     inviteDraft: "",
     me: null,
     screen: "mywork",
-    theme: "dark", systemDark: true,
+    theme: "dark", corners: "rounded", systemDark: true,
     collapsed: false,
     narrow: false,
     navOpen: { ...NAV_CLOSED },
     repo: { status: "idle", data: null },
-    repoTab: "overview", repoRange: "7d", repoDriftOpen: false, repoFetchedAt: null, repoSample: false, repoPoll: null,
+    repoTab: "overview", repoRange: "7d", repoProductEnv: null, repoDriftOpen: false, repoFetchedAt: null, repoSample: false, repoPoll: null,
     feedAuthor: "all", feedTag: "all", feedRange: "all",
     feed: { status: "idle", data: [] },
     mywork: { status: "idle", data: null },
@@ -1204,6 +1212,8 @@ function guideView(s: AppState): string {
 
 // ── settings ─────────────────────────────────────────────────────────────────
 const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
+const APPEAR_SUB = "font-size:12.5px;font-weight:500;color:var(--fg-70);margin-bottom:9px";
+const APPEAR_HINT = "font-size:11.5px;color:var(--fg-40);margin-top:10px";
 
 /** Handle-check status wording, shared with onboarding's STATUS map (people.ts) —
  *  "same" (draft equals the current handle) and "idle" both render blank. */
@@ -1333,6 +1343,16 @@ function settingsView(s: AppState): string {
       : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>`;
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
+  // The glyphs are PATHS, not <rect rx>: the sharp layer zeroes every rect's rx, which
+  // would square the "Rounded" preview itself.
+  const cornerCards = ([
+    ["rounded", "Rounded", `<path d="M4 20v-8.5A7.5 7.5 0 0 1 11.5 4H20"></path>`],
+    ["sharp", "Sharp", `<path d="M4 20V4h16"></path>`],
+  ] as const).map(([k, label, glyph]) => {
+    const sel = s.corners === k;
+    const style = `display:flex;align-items:center;justify-content:center;gap:9px;padding:13px 8px;border-radius:11px;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};background:${sel ? "var(--accent-soft)" : "transparent"};color:${sel ? "var(--accent)" : "var(--fg-70)"}`;
+    return `<button data-act="setCorners" data-arg="${k}" class="cnpy-themecard" aria-pressed="${sel}" style="${style}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="miter">${glyph}</svg><span style="font-size:13px;font-weight:500">${label}</span></button>`;
+  }).join("");
 
   const copied = s.tokenCopied;
   const copyBtn = copied
@@ -1381,8 +1401,18 @@ function settingsView(s: AppState): string {
 
     <section class="cnpy-tile cnpy-set-appear">
       <div style="${SECTION_LABEL}">Appearance</div>
-      <div class="cnpy-set-themes">${themeCards}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
+      <div class="cnpy-set-looks">
+        <div>
+          <div style="${APPEAR_SUB}">Theme</div>
+          <div class="cnpy-set-themes">${themeCards}</div>
+          <div style="${APPEAR_HINT}">System follows your operating system's appearance.</div>
+        </div>
+        <div>
+          <div style="${APPEAR_SUB}">Corners</div>
+          <div class="cnpy-set-corners">${cornerCards}</div>
+          <div style="${APPEAR_HINT}">Sharp squares every corner — cards, buttons, avatars, charts.</div>
+        </div>
+      </div>
     </section>
   </div></div>`;
 }
@@ -1715,7 +1745,7 @@ function screenBody(s: AppState): string {
 function repoProps(s: AppState): RepoProps {
   return {
     tab: s.repoTab, range: s.repoRange, driftOpen: s.repoDriftOpen, repo: s.repo, fetchedAt: s.repoFetchedAt, sample: s.repoSample,
-    admin: s.me?.admin === true, poll: s.repoPoll,
+    admin: s.me?.admin === true, poll: s.repoPoll, productEnv: s.repoProductEnv,
   };
 }
 
@@ -1766,7 +1796,7 @@ function backfillSyncModal(sync: BackfillSyncState): string {
 
 export function render(s: AppState): string {
   const themeAttr = resolved(s);
-  return `<div data-cnpy-theme="${themeAttr}" data-screen="${s.screen}" data-collapsed="${railCollapsed(s) ? "1" : "0"}" data-narrow="${s.narrow ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
+  return `<div data-cnpy-theme="${themeAttr}" data-cnpy-corners="${s.corners}" data-screen="${s.screen}" data-collapsed="${railCollapsed(s) ? "1" : "0"}" data-narrow="${s.narrow ? "1" : "0"}" data-author="${s.feedAuthor}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
     ${s.view === "auth" ? authView(s) : s.screen === "site" ? landingView({ dark: resolved(s) !== "light", signInOpen: false, signedIn: true, seen: s.landingSeen }) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}

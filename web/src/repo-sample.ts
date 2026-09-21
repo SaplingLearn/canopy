@@ -123,7 +123,10 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
   const compact = (n: number): string => (n >= 999_950 ? `${(n / 1e6).toFixed(2)}M` : n >= 1_000 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n)));
   const dollars = (cents: number): string => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
   /** Fourteen daily totals wandering up to today's — placeholder shape, deterministic. */
-  const daily = (today: number): number[] => Array.from({ length: 14 }, (_, i) => Math.round(today * (0.72 + 0.02 * i + ((i * 7) % 5) * 0.015)));
+  // A small daily count (a handful of signups, a few 5xx) wobbles rather than climbs.
+  const WOBBLE = [0.6, 1.3, 1, 1.6, 0.7, 1, 1.3, 2, 1, 0.7, 1.3, 1.6, 1.3, 1];
+  const daily = (today: number): number[] => Array.from({ length: 14 }, (_, i) =>
+    Math.round(today * (today < 20 ? WOBBLE[i] : 0.72 + 0.02 * i + ((i * 7) % 5) * 0.015)));
   // Labels and notes as the Worker's registry has them (src/repo/product.ts) —
   // this chunk cannot import it, so test/render.repo.test.ts holds the two together.
   const NOTES: Record<string, string> = {
@@ -141,8 +144,9 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     ]],
     ["community", "Community", [["room_messages", "Room messages", 264, 1_910, 7_320], ["feedback", "Feedback", 4, 19, 73], ["issue_reports", "Issue reports", 1, 6, 22]]],
     ["ai", "AI spend", [["llm_calls", "LLM calls", 3_120, 21_400, 86_900], ["llm_tokens", "LLM tokens", 4_800_000, 33_100_000, 134_000_000], ["llm_cost_cents", "LLM cost", 412, 2_961, 11_830]]],
-    ["reliability", "Reliability", [["errors_5xx", "5xx errors", 3, 17, 61], ["errors_4xx", "4xx errors", 142, 980, 3_870], ["quiz_generation_failed", "Quiz generation failed", 1, 9, 31], ["quiz_context_write_failed", "Quiz context write failed", 0, 2, 5],
-      ["rag_retrieval_failed", "RAG retrieval failed", 0, 4, 12], ["rag_visibility_resync_failed", "RAG visibility resync failed", 0, 1, 3], ["rag_chunks_dropped", "RAG runs that dropped chunks", 2, 11, 40],
+    ["reliability", "Reliability", [["errors_5xx", "5xx errors", 3, 17, 61], ["errors_4xx", "4xx errors", 142, 980, 3_870], ["quiz_generation_failed", "Quiz generation failed", 1, 9, 31], ["quiz_context_write_failed", "Quiz context write failed", 0, 0, 2],
+      // Measured zeros beside real failures: the Reliability block folds the zeros into one line.
+      ["rag_retrieval_failed", "RAG retrieval failed", 0, 0, 3], ["rag_visibility_resync_failed", "RAG visibility resync failed", 0, 0, 0], ["rag_chunks_dropped", "RAG runs that dropped chunks", 2, 11, 40],
     ]],
   ];
   const TOTALS: [string, string, number][] = [["users", "Users", 1_204], ["users_pending", "Users pending", 7], ["documents", "Documents", 8_420], ["flashcards", "Flashcards", 96_300], ["notes", "Notes", 12_750], ["rooms", "Rooms", 58]];

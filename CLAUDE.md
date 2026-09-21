@@ -86,8 +86,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   and the three hourly usage pollers `pollCloudflare`, `pollRailway`, `pollSaplingMetrics`, each returning a
   `PollOutcome` per environment), and `cron.ts`
   (`handleRepoCron` — the repo trigger's one dispatcher, ONE heavy job per invocation, the subrequest budget
-  stated at the dispatcher — `runUsagePolls`, the one function behind both the `:00` tick and the admin's
-  "Poll usage now", and `railwayTokens`). Retention, the cron schedule and every capture path are
+  stated at the dispatcher — `runUsagePolls`, the one function behind the `:00` tick and the usage half of
+  the admin's "Poll now"; `runRepoRefresh` / `runLockedRepoRefresh`, the on-demand refresh of EVERY source
+  behind `POST /admin/poll`, which the cron never calls; and `railwayTokens`). Retention, the cron schedule and every capture path are
   described once, in the Repo dashboard section below.
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
@@ -388,7 +389,8 @@ is no connect button or flow. "Preview with sample data" swaps in `repo-sample.t
 (session-only, labelled on screen); it never touches the Worker.
 
 Three capture shapes feed it: `repo_events` rows (through the `ingestRepoEvent` gate — see Core invariant),
-`repo_snapshots` (one JSON row per kind: `prs_reconciled`, `env_heads`, `drift`, `branches`, `cf_polled`) and
+`repo_snapshots` (one JSON row per kind: `prs_reconciled`, `env_heads`, `drift`, `branches`, `cf_polled` —
+plus the transient `refresh_lock`, which is "Poll now"'s lock and feeds no section) and
 `repo_metrics` points (`putMetric`). Every section, its source, and what triggers the capture:
 
 | Section (tab) | Source | Trigger |
@@ -401,17 +403,20 @@ Three capture shapes feed it: `repo_events` rows (through the `ingestRepoEvent` 
 | `branches` (+ the Active branches tile) | snapshot `branches` | reconcile `branches` arm only |
 | `deploys` (CI) | the same `deploy` / frontend-`check` rows as `environments`, health excluded | as `environments`, minus the ping |
 | `ciFailures` | `run` rows | webhook `workflow_run` (+ `fillFailedJob`); reconcile `runs` + `job_titles` arms |
-| `coverage`, `bundle` (CI); `todos` (Planning) | metrics `coverage` / `bundle_kb` / `todo_count` | webhook `status` carrying a `canopy/*` commit status the target repo's CI posts |
+| `coverage`, `bundle` (CI); `todos` (Planning) | metrics `coverage` / `bundle_kb` / `todo_count` | a `canopy/*` commit status the target repo's CI posts — webhook `status`; reconcile `statuses` arm |
 | `activity` | PR closes + issue moves from `events`; webhook `push` rows, `review` rows, landed deploys | the captures above |
 | `usage` (Usage) | metrics `cf_requests` / `cf_errors` (requests, error rate) and `active_users_*` | cron `:00` — `pollCloudflare`, `pollSaplingMetrics` |
 | `cloudflare` | metrics `cf_*` + snapshot `cf_polled` | cron `:00` — `pollCloudflare` |
 | `hosting` | metrics `rw_cpu` / `rw_mem_mb` | cron `:00` — `pollRailway` |
 | `product` (Usage) | metrics `sap_c_<key>_<24h\|7d\|30d>` / `sap_t_<key>` — whatever keys the app reports | cron `:00` — `pollSaplingMetrics` (the same response as active users) |
-| `sprint`, `labels`, `contributors` (Planning) | live D1: the sprint a person marked `active` (the Roadmap's `sprintProgress`); open-issue snapshots; webhook pushes · merged PRs · `review` rows this week | none / webhook `issues` / `push`, `pull_request`, `pull_request_review` |
+| `sprint`, `labels`, `contributors` (Planning) | live D1: the sprint a person marked `active` (the Roadmap's `sprintProgress`); open-issue snapshots; webhook pushes · merged PRs · `review` rows this week | none / webhook `issues` / `push`, `pull_request`, `pull_request_review`; reconcile `reviews` arm |
 
 "Reconcile" is `reconcileRepo` (`src/repo/github.ts`), run by an admin's Sync GitHub and by the cron's
-6-hourly `:20` tick; "cron" is the `*/10` repo trigger — both below. The three `:00` pollers also run on
-demand from an admin's "Poll now" (`POST /admin/poll-usage`, below). The capture names a PR's AUTHOR and an
+6-hourly `:20` tick; "cron" is the `*/10` repo trigger — both below. **Everything the cron and reconcile
+capture also runs on demand from an admin's "Poll now"** (`POST /admin/poll`, below: health pings, the three
+`:00` pollers, reconcile) — and reconcile reads EVERY GitHub input the dashboard has, including the two that
+used to be webhook-only (`canopy/*` commit statuses, PR reviews). What stays webhook-only is `issues`, which
+feeds `events` (My Work's capture, refreshed by Sync GitHub). The capture names a PR's AUTHOR and an
 issue's subject, not who merged/closed, so the feed never claims an actor it does not have.
 
 **Owner prerequisites — what must be true OUTSIDE this repo** (the one place they are listed):
@@ -419,9 +424,10 @@ issue's subject, not who merged/closed, so the feed never claims an actor it doe
   (`src/webhook.ts`): `pull_request`, `push`, `pull_request_review`, `deployment_status`, `check_run`,
   `workflow_run`, `status`. Every capture arm exists, but GitHub delivers only what the hook subscribes to.
   Without `deployment_status` / `check_run` / `workflow_run`, reconcile is the ONLY source of deploys, checks
-  and runs (up to 6 hours late). Without `pull_request_review`, NOTHING captures reviews — reconcile has no
-  reviews arm — so the contributors' `R` stays `null` ("—") and no PR ever reads APPROVED. Without `status`,
-  coverage / bundle / TODO stay `not_connected`.
+  and runs (up to 6 hours late). The same now holds for `pull_request_review` and `status`: without them the
+  reconcile's `reviews` and `statuses` arms are the only source (up to 6 hours late, or an admin's Poll now),
+  and a review on a PR outside the 30 most recently updated OPEN ones, or older than that PR's last 10, is
+  never backfilled.
 - **The target repo's CI must post the three `canopy/*` commit statuses** on a push to the first configured
   environment's branch — the YAML is `docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`, a PR against
   the separate `SaplingLearn/sapling` repo (bundle size is optional there).
@@ -453,8 +459,8 @@ fire time's UTC minute/hour, each job in its own `safely` arm:
   sequentially, each fetch under its own timeout: worst case ≈ 64 s of wall clock for two environments, all
   I/O wait. The tick calls `runUsagePolls`, and the cron ignores what it returns.
 - **every 6th hour** (UTC hour % 6 = 0) — `:10` `recomputeAllProgress` alone (UNBOUNDED: one request per
-  issue number of every array-ref sprint); `:20` `reconcileRepo` alone (17 + 2N worst case, below; logs
-  `failed` when non-empty); `:30` `pruneRepoCapture` (D1 only). `:10` and `:20` need `GITHUB_SERVICE_TOKEN`
+  issue number of every array-ref sprint); `:20` `reconcileRepo` alone (19 + 2N worst case, below — **19 + 4N with the tick's own
+  pings: 27 today, N ≤ 7 under the 50**; logs `failed` when non-empty); `:30` `pruneRepoCapture` (D1 only). `:10` and `:20` need `GITHUB_SERVICE_TOKEN`
   + `GITHUB_REPO`; `:30` and the pings run regardless.
 - `:40` / `:50`, and `:10`–`:30` of any other hour, ping health and nothing else.
 `src/index.ts` dispatches by EXACT string equality on `controller.cron`, so `REPO_CRON` and the expression
@@ -574,7 +580,7 @@ GitHub (`POST /admin/backfill`) and the cron's 6-hourly `:20` tick, so a repo no
 heals within 6 hours. Both need `GITHUB_SERVICE_TOKEN` + `GITHUB_REPO`. Its arms, each in its own `safely`
 block: open PRs (+ the `prs_reconciled` marker), closed PRs, the pre-capture commit window, deployments,
 completed workflow runs, the failing-job label pass, the environment heads, each environment's head checks,
-branches, drift. It returns `{ written, unchanged, failed: string[] }` — `failed` NAMES every arm that threw
+the `canopy/*` commit statuses, PR reviews, branches, drift. It returns `{ written, unchanged, failed: string[] }` — `failed` NAMES every arm that threw
 (`"deployments"`, `"runs"`, …); `/admin/backfill` passes that through as its `repo` object and the cron logs
 it.
 - **Deployments are ONE GraphQL request** (`ghGraphql` beside `ghJson`; throws on non-2xx AND on an `errors`
@@ -594,10 +600,29 @@ it.
   the poll asked for: the owner is the config whose `workerCheck` matches the run's name AND whose captured
   head equals the run's `head_sha` (falling back to the polled branch) — two branches sharing a HEAD
   otherwise left one environment permanently untagged.
-- Worst case **17 + 2N outbound requests** for N environments (21 today): 2 PR lists + 1 commit window + 1
-  GraphQL deployments + 1 workflow-run list + ≤5 job lookups + ≤5 branch pages + ≤2 drift compares + 2 per
-  environment (head commit, head checks). Under an admin Sync it shares the invocation with `runBackfill`'s
-  ~13.
+- **The `statuses` arm closes coverage / bundle / TODO** (they used to arrive ONLY as `status` deliveries):
+  ONE `GET /commits/<ref>/statuses?per_page=100`, `<ref>` = the head sha the env_heads arm just read for the
+  FIRST environment's branch (the branch name when that read failed; `main` with no environment). Each
+  `canopy/*` item — at most the newest 10 per context — is rebuilt as the WEBHOOK's `status` payload (context,
+  description, state, created/updated_at, sha, `branches: [{ name }]`) and put through the UNCHANGED
+  `metricsFromStatus` → `putMetric`: one derivation, one validator, and the same `at` (`updated_at`, else
+  `created_at`, normalised by `putMetric`), so a polled point and a delivered one collide on `(metric, env,
+  part, at)`. New rows count into `written`, repeats into `unchanged`; a dropped one is `console.warn`ed as
+  the webhook does; a 404 or an empty list is not a failure (`ghJsonOrNull`).
+- **The `reviews` arm closes the contributors' `R` and APPROVED**: ONE GraphQL request — the 30 most recently
+  updated OPEN PRs, each with its last 10 reviews — each review rebuilt as the webhook's
+  `pull_request_review` payload and put through the UNCHANGED `fromReview`, `provenance: "backfill"`.
+  **Key parity, verified live 2026-09-21** (PR #658's two reviews read over GraphQL and over REST):
+  `databaseId` EQUALS the REST/webhook `review.id`, so `gh:review:<id>:<action>` is the webhook row's key;
+  `submittedAt` = `submitted_at` and `url` = `html_url`, string for string; `state` arrives UPPERCASE and is
+  lower-cased; a Bot's `login` arrives WITHOUT `[bot]` and is re-suffixed. A DISMISSED review is wrapped as
+  the webhook's `dismissed` action only (key `…:dismissed`) — its state at submission is no longer knowable,
+  and a guessed `…:submitted` row would shadow the real one forever. PENDING reviews and ones with no author
+  or no `submittedAt` are skipped.
+- Worst case **19 + 2N outbound requests** for N environments (23 today): 2 PR lists + 1 commit window + 1
+  GraphQL deployments + 1 workflow-run list + ≤5 job lookups + 1 status list + 1 GraphQL reviews + ≤5 branch
+  pages + ≤2 drift compares + 2 per environment (head commit, head checks). Under an admin Sync it shares the
+  invocation with `runBackfill`'s ~13 (36 today).
 - **`/admin/backfill` runs it once per Sync, on the batch that ENDS the loop**: the batch whose
   `summaryBudgetExhausted` reads `false`, OR the one that hits the SPA's own cap while still exhausted —
   `isFinalBackfillBatch(result, batch?, of?)` (`src/tools/backfill.ts`); `runAdminBackfillLoop`
@@ -608,8 +633,8 @@ it.
 **Coverage, bundle size and the TODO/FIXME count are commit-status metrics**: the target repo's CI posts each
 as a GitHub commit status (`context` names the metric, `description` is the number); the `status` delivery
 reaches `metricsFromStatus` (`src/repo/capture.ts`) — a SIBLING arm to `repoEventsFromDelivery` in the
-webhook's repo-capture branch, since a status produces no `RepoEvent` — which turns it into a `repo_metrics`
-point: `canopy/coverage` → `coverage`, `canopy/bundle-kb` → `bundle_kb`, `canopy/todo` → `todo_count`. A
+webhook's repo-capture branch, since a status produces no `RepoEvent`; reconcile's `statuses` arm feeds the
+SAME function the same payload — which turns it into a `repo_metrics` point: `canopy/coverage` → `coverage`, `canopy/bundle-kb` → `bundle_kb`, `canopy/todo` → `todo_count`. A
 status counts only when its `branches[].name` includes the FIRST configured environment's branch (the
 literal `"main"` when none is configured); an unrelated context (Railway's, CodeRabbit's) is dropped after
 one cheap parse, costing zero D1 writes. **`description` must be a strict decimal, range-checked per
@@ -627,11 +652,57 @@ FIRST point, which may lie left of the 10-point sparkline. Below that bar `RepoT
 points. All three read `empty`, not `not_connected`, once a point has EVER landed but none is in the window
 (`latestMetric` with no bound, checked only on the empty path).
 
-**"Poll usage now" — the same three pollers, on demand** (`POST /admin/poll-usage`; session-cookie,
-admin-only — a non-admin is 403 `{ error: "admin only" }` — no request body, NEVER an MCP tool). The pollers
-no longer run ONLY from the cron: the route calls `runUsagePolls(env, Date.now())` (`src/repo/cron.ts`), the
-SAME function as the `:00` tick, so after adding or rotating a token an admin sees at once whether it works
-instead of waiting up to an hour for a log line. **Idempotent with the cron**: every poller keys on the HOUR
+**"Poll now" — every source the dashboard shows, on demand** (`POST /admin/poll`; session-cookie,
+admin-only — a non-admin is 403 `{ error: "admin only" }` — no request body, NEVER an MCP tool). It calls
+`runRepoRefresh(env, Date.now())` (`src/repo/cron.ts`), which runs three sources **in this order, each in
+its OWN guarded arm** (a failure in one never skips another): **health** (`pingHealth`), **usage**
+(`runUsagePolls`, unchanged — Cloudflare, Railway, the app's metrics), **github** (`reconcileRepo` with the
+service token: deploys, checks, runs, branches, drift, open PRs, env heads, the `canopy/*` commit statuses
+and PR reviews). The result is
+`RepoRefreshResult` (`shared/repo.ts`, types only): `UsagePollResult`'s `cloudflare` / `railway` /
+`sapling`, plus `health` — one `PollOutcome` per TARGET (`part` set; `ok` = up, `failed` = down with FIXED
+words `timeout` / `HTTP <status>` / `unreachable`; `"not_configured"` with no environment) — and `github`:
+`{ written, unchanged, failed }` (`failed` = reconcile's ARM NAMES), `"not_configured"` without
+`GITHUB_SERVICE_TOKEN` + `GITHUB_REPO`, `failed: ["unexpected error"]` on an unexpected throw. **The cron
+does NOT call it** — its per-tick spreading stands. **Budget: health 2N + usage 3N + reconcile (19 + 2N) =
+19 + 7N subrequests — 33 for two environments, and the free plan's 50 caps it at N ≤ 4** (47; 54 at five); past that the
+github arm is SKIPPED and says so (`failed: ["skipped: would exceed the subrequest budget"]`) rather than
+risk the invocation, while health and usage still run. **Deliberately excluded**: `recomputeAllProgress`
+(UNBOUNDED — the reason it has a tick of its own — and it feeds the Roadmap, not this dashboard),
+`pruneRepoCapture` (maintenance, not a refresh) and `runBackfill` / summaries (that is Sync GitHub: My Work's
+capture, with its own Gemini budget loop). **Idempotent with the cron**: the pollers key on the HOUR FLOOR,
+reconcile on semantic keys and snapshot upserts. **The on-demand health ping is stamped to the MINUTE, not
+the ten-minute tick** (`HEALTH_ON_DEMAND_BUCKET_MS`): `putMetric` is first-write-wins, so inside the cron's
+own bucket an on-demand reading would be dropped and the screen would keep the tick's; a finer bucket lands
+a NEWER row, which `latestHealth` (the only reader) picks up, and a double click within the minute is still
+a no-op. **The lock**: overlapping runs are correct but wasteful, so `runLockedRepoRefresh` takes a
+`repo_snapshots` row `refresh_lock` (`{ by, at }` — not a dashboard section) in ONE statement, an upsert that
+only overwrites a row older than 90 s; a younger one is a 409 `{ error: "a refresh is already running",
+since }` that runs nothing. It is cleared in a `finally`, and only when the row is still the caller's own.
+The response is 200 even when every source failed (the body says so), 502 `{ error: "poll failed" }` only if
+the lock statement itself throws, never a 500 — and it carries outcomes but **never a token, a header or an
+account id**; `src/repo/github.ts` now LOGS a failed read as its message with the service token scrubbed
+(`scrubbedMessage`), never the Error object, since a thrown fetch or a GraphQL `errors` body can quote the
+`authorization` header back.
+**On screen** the button lives in the **Repo top bar, beside the refresh icon, on every tab** and in every
+state of the dashboard (loading, failed, degraded, all `not_connected`) — admins only, hidden in sample
+mode, and a non-admin's bar is byte-for-byte what it was (pinned by a test; the refresh icon's title is
+"Reload from Canopy's database" only beside the button, whose own is "Poll every source now (admin)"). A
+container query on the BAR (`.repo-pollbtn` in `canopy.css`; only a bar that has the button is a container)
+makes it icon-only when crumb + labelled controls no longer fit (bar content < 740px — a viewport under
+~850px with the rail collapsed) and drops the "updated …" text under 676px, so at phone width an admin's
+controls (281px) are narrower than a non-admin's (343px). While in flight it is disabled and reads
+"Polling…" (the refresh icon's `cnpy-spin`, off under reduced motion); a second click does nothing. On
+completion the dashboard reloads (the payload stays on screen, so the entrance is not replayed) and a
+dismissible strip flashes in at the top of WHICHEVER tab is open (`state.repoPoll`, `repoPollFor`:
+session-only, survives a tab switch, cleared on leaving the Repo screen): `Health — 3 up · staging api ✗
+timeout`, the three usage lines as below, `GitHub — 12 new · 240 unchanged` / `✗ failed: deployments, runs`
+/ `– skipped: …` / `not configured`; a 409 reads "A refresh is already running — try again in a minute.",
+any other failure "Poll failed — try again."
+
+**`POST /admin/poll-usage` remains — the narrower, older route** (same gate, no lock): the three usage
+pollers only, via `runUsagePolls(env, Date.now())` (`src/repo/cron.ts`), the SAME function as the `:00`
+tick; the SPA no longer calls it. **Idempotent with the cron**: every poller keys on the HOUR
 FLOOR of `now` and every write is `INSERT OR IGNORE`, so a run at any minute asks for the same hours and
 writes the same rows. **3N subrequests** (6 today; no health pings). Each poller returns one `PollOutcome`
 per environment (`shared/repo.ts`, types only: `ok` with `written` = NEW `repo_metrics` rows — `0` is a
@@ -644,10 +715,7 @@ it carries outcomes but **never a token, a header or an account id** (`pollCloud
 the account id as well as the token). A Cloudflare or Railway **non-2xx says why**: the body's
 `errors[0].message` (+ `code`), else the raw text's start, scrubbed BEFORE it is cut (`failureReason`), and
 Cloudflare's 400 / 401 / 403 each append a fixed hint (malformed token value / invalid token / lacks Account
-Analytics: Read). On screen it is the Usage tab's quiet **Poll now** button beside the range buttons —
-admins only, hidden in sample mode, the header untouched for everyone else — then a reload of the dashboard
-and a dismissible result strip under the APP USAGE header, one line per source (`state.repoPoll`:
-session-only, cleared on leaving the Repo screen; a failed request reads "Poll failed — try again."). The
+Analytics: Read). In the strip the
 Sapling line is labelled "App metrics" (one response carries active users AND product metrics); an `ok`
 outcome's `detail` (dropped product keys) and a `failed` outcome's partial `written` are both shown.
 
@@ -781,6 +849,29 @@ scan (a recursive CTE hops distinct `sap_*` names, then seeks each name × envir
 each midnight by equality), because the plain `metric GLOB 'sap_*'` form walks every stored `sap_` entry
 (~33k at steady state for two environments) to return ~3k. The shape saves rows READ, not the sort — the
 `UNION ALL … ORDER BY` still costs a temp b-tree in both arms.
+
+**On screen the Usage tab is a hierarchy, not tables** (`web/src/repo.ts`): APP USAGE compare (side by side —
+comparing environments is its job) → ONE **Product** section → infrastructure. Product shows ONE environment,
+picked by a segmented control (`state.repoProductEnv`, session-only; default = the LAST configured environment
+that has reported anything, else the first; the pressed button carries no `data-act`, so re-pressing it never
+replays the cross-fade; `repoProductEnv` flashes only `.repo-pswap`, a range switch flashes every `.repo-swap`).
+Inside it: the `totals` as an inline "Right now" stat strip; up to four headline tiles picked by KEY in a fixed
+order (`signups`, `tutor_sessions`, `llm_cost_cents`, `errors_5xx`, then `chat_messages`, `logins`,
+`quizzes_completed`; fewer than two present → no strip; `errors_5xx` > 0 is the one toned tile); then a block
+per group on a 12-column grid, its SHAPE keyed by the group `id` — `learning` a ranked bar list (sorted by the
+range's raw figure, bar = raw ÷ group max, null last with no bar), `ai` one feature figure (`llm_cost_cents`
+leads, the other keys are one quiet line — nothing derived, no cost-per-call), `reliability` a status list
+(non-zero rows with a tone dot — `bad`, except `errors_4xx` which stays neutral; every measured ZERO folds into
+one "N at zero — …" line; a null is named on its own "no recent reading" line and is NEVER counted a zero; the
+block's `min-height` is its tallest form across every range and environment so a switch shifts nothing under
+it), `growth` / `community` stat pairs, and `other` or ANY unrecognised group id as quiet rows at the end — no
+shape may depend on a key existing. `data-count` now takes an optional `data-count-fmt` (`compact` / `usd`,
+`formatCount`): `countUp` formats the in-between frames and LANDS on the element's own rendered text, so a
+compacted or dollar figure counts up without the browser ever re-deriving the Worker's string. Cloudflare and
+Railway are figure-over-label blocks per environment; the Cloudflare error-share bar is `errorShare` over the
+two compact strings that block itself shows (`parseCompact`), drawn only when both parse and requests > 0, and
+it prints NO percentage (the Worker's own error rate sits in the compare block above — a second, re-derived
+figure could disagree with it by a rounding).
 
 **Pruning** (`pruneRepoCapture`, `src/repo/store.ts`, the cron's 6-hourly `:30` tick): `health_*` metrics
 and `check` rows older than 45 days — the `check` deletion ONLY `WHERE part IS NULL`, because a FRONTEND
