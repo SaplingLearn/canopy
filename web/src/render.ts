@@ -24,7 +24,7 @@ import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind 
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
 import { sidebarView, NAV_CLOSED, type NavOpen } from "./sidebar";
-import { repoView, repoControls, repoCrumb, type RepoProps } from "./repo";
+import { repoView, repoControls, repoCrumb, type RepoProps, type RepoPollState } from "./repo";
 import type { RepoDashboard, RepoTab, RepoRange } from "@shared/repo";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
@@ -82,6 +82,8 @@ export interface AppState {
   repoFetchedAt: number | null;
   /** Showing the built-in sample set instead of the Worker's projection. Session-only. */
   repoSample: boolean;
+  /** The admin's last "Poll now" on the Usage tab. Session-only, never persisted; cleared on leaving the Repo screen. */
+  repoPoll: RepoPollState | null;
   feedAuthor: string;
   feedTag: string;
   feedRange: string;
@@ -227,7 +229,7 @@ export function initialState(): AppState {
     narrow: false,
     navOpen: { ...NAV_CLOSED },
     repo: { status: "idle", data: null },
-    repoTab: "overview", repoRange: "7d", repoDriftOpen: false, repoFetchedAt: null, repoSample: false,
+    repoTab: "overview", repoRange: "7d", repoDriftOpen: false, repoFetchedAt: null, repoSample: false, repoPoll: null,
     feedAuthor: "all", feedTag: "all", feedRange: "all",
     feed: { status: "idle", data: [] },
     mywork: { status: "idle", data: null },
@@ -1711,7 +1713,10 @@ function screenBody(s: AppState): string {
 
 /** Project the app state onto the Repo dashboard's props (its components never see AppState). */
 function repoProps(s: AppState): RepoProps {
-  return { tab: s.repoTab, range: s.repoRange, driftOpen: s.repoDriftOpen, repo: s.repo, fetchedAt: s.repoFetchedAt, sample: s.repoSample };
+  return {
+    tab: s.repoTab, range: s.repoRange, driftOpen: s.repoDriftOpen, repo: s.repo, fetchedAt: s.repoFetchedAt, sample: s.repoSample,
+    admin: s.me?.admin === true, poll: s.repoPoll,
+  };
 }
 
 // `.cnpy-shell` is the seam web/src/morph.ts looks for: inside it the <aside> is

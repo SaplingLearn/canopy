@@ -81,9 +81,11 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   non-decisive-conclusion policy at `foldResult`/`checkState`), `github.ts` (service-token GitHub reads —
   `ghJson` / `ghGraphql`, `reconcileRepo` with its drift and branches arms, `refreshDrift`, `fillFailedJob` —
   never on the render path), `poll.ts` (the four scheduled pulls, none of which may throw: `pingHealth` every tick,
-  and the three minute-0 pollers `pollCloudflare`, `pollRailway`, `pollSaplingMetrics`), and `cron.ts`
+  and the three hourly usage pollers `pollCloudflare`, `pollRailway`, `pollSaplingMetrics`, each returning a
+  `PollOutcome` per environment), and `cron.ts`
   (`handleRepoCron` — the repo trigger's one dispatcher, ONE heavy job per invocation, the subrequest budget
-  stated at the dispatcher — and `railwayTokens`). Retention, the cron schedule and every capture path are
+  stated at the dispatcher — `runUsagePolls`, the one function behind both the `:00` tick and the admin's
+  "Poll usage now", and `railwayTokens`). Retention, the cron schedule and every capture path are
   described once, in the Repo dashboard section below.
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
   `0012_events_plan` [events / pr_summaries / milestone_progress / people / plan / plan_versions +
@@ -385,7 +387,8 @@ Three capture shapes feed it: `repo_events` rows (through the `ingestRepoEvent` 
 | `sprint`, `labels`, `contributors` (Planning) | live D1: the sprint a person marked `active` (the Roadmap's `sprintProgress`); open-issue snapshots; webhook pushes · merged PRs · `review` rows this week | none / webhook `issues` / `push`, `pull_request`, `pull_request_review` |
 
 "Reconcile" is `reconcileRepo` (`src/repo/github.ts`), run by an admin's Sync GitHub and by the cron's
-6-hourly `:20` tick; "cron" is the `*/10` repo trigger — both below. The capture names a PR's AUTHOR and an
+6-hourly `:20` tick; "cron" is the `*/10` repo trigger — both below. The three `:00` pollers also run on
+demand from an admin's "Poll now" (`POST /admin/poll-usage`, below). The capture names a PR's AUTHOR and an
 issue's subject, not who merged/closed, so the feed never claims an actor it does not have.
 
 **Owner prerequisites — what must be true OUTSIDE this repo** (the one place they are listed):
@@ -425,7 +428,7 @@ fire time's UTC minute/hour, each job in its own `safely` arm:
   10 today**, which caps the configuration at **N ≤ 9 environments** under the free plan's 50 (a tenth lands
   exactly on the cap, and a health ping that follows a redirect costs a subrequest more). The pollers run
   sequentially, each fetch under its own timeout: worst case ≈ 64 s of wall clock for two environments, all
-  I/O wait.
+  I/O wait. The tick calls `runUsagePolls`, and the cron ignores what it returns.
 - **every 6th hour** (UTC hour % 6 = 0) — `:10` `recomputeAllProgress` alone (UNBOUNDED: one request per
   issue number of every array-ref sprint); `:20` `reconcileRepo` alone (17 + 2N worst case, below; logs
   `failed` when non-empty); `:30` `pruneRepoCapture` (D1 only). `:10` and `:20` need `GITHUB_SERVICE_TOKEN`
@@ -600,6 +603,28 @@ FIRST point, which may lie left of the 10-point sparkline. Below that bar `RepoT
 `RepoTodos.delta` is `null` — value shown, no delta text, no "since" — and `spark()` renders nothing under 2
 points. All three read `empty`, not `not_connected`, once a point has EVER landed but none is in the window
 (`latestMetric` with no bound, checked only on the empty path).
+
+**"Poll usage now" — the same three pollers, on demand** (`POST /admin/poll-usage`; session-cookie,
+admin-only — a non-admin is 403 `{ error: "admin only" }` — no request body, NEVER an MCP tool). The pollers
+no longer run ONLY from the cron: the route calls `runUsagePolls(env, Date.now())` (`src/repo/cron.ts`), the
+SAME function as the `:00` tick, so after adding or rotating a token an admin sees at once whether it works
+instead of waiting up to an hour for a log line. **Idempotent with the cron**: every poller keys on the HOUR
+FLOOR of `now` and every write is `INSERT OR IGNORE`, so a run at any minute asks for the same hours and
+writes the same rows. **3N subrequests** (6 today; no health pings). Each poller returns one `PollOutcome`
+per environment (`shared/repo.ts`, types only: `ok` with `written` = NEW `repo_metrics` rows — `0` is a
+legitimate re-poll; `failed` with `detail` = the SAME scrubbed, truncated message it logs; `skipped` with a
+few fixed words — no worker / no project token / no `railwayEnvironmentId` / no `railwayServiceId` /
+`apiUrl` not https), and `UsagePollResult` is those per source, or `"not_configured"` when the source's
+secret(s) are absent — exactly when the cron skips it. The response is 200 even when every source failed
+(the body says so), 502 `{ error: "poll failed" }` only if `runUsagePolls` itself throws, never a 500 — and
+it carries outcomes but **never a token, a header or an account id** (`pollCloudflare`'s one scrub covers
+the account id as well as the token). A Cloudflare or Railway **non-2xx says why**: the body's
+`errors[0].message` (+ `code`), else the raw text's start, scrubbed BEFORE it is cut (`failureReason`), and
+Cloudflare's 400 / 401 / 403 each append a fixed hint (malformed token value / invalid token / lacks Account
+Analytics: Read). On screen it is the Usage tab's quiet **Poll now** button beside the range buttons —
+admins only, hidden in sample mode, the header untouched for everyone else — then a reload of the dashboard
+and a dismissible result strip under the APP USAGE header, one line per source (`state.repoPoll`:
+session-only, cleared on leaving the Repo screen; a failed request reads "Poll failed — try again.").
 
 **Cloudflare Workers analytics** (`pollCloudflare`, `src/repo/poll.ts`) asks Cloudflare's GraphQL analytics
 API (`https://api.cloudflare.com/client/v4/graphql`, dataset `workersInvocationsAdaptive`, `scriptName` =

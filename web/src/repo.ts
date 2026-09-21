@@ -16,6 +16,7 @@ import {
   REPO_RANGES, REPO_TABS,
   type RepoActivity, type RepoActivityKind, type RepoDashboard, type RepoPerson, type RepoPr, type RepoPrState,
   type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
+  type PollOutcome, type UsagePollResult, type UsagePollSource,
 } from "@shared/repo";
 import type { Loadable } from "./render";
 import { esc, attr, statusBadge } from "./ui";
@@ -28,7 +29,14 @@ export interface RepoProps {
   repo: Loadable<RepoDashboard | null>;
   fetchedAt: number | null;
   sample: boolean;
+  /** The viewer is an admin — the only one offered "Poll now" on the Usage tab. */
+  admin: boolean;
+  /** The last on-demand usage poll. Session-only; null = none / dismissed. */
+  poll: RepoPollState | null;
 }
+
+/** "Poll now" (POST /admin/poll-usage): in flight, its per-source outcomes, or a failed request. */
+export type RepoPollState = { status: "polling" } | { status: "done"; result: UsagePollResult } | { status: "error" };
 
 // ── design tokens (verbatim from the .dc.html) ───────────────────────────────
 const LABEL = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
@@ -464,8 +472,45 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
   </div>`;
 }
 
+// ── "Poll now" — the admin's on-demand run of the three hourly usage pollers ──
+const POLL_SOURCES: [keyof UsagePollResult, string][] = [["cloudflare", "Cloudflare"], ["railway", "Railway"], ["sapling", "Active users"]];
+const MUTED = "var(--fg-40)";
+
+/** One environment's outcome: `staging ✓ 3 new` / `✓ up to date` / `✗ <detail>` / `– skipped: <detail>`. */
+function pollOutcome(o: PollOutcome): string {
+  const [color, text] =
+    o.status === "ok" ? [TONE.good, o.written > 0 ? `✓ ${o.written} new` : "✓ up to date"]
+    : o.status === "failed" ? [TONE.bad, `✗ ${o.detail ?? "failed"}`]
+    : [MUTED, `– skipped${o.detail ? `: ${o.detail}` : ""}`];
+  // "*" is the whole source (an arm that threw), not an environment called "*".
+  return `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}</span> <span style="color:${color}">${esc(text)}</span></span>`;
+}
+const pollSource = (s: UsagePollSource): string =>
+  s === "not_configured" || !Array.isArray(s) ? `<span style="color:${MUTED}">not configured</span>`
+  : !s.length ? `<span style="color:${MUTED}">no environment configured</span>`
+  : s.map(pollOutcome).join(`<span style="color:${MUTED}"> · </span>`);
+
+/** The result strip under the APP USAGE header: one line per source, or the one-line failure. */
+function pollStrip(poll: RepoPollState | null): string {
+  if (!poll || poll.status === "polling") return "";
+  const lines = poll.status === "error"
+    ? `<div style="color:${TONE.bad}">Poll failed — try again.</div>`
+    : POLL_SOURCES.map(([key, label]) =>
+      `<div><span style="font-weight:600;color:var(--fg-70)">${label}</span><span style="color:${MUTED}"> — </span>${pollSource(poll.result[key])}</div>`).join("");
+  return `<div class="repo-poll-strip" role="status" style="display:flex;align-items:flex-start;gap:12px;padding:10px 20px;border-bottom:1px solid var(--border);font-size:12px;line-height:1.7;color:var(--fg-55)">
+      <div style="flex:1;min-width:0;overflow-wrap:anywhere">${lines}</div>
+      <button data-act="repoPollDismiss" title="Dismiss" aria-label="Dismiss poll result" class="cnpy-iconbtn" style="flex:none;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:14px;line-height:1;color:${MUTED}">×</button>
+    </div>`;
+}
+
 function usageTab(p: RepoProps): string {
   const usageLive = okData(p, (d) => d.usage) !== null;
+  // Admins only, and never in sample mode (which never touches the Worker). A
+  // non-admin gets the header exactly as it was — the button and its wrapper
+  // exist only for an admin, and the wrapper (not the row) is what wraps at
+  // phone width: the button drops above the range buttons, right-aligned.
+  const canPoll = p.admin && !p.sample;
+  const polling = p.poll?.status === "polling";
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
@@ -488,9 +533,13 @@ function usageTab(p: RepoProps): string {
       <span style="font-size:12.5px;color:var(--fg-55)">Memory <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${esc(h.memory)}</span></span>
     </div>`).join(""));
 
+  const pollBtn = `<button data-act="repoPollNow" title="Run the hourly usage polls now" class="cnpy-outlinebtn"${polling ? " disabled" : ""} style="padding:7px 12px;border-radius:9px;border:1px solid var(--border);font-size:12px;font-weight:500;white-space:nowrap;color:var(--fg-55);${polling ? "opacity:.6;cursor:default;pointer-events:none" : ""}">${polling ? "Polling…" : "Poll now"}</button>`;
+  const controls = canPoll ? `<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0">${pollBtn}${ranges}</div>` : ranges;
+
   return `<div ${rise(0, `display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border)`)}>
-      <span style="${LABEL}">App usage</span>${ranges}
+      <span style="${LABEL}">App usage</span>${controls}
     </div>
+    ${canPoll ? pollStrip(p.poll) : ""}
     <div ${rise(1)}>${usageLive ? usage : `<div style="padding:6px 20px">${usage}</div>`}</div>
     <div ${rise(2, `display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));${TOP};flex:1`)}>
       <div style="padding:18px 20px;min-width:0;display:flex;flex-direction:column">

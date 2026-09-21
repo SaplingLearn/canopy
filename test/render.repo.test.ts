@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
 import { render, initialState } from "../web/src/render";
-import { REPO_TABS, type RepoDashboard, type RepoPerson } from "@shared/repo";
+import { REPO_TABS, type RepoDashboard, type RepoPerson, type UsagePollResult } from "@shared/repo";
 
 const NC = { status: "not_connected" } as const;
 const EMPTY = { status: "empty" } as const;
@@ -26,7 +26,7 @@ function live(over: Partial<RepoDashboard> = {}): RepoDashboard {
 }
 
 function props(over: Partial<RepoProps> = {}): RepoProps {
-  return { tab: "overview", range: "7d", driftOpen: false, repo: { status: "ok", data: live() }, fetchedAt: Date.now(), sample: false, ...over };
+  return { tab: "overview", range: "7d", driftOpen: false, repo: { status: "ok", data: live() }, fetchedAt: Date.now(), sample: false, admin: false, poll: null, ...over };
 }
 
 describe("repoView — section states", () => {
@@ -466,6 +466,86 @@ describe("repo header chrome", () => {
     expect(html).toContain(">Repo</h1>");
     expect(html).toContain('class="cnpy-navrow n-repo is-active"');
     expect(html).toContain('data-screen-label="Code"');
+  });
+});
+
+// ── "Poll now" (admin-only, Usage tab) ───────────────────────────────────────
+describe("repoView — Poll usage now", () => {
+  const usage = (over: Partial<RepoProps> = {}) => repoView(props({ tab: "usage", ...over }));
+  const done = (result: UsagePollResult) => ({ status: "done" as const, result });
+  const NOT: UsagePollResult = { cloudflare: "not_configured", railway: "not_configured", sapling: "not_configured" };
+
+  it("the button is there for an admin — and absent for a non-admin, in sample mode, and off the Usage tab", () => {
+    expect(usage({ admin: true })).toContain('data-act="repoPollNow"');
+    expect(usage({ admin: true })).toContain(">Poll now</button>");
+    expect(usage({ admin: false })).not.toContain("repoPollNow");
+    expect(usage({ admin: true, sample: true, repo: { status: "ok", data: repoSample() } })).not.toContain("repoPollNow");
+    expect(repoView(props({ tab: "ci", admin: true }))).not.toContain("repoPollNow");
+  });
+
+  it("a non-admin's header row is exactly what it was — nothing wraps the range buttons", () => {
+    const html = usage({ admin: false });
+    expect(html).toMatch(/App usage<\/span><div class="repo-seg"/);
+  });
+
+  it("while polling the button is disabled and says so; no strip yet", () => {
+    const html = usage({ admin: true, poll: { status: "polling" } });
+    expect(html).toMatch(/<button data-act="repoPollNow"[^>]* disabled[^>]*>Polling…<\/button>/);
+    expect(html).not.toContain("repo-poll-strip");
+  });
+
+  it("the strip gives one line per source: new rows, up to date, a failure's detail, a skip, not configured", () => {
+    const html = usage({ admin: true, poll: done({
+      cloudflare: [{ env: "staging", status: "ok", written: 3 }, { env: "production", status: "failed", written: 0, detail: "cloudflare analytics 403" }],
+      railway: "not_configured",
+      sapling: [{ env: "staging", status: "ok", written: 0 }, { env: "production", status: "skipped", written: 0, detail: "apiUrl is not https" }],
+    }) });
+    const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain("Cloudflare — staging ✓ 3 new · production ✗ cloudflare analytics 403");
+    expect(text).toContain("Railway — not configured");
+    expect(text).toContain("Active users — staging ✓ up to date · production – skipped: apiUrl is not https");
+    expect(html).toContain('data-act="repoPollDismiss"');
+    // Tone comes from the existing variables: good / bad / muted.
+    expect(html).toMatch(/color:var\(--green\)[^>]*>✓ 3 new/);
+    expect(html).toMatch(/color:var\(--red\)[^>]*>✗ cloudflare analytics 403/);
+    expect(html).toMatch(/color:var\(--fg-40\)[^>]*>not configured/);
+  });
+
+  it("a source with no environment says so, and the unexpected-error arm reads as all environments", () => {
+    const html = usage({ admin: true, poll: done({ ...NOT, cloudflare: [], sapling: [{ env: "*", status: "failed", written: 0, detail: "unexpected error" }] }) });
+    const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain("Cloudflare — no environment configured");
+    expect(text).toContain("Active users — all ✗ unexpected error");
+  });
+
+  it("never trusts a detail or an environment name as markup", () => {
+    const html = usage({ admin: true, poll: done({ ...NOT, cloudflare: [{ env: `<b>stg</b>`, status: "failed", written: 0, detail: `<img src=x onerror=1>` }] }) });
+    expect(html).not.toContain("<img src=x");
+    expect(html).not.toContain("<b>stg</b>");
+    expect(html).toContain("&lt;img src=x onerror=1&gt;");
+    expect(html).toContain("&lt;b&gt;stg&lt;/b&gt;");
+  });
+
+  it("a failed request is one line, still dismissible", () => {
+    const html = usage({ admin: true, poll: { status: "error" } });
+    expect(html).toContain("Poll failed — try again.");
+    expect(html).toContain('data-act="repoPollDismiss"');
+    expect(html).toContain(">Poll now</button>"); // and the button is live again
+  });
+
+  it("the strip is for the Usage tab of the live dashboard only", () => {
+    const poll = done(NOT);
+    expect(repoView(props({ tab: "overview", admin: true, poll }))).not.toContain("repo-poll-strip");
+    expect(usage({ admin: false, poll })).not.toContain("repo-poll-strip");
+    expect(usage({ admin: true, poll, sample: true, repo: { status: "ok", data: repoSample() } })).not.toContain("repo-poll-strip");
+  });
+
+  it("render() hands the viewer's admin flag and the session-only poll state through", () => {
+    const base = { ...initialState(), view: "app" as const, screen: "repo" as const, repoTab: "usage" as const, repo: { status: "ok" as const, data: live() } };
+    const me = { handle: "andres", name: null, avatar_url: null, color: "green", identities: [], org: "SaplingLearn" };
+    expect(render({ ...base, me: { ...me, admin: true } as typeof base.me })).toContain('data-act="repoPollNow"');
+    expect(render({ ...base, me: { ...me, admin: false } as typeof base.me })).not.toContain("repoPollNow");
+    expect(render({ ...base, me: { ...me, admin: true } as typeof base.me, repoPoll: { status: "error" } })).toContain("Poll failed — try again.");
   });
 });
 
