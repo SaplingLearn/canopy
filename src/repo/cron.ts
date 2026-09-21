@@ -6,7 +6,7 @@ import type { Env } from "../env";
 import { recomputeAllProgress } from "../tools/progress";
 import { repoEnvironments, type RepoEnvConfig } from "./config";
 import { reconcileRepo } from "./github";
-import { pingHealth, pollCloudflare, pollRailway } from "./poll";
+import { pingHealth, pollCloudflare, pollRailway, pollSaplingMetrics } from "./poll";
 import { pruneRepoCapture } from "./store";
 
 export const REPO_CRON = "*/10 * * * *";
@@ -34,15 +34,17 @@ function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, string |
  *
  *   every tick   health pings — 2 per environment (`pingHealth`), 4 today.
  *   :00          the hourly-polls slot, and nothing else may run on this
- *                tick. Today two pollers, each its own `safely` arm:
- *                `pollCloudflare` — 1 GraphQL request per environment (2
- *                today), skipped entirely unless BOTH `CF_ANALYTICS_TOKEN` and
- *                `CF_ANALYTICS_ACCOUNT_ID` are set; and `pollRailway` — 1
- *                GraphQL request per environment that HAS a project token
- *                (`RAILWAY_TOKEN_<KEY>`, ≤2 today), skipped entirely when none
- *                does. So this tick is health 2N + Cloudflare N + Railway N =
- *                4N requests for N environments: 8 today. Phase 5's last
- *                poller joins it here.
+ *                tick. Three pollers, each its own `safely` arm (one failing
+ *                never skips another): `pollCloudflare` — 1 GraphQL request
+ *                per environment (2 today), skipped entirely unless BOTH
+ *                `CF_ANALYTICS_TOKEN` and `CF_ANALYTICS_ACCOUNT_ID` are set;
+ *                `pollRailway` — 1 GraphQL request per environment that HAS a
+ *                project token (`RAILWAY_TOKEN_<KEY>`, ≤2 today), skipped
+ *                entirely when none does; and `pollSaplingMetrics` — 1 GET per
+ *                environment (2 today; `redirect: "manual"`, so never a second
+ *                hop), skipped entirely unless `SAPLING_METRICS_TOKEN` is set.
+ *                So this tick is health 2N + Cloudflare N + Railway N +
+ *                Sapling N = 5N requests for N environments: 10 today.
  *   :10 (h%6)    `recomputeAllProgress` — UNBOUNDED: `fetchGithubRefProgress`
  *                issues one request per issue number of every array-ref
  *                sprint, so it gets an invocation to itself.
@@ -86,6 +88,12 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
     const railway = railwayTokens(env, envs);
     if (Object.values(railway).some(Boolean)) {
       await safely("railway", () => pollRailway(env.DB, railway, envs, scheduledTime, fetchImpl));
+    }
+    // Sapling's active users: ONE token for every environment. Absent or empty
+    // → not called, and Active users stays "not connected".
+    const sapling = env.SAPLING_METRICS_TOKEN;
+    if (sapling) {
+      await safely("sapling", () => pollSaplingMetrics(env.DB, sapling, envs, scheduledTime, fetchImpl));
     }
     return;
   }

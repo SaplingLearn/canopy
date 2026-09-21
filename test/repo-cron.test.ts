@@ -29,8 +29,9 @@ const RECONCILE_TICK = Date.parse("2026-09-20T12:20:00Z");// reconcileRepo, alon
 const PRUNE_TICK = Date.parse("2026-09-20T12:30:00Z");    // pruneRepoCapture (D1 only)
 const NOT_SIX = Date.parse("2026-09-20T13:20:00Z");       // the same minute, a non-6-hourly hour
 
+/** `SAPLING_METRICS_TOKEN` is pinned absent unless a test sets it: a local `.dev.vars` must not decide a request count. */
 const ghEnv = (over: Partial<Env> = {}): Env =>
-  ({ ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r", ...over }) as unknown as Env;
+  ({ ...env, GITHUB_SERVICE_TOKEN: "t", GITHUB_REPO: "o/r", SAPLING_METRICS_TOKEN: undefined, ...over }) as unknown as Env;
 /** Both Railway project tokens pinned absent: a local `.dev.vars` must not decide a test. */
 const NO_RAILWAY = { RAILWAY_TOKEN_STAGING: undefined, RAILWAY_TOKEN_PRODUCTION: undefined } as const;
 const okFetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
@@ -310,6 +311,96 @@ describe("handleRepoCron", () => {
       }) as typeof fetch;
       await expect(handleRepoCron(rwEnv(), HOURLY, fetchImpl)).resolves.toBeUndefined();
       expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
+    });
+  });
+
+  // Task 18: the slot's third poller. Sapling's active users run at minute 0
+  // ONLY, and only when `SAPLING_METRICS_TOKEN` is set (and not empty).
+  describe("the hourly Sapling active-users poll", () => {
+    const METRICS_PATH = "/api/internal/metrics";
+    const RW_URL = "https://backboard.railway.com/graphql/v2";
+    const CF_URL = "https://api.cloudflare.com/client/v4/graphql";
+    const spEnv = (over: Partial<Env> = {}): Env =>
+      ghEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(ENVS), CF_ANALYTICS_TOKEN: undefined, CF_ANALYTICS_ACCOUNT_ID: undefined,
+        ...NO_RAILWAY, SAPLING_METRICS_TOKEN: "s3cret", ...over,
+      });
+    /** Health pings answer 200; Sapling answers its three windows; `broken` URLs throw. */
+    const recorder = (broken: string[] = []) => {
+      const calls: string[] = [];
+      const auth: (string | null)[] = [];
+      const fetchImpl = (async (u: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(u);
+        calls.push(url);
+        if (broken.includes(url)) throw new Error("connect timeout");
+        if (!url.endsWith(METRICS_PATH)) return new Response("ok", { status: 200 });
+        auth.push(new Headers(init?.headers).get("authorization"));
+        return new Response(JSON.stringify({ active_users: { "24h": 74, "7d": 318, "30d": 318 } }), { status: 200 });
+      }) as typeof fetch;
+      return { calls, auth, fetchImpl, sapling: () => calls.filter((c) => c.endsWith(METRICS_PATH)) };
+    };
+    const spRows = () => all<{ env: string; metric: string; value: number; at: string }>(env.DB,
+      `SELECT env, metric, value, at FROM repo_metrics WHERE metric LIKE 'active_users_%' ORDER BY env, metric`);
+
+    it("at minute 0 with the token, asks each environment's backend once and stores the hour", async () => {
+      const r = recorder();
+      await handleRepoCron(spEnv(), HOURLY, r.fetchImpl);
+      expect(r.sapling()).toEqual([
+        "https://api.staging.saplinglearn.com/api/internal/metrics", "https://api.saplinglearn.com/api/internal/metrics",
+      ]);
+      expect(r.auth).toEqual(["Bearer s3cret", "Bearer s3cret"]);
+      expect(r.calls).toHaveLength(6); // 4 health pings + 2 Sapling requests
+      const at = "2026-09-20T12:00:00.000Z";
+      expect(await spRows()).toEqual([
+        { env: "production", metric: "active_users_24h", value: 74, at }, { env: "production", metric: "active_users_30d", value: 318, at },
+        { env: "production", metric: "active_users_7d", value: 318, at },
+        { env: "staging", metric: "active_users_24h", value: 74, at }, { env: "staging", metric: "active_users_30d", value: 318, at },
+        { env: "staging", metric: "active_users_7d", value: 318, at },
+      ]);
+      expect(await snapshots()).toHaveLength(0); // still nothing ELSE on this tick
+    });
+
+    it("the full slot: health 2N + Cloudflare N + Railway N + Sapling N = 5N requests", async () => {
+      const r = recorder();
+      await handleRepoCron(spEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(ENVS.map((e, i) => ({ ...e, railwayEnvironmentId: `env-${i}`, railwayServiceId: "svc" }))),
+        CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct",
+        RAILWAY_TOKEN_STAGING: "tok-staging", RAILWAY_TOKEN_PRODUCTION: "tok-production",
+      }), HOURLY, r.fetchImpl);
+      expect(r.calls).toHaveLength(10);
+      expect(r.sapling()).toHaveLength(2);
+    });
+
+    it("at minute 10 it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(spEnv(), PROGRESS_TICK, r.fetchImpl);
+      expect(r.sapling()).toHaveLength(0);
+      expect(await spRows()).toEqual([]);
+    });
+
+    it.each([["absent", undefined], ["empty", ""]])("with the token %s it is not called", async (_name, token) => {
+      const r = recorder();
+      await handleRepoCron(spEnv({ SAPLING_METRICS_TOKEN: token }), HOURLY, r.fetchImpl);
+      expect(r.sapling()).toHaveLength(0);
+      expect(r.calls).toHaveLength(4); // the health pings, nothing else
+      expect(await spRows()).toEqual([]);
+    });
+
+    it("a Sapling endpoint that throws never costs the tick", async () => {
+      const r = recorder(["https://api.staging.saplinglearn.com/api/internal/metrics", "https://api.saplinglearn.com/api/internal/metrics"]);
+      await expect(handleRepoCron(spEnv(), HOURLY, r.fetchImpl)).resolves.toBeUndefined();
+      expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
+      expect(await spRows()).toEqual([]);
+    });
+
+    it("Cloudflare and Railway both failing do not skip it", async () => {
+      const r = recorder([CF_URL, RW_URL]);
+      await handleRepoCron(spEnv({
+        REPO_ENVIRONMENTS: JSON.stringify(ENVS.map((e, i) => ({ ...e, railwayEnvironmentId: `env-${i}`, railwayServiceId: "svc" }))),
+        CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct",
+        RAILWAY_TOKEN_STAGING: "tok-staging", RAILWAY_TOKEN_PRODUCTION: "tok-production",
+      }), HOURLY, r.fetchImpl);
+      expect(await spRows()).toHaveLength(6);
     });
   });
 

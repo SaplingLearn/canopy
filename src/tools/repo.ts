@@ -35,11 +35,15 @@ import { CF_POLLED, type RepoEventRow, type RepoPrRow } from "../repo/types";
 // `rw_mem_mb` the minute-0 tick polls from Railway, the latest point per
 // environment picked out in memory and shown only while it is current.
 //
+// Active users (Task 18) ride it too: hourly `active_users_<range>` GAUGES the
+// minute-0 tick asks Sapling's own backend for — Canopy cannot compute them —
+// shown, like hosting, only while the latest reading is current.
+//
 // Every SECTION now has a capture path, so the `UNCAPTURED` object that used to
-// list the ones without is gone with its last entry (hosting). What Canopy
-// still has NO capture path for is one metric INSIDE the usage section — each
-// environment's active users — returned as `users: null`, never guessed. A
-// section with a capture path that has not landed yet is still `not_connected`.
+// list the ones without is gone with its last entry (hosting). A section — or
+// one metric inside the usage section, e.g. `users: null` while Sapling's
+// endpoint is not built — whose capture has not landed yet is still
+// `not_connected`, never guessed.
 
 const DAY = 86_400_000;
 const PR_LIMIT = 8;
@@ -75,7 +79,10 @@ export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboa
 /** A hosting figure is shown as CURRENT, so it must be: the Railway poll
  *  (src/repo/poll.ts) is hourly and stores complete hours only, so a healthy
  *  poller's newest point is 1–2 hours old. Past 3 hours the poll has stopped —
- *  the cell reads "—" rather than pass an old gauge off as now. */
+ *  the cell reads "—" rather than pass an old gauge off as now.
+ *  The ONE staleness rule for an hourly gauge: active users (Task 18) reuse it
+ *  — that poll stamps the current hour, so a healthy reading is under ~1h10m
+ *  old and 3 hours forgives two missed ticks, no more. */
 const HOSTING_STALE_MS = 3 * 3_600_000;
 
 /** Each environment ships two deployables, on two different hosts. */
@@ -196,9 +203,10 @@ const signed = (n: number, d: number, unit = ""): string => `${n > 0 ? "+" : n <
 
 // ── usage + Cloudflare (Task 16) ─────────────────────────────────────────────
 const HOUR = 3_600_000;
-/** Every series the Usage tab reads, fetched in ONE statement. The
- *  `active_users_*` gauges have no writer yet (Task 18) — reading them now
- *  costs nothing and keeps `users: null` until one exists. */
+/** Every series the Usage tab reads, fetched in ONE statement: Cloudflare's
+ *  hourly counts and the `active_users_<range>` gauges `pollSaplingMetrics`
+ *  writes (src/repo/poll.ts) — one metric PER RANGE, because a 7-day distinct
+ *  count is not derivable from 24-hour ones. */
 const USAGE_METRICS = ["cf_requests", "cf_errors", "active_users_24h", "active_users_7d", "active_users_30d"];
 /** The hosting block's two gauges — appended to the SAME one read, never a
  *  statement per environment. Kept apart from `USAGE_METRICS` because the two
@@ -245,10 +253,23 @@ interface UsagePoint { t: number; value: number }
  *    requests it is a true "0.00%"; with NO point, 0 of 0 is not a rate: `null`.
  *  - Totals are sums of real points only; the bound changes which zero buckets
  *    the sparkline may draw, never a number.
+ *
+ * ACTIVE USERS are a different kind of series — an hourly GAUGE Sapling
+ * computes at request time ("distinct users in the trailing 24h, as of now"),
+ * one metric per range — so none of the above applies to them:
+ *  - `users.value` for range R is the LATEST `active_users_R` reading, NEVER a
+ *    sum of readings, and only while it is CURRENT: at most `HOSTING_STALE_MS`
+ *    older than `now` (and not stamped ahead of it), else `users: null` — an
+ *    old gauge is not passed off as now. `null` renders "not connected" under
+ *    Active users, which is also the true, designed state while Cloudflare is
+ *    connected and Sapling's endpoint is not built yet.
+ *  - `users.trend` is the readings inside the trailing range, oldest first,
+ *    and is NEVER zero-filled: a missing hour is a poll that did not land —
+ *    unknown, not zero users.
  */
 function projectUsage(
   rows: { metric: string; env: string; part: string; at: string; value: number }[], envs: RepoEnvConfig[], endExcl: number,
-  polled: Record<string, unknown>
+  polled: Record<string, unknown>, now: number
 ): { usage: Record<RepoRange, RepoUsageEnv[]>; cloudflare: Record<RepoRange, RepoCfRow[]>; anyUsage: boolean } {
   const usage = {} as Record<RepoRange, RepoUsageEnv[]>;
   const cloudflare = {} as Record<RepoRange, RepoCfRow[]>;
@@ -273,7 +294,9 @@ function projectUsage(
       const inRange = (pts: UsagePoint[]) => pts.filter((p) => p.t >= start);
       const req = inRange(reqAll);
       const err = inRange(errAll);
-      const usr = inRange(series(`active_users_${range}`, ""));
+      // The gauge's window trails `now`, not the last complete hour: its
+      // newest reading is stamped with the CURRENT hour (`endExcl` itself).
+      const usr = series(`active_users_${range}`, "").filter((p) => p.t <= now && p.t > now - hours * HOUR);
 
       // `reqAll` is ascending: its first point predating the range means
       // capture was already running when the range began.
@@ -308,8 +331,9 @@ function projectUsage(
           { env: cfg.label, label: "Workers errors", value: compact(errors) },
         );
       }
-      const users: RepoUsageMetric | null = usr.length
-        ? { value: compact(usr[usr.length - 1].value), trend: usr.map((p) => p.value), tone: "neutral" }
+      const latestUsers = usr.length ? usr[usr.length - 1] : null; // `rows` is ascending by `at`
+      const users: RepoUsageMetric | null = latestUsers && now - latestUsers.t <= HOSTING_STALE_MS
+        ? { value: compact(latestUsers.value), trend: usr.map((p) => p.value), tone: "neutral" }
         : null;
       if (requests || users) anyUsage = true;
       usage[range].push({ name: cfg.label, host: cfg.frontendUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""), requests, errorRate, users });
@@ -757,6 +781,9 @@ export async function getRepoDashboard(
   // The `cf_polled` snapshot (how far each environment's polls have looked —
   // what entitles a missing hour to be drawn as 0) is ONE more read, issued
   // beside the first and never per environment.
+  // Active users (Task 18) are in that SAME statement too — `active_users_*`
+  // is part of `USAGE_METRICS`, so a CURRENT reading makes `usage` ok on its
+  // own, and a reading that has ever landed makes a quiet section `empty`.
   // The hosting block's `rw_*` gauges (Task 17) ride the SAME statement, and its
   // three states mirror health's: `ok` with a CURRENT figure for any
   // environment, `empty` when an `rw_*` row has ever landed but none is current
@@ -769,7 +796,7 @@ export async function getRepoDashboard(
       ])
     : [[], null];
   const polled = polledSnap?.data && typeof polledSnap.data === "object" ? (polledSnap.data as Record<string, unknown>) : {};
-  const used = projectUsage(usageRows, envs, usageEnd, polled);
+  const used = projectUsage(usageRows, envs, usageEnd, polled, now);
   // Gated on the WIDEST range; a narrower one may legitimately hold no rows.
   const anyCf = used.cloudflare["30d"].length > 0;
   const hosting = projectHosting(usageRows, envs, now);

@@ -1,0 +1,311 @@
+/**
+ * Task 18 — active users, from Sapling's own metrics endpoint (source M).
+ *
+ * Canopy cannot compute active users; only Sapling's database knows. The repo
+ * cron's minute-0 tick asks each environment's backend
+ * (`GET {apiUrl}/api/internal/metrics`, a bearer token) and `pollSaplingMetrics`
+ * stores the three windows as hourly GAUGES — `active_users_24h` / `_7d` /
+ * `_30d`, `env` = the config key, `part` = "". The whole response is validated
+ * or NOTHING is written; the token goes to one https URL and never follows a
+ * redirect. `getRepoDashboard` shows the latest reading of a range only while
+ * it is current (≤ 3 hours old), and its trend is the readings themselves —
+ * never zero-filled, never summed.
+ * The fetch is stubbed at the Response level; every assertion is on D1 rows or
+ * on the projection built from them.
+ */
+import { describe, it, expect, vi } from "vitest";
+import { env } from "cloudflare:test";
+import { all } from "../src/db";
+import { pollSaplingMetrics } from "../src/repo/poll";
+import { putMetric } from "../src/repo/store";
+import { getRepoDashboard } from "../src/tools/repo";
+import { ENVS } from "./helpers/repo";
+
+const NOW = Date.parse("2026-09-20T12:05:00Z");
+const HOUR = 3_600_000;
+const AT = "2026-09-20T12:00:00.000Z";
+const STAGING_URL = "https://api.staging.saplinglearn.com/api/internal/metrics";
+const PRODUCTION_URL = "https://api.saplinglearn.com/api/internal/metrics";
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+const users = (a: unknown, b: unknown, c: unknown) => ({ active_users: { "24h": a, "7d": b, "30d": c } });
+const stored = () => all<{ metric: string; env: string; part: string; value: number; at: string }>(env.DB,
+  `SELECT metric, env, part, value, at FROM repo_metrics WHERE metric LIKE 'active_users_%' ORDER BY env, metric, at`);
+/** Staging answers `body`; production is a plain 404 (the endpoint not built there). */
+const stagingAnswers = (respond: () => Response) => (async (u: RequestInfo | URL) =>
+  String(u) === STAGING_URL ? respond() : new Response("nope", { status: 404 })) as typeof fetch;
+const quietly = async (fn: () => Promise<void>) => {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try { await fn(); return spy.mock.calls.slice(); } finally { spy.mockRestore(); }
+};
+
+describe("pollSaplingMetrics", () => {
+  it("stores the three windows per environment at the hour, with the bearer token", async () => {
+    const seen: { url: string; auth: string | null; agent: string | null; redirect?: string; method?: string }[] = [];
+    const fetchImpl = (async (u: RequestInfo | URL, init?: RequestInit) => {
+      const h = new Headers(init?.headers);
+      seen.push({ url: String(u), auth: h.get("authorization"), agent: h.get("user-agent"), redirect: init?.redirect, method: init?.method });
+      return String(u).startsWith("https://api.staging")
+        ? json(users(6, 9, 9))
+        : new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl));
+    expect(await stored()).toEqual([
+      { metric: "active_users_24h", env: "staging", part: "", value: 6, at: AT },
+      { metric: "active_users_30d", env: "staging", part: "", value: 9, at: AT },
+      { metric: "active_users_7d", env: "staging", part: "", value: 9, at: AT },
+    ]);
+    // ONE request per environment, to ONE place, and a redirect is never followed.
+    expect(seen).toEqual([
+      { url: STAGING_URL, auth: "Bearer s3cret", agent: "canopy-metrics", redirect: "manual", method: "GET" },
+      { url: PRODUCTION_URL, auth: "Bearer s3cret", agent: "canopy-metrics", redirect: "manual", method: "GET" },
+    ]);
+  });
+
+  it("joins the path without a double slash when apiUrl ends in one", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (u: RequestInfo | URL) => { calls.push(String(u)); return json(users(1, 2, 3)); }) as typeof fetch;
+    await pollSaplingMetrics(env.DB, "s3cret", [{ ...ENVS[0], apiUrl: "https://api.staging.saplinglearn.com//" }], NOW, fetchImpl);
+    expect(calls).toEqual([STAGING_URL]);
+    expect(await stored()).toHaveLength(3);
+  });
+
+  it("a 302 writes nothing — the token is never carried to wherever it points", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (u: RequestInfo | URL) => {
+      calls.push(String(u));
+      return new Response(null, { status: 302, headers: { location: "https://elsewhere.example/api/internal/metrics" } });
+    }) as typeof fetch;
+    await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl));
+    expect(calls).toEqual([STAGING_URL, PRODUCTION_URL]); // one each, and nothing to elsewhere.example
+    expect(await stored()).toEqual([]);
+  });
+
+  it("an http:// apiUrl is never fetched — a bearer token is not sent in clear — and the other environment still polls", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (u: RequestInfo | URL) => { calls.push(String(u)); return json(users(1, 2, 3)); }) as typeof fetch;
+    const envs = [{ ...ENVS[0], apiUrl: "http://api.staging.saplinglearn.com" }, ENVS[1]];
+    const logged = await quietly(() => pollSaplingMetrics(env.DB, "s3cret", envs, NOW, fetchImpl));
+    expect(calls).toEqual([PRODUCTION_URL]);
+    expect((await stored()).map((r) => r.env)).toEqual(["production", "production", "production"]);
+    expect(JSON.stringify(logged)).toContain("staging");
+  });
+
+  it("an apiUrl that is not a URL at all is skipped without throwing", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (u: RequestInfo | URL) => { calls.push(String(u)); return json(users(1, 2, 3)); }) as typeof fetch;
+    await expect(quietly(() => pollSaplingMetrics(env.DB, "s3cret", [{ ...ENVS[0], apiUrl: "" }, { ...ENVS[1], apiUrl: "not a url" }], NOW, fetchImpl))).resolves.toBeDefined();
+    expect(calls).toEqual([]);
+    expect(await stored()).toEqual([]);
+  });
+
+  it.each([401, 403, 404, 500, 503, 201, 204])("HTTP %i writes nothing — only a 200 is an answer", async (status) => {
+    const body = status === 204 ? null : JSON.stringify(users(6, 9, 9));
+    await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, (async () => new Response(body, { status })) as typeof fetch));
+    expect(await stored()).toEqual([]);
+  });
+
+  it("a thrown fetch writes nothing and does not throw", async () => {
+    const fetchImpl = (async () => { throw new Error("connect timeout"); }) as typeof fetch;
+    await expect(quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl))).resolves.toBeDefined();
+    expect(await stored()).toEqual([]);
+  });
+
+  // The whole response or nothing: numbers that contradict each other, or a
+  // window that is not a count, are not evidence for the OTHER windows either.
+  describe("validation — one bad window costs that environment the whole tick", () => {
+    const REJECTED: [string, unknown][] = [
+      ["a string", users("6", 9, 9)],
+      ["a float", users(6.5, 9, 9)],
+      ["a negative", users(6, -1, 9)],
+      ["null", users(6, 9, null)],
+      ["a missing window", { active_users: { "24h": 6, "7d": 9 } }],
+      ["a boolean", users(true, 9, 9)],
+      ["over the ceiling", users(6, 9, 10_000_001)],
+      ["an exponent past the integer range", users(6, 9, 1e21)],
+      ["24h above 7d", users(10, 9, 12)],
+      ["7d above 30d", users(6, 13, 12)],
+      ["no active_users object", { users: { "24h": 6, "7d": 9, "30d": 9 } }],
+      ["active_users as an array", { active_users: [6, 9, 9] }],
+      ["active_users as null", { active_users: null }],
+      ["a JSON scalar", 7],
+      ["JSON null", null],
+    ];
+    it.each(REJECTED)("%s → zero rows", async (_name, body) => {
+      const logged = await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, stagingAnswers(() => json(body))));
+      expect(await stored()).toEqual([]);
+      expect(JSON.stringify(logged)).toContain("staging"); // says WHICH environment
+    });
+
+    it("NaN / a body that is not JSON → zero rows", async () => {
+      for (const text of ['{"active_users":{"24h":NaN,"7d":9,"30d":9}}', "<html>502 Bad Gateway</html>", ""]) {
+        await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, stagingAnswers(() => new Response(text, { status: 200 }))));
+      }
+      expect(await stored()).toEqual([]);
+    });
+
+    it("never logs more than ~80 characters of a body it rejected", async () => {
+      const long = "x".repeat(5_000);
+      const logged = await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, stagingAnswers(() => new Response(long, { status: 200 }))));
+      expect(JSON.stringify(logged)).not.toContain("x".repeat(81));
+    });
+
+    it("a bad environment never costs the good one beside it", async () => {
+      const fetchImpl = (async (u: RequestInfo | URL) => json(String(u) === STAGING_URL ? users(10, 9, 12) : users(74, 318, 318))) as typeof fetch;
+      await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl));
+      expect((await stored()).map((r) => [r.env, r.metric, r.value])).toEqual([
+        ["production", "active_users_24h", 74], ["production", "active_users_30d", 318], ["production", "active_users_7d", 318],
+      ]);
+    });
+
+    it("accepts the edges: zeros, equal windows, and exactly the ceiling", async () => {
+      const fetchImpl = (async (u: RequestInfo | URL) => json(String(u) === STAGING_URL ? users(0, 0, 0) : users(10_000_000, 10_000_000, 10_000_000))) as typeof fetch;
+      await pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl);
+      expect((await stored()).map((r) => r.value)).toEqual([10_000_000, 10_000_000, 10_000_000, 0, 0, 0]);
+    });
+  });
+
+  it("keeps the FIRST reading of an hour: a second poll inside it writes nothing new", async () => {
+    await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, stagingAnswers(() => json(users(6, 9, 9)))));
+    await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW + 20 * 60_000, stagingAnswers(() => json(users(7, 10, 10)))));
+    expect((await stored()).map((r) => r.value)).toEqual([6, 9, 9]);
+    // The next hour is its own point.
+    await quietly(() => pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW + HOUR, stagingAnswers(() => json(users(7, 10, 10)))));
+    expect(await stored()).toHaveLength(6);
+  });
+
+  it("never logs the token, whatever fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      // The worst cases: the failure quotes the request back; the body echoes the header.
+      await pollSaplingMetrics(env.DB, "s3cret-token", ENVS, NOW, (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        throw new Error(`request failed: ${JSON.stringify(init?.headers)}`);
+      }) as typeof fetch);
+      await pollSaplingMetrics(env.DB, "s3cret-token", ENVS, NOW, (async () => new Response("bad token: Bearer s3cret-token", { status: 200 })) as typeof fetch);
+      await pollSaplingMetrics(env.DB, "s3cret-token", ENVS, NOW, (async () => new Response("no", { status: 401 })) as typeof fetch);
+      expect(spy).toHaveBeenCalled();
+      const logged = JSON.stringify(spy.mock.calls.map((c) => c.map((a) => (a instanceof Error ? `${a.message} ${a.stack}` : a))));
+      expect(logged).not.toContain("s3cret-token");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ── the projection ───────────────────────────────────────────────────────────
+const ok = <T>(s: { status: string; data?: T }): T => { expect(s.status).toBe("ok"); return (s as { data: T }).data; };
+/** The start of the hour `h` hours before NOW's own (12:00): h=0 → 12:00, the newest reading a healthy poll has. */
+const hoursBack = (h: number) => new Date(Date.parse(AT) - h * HOUR).toISOString();
+const gauge = (range: "24h" | "7d" | "30d", envKey: string, h: number, value: number) =>
+  putMetric(env.DB, { metric: `active_users_${range}`, env: envKey, part: "", value, at: hoursBack(h) });
+const cfPoint = async (envKey: string, h: number, requests: number, errors: number) => {
+  await putMetric(env.DB, { metric: "cf_requests", env: envKey, part: "frontend", value: requests, at: hoursBack(h) });
+  await putMetric(env.DB, { metric: "cf_errors", env: envKey, part: "frontend", value: errors, at: hoursBack(h) });
+};
+
+describe("getRepoDashboard — active users from active_users_* gauges", () => {
+  it("each range shows ITS OWN metric's latest reading, per environment", async () => {
+    await gauge("24h", "staging", 0, 74);
+    await gauge("7d", "staging", 0, 318);
+    await gauge("30d", "staging", 0, 1204);
+    await gauge("24h", "production", 0, 5);
+    const u = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+    expect(u["24h"][0].users).toMatchObject({ value: "74", tone: "neutral" });
+    expect(u["7d"][0].users).toMatchObject({ value: "318", tone: "neutral" });
+    expect(u["30d"][0].users).toMatchObject({ value: "1.2K", tone: "neutral" });
+    expect(u["24h"][1].users).toMatchObject({ value: "5" });
+    expect(u["7d"][1].users).toBeNull(); // production never reported a 7d window
+  });
+
+  // A gauge, not a count: the value is the LATEST reading (never a sum of the
+  // hourly ones), and a missing hour is unknown — it is left out, never drawn as 0.
+  it("the trend is the readings inside the range, oldest first — not summed, not zero-filled", async () => {
+    await gauge("24h", "staging", 5, 60);
+    await gauge("24h", "staging", 2, 70); // hours 4 and 3 were never polled
+    await gauge("24h", "staging", 0, 74);
+    await gauge("24h", "staging", 30, 999); // outside the 24h range
+    const { users } = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"][0];
+    expect(users).toEqual({ value: "74", trend: [60, 70, 74], tone: "neutral" });
+  });
+
+  it("a range's trend reaches back the whole range", async () => {
+    await gauge("7d", "staging", 0, 300);
+    await gauge("7d", "staging", 100, 250);
+    await gauge("7d", "staging", 24 * 7 + 1, 111); // just outside 7 days
+    await gauge("30d", "staging", 0, 900);
+    await gauge("30d", "staging", 24 * 29, 700);
+    const u = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+    expect(u["7d"][0].users?.trend).toEqual([250, 300]);
+    expect(u["30d"][0].users?.trend).toEqual([700, 900]);
+  });
+
+  it("a reading exactly 3 hours old still shows; one older than that does not", async () => {
+    await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 41, at: new Date(NOW - 3 * HOUR).toISOString() });
+    await gauge("24h", "production", 4, 12); // 08:00 — 4h05m before NOW
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    const [staging, production] = ok(d.usage)["24h"];
+    expect(staging.users).toMatchObject({ value: "41" });
+    expect(production.users).toBeNull();
+  });
+
+  it("only stale readings → users null everywhere, and the section reads empty (the poll has stopped), not not_connected", async () => {
+    await gauge("24h", "staging", 6, 41);
+    await gauge("7d", "staging", 6, 90);
+    await gauge("30d", "staging", 6, 90);
+    expect((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage.status).toBe("empty");
+  });
+
+  it("readings aged out of the 30-day read entirely → still empty, not not_connected", async () => {
+    await gauge("7d", "staging", 24 * 40, 90);
+    expect((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage.status).toBe("empty");
+  });
+
+  it("a reading stamped ahead of the clock is not a current one", async () => {
+    await gauge("24h", "staging", -2, 500);
+    expect((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage.status).toBe("empty");
+  });
+
+  // The designed state while Cloudflare is connected and Sapling's endpoint is
+  // not built yet: live requests, and `users: null` → "not connected" under
+  // Active users. It is TRUE, so it stays.
+  it("requests live, users null", async () => {
+    await cfPoint("staging", 1, 500, 5);
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    const [staging] = ok(d.usage)["24h"];
+    expect(staging.requests).toMatchObject({ value: "500" });
+    expect(staging.errorRate).toMatchObject({ value: "1.00%" });
+    expect(staging.users).toBeNull();
+  });
+
+  it("users live, requests null — and the Cloudflare panel stays unconnected", async () => {
+    await gauge("24h", "staging", 0, 74);
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    const [staging] = ok(d.usage)["24h"];
+    expect(staging).toMatchObject({ requests: null, errorRate: null, users: { value: "74", trend: [74], tone: "neutral" } });
+    expect(d.cloudflare.status).toBe("not_connected");
+    expect(d.hosting.status).toBe("not_connected");
+  });
+
+  it("both live, side by side", async () => {
+    await cfPoint("staging", 1, 500, 0);
+    await gauge("24h", "staging", 0, 74);
+    const [staging] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests).toMatchObject({ value: "500" });
+    expect(staging.users).toMatchObject({ value: "74" });
+  });
+
+  it("a row for an unconfigured environment, or with a part, is nobody's active users", async () => {
+    await gauge("24h", "preview", 0, 9);
+    await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "backend", value: 9, at: hoursBack(0) });
+    // Something HAS landed under the name, so the section is "gone quiet", never a guess.
+    expect((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage.status).toBe("empty");
+  });
+
+  it("what the poller writes is what the screen reads", async () => {
+    const fetchImpl = (async (u: RequestInfo | URL) => json(String(u) === STAGING_URL ? users(74, 318, 1204) : users(1, 2, 3))) as typeof fetch;
+    await pollSaplingMetrics(env.DB, "s3cret", ENVS, NOW, fetchImpl);
+    const u = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+    expect([u["24h"][0].users?.value, u["7d"][0].users?.value, u["30d"][0].users?.value]).toEqual(["74", "318", "1.2K"]);
+    expect([u["24h"][1].users?.value, u["7d"][1].users?.value, u["30d"][1].users?.value]).toEqual(["1", "2", "3"]);
+  });
+});

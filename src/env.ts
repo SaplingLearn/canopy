@@ -28,4 +28,9 @@ export interface Env {
   // A third environment needs only its secret (src/repo/cron.ts looks the name up) — plus a line here for the type.
   RAILWAY_TOKEN_STAGING?: string;
   RAILWAY_TOKEN_PRODUCTION?: string;
+  // SECRET — the bearer token Sapling's own `GET {apiUrl}/api/internal/metrics` expects (the contract:
+  // docs/superpowers/specs/2026-09-20-sapling-metrics-endpoint.md). ONE value for every environment, sent only to
+  // an https `apiUrl` and never across a redirect. Absent/empty → the hourly active-users poll (src/repo/poll.ts)
+  // is not called and the Usage tab's Active users stays "not connected".
+  SAPLING_METRICS_TOKEN?: string;
 }

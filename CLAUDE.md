@@ -86,7 +86,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   (service-token GitHub reads — `ghJson` / `ghGraphql` / `reconcileRepo`, driven off the admin
   `/admin/backfill` route AND the repo cron's 6-hourly `:20` tick — never on the render path), `poll.ts`
   (`pingHealth` — a polite `GET` per environment deployable into `repo_metrics`, all targets pinged
-  concurrently, every cron tick — plus the two minute-0 pollers, `pollCloudflare` and `pollRailway`), and `cron.ts` (`handleRepoCron` — the repo trigger's one dispatcher, ONE
+  concurrently, every cron tick — plus the three minute-0 pollers, `pollCloudflare`, `pollRailway` and `pollSaplingMetrics`), and `cron.ts` (`handleRepoCron` — the repo trigger's one dispatcher, ONE
   heavy job per invocation, with the subrequest budget stated at the dispatcher; see the Repo dashboard
   section below).
 - `migrations/` — D1 SQL (`0001_init` … `0010_triage_resolve`, then `0011_fts_recreate`,
@@ -518,11 +518,12 @@ did not.
 **The repo cron's per-tick schedule** (`src/repo/cron.ts`, `REPO_CRON = "*/10 * * * *"`, budget arithmetic
 stated at the dispatcher) — ONE heavy job per invocation, keyed off the fire time's UTC minute/hour:
 EVERY tick pings health (2 requests per environment, 4 today); `:00` is the hourly-polls slot (nothing else
-may run on it) — today TWO pollers, each its own `safely` arm: `pollCloudflare`, one GraphQL request per
-environment, skipped entirely unless BOTH `CF_ANALYTICS_TOKEN` and `CF_ANALYTICS_ACCOUNT_ID` are set, and
-`pollRailway`, one GraphQL request per environment that has a project token, skipped entirely when none does
-(so the tick is health 2N + Cloudflare N + Railway N = 8 requests today); Phase 5's last poller joins it
-there; and every 6th hour `:10` runs `recomputeAllProgress`
+may run on it) — THREE pollers, each its own `safely` arm (one failing never skips another):
+`pollCloudflare`, one GraphQL request per environment, skipped entirely unless BOTH `CF_ANALYTICS_TOKEN` and
+`CF_ANALYTICS_ACCOUNT_ID` are set; `pollRailway`, one GraphQL request per environment that has a project
+token, skipped entirely when none does; and `pollSaplingMetrics`, one GET per environment, skipped entirely
+unless `SAPLING_METRICS_TOKEN` is set (so the tick is health 2N + Cloudflare N + Railway N + Sapling N = 5N,
+10 requests today); and every 6th hour `:10` runs `recomputeAllProgress`
 alone (unbounded — one request per issue number of every array-ref sprint), `:20` runs `reconcileRepo`
 alone (logging `failed` when non-empty), and `:30` runs `pruneRepoCapture` (D1 only). A tick of a
 non-6-hourly hour does health and nothing else.
@@ -559,16 +560,16 @@ the Commits tile's totals and the 14-day bars, which read `repo_events` unfilter
 without one: the `UNCAPTURED` object that listed them is GONE with its last entry (drift/branches/health
 left it with Phase 3, environments/deploys/CI failures with Phase 2's Task 10, coverage/bundle/TODO counts
 with Phase 4's Task 14, usage + the Cloudflare panel with Phase 5's Task 16, hosting with Task 17 — see
-below). What remains uncaptured is one metric INSIDE the usage section: each environment's ACTIVE USERS
-(`users: null` until Task 18's writer exists). A section whose capture has not landed yet still reads
-`not_connected`; the screen already renders every section's live shape.
+below), and the last METRIC inside the usage section — each environment's active users — with Task 18
+(see "Active users" below). A section, or one metric inside `usage`, whose capture has not landed yet still
+reads `not_connected`; the screen already renders every section's live shape.
 **Phase 3 closed drift, branches and health** (lighting up the drift strip, the branches list + Active
 branches tile, and the health block feeding the HEALTHY/DEGRADED/DOWN pill — see above; no GitHub settings
 change, no new secret); **Phase 4 (Task 14) closed coverage, bundle size and the TODO/FIXME count** (see the
 paragraph below); **Phase 5 (Task 16) closed the Usage tab's requests / error rate and the Cloudflare panel**
-(see "Cloudflare Workers analytics" below) and **Task 17 closed hosting** (see "Railway CPU and memory"
-below); what remains — active users — is specified in
-`docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. `pruneRepoCapture` (`src/repo/store.ts`) is
+(see "Cloudflare Workers analytics" below), **Task 17 closed hosting** (see "Railway CPU and memory"
+below) and **Task 18 built Canopy's side of active users** (see "Active users" below — the Sapling side is a
+spec, not yet built); the plan is `docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. `pruneRepoCapture` (`src/repo/store.ts`) is
 now CALLED — the repo cron's 6-hourly `:30` tick (`src/repo/cron.ts`) — and deletes `check` rows older than
 45 days ONLY `WHERE part IS NULL`: a FRONTEND deploy record IS a `check` row (the Workers Builds check,
 carrying `part = 'frontend'`), and pruning it on the same schedule as a plain CI check would silently lose
@@ -654,6 +655,36 @@ environment has a fresh CPU or memory figure (an environment with neither is lef
 `rw_*` row has EVER landed but none is fresh** (the poll has stopped — "No fresh hosting reading — the last
 Railway sample is over 3 hours old."), and `not_connected` when none ever did or no environment is
 configured.
+
+**Active users come from Sapling's own backend** (Phase 5, Task 18) — the third minute-0 poll, and the one
+number Canopy CANNOT compute (only Sapling's database knows who signed in). `pollSaplingMetrics`
+(`src/repo/poll.ts`) sends `GET {cfg.apiUrl}/api/internal/metrics` with `Authorization: Bearer
+<SAPLING_METRICS_TOKEN>` (user-agent `canopy-metrics`, the 8s ping timeout) once per environment and expects
+`200` → `{ "active_users": { "24h": n, "7d": n, "30d": n } }` — distinct authenticated users in each trailing
+window, computed at request time. **The contract Sapling implements is
+`docs/superpowers/specs/2026-09-20-sapling-metrics-endpoint.md`; that endpoint does NOT exist yet**, so
+today every poll is a 404, nothing is written, and Active users reads "not connected" beside live
+Requests / Error rate — the true, designed state. **The token goes to ONE place**: a non-`https:` `apiUrl`
+is never fetched (a bearer is not sent in clear), trailing slashes are normalised, and `redirect: "manual"`
++ "only a 200 is an answer" means a 3xx is a failure, never a hop that carries the header elsewhere. The
+token, headers and request init are never logged — only `cfg.key` and a short message, scrubbed of the token
+(scrubbed BEFORE it is cut), quoting at most 80 characters of a refused body. **Validation is the whole
+response or nothing** (`saplingActiveUsers`): each window must be a JSON number that is a non-negative
+INTEGER ≤ 10,000,000 AND `24h ≤ 7d ≤ 30d` — a string, a float, a negative, `null`, a missing key or windows
+that do not nest write NOTHING for that environment that tick (numbers that contradict each other are not
+evidence). Stored as hourly `active_users_24h` / `_7d` / `_30d` (`env` = the config key, `part = ''`), `at`
+= the CURRENT hour's floor with NO lag: unlike the two pollers above this is a point-in-time GAUGE, whole
+the moment it is read, so there is no partial-hour problem; `INSERT OR IGNORE` keeps the first reading of
+each hour. Never throws; one bad environment never costs the other.
+The projection costs **NO new statement** — the three names were already in `USAGE_METRICS`, so they ride
+the one `metricsSince` read (and the not-`ok`-path `metricsEver`). For range R, `users.value` is the LATEST
+`active_users_R` reading — **never a sum** — shown only while it is ≤ 3 hours older than `now` (the SAME
+`HOSTING_STALE_MS` rule hosting uses; a reading stamped ahead of the clock does not count), else
+`users: null`. `users.trend` is that metric's readings inside the trailing range, oldest first, **never
+zero-filled**: a missing hour is a poll that did not land — unknown, not zero users (the 30d trend can
+therefore carry up to 720 points). A current users reading makes `usage` `ok` on its own (requests may be
+`null` beside it, and the reverse); readings that have all gone stale leave `usage` `empty`, never
+`not_connected`.
 
 **Coverage, bundle size and the TODO/FIXME count are commit-status metrics** (Phase 4, Task 14) — a THIRD
 capture shape beside `repo_events` and the environment/deploy `repo_snapshots`: the target repo's CI posts
@@ -831,7 +862,11 @@ error rate and Cloudflare panel stay `not_connected`. They are deliberately NOT 
 from the environment `key`, upper-cased), sent as `Project-Access-Token`; absent → the hourly Railway poll
 skips THAT environment (absent both → it is not called, and `hosting` stays `not_connected`). **These tokens
 are NOT read-only** — Railway has no read-only scope; each is scoped to one environment of one project,
-which is the narrowest Railway offers, and neither may ever be logged. Vars
+which is the narrowest Railway offers, and neither may ever be logged. `SAPLING_METRICS_TOKEN` — the bearer
+token Sapling's `GET {apiUrl}/api/internal/metrics` expects (the same value on both sides; ONE token for
+every environment, so staging and production Sapling must accept the same one — a stated limitation of the
+contract doc); absent or empty → the hourly active-users poll is not called and the Usage tab's Active users
+stays "not connected". Never logged, never sent to a non-https URL or across a redirect. Vars
 (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`), `ADMIN_LOGINS`, `PUBLIC_ORIGIN`
 (absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`),
 `REPO_ENVIRONMENTS` (a JSON list, parsed by `src/repo/config.ts`'s `repoEnvironments()` — which branch
@@ -839,7 +874,7 @@ deploys to which environment plus its Worker/URLs, and — optional — its Rail
 the backend's `railwayServiceId` (ids, not secrets; the service id is the same in both environments); absent
 or malformed → `[]`. Today it encodes two:
 **staging** deploys from `main`, **production** from a `production` branch; backend on Railway, frontend on
-Cloudflare Workers. Now read in SIX places: the webhook's repo capture
+Cloudflare Workers. Now read in SEVEN places: the webhook's repo capture
 (matching a `deployment_status`/`check_run` delivery to its environment), the dashboard projection
 (`getRepoDashboard`'s `envs` param — the `environments`/`deploys`/`health` sections stay `not_connected` when
 it is empty; `ciFailures` does NOT consult it and is gated only on `run` capture), `reconcileRepo` — which
@@ -847,9 +882,9 @@ reads it for the GitHub ENVIRONMENT NAMES the deployments GraphQL query filters 
 BRANCHES whose head commit, head checks, and drift/branch comparisons it polls — and the repo cron's
 `pingHealth` (`src/repo/poll.ts`), which reads it for the two ping targets (frontend URL, `apiUrl +
 healthPath`) per environment — `pollCloudflare`, which reads each environment's `worker` (the
-script name the analytics query filters on) and `key` — and `pollRailway`, which reads `key` (→ its token),
-`railwayEnvironmentId` and `railwayServiceId`. Absent → no deployments arm, no env-head or head-checks arms, no drift
-compare (it needs two environments), no health pings, no analytics poll and no Railway poll, and
+script name the analytics query filters on) and `key` — `pollRailway`, which reads `key` (→ its token),
+`railwayEnvironmentId` and `railwayServiceId` — and `pollSaplingMetrics`, which reads `key` and `apiUrl`. Absent → no deployments arm, no env-head or head-checks arms, no drift
+compare (it needs two environments), no health pings, no analytics poll, no Railway poll and no active-users poll, and
 `environments`/`deploys`/`health`/`usage`/`cloudflare`/`hosting` stay
 `not_connected` — but the **branches arm still runs**: `computeBranches` degrades correctly with `envs: []`
 (head `main`, nothing excluded from the list), so a repo with no `REPO_ENVIRONMENTS` still gets a branches
@@ -858,8 +893,8 @@ Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
 not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` is three expressions: `*/10 * * * *`
 drives the repo cron (`src/repo/cron.ts`'s `handleRepoCron`), which spreads ONE heavy job per invocation
-across its six ticks an hour — environment health pings on EVERY tick; `:00` the hourly-polls slot (today
-the Cloudflare analytics poll and the Railway CPU/memory poll); and, every 6th hour, `:10` the sprint-progress backstop, `:20` the GitHub reconcile and `:30`
+across its six ticks an hour — environment health pings on EVERY tick; `:00` the hourly-polls slot (the
+Cloudflare analytics poll, the Railway CPU/memory poll and the Sapling active-users poll); and, every 6th hour, `:10` the sprint-progress backstop, `:20` the GitHub reconcile and `:30`
 the capture prune, each alone in its invocation because Cloudflare caps one at 50 subrequests — plus the two
 hourly digest candidates (see Email notifications). `src/index.ts` dispatches by EXACT string equality on
 `controller.cron`, so `REPO_CRON` and the expression in `wrangler.toml` must stay identical (pinned by a

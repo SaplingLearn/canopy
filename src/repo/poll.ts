@@ -1,7 +1,7 @@
 // Scheduled pulls for the repo dashboard — health pings, Cloudflare Workers
-// analytics, Railway CPU/memory. Each writes repo_metrics (the Cloudflare poll
-// also its `cf_polled` snapshot); none may throw — a dead target or a bad token
-// costs one data point, never the cron tick.
+// analytics, Railway CPU/memory, Sapling's active users. Each writes
+// repo_metrics (the Cloudflare poll also its `cf_polled` snapshot); none may
+// throw — a dead target or a bad token costs one data point, never the cron tick.
 import type { DB } from "../db";
 import type { RepoEnvConfig } from "./config";
 import { getSnapshot, putMetric, putSnapshot } from "./store";
@@ -249,6 +249,104 @@ export async function pollRailway(
       let message = e instanceof Error ? e.message : String(e);
       for (const secret of Object.values(tokens)) if (secret) message = message.split(secret).join("[redacted]");
       console.error("pollRailway", cfg.key, message);
+    }
+  }
+}
+
+// ── Sapling active users (source M) ──────────────────────────────────────────
+const SAPLING_METRICS_PATH = "/api/internal/metrics";
+const SAPLING_RANGES = ["24h", "7d", "30d"] as const;
+/** A sanity ceiling, far past any plausible user count — `repo_metrics` is
+ *  append-only, so an absurd number written once would be permanent. */
+const SAPLING_MAX_USERS = 10_000_000;
+const SAPLING_BODY_LOG_CHARS = 80;
+
+/**
+ * The three windows of a Sapling metrics body, or the reason it is refused.
+ * THE WHOLE RESPONSE OR NOTHING: each of `24h` / `7d` / `30d` must be a JSON
+ * number that is a non-negative INTEGER ≤ `SAPLING_MAX_USERS` (a string, a
+ * float, a negative, null and a missing key are all refused), AND the windows
+ * must nest — `24h ≤ 7d ≤ 30d`, which distinct-users-in-a-trailing-window
+ * guarantees by construction. Numbers that contradict each other are not
+ * evidence, so one bad window refuses the other two as well. Pure.
+ */
+function saplingActiveUsers(body: unknown): { values: number[] } | { refused: string } {
+  const users = record(body).active_users;
+  if (!users || typeof users !== "object" || Array.isArray(users)) return { refused: "no active_users object" };
+  const values: number[] = [];
+  for (const range of SAPLING_RANGES) {
+    const v = (users as Record<string, unknown>)[range];
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > SAPLING_MAX_USERS) {
+      return { refused: `active_users.${range} is not an integer in 0–${SAPLING_MAX_USERS} (${v === null ? "null" : typeof v})` };
+    }
+    values.push(v);
+  }
+  if (values[0] > values[1] || values[1] > values[2]) return { refused: "the windows do not nest (24h ≤ 7d ≤ 30d)" };
+  return { values };
+}
+
+/**
+ * Hourly `active_users_24h` / `_7d` / `_30d` per environment, `env` = the
+ * config key, `part` = "". Canopy cannot compute these — only Sapling's
+ * database knows who signed in — so each environment's BACKEND is asked:
+ * `GET {apiUrl}/api/internal/metrics`, `Authorization: Bearer <token>`, and a
+ * `200` carrying `{ "active_users": { "24h": n, "7d": n, "30d": n } }` (the
+ * contract: docs/superpowers/specs/2026-09-20-sapling-metrics-endpoint.md).
+ *
+ * THE TOKEN GOES TO ONE PLACE. The URL is `apiUrl` (trailing slashes dropped)
+ * plus the fixed path; an `apiUrl` that is not `https:` is never fetched — a
+ * bearer token is not sent in clear — and `redirect: "manual"` plus "only a
+ * 200 is an answer" means a 3xx is a failure, never a hop that would carry the
+ * header somewhere else. NOTHING here may log the token, a header or the
+ * request init: only `cfg.key` and a short message reach the console, and the
+ * message is scrubbed of the token in case a failure ever quotes it back. A
+ * refused body is quoted to at most 80 characters.
+ *
+ * `at` is the CURRENT hour's floor, with NO lag and no complete-hours rule —
+ * unlike the two pollers above. Those store per-hour sums/averages, where a
+ * partial hour written once is permanently short. This is a point-in-time
+ * GAUGE the endpoint computes at request time ("distinct users in the trailing
+ * 24h, as of now"), so there is no partial-hour problem: the reading is whole
+ * the moment it is taken, the hour is only its label, and `INSERT OR IGNORE`
+ * keeps the FIRST reading of each hour.
+ *
+ * Never throws. One request per environment, sequentially (2 today). Anything
+ * but a valid 200 — a non-200, a thrown fetch, a body that is not JSON or fails
+ * `saplingActiveUsers` — is logged and writes NOTHING for that environment this
+ * tick; the loop moves on, and Active users reads "not connected" (or, once a
+ * reading is over 3 hours old, stops showing — src/tools/repo.ts).
+ */
+export async function pollSaplingMetrics(
+  db: DB, token: string, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  const at = new Date(Math.floor(now / HOUR) * HOUR).toISOString();
+  // Scrubbed BEFORE it is cut: cutting first could leave half a token behind.
+  const scrub = (s: string) => (token ? s.split(token).join("[redacted]") : s);
+  const excerpt = (s: string) => scrub(s).slice(0, SAPLING_BODY_LOG_CHARS);
+  for (const cfg of envs) {
+    try {
+      const base = cfg.apiUrl.replace(/\/+$/, "");
+      let protocol = "";
+      try { protocol = new URL(base).protocol; } catch { /* not a URL: refused below */ }
+      if (protocol !== "https:") throw new Error("apiUrl is not an https URL — not fetched");
+      const res = await fetchImpl(base + SAPLING_METRICS_PATH, {
+        method: "GET",
+        redirect: "manual",
+        signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+        headers: { authorization: `Bearer ${token}`, "user-agent": "canopy-metrics" },
+      });
+      if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      let body: unknown;
+      try { body = JSON.parse(text); } catch { throw new Error(`body is not JSON: ${excerpt(text)}`); }
+      const parsed = saplingActiveUsers(body);
+      if ("refused" in parsed) throw new Error(`${parsed.refused}: ${excerpt(text)}`);
+      for (const [i, range] of SAPLING_RANGES.entries()) {
+        await putMetric(db, { metric: `active_users_${range}`, env: cfg.key, part: "", value: parsed.values[i], at });
+      }
+    } catch (e) {
+      // The message only — never the error object, the request init or a header.
+      console.error("pollSaplingMetrics", cfg.key, scrub(e instanceof Error ? e.message : String(e)).slice(0, 200));
     }
   }
 }
