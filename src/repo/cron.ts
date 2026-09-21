@@ -76,8 +76,9 @@ export async function runUsagePolls(env: Env, now: number, fetchImpl?: typeof fe
   const railway = Object.values(tokens).some(Boolean)
     ? await arm("railway", () => pollRailway(env.DB, tokens, envs, now, fetchImpl))
     : "not_configured";
-  // Sapling's active users: ONE token for every environment. Absent or empty
-  // → not called, and Active users stays "not connected".
+  // Sapling's active users AND product metrics (one response carries both):
+  // ONE token for every environment. Absent or empty → not called, and Active
+  // users / the Product blocks stay "not connected".
   const saplingToken = env.SAPLING_METRICS_TOKEN;
   const sapling = saplingToken
     ? await arm("sapling", () => pollSaplingMetrics(env.DB, saplingToken, envs, now, fetchImpl))

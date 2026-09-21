@@ -1,12 +1,14 @@
 // Scheduled pulls for the repo dashboard — health pings, Cloudflare Workers
-// analytics, Railway CPU/memory, Sapling's active users. Each writes
+// analytics, Railway CPU/memory, Sapling's active users and product metrics
+// (ONE request answers both). Each writes
 // repo_metrics (the Cloudflare poll also its `cf_polled` snapshot); none may
 // throw — a dead target or a bad token costs one data point, never the cron tick.
 import type { PollOutcome } from "@shared/repo";
 import type { DB } from "../db";
 import type { RepoEnvConfig } from "./config";
-import { getSnapshot, putMetric, putSnapshot } from "./store";
-import { CF_POLLED, CF_POLL_HOURS, cfCovered, type CfPolled } from "./types";
+import { countMetric, totalMetric } from "./product";
+import { getSnapshot, putMetric, putMetrics, putSnapshot } from "./store";
+import { CF_POLLED, CF_POLL_HOURS, cfCovered, type CfPolled, type RepoMetric } from "./types";
 
 export type { PollOutcome };
 
@@ -18,8 +20,9 @@ export type { PollOutcome };
  *  the SAME scrubbed message the poller logs, cut to `DETAIL_CHARS`; a
  *  `skipped` detail names what is missing, never a secret's value. */
 const DETAIL_CHARS = 200;
-const okOutcome = (env: string, written: number): PollOutcome => ({ env, status: "ok", written });
-const failedOutcome = (env: string, message: string): PollOutcome => ({ env, status: "failed", written: 0, detail: message.slice(0, DETAIL_CHARS) });
+const okOutcome = (env: string, written: number, detail?: string): PollOutcome =>
+  ({ env, status: "ok", written, ...(detail ? { detail: detail.slice(0, DETAIL_CHARS) } : {}) });
+const failedOutcome = (env: string, message: string, written = 0): PollOutcome => ({ env, status: "failed", written, detail: message.slice(0, DETAIL_CHARS) });
 const skippedOutcome = (env: string, detail: string): PollOutcome => ({ env, status: "skipped", written: 0, detail });
 
 const TEN_MIN = 600_000;
@@ -436,6 +439,89 @@ function saplingActiveUsers(body: unknown): { values: number[] } | { refused: st
   return { values };
 }
 
+// ── Sapling product metrics (contract v2) ────────────────────────────────────
+// docs/superpowers/specs/2026-09-21-sapling-product-metrics.md §3. The same
+// response may ALSO carry `counts` (windowed) and `totals` (point-in-time).
+const PRODUCT_KEY = /^[a-z][a-z0-9_]{0,39}$/;
+const PRODUCT_MAX_COUNTS = 48;
+const PRODUCT_MAX_TOTALS = 24;
+/** `repo_metrics` is append-only and first-write-wins: an absurd number written
+ *  once is permanent. 1e12 is exactly representable, as is every integer under it. */
+const PRODUCT_MAX_VALUE = 1_000_000_000_000;
+const PRODUCT_DROPPED_NAMES = 20;
+const PRODUCT_NAME_CHARS = 40;
+
+export interface ProductWindows { h24: number; d7: number; d30: number }
+export interface SaplingProductMetrics {
+  counts: Record<string, ProductWindows>;
+  totals: Record<string, number>;
+  /** What was refused, BY NAME — `counts.<key>` / `totals.<key>`, or the bare
+   *  section name when the whole section was ignored. At most 20 names, each cut
+   *  to 40 printable characters (a name is another service's text); never a value. */
+  dropped: string[];
+  /** How many were refused — `dropped` may name fewer. */
+  droppedCount: number;
+}
+
+/** A JSON integer in `0..1e12`. `typeof` refuses booleans, strings and null;
+ *  `Number.isInteger` refuses floats, NaN and ±Infinity. */
+const productInt = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= PRODUCT_MAX_VALUE;
+
+/**
+ * The `counts` / `totals` of a Sapling metrics body, validated PER KEY — one bad
+ * key never costs the others, and nothing here depends on `active_users`
+ * (which `saplingActiveUsers` judges on its own). A section that is absent is
+ * simply empty; one that is present but not a JSON object, or that holds more
+ * than 48 / 24 keys (a runaway producer is not evidence), is ignored WHOLE. A
+ * key must match `^[a-z][a-z0-9_]{0,39}$`; a `totals` value must be an integer
+ * in `0..1e12`; a `counts` value must be an object with EXACTLY the own keys
+ * `24h` / `7d` / `30d`, each such an integer, nesting `24h ≤ 7d ≤ 30d`.
+ *
+ * Pure, and never throws. The key names are another service's text: only OWN
+ * enumerable keys are read (`Object.keys`), and the results are
+ * prototype-less objects — so a key called `constructor` or `toString` is an
+ * ordinary entry, and `__proto__` (which the key pattern refuses anyway) can
+ * never reach a prototype.
+ */
+export function saplingProductMetrics(body: unknown): SaplingProductMetrics {
+  const counts = Object.create(null) as Record<string, ProductWindows>;
+  const totals = Object.create(null) as Record<string, number>;
+  const dropped: string[] = [];
+  let droppedCount = 0;
+  const drop = (name: string) => {
+    droppedCount++;
+    if (dropped.length < PRODUCT_DROPPED_NAMES) dropped.push(name);
+  };
+  const printable = (key: string) => key.slice(0, PRODUCT_NAME_CHARS).replace(/[^\x20-\x7e]/g, "?");
+  const top = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+  const section = (name: "counts" | "totals", cap: number, keep: (key: string, v: unknown) => boolean) => {
+    if (!Object.hasOwn(top, name) || top[name] === undefined) return;
+    const raw = top[name];
+    const keys = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.keys(raw) : null;
+    if (!keys || keys.length > cap) { drop(name); return; }
+    for (const key of keys) {
+      if (!PRODUCT_KEY.test(key) || !keep(key, (raw as Record<string, unknown>)[key])) drop(`${name}.${printable(key)}`);
+    }
+  };
+  section("counts", PRODUCT_MAX_COUNTS, (key, v) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+    const entry = v as Record<string, unknown>;
+    const own = Object.keys(entry);
+    if (own.length !== SAPLING_RANGES.length || !SAPLING_RANGES.every((r) => Object.hasOwn(entry, r))) return false;
+    const [h24, d7, d30] = SAPLING_RANGES.map((r) => entry[r]);
+    if (!productInt(h24) || !productInt(d7) || !productInt(d30) || h24 > d7 || d7 > d30) return false;
+    counts[key] = { h24, d7, d30 };
+    return true;
+  });
+  section("totals", PRODUCT_MAX_TOTALS, (key, v) => {
+    if (!productInt(v)) return false;
+    totals[key] = v;
+    return true;
+  });
+  return { counts, totals, dropped, droppedCount };
+}
+
 /**
  * Hourly `active_users_24h` / `_7d` / `_30d` per environment, `env` = the
  * config key, `part` = "". Canopy cannot compute these — only Sapling's
@@ -465,10 +551,23 @@ function saplingActiveUsers(body: unknown): { values: number[] } | { refused: st
  * `apiUrl` is `skipped` (still logged, never fetched), every other refusal is
  * `failed`. One request per environment, sequentially (2 today). Anything
  * but a valid 200 — a non-200, a thrown fetch, a body that is not JSON or fails
- * `saplingActiveUsers` — is logged and writes NOTHING for that environment this
- * tick; the loop moves on, and Active users reads "not connected" — or, once a
- * reading HAS landed and is over 3 hours old, "no recent reading"
- * (src/tools/repo.ts's `seen`).
+ * `saplingActiveUsers` — is logged and writes NO `active_users_*` row for that
+ * environment this tick; the loop moves on, and Active users reads "not
+ * connected" — or, once a reading HAS landed and is over 3 hours old, "no
+ * recent reading" (src/tools/repo.ts's `seen`).
+ *
+ * PRODUCT METRICS (contract v2) ride the SAME response: whatever valid
+ * `counts` / `totals` keys it carries (`saplingProductMetrics`, judged per
+ * key) are stored as `sap_c_<key>_<24h|7d|30d>` / `sap_t_<key>` gauges — same
+ * `env`, `part` = "", same hour-floor `at`, first write of the hour wins — so
+ * Sapling can add a metric with no change here. The two halves never cost each
+ * other: a v1 body (no `counts` / `totals`) is a plain success, and a body
+ * whose `active_users` is REFUSED still has its valid product keys stored —
+ * the environment then reads `failed` (the contract's core half failed; the
+ * `detail` names that), with `written` the rows that did land. All of one
+ * environment's rows go in ONE `putMetrics` call (D1 batches of 50). Dropped
+ * keys are logged once per environment, by NAME only, and named in an `ok`
+ * outcome's `detail` ("2 keys dropped: counts.foo, totals.bar").
  */
 export async function pollSaplingMetrics(
   db: DB, token: string, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
@@ -480,6 +579,7 @@ export async function pollSaplingMetrics(
   const excerpt = (s: string) => scrub(s).slice(0, SAPLING_BODY_LOG_CHARS);
   for (const cfg of envs) {
     let fetched = false;
+    let written = 0; // NEW rows this environment's one batch wrote — reported even when the poll reads failed
     try {
       const base = cfg.apiUrl.replace(/\/+$/, "");
       let protocol = "";
@@ -496,20 +596,41 @@ export async function pollSaplingMetrics(
       const text = await res.text();
       let body: unknown;
       try { body = JSON.parse(text); } catch { throw new Error(`body is not JSON: ${excerpt(text)}`); }
+      // Two verdicts on ONE body, neither costing the other: `active_users` is
+      // whole-or-nothing, `counts` / `totals` are judged per key. Everything
+      // that survives is ONE `putMetrics` call — batches of 50, not a D1
+      // round-trip per row (a full v2 body is 171 rows).
       const parsed = saplingActiveUsers(body);
-      if ("refused" in parsed) throw new Error(`${parsed.refused}: ${excerpt(text)}`);
-      let written = 0;
-      for (const [i, range] of SAPLING_RANGES.entries()) {
-        if (await putMetric(db, { metric: `active_users_${range}`, env: cfg.key, part: "", value: parsed.values[i], at })) written++;
+      const product = saplingProductMetrics(body);
+      const rows: RepoMetric[] = [];
+      const gauge = (metric: string, value: number) => rows.push({ metric, env: cfg.key, part: "", value, at });
+      if (!("refused" in parsed)) for (const [i, range] of SAPLING_RANGES.entries()) gauge(`active_users_${range}`, parsed.values[i]);
+      for (const key of Object.keys(product.counts)) {
+        const c = product.counts[key];
+        gauge(countMetric(key, "24h"), c.h24);
+        gauge(countMetric(key, "7d"), c.d7);
+        gauge(countMetric(key, "30d"), c.d30);
       }
-      outcomes.push(okOutcome(cfg.key, written));
+      for (const key of Object.keys(product.totals)) gauge(totalMetric(key), product.totals[key]);
+      written = await putMetrics(db, rows);
+      // Dropped keys: NAMES only (each already cut and made printable), logged
+      // once per environment and handed to the outcome — scrubbed, because a
+      // name is the other service's text.
+      const droppedNote = product.droppedCount
+        ? scrub(`${product.droppedCount} key${product.droppedCount === 1 ? "" : "s"} dropped: ${product.dropped.join(", ")}${product.droppedCount > product.dropped.length ? ", …" : ""}`).slice(0, 200)
+        : "";
+      if (droppedNote) console.error("pollSaplingMetrics", cfg.key, droppedNote);
+      // The contract's core part failing is still a FAILED poll — `written`
+      // (kept by the catch below) says what the product half stored anyway.
+      if ("refused" in parsed) throw new Error(`${parsed.refused}: ${excerpt(text)}`);
+      outcomes.push(okOutcome(cfg.key, written, droppedNote));
     } catch (e) {
       // The message only — never the error object, the request init or a header.
       const message = scrub(e instanceof Error ? e.message : String(e)).slice(0, 200);
       console.error("pollSaplingMetrics", cfg.key, message);
       // Refused BEFORE any request (the only throw above `fetched`) is a
       // configuration gap, not a failed poll.
-      outcomes.push(fetched ? failedOutcome(cfg.key, message) : skippedOutcome(cfg.key, "apiUrl is not https"));
+      outcomes.push(fetched ? failedOutcome(cfg.key, message, written) : skippedOutcome(cfg.key, "apiUrl is not https"));
     }
   }
   return outcomes;

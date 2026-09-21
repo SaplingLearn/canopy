@@ -1,4 +1,5 @@
-import { type DB, all, first, run, nowIso, ph } from "../db";
+import { type DB, all, first, run, nowIso, ph, chunked } from "../db";
+import { PRODUCT_PREFIX } from "./product";
 import type { RepoMetric } from "./types";
 
 const DAY = 86_400_000;
@@ -16,6 +17,23 @@ const FAST_RETENTION_DAYS = 45;
  *  (`cf_%` would also match `cfx…`), and GLOB is case-sensitive like the names. */
 const USAGE_METRIC_GLOBS = ["cf_*", "rw_*", "active_users_*"];
 const USAGE_RETENTION_DAYS = 100;
+/** Sapling's product metrics (`sap_c_*` / `sap_t_*`, src/repo/poll.ts) are the
+ *  widest hourly series by far — up to 168 metrics per environment — and the
+ *  projection reads them two ways only: the last 3 hours (the figure) and the
+ *  00:00 UTC reading of each of the last 30 days (the trend). So an HOURLY row
+ *  is kept 7 days, and only the rows stamped exactly at 00:00 UTC — the daily
+ *  totals — get the 100 days. `sap_*` matches none of `USAGE_METRIC_GLOBS` and
+ *  none of them matches it (in GLOB `_` is a literal), so the two rules never
+ *  touch each other's rows. `at` is always `toISOString()`-shaped (see
+ *  `normaliseAt`), so "exactly midnight" is a fixed 14-character tail. */
+const PRODUCT_METRIC_GLOB = `${PRODUCT_PREFIX}*`;
+const PRODUCT_HOURLY_RETENTION_DAYS = 7;
+const PRODUCT_DAILY_RETENTION_DAYS = 100;
+export const MIDNIGHT_TAIL = "T00:00:00.000Z";
+/** A bound on `productReadings`' midnight list — it is one bound parameter each. */
+const MAX_MIDNIGHTS = 62;
+/** One D1 batch holds at most this many statements — see `putMetrics`. */
+const BATCH_STATEMENTS = 50;
 
 export async function putSnapshot(db: DB, kind: string, data: unknown, now: string = nowIso()): Promise<void> {
   await run(db,
@@ -55,9 +73,36 @@ export async function putMetric(db: DB, m: RepoMetric): Promise<boolean> {
     console.error("putMetric: unparseable at", m.metric, m.at);
     return false;
   }
-  const res = await run(db, `INSERT OR IGNORE INTO repo_metrics (metric, env, part, value, at) VALUES (?, ?, ?, ?, ?)`,
-    m.metric, m.env, m.part, m.value, at);
+  const res = await run(db, PUT_METRIC_SQL, m.metric, m.env, m.part, m.value, at);
   return res.meta.changes > 0;
+}
+
+const PUT_METRIC_SQL = `INSERT OR IGNORE INTO repo_metrics (metric, env, part, value, at) VALUES (?, ?, ?, ?, ?)`;
+
+/** `putMetric` for MANY rows: the same first-write-wins `INSERT OR IGNORE`, the
+ *  same `at` normalisation (an unparseable `at` skips THAT row and is logged),
+ *  but sent as `db.batch` calls of at most `BATCH_STATEMENTS` statements — one
+ *  round-trip per 50 rows instead of one per row. Sapling's product metrics
+ *  are up to 171 rows per environment per poll; written one by one that is 171
+ *  sequential D1 calls inside one cron invocation. Each statement keeps its
+ *  own `meta.changes`, so the return is still the count of NEW rows (0 for a
+ *  re-poll of an hour already stored). A D1 batch is a transaction: one chunk
+ *  lands whole or not at all, and a throw propagates to the caller. */
+export async function putMetrics(db: DB, rows: RepoMetric[]): Promise<number> {
+  const statements: D1PreparedStatement[] = [];
+  for (const m of rows) {
+    const at = normaliseAt(m.at);
+    if (at === null) {
+      console.error("putMetrics: unparseable at", m.metric, m.at);
+      continue;
+    }
+    statements.push(db.prepare(PUT_METRIC_SQL).bind(m.metric, m.env, m.part, m.value, at));
+  }
+  let written = 0;
+  for (const chunk of chunked(statements, BATCH_STATEMENTS)) {
+    for (const res of await db.batch(chunk)) if (res.meta.changes > 0) written++;
+  }
+  return written;
 }
 
 /** `sinceIso` is normalised the SAME way `at` is stored before comparing — its
@@ -106,14 +151,87 @@ export async function metricsSince(db: DB, groups: MetricGroup[]): Promise<{ met
  *  `metric`), never a scan of the series. It is what separates a section that
  *  is `empty` (the source reported before and has gone quiet) from one that is
  *  `not_connected` — the many-metric sibling of the `latestMetric` existence
- *  check the coverage/bundle/TODO sections make. */
-export async function metricsEver(db: DB, metrics: string[]): Promise<Set<string>> {
-  if (!metrics.length) return new Set();
-  const rows = await all<{ metric: string }>(db,
-    `WITH asked(metric) AS (VALUES ${metrics.map(() => "(?)").join(", ")})
-     SELECT metric FROM asked WHERE EXISTS (SELECT 1 FROM repo_metrics r WHERE r.metric = asked.metric)`,
-    ...metrics);
+ *  check the coverage/bundle/TODO sections make.
+ *
+ *  `prefixes` asks the same question of a FAMILY whose names are not known in
+ *  advance (Sapling's product metrics, `sap_`): "has any metric starting with
+ *  this ever landed?" — answered in the SAME statement by one more index seek
+ *  (a range on `metric`, `LIMIT`ed by `EXISTS`), and reported as `<prefix>*`. */
+export async function metricsEver(db: DB, metrics: string[], prefixes: string[] = []): Promise<Set<string>> {
+  const families = prefixes.filter((p) => p.length > 0);
+  const ctes: string[] = [];
+  const arms: string[] = [];
+  if (metrics.length) {
+    ctes.push(`asked(metric) AS (VALUES ${metrics.map(() => "(?)").join(", ")})`);
+    arms.push(`SELECT metric FROM asked WHERE EXISTS (SELECT 1 FROM repo_metrics r WHERE r.metric = asked.metric)`);
+  }
+  if (families.length) {
+    ctes.push(`family(name, lo, hi) AS (VALUES ${families.map(() => "(?, ?, ?)").join(", ")})`);
+    arms.push(`SELECT name AS metric FROM family WHERE EXISTS (SELECT 1 FROM repo_metrics r WHERE r.metric >= family.lo AND r.metric < family.hi)`);
+  }
+  if (!arms.length) return new Set();
+  const rows = await all<{ metric: string }>(db, `WITH ${ctes.join(", ")} ${arms.join(" UNION ALL ")}`,
+    ...metrics, ...families.flatMap((p) => [`${p}*`, p, prefixEnd(p)]));
   return new Set(rows.map((r) => r.metric));
+}
+
+/** The smallest string greater than every string starting with `prefix`: its
+ *  last character, plus one. (`sap_` → "sap`".) */
+const prefixEnd = (prefix: string): string =>
+  prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+
+/**
+ * Sapling's product metrics for the render — ONE statement, however many keys
+ * Sapling reports (their names are dynamic, so `metricsSince`, which takes
+ * explicit names, cannot ask). Two disjoint slices of `sap_*`, `part = ''`, for
+ * the configured environments:
+ *  1. every reading at or after `freshSinceIso` — the figures;
+ *  2. the readings stamped EXACTLY at a 00:00 UTC inside
+ *     `[trendSinceIso, freshSinceIso)` of the metrics a trend is drawn from
+ *     (`sap_c_<key>_24h` and `sap_t_<key>`) — the daily totals.
+ *
+ * Shaped as a LOOSE INDEX SCAN, because the obvious form (`metric GLOB 'sap_*'
+ * AND (at >= ? OR …)`) does use `idx_repo_metrics_series` but only for the
+ * `metric` range: it walks EVERY stored `sap_` entry — ~45k at steady state for
+ * two environments — to return ~2.5k. Here the recursive `names` CTE hops from
+ * one distinct metric name to the next (one index seek each), and each
+ * (name, env) then seeks its own `at` range — and, for the trend, each midnight
+ * by equality — so the rows read stay within ~3× the rows returned. Measured at
+ * that volume: 7.6k rows read against 44.7k, same 2,466 rows back.
+ *
+ * Bound parameters: one per environment, one per midnight (≤ 31 for a 30-day
+ * trend) and one bound — far under D1's 100. No environment → no read. Both
+ * bounds are normalised as `metricsSince` normalises its own; an unparseable
+ * one returns []. Ascending by `at`.
+ */
+export async function productReadings(
+  db: DB, envKeys: string[], freshSinceIso: string, trendSinceIso: string
+): Promise<{ metric: string; env: string; at: string; value: number }[]> {
+  const fresh = normaliseAt(freshSinceIso);
+  const trend = normaliseAt(trendSinceIso);
+  if (fresh === null || trend === null || !envKeys.length) return [];
+  const midnights: string[] = [];
+  for (let t = Math.ceil(Date.parse(trend) / DAY) * DAY; t < Date.parse(fresh) && midnights.length < MAX_MIDNIGHTS; t += DAY) {
+    midnights.push(new Date(t).toISOString());
+  }
+  const hi = prefixEnd(PRODUCT_PREFIX);
+  const names = `names(m) AS (
+       SELECT MIN(metric) FROM repo_metrics WHERE metric >= '${PRODUCT_PREFIX}' AND metric < '${hi}'
+       UNION ALL
+       SELECT (SELECT MIN(metric) FROM repo_metrics WHERE metric > names.m AND metric < '${hi}') FROM names WHERE names.m IS NOT NULL
+     ),
+     envs(e) AS (VALUES ${envKeys.map(() => "(?)").join(", ")})`;
+  const freshArm = `SELECT r.metric, r.env, r.at, r.value FROM names CROSS JOIN envs CROSS JOIN repo_metrics r
+       WHERE names.m IS NOT NULL AND r.metric = names.m AND r.env = envs.e AND r.part = '' AND r.at >= ?`;
+  const trendArm = `SELECT r.metric, r.env, r.at, r.value FROM names CROSS JOIN envs CROSS JOIN mids CROSS JOIN repo_metrics r
+       WHERE names.m IS NOT NULL AND (names.m GLOB '${PRODUCT_PREFIX}c_*_24h' OR names.m GLOB '${PRODUCT_PREFIX}t_*')
+         AND r.metric = names.m AND r.env = envs.e AND r.part = '' AND r.at = mids.a`;
+  return midnights.length
+    ? all(db,
+        `WITH RECURSIVE ${names}, mids(a) AS (VALUES ${midnights.map(() => "(?)").join(", ")})
+         ${freshArm} UNION ALL ${trendArm} ORDER BY 3 ASC`,
+        ...envKeys, ...midnights, fresh)
+    : all(db, `WITH RECURSIVE ${names} ${freshArm} ORDER BY 3 ASC`, ...envKeys, fresh);
 }
 
 export async function latestMetric(db: DB, metric: string, env: string, part: string): Promise<{ at: string; value: number } | null> {
@@ -144,6 +262,12 @@ export async function pruneRepoCapture(db: DB, now: number): Promise<void> {
   // (coverage, bundle_kb, todo_count) matches neither rule and is kept forever.
   const usageCutoff = new Date(now - USAGE_RETENTION_DAYS * DAY).toISOString();
   await run(db, `DELETE FROM repo_metrics WHERE (${USAGE_METRIC_GLOBS.map(() => "metric GLOB ?").join(" OR ")}) AND at < ?`, ...USAGE_METRIC_GLOBS, usageCutoff);
+  // Sapling's product metrics: hourly rows 7 days, the 00:00 UTC rows 100 days.
+  const productHourly = new Date(now - PRODUCT_HOURLY_RETENTION_DAYS * DAY).toISOString();
+  const productDaily = new Date(now - PRODUCT_DAILY_RETENTION_DAYS * DAY).toISOString();
+  await run(db,
+    `DELETE FROM repo_metrics WHERE metric GLOB ? AND (at < ? OR (at < ? AND substr(at, 11) != ?))`,
+    PRODUCT_METRIC_GLOB, productDaily, productHourly, MIDNIGHT_TAIL);
   // `part IS NULL` only: a `check` row carrying a `part` (a Workers Builds run
   // tagged as a frontend deploy — see the migration's column notes) is a
   // DEPLOY record and must be kept forever like `deploy` rows, or the

@@ -3,7 +3,7 @@ import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { ingestRepoEvent } from "../src/consumer";
 import { repoEnvironments } from "../src/repo/config";
-import { putSnapshot, getSnapshot, putMetric, metricSeries, metricsSince, metricsEver, latestMetric, pruneRepoCapture } from "../src/repo/store";
+import { putSnapshot, getSnapshot, putMetric, putMetrics, metricSeries, metricsSince, metricsEver, productReadings, latestMetric, pruneRepoCapture } from "../src/repo/store";
 import type { RepoEvent, RepoEventRow } from "../src/repo/types";
 
 const push = (over: Partial<RepoEvent> = {}): RepoEvent => ({
@@ -119,6 +119,77 @@ describe("snapshots and metrics", () => {
     await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 5, at: "2020-01-01T00:00:00Z" });
     expect(await metricsEver(env.DB, ["cf_requests", "active_users_7d"])).toEqual(new Set(["cf_requests"]));
     expect(await metricsEver(env.DB, [])).toEqual(new Set());
+  });
+
+  it("metricsEver answers a PREFIX family in the same statement — `sap_*` — and a lookalike is not in the family", async () => {
+    expect(await metricsEver(env.DB, ["cf_requests"], ["sap_"])).toEqual(new Set());
+    await putMetric(env.DB, { metric: "sapling", env: "", part: "", value: 1, at: "2020-01-01T00:00:00Z" });   // no underscore
+    await putMetric(env.DB, { metric: "sap`x", env: "", part: "", value: 1, at: "2020-01-01T00:00:00Z" });     // just past the range
+    await putMetric(env.DB, { metric: "rw_cpu", env: "", part: "", value: 1, at: "2020-01-01T00:00:00Z" });
+    expect(await metricsEver(env.DB, ["cf_requests"], ["sap_"])).toEqual(new Set());
+    await putMetric(env.DB, { metric: "sap_t_users", env: "production", part: "", value: 5, at: "2020-01-01T00:00:00Z" });
+    expect(await metricsEver(env.DB, ["cf_requests", "rw_cpu"], ["sap_"])).toEqual(new Set(["rw_cpu", "sap_*"]));
+    expect(await metricsEver(env.DB, [], ["sap_"])).toEqual(new Set(["sap_*"]));
+    expect(await metricsEver(env.DB, [], [""])).toEqual(new Set());
+  });
+
+  describe("productReadings — the render's one read of sap_*", () => {
+    const FRESH = "2026-09-20T09:05:00Z";
+    const TREND = "2026-08-21T12:05:00Z";
+    const seed = (rows: [string, string, string, number, string?][]) =>
+      putMetrics(env.DB, rows.map(([metric, envKey, at, value, part]) => ({ metric, env: envKey, part: part ?? "", value, at })));
+
+    it("returns the fresh readings of every sap_ metric, and only the midnight rows of the trend metrics before that", async () => {
+      await seed([
+        ["sap_c_signups_24h", "staging", "2026-09-20T12:00:00Z", 3],   // fresh
+        ["sap_c_signups_7d", "staging", "2026-09-20T12:00:00Z", 21],   // fresh
+        ["sap_c_signups_7d", "staging", "2026-09-20T09:00:00Z", 20],   // 5 minutes before the fresh bound → out
+        ["sap_c_signups_24h", "staging", "2026-09-19T00:00:00Z", 5],   // a midnight → trend
+        ["sap_c_signups_24h", "staging", "2026-09-19T01:00:00Z", 6],   // hourly, not fresh → out
+        ["sap_c_signups_7d", "staging", "2026-09-19T00:00:00Z", 30],   // a midnight, but 7d draws no trend → out
+        ["sap_t_users", "production", "2026-09-01T00:00:00Z", 1200],   // a total's midnight → trend
+        ["sap_t_users", "production", "2026-08-21T00:00:00Z", 1100],   // before the trend bound → out
+        ["sap_t_users", "elsewhere", "2026-09-20T12:00:00Z", 9],       // not a configured environment → out
+        ["sap_t_users", "staging", "2026-09-20T12:00:00Z", 9, "backend"], // a part → nobody's product metric
+        ["active_users_24h", "staging", "2026-09-20T12:00:00Z", 74],   // not sap_
+        ["sapling", "staging", "2026-09-20T12:00:00Z", 1],
+      ]);
+      const rows = await productReadings(env.DB, ["staging", "production"], FRESH, TREND);
+      expect(rows.map((r) => [r.metric, r.env, r.at, r.value])).toEqual([
+        ["sap_t_users", "production", "2026-09-01T00:00:00.000Z", 1200],
+        ["sap_c_signups_24h", "staging", "2026-09-19T00:00:00.000Z", 5],
+        ["sap_c_signups_24h", "staging", "2026-09-20T12:00:00.000Z", 3],
+        ["sap_c_signups_7d", "staging", "2026-09-20T12:00:00.000Z", 21],
+      ].sort((a, b) => (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0)));
+    });
+
+    it("a midnight INSIDE the fresh window comes back once, not twice", async () => {
+      await seed([["sap_c_signups_24h", "staging", "2026-09-20T00:00:00Z", 4]]);
+      expect(await productReadings(env.DB, ["staging"], "2026-09-19T22:00:00Z", TREND)).toHaveLength(1);
+    });
+
+    it("no environment, no sap_ row, or an unparseable bound → []", async () => {
+      expect(await productReadings(env.DB, ["staging"], FRESH, TREND)).toEqual([]);
+      await seed([["sap_t_users", "staging", "2026-09-20T12:00:00Z", 9]]);
+      expect(await productReadings(env.DB, [], FRESH, TREND)).toEqual([]);
+      expect(await productReadings(env.DB, ["staging"], "not a date", TREND)).toEqual([]);
+      expect(await productReadings(env.DB, ["staging"], FRESH, "not a date")).toEqual([]);
+      // A trend bound at or after the fresh bound leaves no midnight to ask for: the fresh arm alone.
+      expect(await productReadings(env.DB, ["staging"], FRESH, FRESH)).toHaveLength(1);
+    });
+
+    it("never scans the table: every access to repo_metrics is an index SEARCH", async () => {
+      const spy: string[] = [];
+      const db = new Proxy(env.DB, { get: (t, k) => (k === "prepare" ? (sql: string) => { spy.push(sql); return t.prepare(sql); } : Reflect.get(t, k).bind?.(t) ?? Reflect.get(t, k)) }) as typeof env.DB;
+      await productReadings(db, ["staging", "production"], FRESH, TREND);
+      expect(spy).toHaveLength(1); // ONE statement
+      const binds = spy[0].split("?").length - 1;
+      expect(binds).toBeLessThan(100);
+      const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${spy[0]}`).bind(...Array.from({ length: binds }, () => "x")).all<{ detail: string }>();
+      const touching = plan.results.map((r) => r.detail).filter((d) => /repo_metrics|\br\b/.test(d));
+      expect(touching.length).toBeGreaterThan(0);
+      for (const d of touching) expect(d).toMatch(/^SEARCH .*USING (COVERING )?INDEX/);
+    });
   });
 
   it("the same instant written in two formats is ONE row, and an unparseable `at` is skipped", async () => {
