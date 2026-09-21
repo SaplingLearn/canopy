@@ -15,7 +15,7 @@ import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { pollSaplingMetrics, saplingProductMetrics } from "../src/repo/poll";
 import { putMetrics, pruneRepoCapture, putMetric } from "../src/repo/store";
-import { ENVS } from "./helpers/repo";
+import { ENVS, LONG_TOKEN, leakedFragments } from "./helpers/repo";
 
 const NOW = Date.parse("2026-09-20T12:05:00Z");
 const HOUR = 3_600_000;
@@ -74,10 +74,30 @@ describe("saplingProductMetrics — spec §3, per key", () => {
     expect(Object.keys(over.counts)).toHaveLength(0);
     expect(Object.keys(over.totals)).toHaveLength(24);
     expect(over.dropped).toEqual(["counts.*"]);
+    expect(over.droppedCount).toBe(49); // every key the ignored section held, not "1"
     const overTotals = saplingProductMetrics({ counts: counts(2), totals: totals(25) });
     expect(Object.keys(overTotals.counts)).toHaveLength(2);
     expect(Object.keys(overTotals.totals)).toHaveLength(0);
     expect(overTotals.dropped).toEqual(["totals.*"]);
+    expect(overTotals.droppedCount).toBe(25);
+  });
+
+  it("an ignored section counts EVERY key it held — 60 counts read as 60 dropped, named once", () => {
+    const counts = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`c${i}`, w(1, 2, 3)]));
+    const r = saplingProductMetrics({ counts, totals: { Bad: 1, fine: 2 } });
+    expect(r.dropped).toEqual(["counts.*", "totals.Bad"]);
+    expect(r.droppedCount).toBe(61);
+    // a section that is not an object held no keys to count: it is one refusal
+    expect(saplingProductMetrics({ counts: "nope" }).droppedCount).toBe(1);
+    expect(saplingProductMetrics({ counts: [w(1, 2, 3), w(1, 2, 3)] }).droppedCount).toBe(1);
+  });
+
+  it("`clean` runs on a rejected name BEFORE it is cut to 40 characters — and defaults to identity", () => {
+    const secret = "S".repeat(64);
+    const redact = (s: string) => s.split(secret).join("[redacted]");
+    expect(saplingProductMetrics({ totals: { [secret]: 1 } }).dropped).toEqual([`totals.${"S".repeat(40)}`]);
+    expect(saplingProductMetrics({ totals: { [secret]: 1 }, counts: { [`key_${secret}`]: w(1, 2, 3) } }, redact).dropped)
+      .toEqual(["counts.key_[redacted]", "totals.[redacted]"]);
   });
 
   const BAD_KEYS = ["Signups", "9lives", "_private", "sign-ups", "sign ups", "", "a".repeat(41), "é", "signups.total", "__proto__", "constructor".toUpperCase()];
@@ -272,10 +292,45 @@ describe("pollSaplingMetrics — product metrics", () => {
     expect(await stored("%")).toEqual([]);
   });
 
-  it("never logs the token, even when the body echoes it as a key name", async () => {
-    const { out, logged } = await run(() => pollSaplingMetrics(env.DB, "s3cret-token", [ENVS[0]], NOW,
-      stagingAnswers(() => json({ ...USERS, totals: { "Bearer s3cret-token": 1 } }))));
-    expect(JSON.stringify([out, logged])).not.toContain("s3cret-token");
+  it("an over-cap section reports how many keys were ignored, not 1", async () => {
+    const counts = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`c${i}`, w(1, 2, 3)]));
+    const { out } = await run(() => pollSaplingMetrics(env.DB, "s3cret", [ENVS[0]], NOW, stagingAnswers(() => json({ ...USERS, counts, totals: { users: 5 } }))));
+    expect(out).toEqual([{ env: "staging", status: "ok", written: 4, detail: "60 keys dropped: counts.*" }]);
+  });
+
+  it("active_users refused AND product keys dropped → the failed outcome's detail carries both", async () => {
+    const body = { active_users: w(10, 9, 12), counts: { signups: w(3, 21, 96), foo: w(9, 2, 3) }, totals: { users: 1204, Baz: 1 } };
+    const { out, logged } = await run(() => pollSaplingMetrics(env.DB, LONG_TOKEN, [ENVS[0]], NOW, stagingAnswers(() => json(body))));
+    expect(out[0]).toMatchObject({ env: "staging", status: "failed", written: 4 });
+    expect(out[0].detail).toMatch(/^the windows do not nest \(24h ≤ 7d ≤ 30d\) · 2 keys dropped: counts\.foo, totals\.Baz: /);
+    expect(out[0].detail!.length).toBeLessThanOrEqual(200);
+    expect(logged).toEqual([["pollSaplingMetrics", "staging", out[0].detail]]); // ONE line: the refusal carries the note
+  });
+
+  it("the refusal + dropped note stays inside the detail cap, and is scrubbed, even with 20 long hostile names", async () => {
+    const totals = Object.fromEntries(Array.from({ length: 22 }, (_, i) => [`${LONG_TOKEN}-${i}`, 1]));
+    const { out, logged } = await run(() => pollSaplingMetrics(env.DB, LONG_TOKEN, [ENVS[0]], NOW, stagingAnswers(() => json({ active_users: null, totals }))));
+    expect(out[0].status).toBe("failed");
+    expect(out[0].detail).toMatch(/^no active_users object · 22 keys dropped: totals\.\[redacted\]-0, /);
+    expect(out[0].detail!.length).toBeLessThanOrEqual(200);
+    expect(leakedFragments(JSON.stringify([out, logged]), LONG_TOKEN)).toEqual([]);
+  });
+
+  // The token is 64 characters — what `openssl rand -hex 32` makes. A rejected
+  // name is cut to 40, so a scrub that ran AFTER the cut could never match it.
+  it.each([
+    ["a totals key", (t: string) => ({ ...USERS, totals: { [t]: 1 } })],
+    ["a counts key", (t: string) => ({ ...USERS, counts: { [t]: w(1, 2, 3) } })],
+    ["a totals key behind `Bearer `", (t: string) => ({ ...USERS, totals: { [`Bearer ${t}`]: 1 } })],
+    ["a counts key with the token straddling the 40-character cut", (t: string) => ({ ...USERS, counts: { [`${"x".repeat(30)}${t}`]: w(1, 2, 3) } })],
+    ["both sections, with active_users refused as well", (t: string) => ({ active_users: null, counts: { [t]: w(1, 2, 3) }, totals: { [t]: 1 } })],
+  ])("never lets ANY 8-character piece of a 64-character token out — echoed as %s", async (_n, body) => {
+    expect(LONG_TOKEN).toHaveLength(64);
+    const { out, logged } = await run(() => pollSaplingMetrics(env.DB, LONG_TOKEN, [ENVS[0]], NOW, stagingAnswers(() => json(body(LONG_TOKEN)))));
+    expect(logged.length).toBeGreaterThan(0);
+    expect(JSON.stringify(out)).toContain("[redacted]");
+    expect(leakedFragments(JSON.stringify(out), LONG_TOKEN)).toEqual([]);
+    expect(leakedFragments(JSON.stringify(logged), LONG_TOKEN)).toEqual([]);
   });
 });
 
@@ -303,5 +358,18 @@ describe("pruneRepoCapture — sap_* rows", () => {
     await pruneRepoCapture(env.DB, now);
     const kept = await all<{ value: number }>(env.DB, `SELECT value FROM repo_metrics ORDER BY value`);
     expect(kept.map((r) => r.value)).toEqual([2, 4, 5, 6, 9, 11, 12]);
+  });
+
+  // SQLite turns `metric GLOB 'sap_*'` into an index RANGE only when the pattern
+  // is a literal in the statement; a bound `GLOB ?` is a scan of the whole table.
+  it("the prune's GLOB patterns are literals in the SQL, never bound parameters", async () => {
+    const prepare = vi.spyOn(env.DB, "prepare");
+    try {
+      await pruneRepoCapture(env.DB, Date.parse("2026-09-20T12:00:00Z"));
+      const sql = prepare.mock.calls.map((c) => String(c[0]));
+      expect(sql.some((q) => q.includes("metric GLOB 'sap_*'"))).toBe(true);
+      expect(sql.some((q) => q.includes("metric GLOB 'cf_*' OR metric GLOB 'rw_*' OR metric GLOB 'active_users_*'"))).toBe(true);
+      expect(sql.filter((q) => /GLOB\s*\?/.test(q))).toEqual([]);
+    } finally { prepare.mockRestore(); }
   });
 });

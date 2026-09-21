@@ -27,6 +27,18 @@ const USAGE_RETENTION_DAYS = 100;
  *  touch each other's rows. `at` is always `toISOString()`-shaped (see
  *  `normaliseAt`), so "exactly midnight" is a fixed 14-character tail. */
 const PRODUCT_METRIC_GLOB = `${PRODUCT_PREFIX}*`;
+/** A GLOB pattern as a SQL LITERAL. SQLite rewrites `metric GLOB 'sap_*'` into
+ *  an index range on `idx_repo_metrics_series`, but only when it can see the
+ *  pattern: a bound `GLOB ?` is a scan of the whole table. Inlining is safe
+ *  ONLY because every caller passes a module constant — and this refuses, at
+ *  module load, anything but `[a-z_]` plus one trailing `*`, so a pattern that
+ *  could close the quote can never be written here by mistake. */
+const globLiteral = (pattern: string): string => {
+  if (!/^[a-z_]+\*$/.test(pattern)) throw new Error(`not a constant prefix glob: ${pattern}`);
+  return `'${pattern}'`;
+};
+const USAGE_GLOB_SQL = USAGE_METRIC_GLOBS.map((g) => `metric GLOB ${globLiteral(g)}`).join(" OR ");
+const PRODUCT_GLOB_SQL = `metric GLOB ${globLiteral(PRODUCT_METRIC_GLOB)}`;
 const PRODUCT_HOURLY_RETENTION_DAYS = 7;
 const PRODUCT_DAILY_RETENTION_DAYS = 100;
 export const MIDNIGHT_TAIL = "T00:00:00.000Z";
@@ -87,7 +99,11 @@ const PUT_METRIC_SQL = `INSERT OR IGNORE INTO repo_metrics (metric, env, part, v
  *  sequential D1 calls inside one cron invocation. Each statement keeps its
  *  own `meta.changes`, so the return is still the count of NEW rows (0 for a
  *  re-poll of an hour already stored). A D1 batch is a transaction: one chunk
- *  lands whole or not at all, and a throw propagates to the caller. */
+ *  lands whole or not at all, and a throw propagates to the caller. Each chunk
+ *  is its OWN transaction, though: a throw between chunks leaves the earlier
+ *  chunks committed, and the count the caller sees is then 0 (it never gets a
+ *  return value) — the next poll is idempotent, and an in-hour re-poll fills
+ *  the gap exactly (`INSERT OR IGNORE`). */
 export async function putMetrics(db: DB, rows: RepoMetric[]): Promise<number> {
   const statements: D1PreparedStatement[] = [];
   for (const m of rows) {
@@ -192,12 +208,16 @@ const prefixEnd = (prefix: string): string =>
  *
  * Shaped as a LOOSE INDEX SCAN, because the obvious form (`metric GLOB 'sap_*'
  * AND (at >= ? OR …)`) does use `idx_repo_metrics_series` but only for the
- * `metric` range: it walks EVERY stored `sap_` entry — ~45k at steady state for
- * two environments — to return ~2.5k. Here the recursive `names` CTE hops from
- * one distinct metric name to the next (one index seek each), and each
- * (name, env) then seeks its own `at` range — and, for the trend, each midnight
- * by equality — so the rows read stay within ~3× the rows returned. Measured at
- * that volume: 7.6k rows read against 44.7k, same 2,466 rows back.
+ * `metric` range: it walks EVERY stored `sap_` entry — ~33k at steady state for
+ * two environments (81 metrics each: 7 days of hourly rows plus ~93 older
+ * midnights) — to return ~3k. Here the recursive `names` CTE hops from one
+ * distinct metric name to the next (one index seek each), and each (name, env)
+ * then seeks its own `at` range — and, for the trend, each midnight by
+ * equality — so the rows READ track the rows returned, not the rows stored.
+ * Measured at that volume (sqlite 3.53, this schema): ~2.7 ms against ~5.6 ms
+ * for the plain form, a gap that widens with retention. What the shape saves is
+ * reads, NOT the sort: `UNION ALL … ORDER BY` costs a temp b-tree in both arms
+ * either way.
  *
  * Bound parameters: one per environment, one per midnight (≤ 31 for a 30-day
  * trend) and one bound — far under D1's 100. No environment → no read. Both
@@ -261,13 +281,13 @@ export async function pruneRepoCapture(db: DB, now: number): Promise<void> {
   // Hourly usage series get their own, longer bound. Every other metric
   // (coverage, bundle_kb, todo_count) matches neither rule and is kept forever.
   const usageCutoff = new Date(now - USAGE_RETENTION_DAYS * DAY).toISOString();
-  await run(db, `DELETE FROM repo_metrics WHERE (${USAGE_METRIC_GLOBS.map(() => "metric GLOB ?").join(" OR ")}) AND at < ?`, ...USAGE_METRIC_GLOBS, usageCutoff);
+  await run(db, `DELETE FROM repo_metrics WHERE (${USAGE_GLOB_SQL}) AND at < ?`, usageCutoff);
   // Sapling's product metrics: hourly rows 7 days, the 00:00 UTC rows 100 days.
   const productHourly = new Date(now - PRODUCT_HOURLY_RETENTION_DAYS * DAY).toISOString();
   const productDaily = new Date(now - PRODUCT_DAILY_RETENTION_DAYS * DAY).toISOString();
   await run(db,
-    `DELETE FROM repo_metrics WHERE metric GLOB ? AND (at < ? OR (at < ? AND substr(at, 11) != ?))`,
-    PRODUCT_METRIC_GLOB, productDaily, productHourly, MIDNIGHT_TAIL);
+    `DELETE FROM repo_metrics WHERE ${PRODUCT_GLOB_SQL} AND (at < ? OR (at < ? AND substr(at, 11) != ?))`,
+    productDaily, productHourly, MIDNIGHT_TAIL);
   // `part IS NULL` only: a `check` row carrying a `part` (a Workers Builds run
   // tagged as a frontend deploy — see the migration's column notes) is a
   // DEPLOY record and must be kept forever like `deploy` rows, or the

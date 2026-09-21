@@ -97,10 +97,13 @@ const CF_QUERY = `query($a: string!, $s: string!, $from: Time!, $to: Time!) {
 const REASON_CHARS = 300;
 const REASON_READ_BYTES = 8192;
 /** At most `cap` bytes of a body, decoded; the rest of the stream is cancelled.
- *  A Response without a readable stream (a test double) falls back to text(). */
-async function readCapped(res: Response, cap: number): Promise<string> {
+ *  `cut` says the cap was reached, so the text may END mid-word (a body of
+ *  exactly `cap` bytes reads as cut too — the caller only loses a tail it never
+ *  quotes). A Response without a readable stream (a test double) falls back to
+ *  text(). */
+async function readCapped(res: Response, cap: number): Promise<{ text: string; cut: boolean }> {
   const reader = res.body?.getReader();
-  if (!reader) return (await res.text()).slice(0, cap);
+  if (!reader) { const full = await res.text(); return { text: full.slice(0, cap), cut: full.length > cap }; }
   const chunks: Uint8Array[] = [];
   let size = 0;
   while (size < cap) {
@@ -113,8 +116,11 @@ async function readCapped(res: Response, cap: number): Promise<string> {
   const all = new Uint8Array(size);
   let at = 0;
   for (const c of chunks) { all.set(c, at); at += c.byteLength; }
-  return new TextDecoder().decode(all);
+  return { text: new TextDecoder().decode(all), cut: size >= cap };
 }
+/** Far longer than any secret this file holds (a Cloudflare token is 40
+ *  characters, an account id 32, a Railway token 36, Sapling's 64). */
+const SECRET_TAIL_GUARD = 256;
 const RAW_REASON_CHARS = 120;
 async function failureReason(res: Response, scrub: (s: string) => string): Promise<string> {
   // BOUNDED: an edge/proxy error page can be megabytes, and a Worker that
@@ -122,7 +128,15 @@ async function failureReason(res: Response, scrub: (s: string) => string): Promi
   // tick's other pollers and break the route's "never a 500". A few KB is far
   // more than any reason we keep.
   let text = "";
-  try { text = await readCapped(res, REASON_READ_BYTES); } catch { return ""; }
+  try {
+    const read = await readCapped(res, REASON_READ_BYTES);
+    // THE READ CAP IS A CUT TOO, and it comes before every scrub below: a secret
+    // straddling it arrives as a fragment no scrub can match, and a mostly-blank
+    // body collapses to one line, pulling that fragment inside the characters
+    // kept. So: scrub the text whole, then drop the tail a cut-off secret could
+    // be hiding in. Nothing quoted below ever reaches that far into a real body.
+    text = read.cut ? scrub(read.text).slice(0, -SECRET_TAIL_GUARD) : read.text;
+  } catch { return ""; }
   const oneLine = (v: string) => scrub(v.replace(/\s+/g, " ").trim());
   let reason = "";
   try {
@@ -459,8 +473,13 @@ export interface SaplingProductMetrics {
    *  `totals.*` when the whole section was ignored. At most 20 names, each cut
    *  to 40 printable characters (a name is another service's text); never a value. */
   dropped: string[];
-  /** How many were refused — `dropped` may name fewer. */
+  /** How many KEYS were refused — `dropped` may name fewer: an ignored section
+   *  is ONE name (`counts.*`) but counts every key it held (a section that is
+   *  not an object held none to count, so it counts 1). */
   droppedCount: number;
+  /** True when the 20-name cap left a refusal unnamed — what earns the note its
+   *  trailing "…" (an ignored section is fully named by its one `counts.*`). */
+  namesOmitted: boolean;
 }
 
 /** A JSON integer in `0..1e12`. `typeof` refuses booleans, strings and null;
@@ -483,23 +502,30 @@ const productInt = (v: unknown): v is number =>
  * prototype-less objects — so a key called `constructor` or `toString` is an
  * ordinary entry, and `__proto__` (which the key pattern refuses anyway) can
  * never reach a prototype.
+ *
+ * `clean` is the caller's secret-scrub (default: identity, which keeps this
+ * pure). It runs on a rejected name BEFORE the name is cut to 40 characters —
+ * a scrub matches a WHOLE secret, so cutting first would hand the caller 40
+ * characters of a 64-character token that no later scrub could recognise.
  */
-export function saplingProductMetrics(body: unknown): SaplingProductMetrics {
+export function saplingProductMetrics(body: unknown, clean: (s: string) => string = (s) => s): SaplingProductMetrics {
   const counts = Object.create(null) as Record<string, ProductWindows>;
   const totals = Object.create(null) as Record<string, number>;
   const dropped: string[] = [];
   let droppedCount = 0;
-  const drop = (name: string) => {
-    droppedCount++;
+  let namesOmitted = false;
+  const drop = (name: string, keys = 1) => {
+    droppedCount += keys;
     if (dropped.length < PRODUCT_DROPPED_NAMES) dropped.push(name);
+    else namesOmitted = true;
   };
-  const printable = (key: string) => key.slice(0, PRODUCT_NAME_CHARS).replace(/[^\x20-\x7e]/g, "?");
+  const printable = (key: string) => clean(key).slice(0, PRODUCT_NAME_CHARS).replace(/[^\x20-\x7e]/g, "?"); // scrubbed BEFORE the cut
   const top = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
   const section = (name: "counts" | "totals", cap: number, keep: (key: string, v: unknown) => boolean) => {
     if (!Object.hasOwn(top, name) || top[name] === undefined) return;
     const raw = top[name];
     const keys = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.keys(raw) : null;
-    if (!keys || keys.length > cap) { drop(`${name}.*`); return; } // the whole section
+    if (!keys || keys.length > cap) { drop(`${name}.*`, keys ? keys.length : 1); return; } // the whole section, counted by the keys it held
     for (const key of keys) {
       if (!PRODUCT_KEY.test(key) || !keep(key, (raw as Record<string, unknown>)[key])) drop(`${name}.${printable(key)}`);
     }
@@ -519,7 +545,7 @@ export function saplingProductMetrics(body: unknown): SaplingProductMetrics {
     totals[key] = v;
     return true;
   });
-  return { counts, totals, dropped, droppedCount };
+  return { counts, totals, dropped, droppedCount, namesOmitted };
 }
 
 /**
@@ -566,8 +592,10 @@ export function saplingProductMetrics(body: unknown): SaplingProductMetrics {
  * the environment then reads `failed` (the contract's core half failed; the
  * `detail` names that), with `written` the rows that did land. All of one
  * environment's rows go in ONE `putMetrics` call (D1 batches of 50). Dropped
- * keys are logged once per environment, by NAME only, and named in an `ok`
- * outcome's `detail` ("2 keys dropped: counts.foo, totals.bar").
+ * keys are logged once per environment, by NAME only, and named in the
+ * outcome's `detail` — an `ok`'s ("2 keys dropped: counts.foo, totals.bar")
+ * and, appended to the refusal, a `failed`'s. A name is scrubbed BEFORE it is
+ * cut (the validator takes this poller's `scrub`).
  */
 export async function pollSaplingMetrics(
   db: DB, token: string, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
@@ -601,7 +629,7 @@ export async function pollSaplingMetrics(
       // that survives is ONE `putMetrics` call — batches of 50, not a D1
       // round-trip per row (a full v2 body is 171 rows).
       const parsed = saplingActiveUsers(body);
-      const product = saplingProductMetrics(body);
+      const product = saplingProductMetrics(body, scrub); // the scrub goes IN: a name is scrubbed before it is cut
       const rows: RepoMetric[] = [];
       const gauge = (metric: string, value: number) => rows.push({ metric, env: cfg.key, part: "", value, at });
       if (!("refused" in parsed)) for (const [i, range] of SAPLING_RANGES.entries()) gauge(`active_users_${range}`, parsed.values[i]);
@@ -613,16 +641,19 @@ export async function pollSaplingMetrics(
       }
       for (const key of Object.keys(product.totals)) gauge(totalMetric(key), product.totals[key]);
       written = await putMetrics(db, rows);
-      // Dropped keys: NAMES only (each already cut and made printable), logged
-      // once per environment and handed to the outcome — scrubbed, because a
-      // name is the other service's text.
+      // Dropped keys: NAMES only, handed to the outcome. Each name was scrubbed
+      // INSIDE the validator, before it was cut to 40 characters — this second
+      // scrub is belt and braces, and could not catch a token already cut.
       const droppedNote = product.droppedCount
-        ? scrub(`${product.droppedCount} key${product.droppedCount === 1 ? "" : "s"} dropped: ${product.dropped.join(", ")}${product.droppedCount > product.dropped.length ? ", …" : ""}`).slice(0, 200)
+        ? scrub(`${product.droppedCount} key${product.droppedCount === 1 ? "" : "s"} dropped: ${product.dropped.join(", ")}${product.namesOmitted ? ", …" : ""}`).slice(0, 200)
         : "";
-      if (droppedNote) console.error("pollSaplingMetrics", cfg.key, droppedNote);
       // The contract's core part failing is still a FAILED poll — `written`
-      // (kept by the catch below) says what the product half stored anyway.
-      if ("refused" in parsed) throw new Error(`${parsed.refused}: ${excerpt(text)}`);
+      // (kept by the catch below) says what the product half stored anyway, and
+      // the refusal carries the dropped note with it: the catch builds the
+      // outcome from this message alone, so a note left out here is never seen.
+      if ("refused" in parsed) throw new Error(`${parsed.refused}${droppedNote ? ` · ${droppedNote}` : ""}: ${excerpt(text)}`);
+      // Logged once per environment (the refusal above logs it as part of its own line).
+      if (droppedNote) console.error("pollSaplingMetrics", cfg.key, droppedNote);
       outcomes.push(okOutcome(cfg.key, written, droppedNote));
     } catch (e) {
       // The message only — never the error object, the request init or a header.

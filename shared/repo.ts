@@ -237,9 +237,11 @@ export interface RepoDashboard {
 
 // ── "Poll usage now" (POST /admin/poll-usage) — TYPES ONLY, nothing the SPA bundles ──
 /** One environment's outcome from one hourly usage poller. `written` = NEW
- *  `repo_metrics` rows (0 on `ok` = those hours were already stored). `detail`
- *  is the poller's scrubbed, truncated log message (`failed`) or a few words on
- *  what is not configured (`skipped`) — never a token, a header or an id. */
+ *  `repo_metrics` rows — `0` on `ok` means those hours were already stored, and
+ *  a `failed` may still be non-zero when part of a body was storable. `detail`
+ *  is the poller's scrubbed, truncated message: a failure reason (`failed`),
+ *  what is not configured (`skipped`), or — on `ok` — the product keys the poll
+ *  dropped, by name. Never a token, a header or an id. */
 export interface PollOutcome { env: string; status: "ok" | "failed" | "skipped"; written: number; detail?: string }
 /** Per source; `"not_configured"` = that source's secret(s) are absent. */
 export type UsagePollSource = PollOutcome[] | "not_configured";
