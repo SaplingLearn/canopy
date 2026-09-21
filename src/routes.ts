@@ -338,7 +338,7 @@ app.post("/admin/backfill", async (c) => {
 // ADMIN action (session-gated + admin-gated, NEVER an MCP tool): "Poll now" —
 // refresh EVERYTHING the Repo dashboard shows, on demand: health pings, the
 // three usage pollers, then the GitHub reconcile (`runRepoRefresh`,
-// src/repo/cron.ts — the budget, 17 + 7N subrequests, is stated there). No
+// src/repo/cron.ts — the budget, 19 + 7N subrequests, is stated there). No
 // request body. 200 even when every source failed — the body says so; it
 // carries outcomes and NEVER a token, a header or an account id (`github.failed`
 // is reconcile's ARM NAMES). Overlapping runs are correct (every write is

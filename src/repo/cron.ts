@@ -90,8 +90,8 @@ export async function runUsagePolls(env: Env, now: number, fetchImpl?: typeof fe
 /** The free plan's cap on outbound `fetch` per invocation (D1 does not count). */
 export const SUBREQUEST_CAP = 50;
 /** `runRepoRefresh`'s worst case for N environments: health 2N + usage 3N +
- *  reconcile (17 + 2N) = 17 + 7N. 31 for two; 45 at N = 4; 52 at N = 5. */
-export const refreshSubrequests = (n: number): number => 17 + 7 * n;
+ *  reconcile (19 + 2N) = 19 + 7N. 33 for two; 47 at N = 4; 54 at N = 5. */
+export const refreshSubrequests = (n: number): number => 19 + 7 * n;
 /** The one fixed phrase `github.failed` carries when the arm was not run. */
 export const BUDGET_SKIP = "skipped: would exceed the subrequest budget";
 
@@ -105,7 +105,8 @@ export const BUDGET_SKIP = "skipped: would exceed the subrequest budget";
  *            would be dropped). `"not_configured"` with no environment.
  *   usage    `runUsagePolls`, unchanged — Cloudflare, Railway, the app's metrics.
  *   github   `reconcileRepo` with the service token: deploys, checks, runs,
- *            branches, drift, open PRs, env heads. `"not_configured"` without
+ *            branches, drift, open PRs, env heads, the `canopy/*` commit
+ *            statuses and PR reviews. `"not_configured"` without
  *            `GITHUB_SERVICE_TOKEN` + `GITHUB_REPO`; an unexpected throw →
  *            `failed: ["unexpected error"]` (reconcile's own arms never throw
  *            out of it — they land in `failed` by NAME).
@@ -113,9 +114,9 @@ export const BUDGET_SKIP = "skipped: would exceed the subrequest budget";
  * THE CRON DOES NOT CALL THIS. `handleRepoCron` below spreads one heavy job per
  * tick because the jobs together did not fit an invocation; this function fits
  * only because it leaves the unbounded one out. The on-demand budget, counted
- * from the code: health 2N + usage 3N + reconcile (17 + 2N) = **17 + 7N**
- * subrequests — 31 for today's two environments, and the free plan's 50 caps
- * it at **N ≤ 4** (45; N = 5 is 52). Past that the GITHUB arm is SKIPPED and
+ * from the code: health 2N + usage 3N + reconcile (19 + 2N) = **19 + 7N**
+ * subrequests — 33 for today's two environments, and the free plan's 50 caps
+ * it at **N ≤ 4** (47; N = 5 is 54). Past that the GITHUB arm is SKIPPED and
  * says so (`BUDGET_SKIP`) rather than risk the whole invocation dying half-way
  * — health and usage (5N) still run. The formula is the worst case on purpose:
  * it does not discount an unconfigured poller.
@@ -256,14 +257,16 @@ export async function runLockedRepoRefresh(env: Env, by: string, now: number, fe
  *   :10 (h%6)    `recomputeAllProgress` — UNBOUNDED: `fetchGithubRefProgress`
  *                issues one request per issue number of every array-ref
  *                sprint, so it gets an invocation to itself.
- *   :20 (h%6)    `reconcileRepo` — worst case 17 + 2N requests for N
- *                environments (21 today): 2 PR lists + 1 pre-capture commit
+ *   :20 (h%6)    `reconcileRepo` — worst case 19 + 2N requests for N
+ *                environments (23 today): 2 PR lists + 1 pre-capture commit
  *                window + 1 GraphQL deployments + 1 workflow-run list + ≤5 job
- *                lookups + 5 GraphQL branch pages + 2 drift compares + 2 per
- *                environment (head commit, head checks).
+ *                lookups + 1 commit-status list + 1 GraphQL reviews + 5 GraphQL
+ *                branch pages + 2 drift compares + 2 per environment (head
+ *                commit, head checks). With the tick's own pings that is
+ *                19 + 4N — 27 today, and N ≤ 7 under the 50.
  *   :30 (h%6)    `pruneRepoCapture` — D1 only, no subrequests.
  *
- * Health (4) + the heaviest of those (21) leaves ample headroom; stacking all
+ * Health (4) + the heaviest of those (23) leaves ample headroom; stacking all
  * three on one tick did not, and the reconcile is what died.
  */
 export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?: typeof fetch): Promise<void> {

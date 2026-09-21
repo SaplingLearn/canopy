@@ -40,8 +40,9 @@ describe("reconcileRepo — deployments, workflow runs and env-head checks", () 
     expect(await all(env.DB, `SELECT env, part FROM repo_events WHERE kind = 'check'`)).toEqual([{ env: "staging", part: "frontend" }]);
     // One GraphQL request replaces the old 1 + 20 REST deployment calls; a
     // second GraphQL request is Task 12's branches refs query (both env's
-    // request the same URL, routed by query text — see fakeGithub above).
-    expect(gh.calls.filter((c) => c.endsWith("/graphql")).length).toBe(2);
+    // request the same URL, routed by query text — see fakeGithub above); a
+    // third is the PR-reviews query.
+    expect(gh.calls.filter((c) => c.endsWith("/graphql")).length).toBe(3);
     expect(gh.calls.some((c) => c.includes("/deployments"))).toBe(false);
   });
 
@@ -198,7 +199,7 @@ describe("reconcileRepo", () => {
       return new Response("nope", { status: 500 });
     }) as typeof fetch;
     const res = await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl }, ENVS, NOW);
-    expect(res).toEqual({ written: 0, unchanged: 0, failed: ["open_prs", "closed_prs", "commits", "deployments", "runs", "env_heads", "checks", "branches", "drift"] });
+    expect(res).toEqual({ written: 0, unchanged: 0, failed: ["open_prs", "closed_prs", "commits", "deployments", "runs", "env_heads", "checks", "statuses", "reviews", "branches", "drift"] });
     expect(calls.length).toBeGreaterThan(0);
     for (const init of calls) {
       expect((init.headers as Record<string, string>).authorization).toBe("Bearer t");
@@ -258,7 +259,7 @@ describe("reconcileRepo", () => {
       "/compare/main...production": { ahead_by: 1, behind_by: 1, commits: [compareCommit] },
     });
     await reconcileRepo(env.DB, { token: "t", repo: "o/r", fetchImpl: gh.fetchImpl }, ENVS, NOW);
-    expect(gh.calls.length).toBe(17); // 5 + 5 job lookups + 2 environments × 2 + 1 branches refs page + 2 drift compares
+    expect(gh.calls.length).toBe(19); // 5 + 5 job lookups + 2 environments × 2 + 1 status list + 1 reviews query + 1 branches refs page + 2 drift compares
   });
 });
 

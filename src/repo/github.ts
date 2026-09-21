@@ -3,11 +3,11 @@
 import type { DB } from "../db";
 import { fanOut, first, run } from "../db";
 import { ingestRepoEvent } from "../consumer";
-import { putSnapshot } from "./store";
+import { putMetric, putSnapshot } from "./store";
 import { untitledFailedRuns } from "./reads";
 import type { RepoEnvConfig } from "./config";
 import type { RepoEvent } from "./types";
-import { repoEventsFromDelivery } from "./capture";
+import { metricsFromStatus, repoEventsFromDelivery } from "./capture";
 import type { RepoBranches, RepoDrift, RepoDriftGroup } from "@shared/repo";
 
 /** At most this many `.../jobs` lookups per `reconcileRepo` call, so a first
@@ -39,6 +39,16 @@ const HEADERS = (token: string) => ({ authorization: `Bearer ${token}`, accept: 
 
 export async function ghJson<T>(opts: GhOpts, path: string): Promise<T> {
   const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token) });
+  if (!res.ok) throw new Error(`github ${res.status} ${path}`);
+  return (await res.json()) as T;
+}
+
+/** `ghJson`, where a 404 is an ANSWER (`null`), not a failure — a ref with
+ *  nothing posted on it, or one that does not exist yet. Every other non-2xx
+ *  still throws. */
+export async function ghJsonOrNull<T>(opts: GhOpts, path: string): Promise<T | null> {
+  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token) });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`github ${res.status} ${path}`);
   return (await res.json()) as T;
 }
@@ -114,6 +124,71 @@ function creatorLogin(creator: GqlDeployment["creator"]): string | null {
   return creator?.__typename === "Bot" && !login.endsWith("[bot]") ? `${login}[bot]` : login;
 }
 
+// ── PR reviews over GraphQL ──────────────────────────────────────────────────
+//
+// `pull_request_review` used to be WEBHOOK-ONLY, so the contributors' `R` and a
+// PR's APPROVED state could not be backfilled or polled. ONE request: the 30
+// most recently updated open PRs, each with its last 10 reviews. Every review
+// is re-wrapped into the WEBHOOK's `pull_request_review` payload and put
+// through the unchanged `fromReview` (src/repo/capture.ts) — one derivation, so
+// the key is the webhook's own: `gh:review:<id>:<action>`.
+//
+// Key parity, verified live against the target repo (PR #658, 2026-09-21, the
+// same two reviews read over GraphQL and over REST `/pulls/658/reviews`):
+// `databaseId` EQUALS the REST / webhook `review.id`; `submittedAt` is the same
+// string as `submitted_at`; `url` is the same string as `html_url`; `state`
+// arrives UPPERCASE (`fromReview` lower-cases it; done here too, so the payload
+// is the webhook's shape); a Bot author's `login` arrives WITHOUT the `[bot]`
+// suffix (`github-code-quality` vs `github-code-quality[bot]`) and is
+// re-suffixed by `creatorLogin`, exactly as the deployments arm does.
+//
+// A DISMISSED review is wrapped as the webhook's `dismissed` action (key
+// `…:dismissed`, the same row the dismissal delivery writes) and NOT also as a
+// `submitted` one: GraphQL no longer says what the review's state was when it
+// was submitted, and a guessed state would shadow the real webhook row forever
+// (first write wins). PENDING reviews (never submitted) and reviews with no
+// author or no `submittedAt` are skipped.
+const REVIEWS_QUERY = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){
+  pullRequests(states:OPEN, first:30, orderBy:{field:UPDATED_AT,direction:DESC}){ nodes{
+    number reviews(last:10){ nodes{ databaseId state submittedAt url author{ login __typename } } } } } } }`;
+
+interface GqlReview {
+  databaseId?: number | null; state?: string | null; submittedAt?: string | null; url?: string | null;
+  author?: { login?: string | null; __typename?: string | null } | null;
+}
+interface GqlReviews { repository?: { pullRequests?: { nodes?: ({ number?: number | null; reviews?: { nodes?: (GqlReview | null)[] | null } | null } | null)[] | null } | null } | null }
+
+/** One GraphQL review as the webhook's `pull_request_review` payload, or null when it is not a submitted review. */
+function reviewDelivery(number: number, r: GqlReview): Record<string, unknown> | null {
+  const login = creatorLogin(r.author);
+  const state = typeof r.state === "string" ? r.state.toLowerCase() : "";
+  if (typeof r.databaseId !== "number" || !login || !r.submittedAt || !state || state === "pending") return null;
+  return {
+    action: state === "dismissed" ? "dismissed" : "submitted",
+    review: { id: r.databaseId, state, submitted_at: r.submittedAt, html_url: r.url ?? null, user: { login } },
+    pull_request: { number },
+  };
+}
+
+/** The commit-status list item (`GET /commits/<ref>/statuses`). It has no `sha`
+ *  and no `branches` — the webhook's `status` payload does, so the arm adds them. */
+interface GhStatus { context?: string; description?: string | null; state?: string; created_at?: string; updated_at?: string }
+/** At most this many statuses per context from one poll — they are distinct
+ *  points in time (a status is immutable; a re-run posts a NEW one), newest first. */
+const MAX_STATUSES_PER_CONTEXT = 10;
+
+/**
+ * The backfill AND the self-heal — the same function from an admin's Sync
+ * GitHub, the cron's 6-hourly `:20` tick and the admin's "Poll now". Every arm
+ * is its own `safely` block, named in `failed` when it throws.
+ *
+ * Worst case **19 + 2N outbound requests** for N environments (23 for today's
+ * two): 2 PR lists + 1 pre-capture commit window + 1 GraphQL deployments + 1
+ * workflow-run list + ≤5 job lookups + 1 commit-status list + 1 GraphQL reviews
+ * + ≤5 GraphQL branch pages + ≤2 drift compares + 2 per environment (head
+ * commit, head checks). The callers' budgets (src/repo/cron.ts) build on this
+ * number: the `:20` tick is 19 + 4N with its pings, "Poll now" 19 + 7N.
+ */
 export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now: number = Date.now()): Promise<ReconcileResult> {
   const out: ReconcileResult = { written: 0, unchanged: 0, failed: [] };
   /** Every event goes through the SAME gate the webhook uses; a redelivery or a
@@ -249,6 +324,58 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
       }
     });
   }
+
+  // Coverage / bundle size / TODO count: the `canopy/*` commit statuses the
+  // target repo's CI posts. They used to arrive ONLY as `status` webhook
+  // deliveries, so a repo whose hook does not subscribe to Statuses — or an
+  // admin pressing "Poll now" — never saw them. ONE request: the statuses on the
+  // HEAD of the first environment's branch (the sha the env_heads arm just read;
+  // the branch name when that failed, and "main" with no environment — the same
+  // fallback `metricsFromStatus` applies). Each is rebuilt as the webhook's own
+  // `status` payload and put through the UNCHANGED `metricsFromStatus` →
+  // `putMetric`: one derivation, one validator, and the same `at` — the
+  // status's `updated_at` (else `created_at`), which `putMetric` normalises —
+  // so a polled point and a webhook-delivered one for the same status collide
+  // on `(metric, env, part, at)`. A 404 or an empty list is not a failure.
+  await safely("statuses", async () => {
+    const branch = envs[0]?.branch ?? "main";
+    const ref = heads.get(branch) ?? branch;
+    const list = await ghJsonOrNull<GhStatus[]>(opts, `/commits/${encodeURIComponent(ref)}/statuses?per_page=100`);
+    const seen = new Map<string, number>();
+    for (const st of Array.isArray(list) ? list : []) {
+      const context = typeof st?.context === "string" ? st.context : "";
+      if (!context.startsWith("canopy/")) continue;
+      const n = (seen.get(context) ?? 0) + 1;
+      seen.set(context, n);
+      if (n > MAX_STATUSES_PER_CONTEXT) continue; // newest first — the cap keeps the newest
+      const outcome = metricsFromStatus({
+        context, description: st.description ?? null, state: st.state ?? null,
+        created_at: st.created_at ?? null, updated_at: st.updated_at ?? null,
+        sha: heads.get(branch) ?? null, branches: [{ name: branch }],
+      }, envs);
+      if (outcome.dropped) console.warn("reconcileRepo: dropped status", outcome.dropped.context, "-", outcome.dropped.reason);
+      for (const m of outcome.metrics) {
+        if (await putMetric(db, m)) out.written++; else out.unchanged++;
+      }
+    }
+  });
+
+  // PR reviews (see REVIEWS_QUERY above): ONE GraphQL request, each review put
+  // back through the webhook's own `pull_request_review` derivation so its
+  // semantic key is the webhook row's.
+  await safely("reviews", async () => {
+    const [owner, name] = opts.repo.split("/");
+    const data = await ghGraphql<GqlReviews>(opts, REVIEWS_QUERY, { owner, name });
+    const prs = data?.repository?.pullRequests?.nodes;
+    for (const pr of Array.isArray(prs) ? prs : []) {
+      if (!pr || typeof pr.number !== "number") continue;
+      const reviews = pr.reviews?.nodes;
+      for (const r of Array.isArray(reviews) ? reviews : []) {
+        const delivery = r ? reviewDelivery(pr.number, r) : null;
+        if (delivery) await take(asBackfill(repoEventsFromDelivery("pull_request_review", delivery, envs)));
+      }
+    }
+  });
 
   // Branches: every ref, ahead/behind `main` (envs[0]?.branch ?? "main" —
   // same fallback the `commits` arm above uses) and flagged stale, in ONE
