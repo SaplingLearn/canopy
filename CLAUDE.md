@@ -638,7 +638,14 @@ range AND covered hours inside it (a true "0") — otherwise `null`, never "0". 
 needs a real point in range: points summing to 0 requests read "0.00%", but with NO point 0 of 0 is not a
 rate → `null` (the screen shows "—" beside live requests). Totals are sums of real points only. `usage` is
 `ok` when any metric of any range is non-null; the `cloudflare` panel when the WIDEST (30d) range has rows,
-so a narrower range can be `[]` ("No requests in this range.").
+so a narrower range can be `[]` ("Nothing recorded in this range." — never "no requests": the range may be
+one no poll covered). **A per-metric `null` does not say WHY**, so each `RepoUsageEnv` carries `seen: {
+requests, users }` — whether that environment's `cf_requests` / any `active_users_*` point exists AT ALL in
+the one 30-day read, the same in every range. `null` + seen renders **"no recent reading"** (no point in this
+range, a poll that stopped, a gauge gone stale); `null` + not seen renders **"not connected"**; the error
+rate follows `seen.requests`, keeping its "—" beside live requests. `seen` looks back those 30 days only: a
+source silent for longer reads "not connected" per metric again while the section-level `metricsEver` (any
+age) still says `empty` — whose copy is "No current usage reading — the hourly polls have gone quiet."
 
 **Railway CPU and memory** (`pollRailway`) asks Railway's public GraphQL API
 (`https://backboard.railway.com/graphql/v2`, `metrics(environmentId, serviceId, startDate, measurements:

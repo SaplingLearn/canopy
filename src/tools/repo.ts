@@ -287,9 +287,10 @@ interface UsagePoint { t: number; value: number }
  *  - `users.value` for range R is the LATEST `active_users_R` reading, NEVER a
  *    sum of readings, and only while it is CURRENT: at most `HOSTING_STALE_MS`
  *    older than `now` (and not stamped ahead of it), else `users: null` — an
- *    old gauge is not passed off as now. `null` renders "not connected" under
- *    Active users, which is also the true, designed state while Cloudflare is
- *    connected and Sapling's endpoint is not built yet.
+ *    old gauge is not passed off as now. With `seen.users` false that renders
+ *    "not connected" under Active users — the true, designed state while
+ *    Cloudflare is connected and Sapling's endpoint is not built yet; once a
+ *    reading HAS landed, a stale one renders "no recent reading" instead.
  *  - `users.trend` is the readings inside the trailing range, oldest first,
  *    and is NEVER zero-filled: a missing hour is a poll that did not land —
  *    unknown, not zero users.
@@ -308,8 +309,22 @@ function projectUsage(
       rows.filter((r) => r.metric === metric && r.env === cfg.key && r.part === part)
         .map((r) => ({ t: Date.parse(r.at), value: r.value })).filter((p) => Number.isFinite(p.t));
     const complete = (pts: UsagePoint[]) => pts.filter((p) => p.t < endExcl);
-    const reqAll = complete(series("cf_requests", "frontend"));
+    const reqEvery = series("cf_requests", "frontend");
+    const reqAll = complete(reqEvery);
     const errAll = complete(series("cf_errors", "frontend"));
+    // Has this environment's source reported AT ALL inside this read? It is
+    // what lets the screen tell "connected, nothing recent" from "not
+    // connected" when a metric below comes out null. Both are derivable from
+    // the one read because `cf_requests` and `active_users_30d` keep its widest
+    // (30-day) bound — and a healthy Sapling poll always writes all three
+    // `active_users_*` together, so any of them is evidence.
+    // KNOWN LIMIT: `seen` looks back those 30 days only. A source silent for
+    // longer reads "not connected" per metric again, while the section-level
+    // `metricsEver` check (any age) still says `empty`.
+    const seen = {
+      requests: reqEvery.length > 0,
+      users: rows.some((r) => r.env === cfg.key && r.part === "" && r.metric.startsWith("active_users_")),
+    };
     // The covered interval, snapped INWARD to whole hours; its end is clamped to
     // the last complete hour. −∞ / −∞ = no marker at all.
     const covered = cfCovered(polled[cfg.key]);
@@ -380,7 +395,7 @@ function projectUsage(
         ? { value: compact(latestUsers.value), trend: usr.map((p) => p.value), tone: "neutral" }
         : null;
       if (requests || users) anyUsage = true;
-      usage[range].push({ name: cfg.label, host: cfg.frontendUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""), requests, errorRate, users });
+      usage[range].push({ name: cfg.label, host: cfg.frontendUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""), requests, errorRate, users, seen });
     }
   }
   return { usage, cloudflare, anyUsage };

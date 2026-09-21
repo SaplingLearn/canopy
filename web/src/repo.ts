@@ -430,15 +430,19 @@ function ciTab(p: RepoProps): string {
 
 // ── Usage ────────────────────────────────────────────────────────────────────
 // A `null` metric keeps its label row (so the block never collapses or shifts
-// its neighbours) and shows a quiet "not connected" where the value would be
-// — no sparkline element, no empty-state box. `spark()` already renders
-// nothing under 2 trend points, so a connected-but-thin metric just shows its
-// value with no line. ONE `null` is not unconnected: `errorRate` is null while
-// `requests` is live when the range simply holds no request to take a rate of
-// (src/tools/repo.ts) — that reads a quiet "—" in the same muted slot, never
-// "not connected".
+// its neighbours) and shows a quiet line where the value would be — no
+// sparkline element, no empty-state box. WHICH line is the Worker's `seen`
+// flag: a source that has reported inside the 30-day read is CONNECTED, so its
+// null reads "no recent reading" (no point in this range, a poll that stopped,
+// a gauge gone stale); only a source that never reported reads "not
+// connected". `spark()` already renders nothing under 2 trend points, so a
+// connected-but-thin metric just shows its value with no line. `errorRate` is
+// derived from the requests series, so it follows `seen.requests` — except
+// while `requests` is live and the range simply holds no request to take a
+// rate of (src/tools/repo.ts): that reads a quiet "—" in the same muted slot.
+const absentLabel = (seen: boolean): string => (seen ? "no recent reading" : "not connected");
 function usageEnv(e: RepoUsageEnv, i: number): string {
-  const metric = (label: string, m: RepoUsageMetric | null, stroke: string, valueColor = "", absent = "not connected"): string =>
+  const metric = (label: string, m: RepoUsageMetric | null, stroke: string, valueColor: string, absent: string): string =>
     `<div style="${TOP};padding:12px 0">
       <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL_SM}">${label}</span>${
         m
@@ -450,9 +454,9 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
   const errC = e.errorRate ? TONE[e.errorRate.tone === "neutral" ? "good" : e.errorRate.tone] : "";
   return `<div style="padding:18px 20px 4px;min-width:0;${i ? LEFT : ""}">
     <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><span style="font-size:15px;font-weight:600;flex:1">${esc(e.name)}</span><span style="font-family:var(--mono);font-size:10px;color:var(--fg-40)">${esc(e.host)}</span></div>
-    ${metric("Requests", e.requests, "var(--accent)")}
-    ${metric("Error rate", e.errorRate, errC, errC, e.requests ? "—" : "not connected")}
-    ${metric("Active users", e.users, "var(--blue)")}
+    ${metric("Requests", e.requests, "var(--accent)", "", absentLabel(e.seen.requests))}
+    ${metric("Error rate", e.errorRate, errC, errC, e.requests ? "—" : absentLabel(e.seen.requests))}
+    ${metric("Active users", e.users, "var(--blue)", "", absentLabel(e.seen.users))}
   </div>`;
 }
 
@@ -461,12 +465,14 @@ function usageTab(p: RepoProps): string {
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
-  const usage = sec(p, (d) => d.usage, { nc: "No usage captured yet. Requests and error rate come from the hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID); active users come from the app's own metrics endpoint (SAPLING_METRICS_TOKEN). Both need an environment in REPO_ENVIRONMENTS.", empty: "No usage recorded in the last 30 days.", lines: 4 }, (u) =>
+  const usage = sec(p, (d) => d.usage, { nc: "No usage captured yet. Requests and error rate come from the hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID); active users come from the app's own metrics endpoint (SAPLING_METRICS_TOKEN). Both need an environment in REPO_ENVIRONMENTS.", empty: "No current usage reading — the hourly polls have gone quiet.", lines: 4 }, (u) =>
     `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
   // `ok` is gated on the WIDEST range (30d), so a narrower one can legitimately
   // hold no rows — say so, rather than render a titled panel with nothing in it.
+  // "Nothing RECORDED", not "no requests": an empty range may be one no poll
+  // ever covered, and zero traffic is a claim the capture cannot support.
   const cf = sec(p, (d) => d.cloudflare, { nc: "No Cloudflare analytics captured yet. The hourly poll runs once the CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID secrets are set and REPO_ENVIRONMENTS names each environment's Worker; it also feeds the requests and error rate above.", empty: "No Cloudflare metrics in the last 30 days." }, (c) =>
-    `<div class="repo-swap">${!c[p.range].length ? `<div style="padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">No requests in this range.</div>` : ""}${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
+    `<div class="repo-swap">${!c[p.range].length ? `<div style="padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">Nothing recorded in this range.</div>` : ""}${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(w.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">${esc(w.label)}</span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right">${esc(w.value)}</span>

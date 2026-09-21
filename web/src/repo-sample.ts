@@ -90,6 +90,7 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     requests: metric(d.req, d.reqA, "neutral"),
     errorRate: metric(`${d.err.toFixed(2)}%`, d.errA, warn ? "warn" : "good"),
     users: metric(d.users, d.usersA, "neutral"),
+    seen: { requests: true, users: true },
   });
   const usage: Record<RepoRange, RepoUsageEnv[]> = {
     "24h": [

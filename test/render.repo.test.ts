@@ -180,7 +180,7 @@ describe("repoView — live content", () => {
   });
 
   it("a usage metric with no source says so in place, without blanking its neighbours", () => {
-    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "12.4K", trend: [1, 2, 3], tone: "neutral" as const }, errorRate: { value: "2.41%", trend: [1, 2], tone: "warn" as const }, users: null };
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "12.4K", trend: [1, 2, 3], tone: "neutral" as const }, errorRate: { value: "2.41%", trend: [1, 2], tone: "warn" as const }, users: null, seen: { requests: true, users: false } };
     const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } } });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     expect(html).toContain("12.4K");
@@ -189,7 +189,7 @@ describe("repoView — live content", () => {
   });
 
   it("a usage env with every metric unconnected still renders its name, host, and three not-connected rows", () => {
-    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null };
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: false, users: false } };
     const data = live({
       usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } },
       cloudflare: EMPTY, hosting: EMPTY,
@@ -204,7 +204,7 @@ describe("repoView — live content", () => {
   // Task 16b: `errorRate: null` beside LIVE requests is not "not connected" —
   // the source is connected, there were simply no requests to take a rate of.
   it("an error rate with nothing to take a rate of reads a quiet dash, not 'not connected'", () => {
-    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "0", trend: [0, 0, 0], tone: "neutral" as const }, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const } };
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "0", trend: [0, 0, 0], tone: "neutral" as const }, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const }, seen: { requests: true, users: true } };
     const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
@@ -216,13 +216,42 @@ describe("repoView — live content", () => {
   });
 
   it("an error rate whose requests are ALSO unconnected still says 'not connected'", () => {
-    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const } };
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const }, seen: { requests: false, users: true } };
     const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
     expect(errRow).toContain("not connected");
     expect(errRow).not.toContain(">—<");
     expect((html.match(/not connected/g) ?? []).length).toBe(2);
+  });
+
+  // P5-2: a null metric whose source HAS reported (inside the 30-day read) is
+  // connected and quiet — saying "not connected" there was false.
+  it("a null metric whose source has been seen reads 'no recent reading', never 'not connected'", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: true, users: true } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    expect((html.match(/no recent reading/g) ?? []).length).toBe(3); // requests, error rate (follows requests), users
+    expect(html).not.toContain("not connected");
+    expect(html).not.toMatch(/undefined|NaN|<svg viewBox="0 0 100 26"/);
+  });
+
+  it("the two labels sit side by side: requests seen and quiet, users never connected", () => {
+    const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: true, users: false } };
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
+    const row = (from: string, to: string) => html.slice(html.indexOf(from), html.indexOf(to));
+    expect(row("Requests", "Error rate")).toContain("no recent reading");
+    expect(row("Error rate", "Active users")).toContain("no recent reading");
+    const usersRow = html.slice(html.indexOf("Active users"));
+    expect(usersRow).toContain("not connected");
+    expect(usersRow).not.toContain("no recent reading");
+  });
+
+  it("usage empty says the polls have gone quiet — never that nothing was recorded in 30 days", () => {
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ usage: EMPTY }) } }));
+    expect(html).toContain("No current usage reading — the hourly polls have gone quiet.");
+    expect(html).not.toContain("No usage recorded in the last 30 days.");
   });
 
   // Task 17: the hosting block's three states.
@@ -244,10 +273,12 @@ describe("repoView — live content", () => {
     const rows = [{ env: "staging", label: "Workers requests", value: "2.50M" }];
     const data = live({ cloudflare: { status: "ok", data: { "24h": [], "7d": rows, "30d": rows } } });
     const quiet = repoView(props({ tab: "usage", range: "24h", repo: { status: "ok", data } }));
-    expect(quiet).toContain("No requests in this range.");
+    // Not "No requests": that claims zero traffic for a range a poll may never have covered.
+    expect(quiet).toContain("Nothing recorded in this range.");
+    expect(quiet).not.toContain("No requests in this range.");
     const week = repoView(props({ tab: "usage", range: "7d", repo: { status: "ok", data } }));
     expect(week).toContain("2.50M");
-    expect(week).not.toContain("No requests in this range.");
+    expect(week).not.toContain("Nothing recorded in this range.");
   });
 
   it("M11: renders a null reviews count as an em dash, excluded from the bar width", () => {

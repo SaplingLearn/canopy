@@ -76,8 +76,9 @@ exactly the trailing-window question.
 
 Any status other than `200` (`401`, `404`, `5xx`, a `3xx`), a timeout, a body that is not JSON, or a body
 that fails §3: **Canopy writes nothing for that environment for that hour.** The tile keeps showing the
-last reading for up to 3 hours, then stops showing a number and reads "not connected". Nothing is ever
-guessed, interpolated or carried forward past that.
+last reading for up to 3 hours, then stops showing a number and reads "no recent reading" — the endpoint IS
+connected, it has just gone quiet. ("not connected" is reserved for an environment with no reading at all in
+the last 30 days.) Nothing is ever guessed, interpolated or carried forward past that.
 
 ## 3. The validation Canopy applies — the whole response or nothing
 

@@ -481,6 +481,52 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
     expect(production.requests).toEqual({ value: "340", trend: [40, 0, 300], tone: "neutral" });
   });
 
+  // ── P5-2: a per-metric `null` has four meanings; `seen` tells them apart ────
+  // so the screen can say "not connected" ONLY when nothing has ever landed.
+  describe("seen — has this environment's source reported inside the 30-day read", () => {
+    it("1 · never captured → seen false, and the metric is null", async () => {
+      await point("staging", hoursBack(1), 300, 0); // staging only, so the section is ok
+      const [, production] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+      expect(production).toMatchObject({ requests: null, errorRate: null, users: null, seen: { requests: false, users: false } });
+    });
+
+    it("2 · captured, but no point in THIS range → null here, seen true in every range", async () => {
+      await point("production", hoursBack(40), 2_500_000, 100);
+      const usage = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+      expect(usage["24h"][1]).toMatchObject({ requests: null, errorRate: null, seen: { requests: true, users: false } });
+      expect(usage["7d"][1]).toMatchObject({ requests: { value: "2.50M" }, seen: { requests: true, users: false } });
+    });
+
+    // The reviewer's scenario: `wrangler triggers deploy` was never run, so the
+    // poll died eight days ago. 24h and 7d are null — the SOURCE is still connected.
+    it("3 · the poll stopped 8 days ago → 24h and 7d null, seen true, 30d still draws", async () => {
+      await point("staging", hoursBack(24 * 12), 900, 9);
+      await point("staging", hoursBack(24 * 8 + 3), 100, 1);
+      await cover("staging", LONG_AGO, hoursBack(24 * 8));
+      const usage = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+      for (const range of ["24h", "7d"] as const) {
+        expect(usage[range][0], range).toMatchObject({ requests: null, errorRate: null, seen: { requests: true, users: false } });
+      }
+      expect(usage["30d"][0].requests).toMatchObject({ value: "1.0K" });
+    });
+
+    it("4 · a users reading over 3 hours old → users null, seen.users true", async () => {
+      await point("staging", hoursBack(1), 300, 0);
+      await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 41, at: hoursBack(6) });
+      const [staging, production] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+      expect(staging).toMatchObject({ users: null, seen: { requests: true, users: true } });
+      expect(production.seen).toEqual({ requests: false, users: false }); // never leaks across environments
+    });
+
+    it("a row under another part is not this environment's metric", async () => {
+      await point("staging", hoursBack(1), 300, 0);
+      await putMetric(env.DB, { metric: "cf_requests", env: "production", part: "backend", value: 5, at: hoursBack(1) });
+      await putMetric(env.DB, { metric: "active_users_24h", env: "production", part: "frontend", value: 5, at: hoursBack(0) });
+      const [, production] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+      expect(production.seen).toEqual({ requests: false, users: false });
+    });
+  });
+
   it("active users alone connect the usage section but not the Cloudflare panel", async () => {
     await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 41, at: hoursBack(2) });
     const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);

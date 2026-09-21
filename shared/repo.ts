@@ -128,15 +128,22 @@ export interface RepoActivity {
 // ── Usage ───────────────────────────────────────────────────────────────────
 // Requests/errors come from Cloudflare analytics, active users from the target
 // app's own metrics endpoint — different sources that connect independently,
-// so each metric travels as its own nullable value: `null` = not connected for
-// THAT metric, never a guessed number next to its live neighbours.
+// so each metric travels as its own nullable value: `null` = nothing to show
+// for THAT metric in this range, never a guessed number next to its live
+// neighbours. A `null` alone does not say WHY — never connected, no point in
+// this range, a poll that stopped, a reading gone stale — so `seen` travels
+// beside it: whether that environment's source has reported AT ALL inside the
+// render's one 30-day read. `null` + seen = connected and quiet ("no recent
+// reading"); `null` + not seen = "not connected". The same for every range.
 export interface RepoUsageMetric { value: string; trend: number[]; tone: RepoTone }
 export interface RepoUsageEnv {
   name: string;
   host: string;
   requests: RepoUsageMetric | null;
+  /** Follows `seen.requests` — it is derived from the same Cloudflare series. */
   errorRate: RepoUsageMetric | null;
   users: RepoUsageMetric | null;
+  seen: { requests: boolean; users: boolean };
 }
 export interface RepoCfRow { env: string; label: string; value: string }
 export interface RepoHosting { env: string; cpu: string; memory: string }

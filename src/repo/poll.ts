@@ -346,8 +346,9 @@ function saplingActiveUsers(body: unknown): { values: number[] } | { refused: st
  * Never throws. One request per environment, sequentially (2 today). Anything
  * but a valid 200 — a non-200, a thrown fetch, a body that is not JSON or fails
  * `saplingActiveUsers` — is logged and writes NOTHING for that environment this
- * tick; the loop moves on, and Active users reads "not connected" (or, once a
- * reading is over 3 hours old, stops showing — src/tools/repo.ts).
+ * tick; the loop moves on, and Active users reads "not connected" — or, once a
+ * reading HAS landed and is over 3 hours old, "no recent reading"
+ * (src/tools/repo.ts's `seen`).
  */
 export async function pollSaplingMetrics(
   db: DB, token: string, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch

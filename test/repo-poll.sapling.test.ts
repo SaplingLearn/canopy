@@ -248,6 +248,11 @@ describe("getRepoDashboard — active users from active_users_* gauges", () => {
     expect(production.users).toBeNull();
   });
 
+  // P5-2: `empty` here renders "No current usage reading — the hourly polls have
+  // gone quiet." — NOT "No usage recorded in the last 30 days.", which these
+  // 6-hour-old readings would make false. The copy is pinned beside the render
+  // (test/render.repo.test.ts, "usage empty…"): this file is typed as Worker code
+  // and cannot import web/src.
   it("only stale readings → users null everywhere, and the section reads empty (the poll has stopped), not not_connected", async () => {
     await gauge("24h", "staging", 6, 41);
     await gauge("7d", "staging", 6, 90);
