@@ -96,7 +96,11 @@ export interface RepoPr {
   at: string;
 }
 export interface RepoBranch { name: string; at: string; ahead: number; behind: number; stale: boolean }
-export interface RepoBranches { active: number; stale: number; rows: RepoBranch[] }
+/** `head` is the branch every row's ahead/behind was compared against (the
+ *  first configured environment's branch). It is a stored snapshot, so one
+ *  written before `head` was recorded lacks it — the screen then shows the
+ *  counts with no "vs …" rather than guess a branch name. */
+export interface RepoBranches { active: number; stale: number; head?: string; rows: RepoBranch[] }
 
 // ── CI & Deploys ────────────────────────────────────────────────────────────
 export interface RepoDeploy { sha: string; at: string; by: string; result: "ok" | "fail" | "cancel" }

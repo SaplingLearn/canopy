@@ -9,7 +9,7 @@
  * The fetch is stubbed at the Response level; every assertion is on D1 rows or
  * on the projection built from them.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { pollCloudflare } from "../src/repo/poll";
@@ -121,6 +121,30 @@ describe("pollCloudflare", () => {
     expect((await stored()).map((r) => [r.metric, r.value, r.at])).toEqual([
       ["cf_errors", 12, "2026-09-20T10:00:00.000Z"], ["cf_requests", 500, "2026-09-20T10:00:00.000Z"],
     ]);
+  });
+
+  // P5-5: the same rule its two sibling pollers keep — the MESSAGE only, scrubbed.
+  it("never logs the token or the raw error object, whatever fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const secret = { token: "cf-s3cret-token", accountId: "acct" };
+    try {
+      const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        // The worst case: the failure itself quotes the request back.
+        throw new Error(`request failed: ${JSON.stringify(init?.headers)}`);
+      }) as typeof fetch;
+      await pollCloudflare(env.DB, secret, ENVS, NOW, fetchImpl);
+      await pollCloudflare(env.DB, secret, ENVS, NOW, (async () => json({ errors: [{ message: "bad token cf-s3cret-token" }] })) as typeof fetch);
+      expect(spy).toHaveBeenCalledTimes(4);
+      for (const call of spy.mock.calls) {
+        expect(call.slice(0, 2)).toEqual(["pollCloudflare", expect.stringMatching(/^(staging|production)$/)]);
+        expect(typeof call[2]).toBe("string"); // never the Error object (its stack, its cause)
+      }
+      const logged = JSON.stringify(spy.mock.calls);
+      expect(logged).not.toContain("cf-s3cret-token");
+      expect(logged).toContain("[redacted]");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("a body with no accounts (wrong account id) writes nothing and does not throw", async () => {

@@ -1,7 +1,7 @@
 // The Repo dashboard's SAMPLE set — the placeholder data from the Claude Design
 // `Canopy Repo Dashboard.dc.html`, as a full `RepoDashboard` with every section
-// live. It exists so the sections Canopy cannot feed yet can still be seen (and
-// visually tested) in their finished shape. It never reaches the Worker, is
+// live. It exists so the sections nothing has been captured for yet can still be
+// seen (and visually tested) in their finished shape. It never reaches the Worker, is
 // loaded on demand (a dynamic import — not in the main bundle), and the screen
 // labels it "sample data" for as long as it is showing.
 
@@ -106,7 +106,15 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
       env("production", "saplinglearn.com", { req: "5.1M", reqA: [120, 132, 140, 150, 148, 158, 164, 170, 168, 176, 182, 188, 186, 184], err: 0.24, errA: [0.3, 0.28, 0.26, 0.3, 0.25, 0.22, 0.24, 0.26, 0.23, 0.2, 0.22, 0.21, 0.2, 0.21], users: "318", usersA: [210, 226, 240, 252, 260, 272, 280, 290, 296, 304, 310, 318, 315, 318] }, false),
     ],
   };
-  const cf = (rows: [string, string, string][]): RepoCfRow[] => rows.map(([e, label, value]) => ({ env: e, label, value }));
+  // The Cloudflare panel's requests ARE the Requests metric's — the real
+  // projection formats both from one sum, so the sample reads them off the same
+  // field rather than keep a second set of numbers that can drift. Errors are
+  // that row's requests × its error rate.
+  const CF_ERRORS: Record<RepoRange, [string, string]> = { "24h": ["299", "302"], "7d": ["2.1K", "2.6K"], "30d": ["4.5K", "12.2K"] };
+  const cf = (range: RepoRange): RepoCfRow[] => usage[range].flatMap((e, i) => [
+    { env: e.name, label: "Workers requests", value: e.requests?.value ?? "0" },
+    { env: e.name, label: "Workers errors", value: CF_ERRORS[range][i] },
+  ]);
 
   const cbVals = [3, 5, 2, 7, 4, 6, 1, 6, 7, 5, 8, 4, 7, 5];
   const commits = (rows: [string, string, number][]) => rows.map(([sha, msg, ms]) => ({ sha, msg, at: at(ms) }));
@@ -151,7 +159,7 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     prs: { status: "ok", data: prRows.map(([title, number, login, branch, state, checks, ms]) => ({
       number, title, url: `${GH}/pull/${number}`, author: person(login), branch, state, checks, at: at(ms),
     })) },
-    branches: { status: "ok", data: { active: 14, stale: 2, rows: [
+    branches: { status: "ok", data: { active: 14, stale: 2, head: "main", rows: [
       { name: "feature/usage-rollup", at: at(24 * MIN), ahead: 4, behind: 0, stale: false },
       { name: "notif/quiet-hours", at: at(HOUR), ahead: 2, behind: 1, stale: false },
       { name: "fix/sse-auth", at: at(2 * HOUR), ahead: 1, behind: 0, stale: false },
@@ -172,15 +180,15 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
 
     usage: { status: "ok", data: usage },
     // The target app has no D1 (it runs on Supabase) — this panel is the
-    // frontend Workers only, so its second row is Workers errors, not D1
-    // reads. Values are ~0.2–2% of the same row's requests.
-    cloudflare: { status: "ok", data: {
-      "24h": cf([["staging", "Workers requests", "13.1K"], ["staging", "Workers errors", "231"], ["production", "Workers requests", "181K"], ["production", "Workers errors", "289"]]),
-      "7d": cf([["staging", "Workers requests", "92.0K"], ["staging", "Workers errors", "1.84K"], ["production", "Workers requests", "1.31M"], ["production", "Workers errors", "2.62K"]]),
-      "30d": cf([["staging", "Workers requests", "428K"], ["staging", "Workers errors", "4.28K"], ["production", "Workers requests", "5.4M"], ["production", "Workers errors", "12.9K"]]),
-    } },
-    // The design itself leaves hosting unconnected — it is where the state is shown.
-    hosting: { status: "not_connected" },
+    // frontend Workers only, so its second row is Workers errors, not D1 reads.
+    cloudflare: { status: "ok", data: { "24h": cf("24h"), "7d": cf("7d"), "30d": cf("30d") } },
+    // Placeholder rows like every other section: the banner promises EVERY
+    // section is shown with sample values, and an unconnected block here would
+    // tell someone previewing the screen to go and set a Railway secret.
+    hosting: { status: "ok", data: [
+      { env: "staging", cpu: "0.12 vCPU", memory: "410 MB" },
+      { env: "production", cpu: "0.48 vCPU", memory: "1229 MB" },
+    ] },
 
     sprint: { status: "ok", data: { id: 0, label: "M6 — Notifications GA", due: new Date(now + 12 * DAY).toISOString().slice(0, 10), closed: 21, total: 34, pct: 62 } },
     contributors: { status: "ok", data: ([["jose-a", 14, 3, 6], ["meilin", 11, 4, 8], ["dev-raj", 9, 2, 3], ["sanaok", 7, 1, 5], ["priya-k", 6, 2, 2], ["tom-h", 4, 1, 1], ["ana-r", 3, 0, 4], ["kenji-m", 2, 1, 0]] as [string, number, number, number][])

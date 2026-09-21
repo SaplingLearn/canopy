@@ -45,8 +45,9 @@ enabled = true
 #                    folded into one, gated in code on the fire time's minute/hour —
 #                    ONE heavy job per invocation, never stacked (Cloudflare caps an
 #                    invocation at 50 subrequests): every tick pings environment
-#                    health (src/repo/poll.ts); :00 is the hourly-polls slot (none
-#                    wired yet); every 6th hour, :10 runs the sprint progress cache
+#                    health (src/repo/poll.ts); :00 runs the three hourly pollers
+#                    (Cloudflare, Railway, Sapling) and NOTHING else may join that
+#                    tick; every 6th hour, :10 runs the sprint progress cache
 #                    backstop (event-derived writes are primary), :20 the GitHub
 #                    reconcile (deploys/checks/runs/branches/drift/open-PRs) and :30
 #                    the capture prune (src/repo/store.ts pruneRepoCapture).

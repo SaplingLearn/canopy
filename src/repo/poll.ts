@@ -155,7 +155,11 @@ export async function pollCloudflare(
       }
       succeeded.push(cfg.key);
     } catch (e) {
-      console.error("pollCloudflare", cfg.key, e);
+      // The message only — never the error object, the request init or a header
+      // — scrubbed of the token in case a failure ever quotes the request back
+      // (the same rule `pollRailway` and `pollSaplingMetrics` keep below).
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("pollCloudflare", cfg.key, (cf.token ? message.split(cf.token).join("[redacted]") : message).slice(0, 200));
     }
   }
   if (!succeeded.length) return;

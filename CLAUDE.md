@@ -422,7 +422,10 @@ fire time's UTC minute/hour, each job in its own `safely` arm:
   `CF_ANALYTICS_ACCOUNT_ID`), `pollRailway` (1 per environment that has a `RAILWAY_TOKEN_<KEY>`),
   `pollSaplingMetrics` (1 GET per environment, `redirect: "manual"` so never a second hop; needs
   `SAPLING_METRICS_TOKEN`). The tick is health 2N + Cloudflare N + Railway N + Sapling N = **5N requests —
-  10 today**.
+  10 today**, which caps the configuration at **N ≤ 9 environments** under the free plan's 50 (a tenth lands
+  exactly on the cap, and a health ping that follows a redirect costs a subrequest more). The pollers run
+  sequentially, each fetch under its own timeout: worst case ≈ 64 s of wall clock for two environments, all
+  I/O wait.
 - **every 6th hour** (UTC hour % 6 = 0) — `:10` `recomputeAllProgress` alone (UNBOUNDED: one request per
   issue number of every array-ref sprint); `:20` `reconcileRepo` alone (17 + 2N worst case, below; logs
   `failed` when non-empty); `:30` `pruneRepoCapture` (D1 only). `:10` and `:20` need `GITHUB_SERVICE_TOKEN`
@@ -528,7 +531,9 @@ webhook `push` to a configured environment branch (the never-throwing `refreshDr
 `GITHUB_SERVICE_TOKEN`) and every reconcile; it needs two environments. `computeBranches` pages
 `refs(refPrefix:"refs/heads/")` over GraphQL with a per-ref `compare(headRef:$head)` (100 branches per page,
 5 pages max — REST would cost one `/compare` PER BRANCH; still paging after the 5th it THROWS rather than
-pass off a 500-branch prefix as the whole repo) and stores a `RepoBranches` snapshot: active/stale counts and
+pass off a 500-branch prefix as the whole repo) and stores a `RepoBranches` snapshot: active/stale counts,
+the `head` it compared against (the first environment's branch — the list renders `vs <head>`, and a
+snapshot written before `head` was recorded renders NO "vs …" rather than guess `main`) and
 up to 8 rows — the freshest branches plus up to 3 of the stalest-but-unmerged (14 days untouched = stale).
 GraphQL's `Ref.compare` treats THE BRANCH as base and `$head` as head, so `aheadBy`/`behindBy` arrive
 INVERTED from the product's meaning — `computeBranches` flips them back on purpose (verified live). It runs
@@ -680,10 +685,12 @@ failure, never a hop that carries the header elsewhere. The token, headers and r
 10,000,000 AND `24h ≤ 7d ≤ 30d`, else NOTHING is written for that environment that tick. Stored as hourly
 `active_users_24h` / `_7d` / `_30d` (`part = ''`), `at` = the CURRENT hour's floor with NO lag — a
 point-in-time GAUGE is whole the moment it is read; `INSERT OR IGNORE` keeps the first reading of each hour.
-The projection costs **NO new statement** (the names are in `USAGE_METRICS`). For range R, `users.value` is
+The projection costs **NO new statement** (the names are in `USAGE_METRICS` and `usageReadGroups`). For range R, `users.value` is
 the LATEST `active_users_R` reading — **never a sum** — shown only while ≤ 3 hours old (the same
 `HOSTING_STALE_MS` rule; a reading stamped ahead of the clock does not count), else `users: null`;
-`users.trend` is **never zero-filled** (a missing hour is a poll that did not land, not zero users). A
+`users.trend` is **never zero-filled** (a missing hour is a poll that did not land, not zero users) and is
+THINNED for the wider ranges, never truncated (`thinGauge`): 30d keeps the LAST reading of each UTC day (≤ 31
+points), 7d the last of each 6-hour block ending at the current hour (≤ 28), 24h stays hourly. A
 current users reading makes `usage` `ok` on its own; readings all gone stale leave it `empty`.
 
 **Pruning** (`pruneRepoCapture`, `src/repo/store.ts`, the cron's 6-hourly `:30` tick): `health_*` metrics

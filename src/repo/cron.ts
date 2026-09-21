@@ -45,7 +45,16 @@ export function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, s
  *                environment (2 today; `redirect: "manual"`, so never a second
  *                hop), skipped entirely unless `SAPLING_METRICS_TOKEN` is set.
  *                So this tick is health 2N + Cloudflare N + Railway N +
- *                Sapling N = 5N requests for N environments: 10 today.
+ *                Sapling N = 5N requests for N environments: 10 today — and
+ *                that 5N is a CEILING on the configuration: N ≤ 9
+ *                environments stay under the free plan's 50 (a tenth lands
+ *                exactly ON the cap, with no headroom for a redirect on a health
+ *                ping). Wall clock, everything hanging: the pollers
+ *                run one after another and each loops its environments in
+ *                turn, every fetch under its own timeout — 8s health
+ *                (concurrent) + 2×10s Cloudflare + 2×10s Railway + 2×8s
+ *                Sapling ≈ 64s for two environments, all of it I/O wait, not
+ *                CPU, and far inside the 10 minutes to the next tick.
  *   :10 (h%6)    `recomputeAllProgress` — UNBOUNDED: `fetchGithubRefProgress`
  *                issues one request per issue number of every array-ref
  *                sprint, so it gets an invocation to itself.

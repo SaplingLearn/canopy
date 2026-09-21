@@ -89,7 +89,7 @@ describe("reconcileRepo — deployments, workflow runs and env-head checks", () 
     const call = gh.graphql.find((c) => c.query.includes("refs(refPrefix"));
     expect(call?.variables).toMatchObject({ owner: "o", name: "r", head: "main" });
     const snap = await getSnapshot(env.DB, "branches");
-    expect(snap?.data).toEqual({ active: 1, stale: 0, rows: [{ name: "feature/x", at: "2026-09-19T00:00:00Z", ahead: 2, behind: 0, stale: false }] });
+    expect(snap?.data).toEqual({ active: 1, stale: 0, head: "main", rows: [{ name: "feature/x", at: "2026-09-19T00:00:00Z", ahead: 2, behind: 0, stale: false }] });
   });
 
   it("an errors body writes nothing, does not throw, and names the arm in `failed`", async () => {

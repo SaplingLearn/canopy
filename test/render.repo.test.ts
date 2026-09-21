@@ -39,6 +39,27 @@ describe("repoView — section states", () => {
     }
   });
 
+  // P5-12: the banner says EVERY section shows placeholder values — so none may
+  // sit unconnected (telling a previewer to set a secret), and two numbers the
+  // real projection derives from one sum may not disagree.
+  it("the sample set has no unconnected section, and its Cloudflare panel agrees with its Requests metric", () => {
+    const data = repoSample();
+    for (const [key, value] of Object.entries(data)) {
+      if (value && typeof value === "object" && "status" in value) expect((value as { status: string }).status, key).toBe("ok");
+    }
+    const okOf = <T>(s: { status: string; data?: T }) => (s as { data: T }).data;
+    expect(okOf(data.hosting).map((h) => h.env)).toEqual(["staging", "production"]);
+    for (const range of ["24h", "7d", "30d"] as const) {
+      for (const e of okOf(data.usage)[range]) {
+        const row = okOf(data.cloudflare)[range].find((r) => r.env === e.name && r.label === "Workers requests");
+        expect(row?.value, `${range} ${e.name}`).toBe(e.requests?.value);
+      }
+    }
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data }, sample: true }));
+    expect(html).not.toContain("Source not connected");
+    expect(html).not.toContain("RAILWAY_TOKEN");
+  });
+
   it("shows 'Source not connected' for a section nothing has been captured for, with no dead button", () => {
     const html = repoView(props({ tab: "usage" }));
     expect((html.match(/Source not connected/g) ?? []).length).toBe(3);
@@ -57,12 +78,14 @@ describe("repoView — section states", () => {
     expect(code).toContain("No branch snapshot yet. One is taken when an admin runs Sync GitHub and by the 6-hourly GitHub reconcile — both need GITHUB_SERVICE_TOKEN.");
     expect(ci).toContain("Deploys arrive when the GitHub webhook delivers deployment_status and check_run events, or when an admin runs Sync GitHub");
     expect(ci).toContain("Runs arrive when the GitHub webhook delivers workflow_run events, or when an admin runs Sync GitHub.");
-    expect(ci).toContain("posts a canopy/coverage commit status on a push to main and the GitHub webhook delivers status events.");
-    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to main and the GitHub webhook delivers status events.");
+    // P5-8: no branch NAME — the screen does not know which branch the first environment deploys from.
+    expect(ci).toContain("posts a canopy/coverage commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
     expect(usage).toContain("hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID)");
     expect(usage).toContain("metrics endpoint (SAPLING_METRICS_TOKEN)");
     expect(usage).toContain("RAILWAY_TOKEN_&lt;ENVIRONMENT&gt; secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.");
-    expect(planning).toContain("posts a canopy/todo commit status on a push to main and the GitHub webhook delivers status events.");
+    expect(planning).toContain("posts a canopy/todo commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect([ci, planning].join("\n")).not.toContain("push to main");
 
     const all = [overview, code, ci, usage, planning].join("\n");
     for (const stale of ["no capture path", "aren&#39;t captured", "nothing pings", "nothing scans", "not refs", "is ingested yet", "for this repo yet"]) {
@@ -70,6 +93,17 @@ describe("repoView — section states", () => {
     }
     // The page-level legend says the same thing: nothing captured YET, not "no path".
     expect(overview).toContain("have had nothing captured yet — each says what it is waiting on.");
+  });
+
+  // P5-9: the Worker emits `bars` as ok / empty only, so it carries no
+  // not-connected copy of its own. The type still allows the state; if it ever
+  // arrived it gets the generic line, never a sentence about a missing source.
+  it("bars has no bespoke not-connected copy — the generic line covers a state the Worker never sends", () => {
+    const html = repoView(props({ tab: "code", repo: { status: "ok", data: live({ bars: NC }) } }));
+    expect(html).not.toContain("Commit activity isn&#39;t connected.");
+    expect(html).not.toContain("Commit activity isn't connected.");
+    expect(html).toContain("Nothing has been captured for this section yet.");
+    expect(html).not.toMatch(/undefined/);
   });
 
   it("an empty activity chart claims neither commits nor merges", () => {
@@ -125,7 +159,7 @@ describe("repoView — live content", () => {
       branches: {
         status: "ok",
         data: {
-          active: 1, stale: 1,
+          active: 1, stale: 1, head: "develop",
           rows: [
             { name: `feature/<script>alert(1)</script>`, at: new Date().toISOString(), ahead: 4, behind: 0, stale: false },
             { name: "spike/edge-cache", at: "2026-09-04T00:00:00Z", ahead: 7, behind: 31, stale: true },
@@ -136,10 +170,21 @@ describe("repoView — live content", () => {
     const html = repoView(props({ tab: "code", repo: { status: "ok", data } }));
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("+4 / −0 vs main");
-    expect(html).toContain("+7 / −31 vs main");
+    // P5-8: the comparison branch is the snapshot's own `head`, never an assumed `main`.
+    expect(html).toContain("+4 / −0 vs develop");
+    expect(html).toContain("+7 / −31 vs develop");
+    expect(html).not.toContain("vs main");
     expect(html).toContain("STALE");
     expect(html).toContain("1 active · 1 stale");
+  });
+
+  it("a branches snapshot written before `head` was recorded shows the counts with NO 'vs …' — never a guessed branch; a captured head is escaped", () => {
+    const row = { name: "feature/x", at: new Date().toISOString(), ahead: 4, behind: 2, stale: false };
+    const old = repoView(props({ tab: "code", repo: { status: "ok", data: live({ branches: { status: "ok", data: { active: 1, stale: 0, rows: [row] } } }) } }));
+    expect(old).toContain("+4 / −2<");
+    expect(old).not.toMatch(/vs (main|undefined)/);
+    const odd = repoView(props({ tab: "code", repo: { status: "ok", data: live({ branches: { status: "ok", data: { active: 1, stale: 0, head: "<b>x</b>", rows: [row] } } }) } }));
+    expect(odd).toContain("vs &lt;b&gt;x&lt;/b&gt;");
   });
 
   it("names the PR-list header from what's actually shown, not the sample flag", () => {
@@ -378,6 +423,9 @@ describe("repoView — live content", () => {
     expect(html).toContain("−18");
     expect(html).toContain("since Aug 1");
     expect(html).toContain("repo-spark");
+    // P5-8: the footnote names no branch either.
+    expect(html).toContain("counted by CI on each push to the default environment branch");
+    expect(html).not.toContain("push to main");
   });
 
   it("links the current sprint to its screen", () => {

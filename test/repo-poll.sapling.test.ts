@@ -239,6 +239,34 @@ describe("getRepoDashboard — active users from active_users_* gauges", () => {
     expect(u["30d"][0].users?.trend).toEqual([700, 900]);
   });
 
+  // P5-10: a 30d trend of hourly readings was 720 points in a 100-unit-wide
+  // sparkline. It is THINNED, never truncated: the label says 30 days, so the
+  // line still spans 30 days — one reading per UTC day (its LAST), and per
+  // 6-hour block for 7d. Still never summed, never zero-filled; the headline
+  // value stays the latest reading.
+  it("thins the 7d and 30d trends to the LAST reading of each block; 24h stays hourly", async () => {
+    const every = (range: string, hours: number) => env.DB.batch(Array.from({ length: hours }, (_, h) =>
+      env.DB.prepare(`INSERT INTO repo_metrics (metric, env, part, value, at) VALUES (?, 'staging', '', ?, ?)`).bind(`active_users_${range}`, h, hoursBack(h))));
+    await every("24h", 24);   // value = hours back, so each pick names the reading it is
+    await every("7d", 168);
+    await every("30d", 720);
+    const u = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+    expect(u["24h"][0].users?.trend).toEqual(Array.from({ length: 24 }, (_, i) => 23 - i));
+    // 7d: 28 six-hour blocks ENDING at the current hour; the newest reading of each.
+    expect(u["7d"][0].users?.trend).toEqual(Array.from({ length: 28 }, (_, i) => 162 - 6 * i));
+    // 30d: one per UTC day — the 23:00 reading (13h before NOW's 12:00, then every 24h
+    // back), and for today the latest one. Aug 21 … Sep 20 = 31 days.
+    expect(u["30d"][0].users?.trend).toEqual([...Array.from({ length: 30 }, (_, i) => 709 - 24 * i), 0]);
+    for (const range of ["24h", "7d", "30d"] as const) expect(u[range][0].users?.value, range).toBe("0"); // the latest reading
+  });
+
+  it("a missing block is left out of a thinned trend — never drawn as zero", async () => {
+    await gauge("30d", "staging", 0, 900);
+    await gauge("30d", "staging", 1, 890);      // same UTC day as the one above: only the later is kept
+    await gauge("30d", "staging", 24 * 10, 700); // nine whole days with no reading in between
+    expect(ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["30d"][0].users?.trend).toEqual([700, 900]);
+  });
+
   it("a reading exactly 3 hours old still shows; one older than that does not", async () => {
     await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 41, at: new Date(NOW - 3 * HOUR).toISOString() });
     await gauge("24h", "production", 4, 12); // 08:00 — 4h05m before NOW

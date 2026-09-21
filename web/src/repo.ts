@@ -113,7 +113,11 @@ const notConnected = (what: string): string =>
     <div style="font-size:12.5px;color:var(--fg-55);margin-top:4px;line-height:1.55">${esc(what)}</div>
   </div></div>`;
 
-interface SectionCopy { nc: string; empty: string; lines?: number }
+/** `nc` is given only by a section the Worker can actually send as
+ *  `not_connected`; one it only ever sends as ok / empty (`bars`) has no such
+ *  sentence to keep true, and falls back to the generic line below. */
+interface SectionCopy { nc?: string; empty: string; lines?: number }
+const NC_GENERIC = "Nothing has been captured for this section yet.";
 
 /** Render one section in whichever of its states applies. */
 function sec<T>(p: RepoProps, pick: (d: RepoDashboard) => RepoSection<T>, copy: SectionCopy, live: (data: T) => string): string {
@@ -121,7 +125,7 @@ function sec<T>(p: RepoProps, pick: (d: RepoDashboard) => RepoSection<T>, copy: 
   if (phase === "loading") return skeleton(copy.lines);
   if (phase === "error" || !p.repo.data) return errorBlock();
   const s = pick(p.repo.data);
-  if (s.status === "not_connected") return notConnected(copy.nc);
+  if (s.status === "not_connected") return notConnected(copy.nc ?? NC_GENERIC);
   if (s.status === "empty") return emptyBlock(copy.empty);
   return live(s.data);
 }
@@ -279,7 +283,7 @@ function codeTab(p: RepoProps): string {
     </div>`).join("")}</div>`);
 
   const barsData = okData(p, (d) => d.bars);
-  const bars = sec(p, (d) => d.bars, { nc: "Commit activity isn't connected.", empty: "No commits or merges in the last 14 days.", lines: 2 }, (b) => {
+  const bars = sec(p, (d) => d.bars, { empty: "No commits or merges in the last 14 days.", lines: 2 }, (b) => {
     const max = Math.max(1, ...b.days.map((d) => d.count));
     const w = 100 / b.days.length;
     const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -302,7 +306,7 @@ function codeTab(p: RepoProps): string {
     b.rows.map((r) => `<div style="display:grid;grid-template-columns:minmax(0,1.4fr) 90px 130px 54px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
       <span style="font-family:var(--mono);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
       <span style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(ago(r.at, now))} ago</span>
-      <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);white-space:nowrap">+${r.ahead} / −${r.behind} vs main</span>
+      <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);white-space:nowrap">+${r.ahead} / −${r.behind}${b.head ? ` vs ${esc(b.head)}` : ""}</span>
       <span style="text-align:right">${r.stale ? `<span style="font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 5px;flex:none">STALE</span>` : ""}</span>
     </div>`).join(""));
 
@@ -397,9 +401,9 @@ function ciTab(p: RepoProps): string {
   // window" (src/tools/repo.ts checks `latestMetric` on the empty path) — the
   // copy says so, rather than implying nothing has ever been reported.
   const cov = okData(p, (d) => d.coverage);
-  const coverage = sec(p, (d) => d.coverage, { nc: "No coverage reported yet. It appears once the repo's CI posts a canopy/coverage commit status on a push to main and the GitHub webhook delivers status events.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
+  const coverage = sec(p, (d) => d.coverage, { nc: "No coverage reported yet. It appears once the repo's CI posts a canopy/coverage commit status on a push to the default environment branch and the GitHub webhook delivers status events.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
   const bun = okData(p, (d) => d.bundle);
-  const bundle = sec(p, (d) => d.bundle, { nc: "No bundle size reported yet. It appears once the repo's CI posts a canopy/bundle-kb commit status on a push to main and the GitHub webhook delivers status events.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
+  const bundle = sec(p, (d) => d.bundle, { nc: "No bundle size reported yet. It appears once the repo's CI posts a canopy/bundle-kb commit status on a push to the default environment branch and the GitHub webhook delivers status events.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
 
   const activity = sec(p, (d) => d.activity, { nc: "The activity feed isn't connected.", empty: "No repo events captured yet.", lines: 4 }, (rows) =>
     `<div class="cnpy-scroll" style="max-height:236px;overflow-y:auto">${rows.map((a) => activityRow(a, now)).join("")}</div>`);
@@ -549,14 +553,14 @@ function planningTab(p: RepoProps): string {
   // no delta chip and no "since" text (there is nothing to date it from).
   // I2: `empty` now means "a count has landed before, just not in the last 90
   // days", not "nothing has ever scanned this".
-  const todos = sec(p, (d) => d.todos, { nc: "No TODO / FIXME count reported yet. It appears once the repo's CI posts a canopy/todo commit status on a push to main and the GitHub webhook delivers status events.", empty: "No count reported in the last 90 days." }, (t) =>
+  const todos = sec(p, (d) => d.todos, { nc: "No TODO / FIXME count reported yet. It appears once the repo's CI posts a canopy/todo commit status on a push to the default environment branch and the GitHub webhook delivers status events.", empty: "No count reported in the last 90 days." }, (t) =>
     `<div style="display:flex;align-items:baseline;gap:12px;margin-top:10px">
       <span data-count="${t.count}" style="font-family:var(--mono);font-size:31px;font-weight:600;letter-spacing:-0.02em">${t.count}</span>
       ${t.delta === null ? "" : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
       <span style="font-size:11px;color:var(--fg-40)">since ${esc(t.since)}</span>`}
     </div>
     ${spark(t.trend, "var(--fg-55)", 52, 12)}
-    <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">counted by CI on each push to main</div>`);
+    <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">counted by CI on each push to the default environment branch</div>`);
 
   return `<div ${rise(0, `padding:20px 22px`)}>${sprintLive ? sprint : `<div style="${LABEL}">Current sprint</div>${sprint}`}</div>
     <div ${rise(1, `display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));${TOP};flex:1`)}>

@@ -30,7 +30,7 @@ import { CF_POLLED, cfCovered, type RepoEventRow, type RepoPrRow } from "../repo
 // Cloudflare panel (Task 16) are `repo_metrics` too: hourly `cf_requests` /
 // `cf_errors` the repo cron's minute-0 tick polls from Cloudflare's analytics
 // API (src/repo/poll.ts), read back here in ONE statement — beside the poll's
-// `cf_polled` snapshot, which bounds how far a missing hour may be drawn as 0.
+// `cf_polled` snapshot, the covered interval inside which a missing hour may be drawn as 0.
 // The hosting block (Task 17) rides that SAME statement: hourly `rw_cpu` /
 // `rw_mem_mb` the minute-0 tick polls from Railway, the latest point per
 // environment picked out in memory and shown only while it is current.
@@ -203,7 +203,9 @@ const signed = (n: number, d: number, unit = ""): string => `${n > 0 ? "+" : n <
 
 // ── usage + Cloudflare (Task 16) ─────────────────────────────────────────────
 const HOUR = 3_600_000;
-/** Every series the Usage tab reads, fetched in ONE statement: Cloudflare's
+/** Every series the Usage tab reads, fetched in ONE statement (each bounded by
+ *  its own window — `usageReadGroups` below names them again, per bound; this
+ *  list is what the `metricsEver` existence check asks about): Cloudflare's
  *  hourly counts and the `active_users_<range>` gauges `pollSaplingMetrics`
  *  writes (src/repo/poll.ts) — one metric PER RANGE, because a 7-day distinct
  *  count is not derivable from 24-hour ones. */
@@ -246,6 +248,24 @@ function compact(n: number): string {
 }
 
 interface UsagePoint { t: number; value: number }
+
+/** An hourly gauge's trend, THINNED for the wider ranges — 720 hourly readings
+ *  in a 100-unit sparkline is sub-pixel detail and ~8 KB of `points` text per
+ *  line. Thinned, never truncated: a "30d" line that showed only its newest
+ *  5 days would be mislabelled. 30d keeps the LAST reading of each UTC day
+ *  (≤ 31 points); 7d the last of each 6-hour block, the blocks ENDING with the
+ *  current hour (≤ 28); 24h stays hourly. `pts` is ascending, so a later
+ *  reading overwrites an earlier one under the same key while the Map keeps the
+ *  keys in first-seen — chronological — order. A block with no reading has no
+ *  key: still never zero-filled, never summed. */
+function thinGauge(pts: UsagePoint[], range: RepoRange, now: number): number[] {
+  if (range === "24h") return pts.map((p) => p.value);
+  const endHour = Math.floor(now / HOUR) * HOUR;
+  const key = range === "30d" ? (t: number) => Math.floor(t / DAY) : (t: number) => Math.floor((endHour - t) / (6 * HOUR));
+  const last = new Map<number, number>();
+  for (const p of pts) last.set(key(p.t), p.value);
+  return [...last.values()];
+}
 
 /**
  * The Usage tab and the Cloudflare panel, derived IN MEMORY from one read of
@@ -291,9 +311,9 @@ interface UsagePoint { t: number; value: number }
  *    "not connected" under Active users — the true, designed state while
  *    Cloudflare is connected and Sapling's endpoint is not built yet; once a
  *    reading HAS landed, a stale one renders "no recent reading" instead.
- *  - `users.trend` is the readings inside the trailing range, oldest first,
- *    and is NEVER zero-filled: a missing hour is a poll that did not land —
- *    unknown, not zero users.
+ *  - `users.trend` is the readings inside the trailing range, oldest first
+ *    (thinned for 7d / 30d — see `thinGauge`), and is NEVER zero-filled: a
+ *    missing hour is a poll that did not land — unknown, not zero users.
  */
 function projectUsage(
   rows: { metric: string; env: string; part: string; at: string; value: number }[], envs: RepoEnvConfig[], endExcl: number,
@@ -392,7 +412,7 @@ function projectUsage(
       }
       const latestUsers = usr.length ? usr[usr.length - 1] : null; // `rows` is ascending by `at`
       const users: RepoUsageMetric | null = latestUsers && now - latestUsers.t <= HOSTING_STALE_MS
-        ? { value: compact(latestUsers.value), trend: usr.map((p) => p.value), tone: "neutral" }
+        ? { value: compact(latestUsers.value), trend: thinGauge(usr, range, now), tone: "neutral" }
         : null;
       if (requests || users) anyUsage = true;
       usage[range].push({ name: cfg.label, host: cfg.frontendUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""), requests, errorRate, users, seen });
@@ -837,11 +857,11 @@ export async function getRepoDashboard(
   // quiet), `not_connected` when none ever did — and that existence read
   // (`metricsEver`, one more statement) is only made on the not-ok path. No
   // environment configured → nothing to attribute a Worker to: not_connected.
-  // The `cf_polled` snapshot (how far each environment's polls have looked —
+  // The `cf_polled` snapshot (the interval each environment's polls have looked at —
   // what entitles a missing hour to be drawn as 0) is ONE more read, issued
   // beside the first and never per environment.
   // Active users (Task 18) are in that SAME statement too — `active_users_*`
-  // is part of `USAGE_METRICS`, so a CURRENT reading makes `usage` ok on its
+  // is in `usageReadGroups` and `USAGE_METRICS`, so a CURRENT reading makes `usage` ok on its
   // own, and a reading that has ever landed makes a quiet section `empty`.
   // The hosting block's `rw_*` gauges (Task 17) ride the SAME statement, and its
   // three states mirror health's: `ok` with a CURRENT figure for any

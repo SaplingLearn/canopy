@@ -435,7 +435,8 @@ async function computeBranches(db: DB, opts: GhOpts, envs: RepoEnvConfig[], now:
   // a repo whose stale branches are all merged (`ahead: 0`) appends none of
   // them, and reserving for them under-filled the list for nothing.
   const shown = [...fresh.slice(0, BRANCH_ROWS - worthDeleting.length), ...worthDeleting];
-  const data: RepoBranches = { active: fresh.length, stale: stale.length, rows: shown };
+  // `head` travels with the counts it qualifies: the screen says "vs <head>".
+  const data: RepoBranches = { active: fresh.length, stale: stale.length, head, rows: shown };
   await putSnapshot(db, "branches", data);
 }
 

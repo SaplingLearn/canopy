@@ -2931,11 +2931,22 @@ section or with the code, the code is the truth** — `CLAUDE.md`'s Repo dashboa
 - The `UNCAPTURED` object is gone — every section has a capture path; `not_connected` copy now names what
   each section is waiting on.
 
+**Phase 5 final-review fix wave — changed:**
+- The vitest pool BLANKS every network secret (`vitest.config.ts`): a local `.dev.vars` had been leaking
+  `GEMINI_API_KEY` into the pool, so webhook tests called the live Gemini API. An explicit `summarizer: null`
+  now means "no summarizer". The suite is fully green — the "one environmental failure" carve-out is gone.
+- `cf_polled` is a covered INTERVAL `{ from, to }` per environment, not one bound: a gap longer than the poll
+  window restarts `from`, and the projection starts the series at the covered interval when a hole lies
+  before it — a poll outage is never drawn as quiet hours. A legacy string reads as `{ bound − 3h, bound }`.
+  The drawn series also starts at the first WHOLE bucket.
+- `RepoUsageEnv.seen` separates "connected, nothing recent" ("no recent reading") from "not connected".
+- `metricsSince` takes groups with their own bounds (one statement still); the 7d / 30d users trends are
+  thinned to the last reading per 6-hour block / UTC day; the branches snapshot records its `head`.
+
 **Known limits, carried rather than fixed:** the Cloudflare and Railway query shapes were built to the
-documentation and never verified live (a refusal writes nothing). An outage BETWEEN two real Cloudflare points
-still fills as zeros. A stale per-metric reading renders "not connected" beside live neighbours (the DTO has
-no per-metric "gone quiet"). The shared 30-day usage read pulls ~3k `rw_*` rows though hosting needs ~3h; the
-30d users trend can carry 720 points. `env_heads` is replaced wholesale, so one failed head fetch drops that
+documentation and never verified live (a refusal writes nothing). With NO `cf_polled` marker at all, a gap
+between two real Cloudflare points still fills as zeros, and a malformed in-window Cloudflare row still counts
+its hour as polled. `seen` looks back 30 days only. `env_heads` is replaced wholesale, so one failed head fetch drops that
 branch's entry until the next reconcile. Reviews have no backfill arm. Nothing on screen says how old a
 drift/branches snapshot is.
 
