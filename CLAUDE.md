@@ -609,9 +609,15 @@ a non-2xx, a thrown fetch, or a body with no account in it costs THAT environmen
 is never read beside `errors`) and the loop moves on; a malformed row is skipped on its own. Never throws.
 **The `cf_polled` marker — no row ≠ zero unless we know we looked**: Cloudflare returns NO row for an hour
 with no invocations, so a quiet hour and a dead poll look identical in `repo_metrics`. Each environment whose
-poll SUCCEEDED (even with zero rows) is recorded as polled through `to` in ONE snapshot row, `cf_polled`
-(`CF_POLLED` in `src/repo/types.ts`), `{ [envKey]: "<to ISO>" }` — an EXCLUSIVE bound. One read + at most
-one write per poll; a failed environment keeps its bound, and a bound never moves BACKWARDS.
+poll SUCCEEDED (even with zero rows) has its window merged into ONE snapshot row, `cf_polled` (`CF_POLLED` in
+`src/repo/types.ts`): `{ [envKey]: { from, to } }` — ONE contiguous covered INTERVAL, `to` exclusive. An
+interval, not a high-water bound, because a bound cannot say a stretch in the middle was never looked at: when
+the previous interval reaches the new window (`prev.to >= window.from`) it keeps its `from` and `to` becomes
+the max; otherwise (no previous, or a GAP — an outage longer than the 3-hour window) `from` RESTARTS at the
+window's start, and that jump is the record of the hole. One read + at most one write per poll (an unlocked
+read-modify-write, safe because ticks never overlap and a lost update re-writes identically); a failed
+environment keeps its interval, and neither end moves BACKWARDS. A LEGACY string value (the pre-interval
+shape, still in local dev DBs) reads through `cfCovered` as `{ from: bound − 3h, to: bound }`.
 The projection (`projectUsage`) costs the render **ONE statement** — `metricsSince` (`src/repo/store.ts`)
 for every range, environment and series, sliced in memory. It takes GROUPS, each with its OWN bound
 (`(metric IN (…) AND at >= ?) OR (…)`, `usageReadGroups` in `src/tools/repo.ts`): `cf_*` and
@@ -621,10 +627,14 @@ the 3-hour staleness window — every row left out is one the projection already
 `getSnapshot('cf_polled')`, plus ONE `metricsEver` only on the not-`ok` path. A range is its last N COMPLETE
 hours (24 / 168 / 720) in equal buckets (1h / 24h / 24h) ending at the last complete hour, never at UTC
 midnight. The trend is DENSE but zero only where a zero is entitled: the fill STARTS at the first captured
-point (or the range's start when capture predates it) and ENDS at `min(last complete hour, that
-environment's cf_polled bound)`; with NO bound it ends at the last real point, so a dead poll draws no zeros
-after it. `requests` is non-null when there is a bucket to draw — a point in range, or capture predating the
-range AND a polled bound inside it (a true "0") — otherwise `null` → "not connected", never "0". `errorRate`
+point (or the range's start when capture predates it) — **unless that would cross a HOLE** (an hour before
+the covered `from` with no real point: nothing ever looked at it), in which case the series starts at the
+covered `from` and shows the contiguous covered stretch only, while totals still sum every real point in the
+range — and ENDS at `min(last complete hour, that environment's covered `to`)`; with NO marker it ends at the
+last real point, so a dead poll draws no zeros after it. **The first bucket drawn is the first WHOLE one**: a
+7d/30d day-bucket that capture or coverage began inside is counted in the total but not drawn as a day.
+`requests` is non-null when something is known in the range — a point in range, or capture predating the
+range AND covered hours inside it (a true "0") — otherwise `null`, never "0". `errorRate`
 needs a real point in range: points summing to 0 requests read "0.00%", but with NO point 0 of 0 is not a
 rate → `null` (the screen shows "—" beside live requests). Totals are sums of real points only. `usage` is
 `ok` when any metric of any range is non-null; the `cloudflare` panel when the WIDEST (30d) range has rows,

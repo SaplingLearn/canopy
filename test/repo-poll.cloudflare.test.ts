@@ -136,17 +136,22 @@ describe("pollCloudflare", () => {
 // Cloudflare returns NO row for an hour without invocations, so "no row" only
 // means "zero" for hours a poll is known to have looked at. Each environment's
 // successful poll records the (exclusive) bound it looked through.
-const polled = async () => (await getSnapshot<Record<string, string>>(env.DB, "cf_polled"))?.data ?? null;
-const TO = "2026-09-20T11:00:00.000Z";           // pollCloudflare's `to` at NOW
+// P5-3: the marker is a covered INTERVAL per environment — `{ from, to }`, both
+// hour floors, `to` exclusive — because a single high-water bound cannot say
+// that a stretch in the middle was never looked at.
+const polled = async () => (await getSnapshot<Record<string, unknown>>(env.DB, "cf_polled"))?.data ?? null;
+const FROM = "2026-09-20T08:00:00.000Z";         // pollCloudflare's window at NOW is [FROM, TO)
+const TO = "2026-09-20T11:00:00.000Z";
+const IV = { from: FROM, to: TO };
 const EARLIER = NOW - 2 * HOUR;                   // a poll two hours before …
-const EARLIER_TO = "2026-09-20T09:00:00.000Z";    // … looked through here
+const EARLIER_IV = { from: "2026-09-20T06:00:00.000Z", to: "2026-09-20T09:00:00.000Z" }; // … looked at this
 const quiet = (async () => json(cfBody([]))) as typeof fetch;
 const workerOf = (init?: RequestInit) => (JSON.parse(String(init?.body)) as { variables: { s: string } }).variables.s;
 
 describe("pollCloudflare — the polled-through marker", () => {
   it("a successful poll records every environment as polled through `to`, in ONE snapshot row", async () => {
     await pollCloudflare(env.DB, CF, ENVS, NOW, (async () => json(cfBody([hourRow("2026-09-20T10:00:00Z", 640, 3)]))) as typeof fetch);
-    expect(await polled()).toEqual({ staging: TO, production: TO });
+    expect(await polled()).toEqual({ staging: IV, production: IV });
     expect(await all(env.DB, `SELECT kind FROM repo_snapshots`)).toEqual([{ kind: "cf_polled" }]);
   });
 
@@ -155,7 +160,7 @@ describe("pollCloudflare — the polled-through marker", () => {
   it("a successful poll that returned zero rows still advances the bound", async () => {
     await pollCloudflare(env.DB, CF, ENVS, NOW, quiet);
     expect(await stored()).toEqual([]);
-    expect(await polled()).toEqual({ staging: TO, production: TO });
+    expect(await polled()).toEqual({ staging: IV, production: IV });
   });
 
   it.each([
@@ -164,11 +169,12 @@ describe("pollCloudflare — the polled-through marker", () => {
     ["a body with no account", () => json({ data: { viewer: { accounts: [] } } })],
   ])("%s keeps that environment's previous bound while the other environment's advances", async (_name, failure) => {
     await pollCloudflare(env.DB, CF, ENVS, EARLIER, quiet);
-    expect(await polled()).toEqual({ staging: EARLIER_TO, production: EARLIER_TO });
+    expect(await polled()).toEqual({ staging: EARLIER_IV, production: EARLIER_IV });
     const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) =>
       workerOf(init) === "frontend-staging" ? failure() : json(cfBody([]))) as typeof fetch;
     await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl);
-    expect(await polled()).toEqual({ staging: EARLIER_TO, production: TO });
+    // production's window [08:00, 11:00) overlaps what it had looked at, so ONE interval grows.
+    expect(await polled()).toEqual({ staging: EARLIER_IV, production: { from: EARLIER_IV.from, to: TO } });
   });
 
   it("an environment that has never succeeded has no bound at all", async () => {
@@ -177,7 +183,7 @@ describe("pollCloudflare — the polled-through marker", () => {
       return json(cfBody([]));
     }) as typeof fetch;
     await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl);
-    expect(await polled()).toEqual({ production: TO });
+    expect(await polled()).toEqual({ production: IV });
   });
 
   it("never moves a bound backwards: a poll with an earlier clock leaves it where it was", async () => {
@@ -190,9 +196,39 @@ describe("pollCloudflare — the polled-through marker", () => {
   // Compared as parsed instants: a bound stored without milliseconds is the SAME
   // instant as `to`, not an older string.
   it("compares bounds as instants, and replaces one it cannot parse", async () => {
-    await putSnapshot(env.DB, "cf_polled", { staging: "2026-09-20T13:00:00Z", production: "not a date" });
+    await putSnapshot(env.DB, "cf_polled", { staging: { from: "2026-09-20T07:00:00Z", to: "2026-09-20T13:00:00Z" }, production: "not a date" });
     await pollCloudflare(env.DB, CF, ENVS, NOW, quiet);
-    expect(await polled()).toEqual({ staging: "2026-09-20T13:00:00Z", production: TO });
+    expect(await polled()).toEqual({ staging: { from: "2026-09-20T07:00:00Z", to: "2026-09-20T13:00:00Z" }, production: IV });
+  });
+
+  it("contiguous hourly polls keep extending ONE interval", async () => {
+    for (let h = 5; h >= 0; h--) await pollCloudflare(env.DB, CF, [ENVS[0]], NOW - h * HOUR, quiet);
+    expect(await polled()).toEqual({ staging: { from: "2026-09-20T03:00:00.000Z", to: TO } });
+  });
+
+  // A poll window is 3 hours, so a missed tick or two still overlaps (or
+  // touches) what was already looked at. Past that, hours exist that NO poll
+  // ever saw — the interval restarts, and the jump is what records the hole.
+  it("a window that only TOUCHES the interval extends it; a gap restarts `from`", async () => {
+    await pollCloudflare(env.DB, CF, [ENVS[0]], NOW - 3 * HOUR, quiet); // looked at [05:00, 08:00)
+    await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, quiet);            // [08:00, 11:00) touches it
+    expect(await polled()).toEqual({ staging: { from: "2026-09-20T05:00:00.000Z", to: TO } });
+
+    await putSnapshot(env.DB, "cf_polled", {});
+    await pollCloudflare(env.DB, CF, [ENVS[0]], NOW - 4 * HOUR, quiet); // looked at [04:00, 07:00)
+    await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, quiet);            // 07:00 was never looked at
+    expect(await polled()).toEqual({ staging: IV });
+  });
+
+  // The 16b shape — one ISO string, the exclusive bound — still sits in local dev
+  // databases. It reads as the one window that certainly produced it.
+  it("a LEGACY string bound reads as { from: bound − 3h, to: bound } and is upgraded when it advances", async () => {
+    await putSnapshot(env.DB, "cf_polled", { staging: "2026-09-20T09:00:00Z", production: "2026-09-20T02:00:00Z" });
+    await pollCloudflare(env.DB, CF, ENVS, NOW, quiet);
+    expect(await polled()).toEqual({
+      staging: { from: "2026-09-20T06:00:00.000Z", to: TO }, // [06:00, 09:00) overlaps [08:00, 11:00)
+      production: IV,                                         // [23:00, 02:00) does not: a hole, so it restarts
+    });
   });
 
   it("writes nothing when every environment fails", async () => {
@@ -259,10 +295,11 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
     expect(day?.trend).toHaveLength(24);
     expect(day?.trend.slice(-2)).toEqual([0, 300]);
     expect(day?.value).toBe("300");
-    // 7d: 24-hour buckets ending at the last complete hour; the first captured
-    // point sits in the second-to-last bucket.
+    // 7d: 24-hour buckets ending at the last complete hour. Capture began 30h
+    // back — MID-bucket — so that bucket holds 6 captured hours, not 24, and is
+    // not drawn as a day (P5-11); the total still counts its point.
     const week = ok(d.usage)["7d"][0].requests;
-    expect(week?.trend).toEqual([50, 300]);
+    expect(week?.trend).toEqual([300]);
     expect(week?.value).toBe("350");
   });
 
@@ -310,7 +347,11 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
   // ── Task 16b: zeros are drawn only as far as a poll is known to have looked ──
   // `cf_polled` is `{ [envKey]: <exclusive bound> }`: polled through 11:00 means
   // the 10:00 bucket (hoursBack(2)) is the last one known.
-  const markPolled = (bounds: Record<string, string>) => putSnapshot(env.DB, "cf_polled", bounds);
+  // P5-3: the marker is an INTERVAL. These tests are about its upper end, so
+  // `from` sits before every point they write — coverage with no hole in it.
+  const LONG_AGO = hoursBack(24 * 40);
+  const markPolled = (bounds: Record<string, string>) =>
+    putSnapshot(env.DB, "cf_polled", Object.fromEntries(Object.entries(bounds).map(([k, to]) => [k, { from: LONG_AGO, to }])));
 
   it("zero-fills past the last real point up to the polled bound — and no further", async () => {
     await point("staging", hoursBack(5), 100, 10);
@@ -338,9 +379,10 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
     await point("staging", hoursBack(100), 50, 0);
     await markPolled({ staging: hoursBack(72) });
     const usage = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
-    // 7d = seven 24h buckets ending at 12:00. The point sits in bucket 2; the last
-    // polled hour (hoursBack(73)) in bucket 3. Buckets 4–6 are unknown, not zero.
-    expect(usage["7d"][0].requests).toEqual({ value: "50", trend: [50, 0], tone: "neutral" });
+    // 7d = seven 24h buckets ending at 12:00. The point sits in bucket 2 — the
+    // PARTIAL bucket capture began in, so it is counted but not drawn (P5-11); the
+    // last polled hour (hoursBack(73)) is in bucket 3. Buckets 4–6 are unknown, not zero.
+    expect(usage["7d"][0].requests).toEqual({ value: "50", trend: [0], tone: "neutral" });
     // 24h: capture predates the range, but no poll has looked inside it.
     expect(usage["24h"][0]).toMatchObject({ requests: null, errorRate: null });
   });
@@ -365,9 +407,10 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
       { env: "staging", label: "Workers requests", value: "0" },
       { env: "staging", label: "Workers errors", value: "0" },
     ]);
-    // 7d: the point sits in bucket 5, the last polled hour in bucket 6.
-    expect(ok(d.usage)["7d"][0].requests).toEqual({ value: "50", trend: [50, 0], tone: "neutral" });
-    expect(ok(d.usage)["7d"][0].errorRate).toMatchObject({ value: "10.00%", trend: [10, 0] });
+    // 7d: the point sits in bucket 5 — the partial bucket capture began in,
+    // counted but not drawn (P5-11) — and the last polled hour in bucket 6.
+    expect(ok(d.usage)["7d"][0].requests).toEqual({ value: "50", trend: [0], tone: "neutral" });
+    expect(ok(d.usage)["7d"][0].errorRate).toMatchObject({ value: "10.00%", trend: [0] });
   });
 
   it("a marker alone — polled, but nothing ever captured — connects nothing", async () => {
@@ -384,6 +427,58 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
     const [staging, production] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
     expect(staging.requests?.trend).toEqual([300, 0, 0]);
     expect(production.requests?.trend).toEqual([300]);
+  });
+
+  // ── P5-3: a hole in the coverage is never drawn as quiet hours ─────────────
+  const cover = (key: string, from: string, to: string) => putSnapshot(env.DB, "cf_polled", { [key]: { from, to } });
+
+  // Polls ran, the token expired for three days, polls resumed. The old single
+  // bound jumped past the outage and drew it as consecutive zero days.
+  it("30d: a poll outage is NOT zero-filled — the trend is the contiguous covered stretch, totals keep every real point", async () => {
+    // 30d = thirty 24h buckets from hoursBack(720); bucket k starts at hoursBack(720 − 24k).
+    for (let k = 5; k <= 10; k++) await point("staging", hoursBack(720 - 24 * k), 100, 0); // before the outage
+    await point("staging", hoursBack(395), 7, 0);   // bucket 13 — the PARTIAL bucket the polls resumed in
+    await point("staging", hoursBack(380), 50, 0);  // bucket 14; bucket 15 is a genuinely quiet, POLLED day
+    for (let k = 16; k <= 29; k++) await point("staging", hoursBack(720 - 24 * k - 4), 50, 0);
+    await cover("staging", hoursBack(400), hoursBack(1)); // buckets 11–12 were never looked at
+    const month = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["30d"][0].requests;
+    expect(month?.trend).toEqual([50, 0, ...new Array(14).fill(50)]); // buckets 14–29: no outage zeros
+    expect(month?.value).toBe("1.4K"); // 600 + 7 + 50 + 700 — every real point is a fact
+  });
+
+  it("24h: real points before a hole still count, and only the covered stretch is drawn", async () => {
+    await point("staging", hoursBack(10), 100, 0);
+    await point("staging", hoursBack(9), 100, 0);
+    await cover("staging", hoursBack(4), hoursBack(1)); // 8, 7, 6, 5 hours back: never looked at
+    const [staging] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests).toEqual({ value: "200", trend: [0, 0, 0], tone: "neutral" });
+  });
+
+  it("real points that run right up to the covered interval are no hole — the trend starts at the first of them", async () => {
+    await point("staging", hoursBack(6), 100, 0);
+    await point("staging", hoursBack(5), 300, 0);
+    await cover("staging", hoursBack(4), hoursBack(1));
+    const [staging] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests?.trend).toEqual([100, 300, 0, 0, 0]);
+  });
+
+  it("a LEGACY string marker covers only the 3 hours before it", async () => {
+    await point("staging", hoursBack(10), 100, 0);
+    await putSnapshot(env.DB, "cf_polled", { staging: hoursBack(1) });
+    const [staging] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests).toEqual({ value: "100", trend: [0, 0, 0], tone: "neutral" }); // 4, 3, 2 hours back
+  });
+
+  // ── P5-11: the first drawn bucket is a WHOLE one ───────────────────────────
+  it("a 7d/30d series starts at the first whole bucket when capture begins mid-bucket; at a bucket edge nothing is lost", async () => {
+    await point("staging", hoursBack(60), 40, 0);      // 7d bucket 4 = [72h, 48h) back: capture began 12h into it
+    await point("staging", hoursBack(30), 50, 0);      // bucket 5
+    await point("staging", hoursBack(2), 300, 0);      // bucket 6
+    await point("production", hoursBack(72), 40, 0);   // exactly the start of bucket 4
+    await point("production", hoursBack(2), 300, 0);
+    const [staging, production] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["7d"];
+    expect(staging.requests).toEqual({ value: "390", trend: [50, 300], tone: "neutral" }); // total unchanged
+    expect(production.requests).toEqual({ value: "340", trend: [40, 0, 300], tone: "neutral" });
   });
 
   it("active users alone connect the usage section but not the Cloudflare panel", async () => {

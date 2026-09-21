@@ -14,7 +14,7 @@ import {
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
 import { type MetricGroup, getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince } from "../repo/store";
-import { CF_POLLED, type RepoEventRow, type RepoPrRow } from "../repo/types";
+import { CF_POLLED, cfCovered, type RepoEventRow, type RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
 // no live GitHub, no per-user token, nothing written. It reads what the webhook,
@@ -251,8 +251,8 @@ interface UsagePoint { t: number; value: number }
  * The Usage tab and the Cloudflare panel, derived IN MEMORY from one read of
  * the last 30 days (`rows`, ascending by `at`). `endExcl` is the start of the
  * current hour: only complete hours count, whatever the table holds. `polled`
- * is the `cf_polled` snapshot — per environment, the EXCLUSIVE instant its
- * polls are known to have looked through (src/repo/poll.ts).
+ * is the `cf_polled` snapshot — per environment, the interval `[from, to)` its
+ * polls are known to have looked at (src/repo/poll.ts; read via `cfCovered`).
  *
  * Never guess. Cloudflare returns NO row for an hour without invocations, so a
  * missing bucket is drawn as 0 — leaving it out would silently compress the
@@ -260,13 +260,22 @@ interface UsagePoint { t: number; value: number }
  *  - The fill STARTS at the first captured point in the range, or at the
  *    range's start when this read shows capture predates it. Before capture
  *    began the value is unknown, not zero.
- *  - The fill ENDS at `min(last complete hour, that environment's polled
- *    bound)` — and, with NO bound, at the last real point. "No row" means zero
+ *  - …unless that would cross a HOLE: `polled` holds each environment's covered
+ *    INTERVAL `{ from, to }`, and an hour before `from` with no real point is
+ *    one no poll ever looked at (an outage longer than the poll's 3-hour
+ *    window). The series then starts at `from` — the contiguous covered
+ *    stretch only — while the totals still sum every real point in the range.
+ *  - The first bucket drawn is the first WHOLE bucket (7d / 30d buckets are
+ *    days): a bucket capture or coverage began inside is counted, not drawn.
+ *  - The fill ENDS at `min(last complete hour, that environment's covered
+ *    `to`)` — and, with NO marker, at the last real point. "No row" means zero
  *    only for an hour a poll looked at; past that the poll may simply be dead.
- *    (A real point is always drawn, whatever the bound says.)
- *  - `requests` is non-null when there is at least one bucket to draw: a real
- *    point in the range, OR capture predating the range AND a polled bound
- *    inside it — the second reads a true "0" with an all-zero trend.
+ *    (A real point is always drawn, whatever the marker says.)
+ *  - `requests` is non-null when there is something known in the range: a real
+ *    point, OR capture predating the range AND covered hours inside it — the
+ *    second reads a true "0" with an all-zero trend. (Its `trend` can still be
+ *    `[]` when the only known stretch is one partial bucket; the screen draws
+ *    no sparkline under 2 points.)
  *  - `errorRate` needs a real point in the range. With points that sum to 0
  *    requests it is a true "0.00%"; with NO point, 0 of 0 is not a rate: `null`.
  *  - Totals are sums of real points only; the bound changes which zero buckets
@@ -301,10 +310,11 @@ function projectUsage(
     const complete = (pts: UsagePoint[]) => pts.filter((p) => p.t < endExcl);
     const reqAll = complete(series("cf_requests", "frontend"));
     const errAll = complete(series("cf_errors", "frontend"));
-    // Floored to the hour and clamped to the last complete one; −∞ = no bound.
-    const bound = polled[cfg.key];
-    const boundAt = typeof bound === "string" ? Date.parse(bound) : NaN;
-    const polledExcl = Number.isFinite(boundAt) ? Math.min(endExcl, Math.floor(boundAt / HOUR) * HOUR) : -Infinity;
+    // The covered interval, snapped INWARD to whole hours; its end is clamped to
+    // the last complete hour. −∞ / −∞ = no marker at all.
+    const covered = cfCovered(polled[cfg.key]);
+    const coveredFrom = covered ? Math.ceil(covered.from / HOUR) * HOUR : -Infinity;
+    const polledExcl = covered ? Math.min(endExcl, Math.floor(covered.to / HOUR) * HOUR) : -Infinity;
 
     for (const range of REPO_RANGES) {
       const { hours, step } = USAGE_RANGES[range];
@@ -325,12 +335,28 @@ function projectUsage(
       let requests: RepoUsageMetric | null = null;
       let errorRate: RepoUsageMetric | null = null;
       if (fillFrom !== null && fillToExcl > fillFrom) {
+        // A HOLE: an hour between where the fill would begin and where the
+        // covered interval begins that holds no real point — nothing ever looked
+        // at it, so it may not be drawn as 0, and a dense array cannot draw
+        // "unknown". The series then starts at the covered interval instead.
+        // (Real points running right up to `coveredFrom` are no hole: a stored
+        // point IS an hour a poll looked at.)
+        const seenHours = new Set(req.map((p) => Math.floor(p.t / HOUR) * HOUR));
+        let hole = false;
+        for (let h = fillFrom; h < Math.min(coveredFrom, fillToExcl) && !hole; h += HOUR) hole = !seenHours.has(h);
+        const drawFrom = hole ? coveredFrom : fillFrom;
         const idx = (t: number) => Math.floor((t - start) / step);
+        // The first bucket drawn is the first WHOLE one: when capture (or the
+        // covered interval) begins mid-bucket, that bucket holds only part of its
+        // span and would read as a dip beside full ones. `ceil` is the mirror of
+        // the rule at the other end ("never a half-finished day drawn as a
+        // drop"); hourly buckets are always whole. Totals are untouched.
+        const firstIdx = Math.ceil((drawFrom - start) / step);
         const bucket = (pts: UsagePoint[]): number[] => {
           const out = new Array<number>((hours * HOUR) / step).fill(0);
           for (const p of pts) out[idx(p.t)] += p.value;
           // The last bucket drawn is the one holding the last KNOWN hour.
-          return out.slice(idx(fillFrom), idx(fillToExcl - HOUR) + 1);
+          return out.slice(firstIdx, idx(fillToExcl - HOUR) + 1);
         };
         const reqBuckets = bucket(req);
         const errBuckets = bucket(err);

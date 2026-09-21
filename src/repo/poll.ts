@@ -5,7 +5,7 @@
 import type { DB } from "../db";
 import type { RepoEnvConfig } from "./config";
 import { getSnapshot, putMetric, putSnapshot } from "./store";
-import { CF_POLLED, type CfPolled } from "./types";
+import { CF_POLLED, CF_POLL_HOURS, cfCovered, type CfPolled } from "./types";
 
 const TEN_MIN = 600_000;
 const PING_TIMEOUT_MS = 8_000;
@@ -56,7 +56,6 @@ export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fet
 const HOUR = 3_600_000;
 const CF_GRAPHQL = "https://api.cloudflare.com/client/v4/graphql";
 const CF_TIMEOUT_MS = 10_000;
-const CF_HOURS = 3;
 /** Cloudflare's schema spells its scalar `string`, LOWERCASE — `String!` is
  *  rejected as an unknown type. `Time` is theirs too. `limit: 100` is far more
  *  than the ≤4 hourly groups one Worker can return for this window. */
@@ -98,18 +97,25 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
  * an absent hour is not written as 0 here — the projection zero-fills instead
  * (src/tools/repo.ts). But "no row" only means "zero" for an hour a poll is
  * KNOWN to have looked at, so each environment whose poll SUCCEEDED — even with
- * zero rows — is recorded as polled through `to` in the ONE `cf_polled`
- * snapshot: ONE read-modify-write per call, after the loop (read, merge every
- * environment that succeeded, write once) — no read when none succeeded, no
- * write unless a bound actually advanced. A failed environment keeps its
- * previous bound, and a bound never moves BACKWARDS (compared as parsed
- * instants). A failure here is logged and costs only the marker.
+ * zero rows — has this window `[from, to)` merged into its covered INTERVAL in
+ * the ONE `cf_polled` snapshot (`{ [env]: { from, to } }`): when the previous
+ * interval reaches this window (`prev.to >= from`) it keeps its `from` and its
+ * `to` becomes `max(prev.to, to)`; otherwise — no previous interval, or a GAP,
+ * i.e. an outage longer than the 3-hour window left hours nothing ever looked
+ * at — the interval RESTARTS at this window's `from`. That jump is the record
+ * of the hole: the projection never draws a zero before `from`. ONE
+ * read-modify-write per call, after the loop (read, merge every environment
+ * that succeeded, write once) — no read when none succeeded, no write unless an
+ * interval actually changed. A failed environment keeps its previous interval,
+ * and neither end ever moves BACKWARDS (compared as parsed instants). A legacy
+ * string entry is read through `cfCovered` and rewritten as an interval the
+ * first time it advances. A failure here is logged and costs only the marker.
  */
 export async function pollCloudflare(
   db: DB, cf: { token: string; accountId: string }, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
 ): Promise<void> {
   const to = Math.floor(now / HOUR) * HOUR - HOUR;
-  const from = to - CF_HOURS * HOUR;
+  const from = to - CF_POLL_HOURS * HOUR;
   const succeeded: string[] = [];
   for (const cfg of envs) {
     if (!cfg.worker) continue;
@@ -136,6 +142,12 @@ export async function pollCloudflare(
         const sum = record(record(row).sum);
         const requests = count(sum.requests);
         const errors = count(sum.errors);
+        // KNOWN LIMIT (accepted): a row IN the window that is malformed is skipped,
+        // but the environment still counts as polled below — so that one hour may
+        // be drawn as 0 rather than unknown. It takes Cloudflare changing its
+        // response types; the blast radius is one bucket, and totals (sums of
+        // real points) are unaffected. The fix, if it ever matters: remember the
+        // first malformed in-window hour and end this poll's covered `to` there.
         if (!Number.isFinite(at) || at < from || at >= to || requests === null || errors === null) continue;
         const iso = new Date(at).toISOString();
         await putMetric(db, { metric: "cf_requests", env: cfg.key, part: "frontend", value: requests, at: iso });
@@ -148,15 +160,20 @@ export async function pollCloudflare(
   }
   if (!succeeded.length) return;
   try {
-    const bounds: CfPolled = { ...record((await getSnapshot<unknown>(db, CF_POLLED))?.data) } as CfPolled;
-    let advanced = false;
+    // A read-modify-write with no lock, which is safe only because ticks do not
+    // overlap (hourly, against ~10s timeouts per environment) — and a lost update
+    // would be harmless anyway: every writer inside one hour computes the SAME
+    // window, so the loser's interval is re-written identically next tick.
+    const bounds = { ...record((await getSnapshot<unknown>(db, CF_POLLED))?.data) } as Record<string, unknown>;
+    let changed = false;
     for (const key of succeeded) {
-      const prev = typeof bounds[key] === "string" ? Date.parse(bounds[key]) : NaN;
-      if (Number.isFinite(prev) && prev >= to) continue;
-      bounds[key] = new Date(to).toISOString();
-      advanced = true;
+      const prev = cfCovered(bounds[key]);
+      const next = prev && prev.to >= from ? { from: prev.from, to: Math.max(prev.to, to) } : { from, to };
+      if (prev && next.from === prev.from && next.to === prev.to) continue;
+      bounds[key] = { from: new Date(next.from).toISOString(), to: new Date(next.to).toISOString() };
+      changed = true;
     }
-    if (advanced) await putSnapshot(db, CF_POLLED, bounds, new Date(now).toISOString());
+    if (changed) await putSnapshot(db, CF_POLLED, bounds as CfPolled, new Date(now).toISOString());
   } catch (e) {
     console.error("pollCloudflare", CF_POLLED, e);
   }
