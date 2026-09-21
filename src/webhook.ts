@@ -294,7 +294,8 @@ async function progressSeam(db: DB, payload: unknown): Promise<void> {
 const WORK_EVENT_NAMES = ["pull_request", "issues"];
 /** Deliveries the repo dashboard capture (`repo_events`) reads. `status` (Task
  *  14) is a sibling arm: it feeds `repo_metrics`, not `repo_events` — see the
- *  branch below. Later phases append. */
+ *  branch below. The list is complete for the five-phase capture plan; GitHub
+ *  only delivers the ones the repo's webhook is SUBSCRIBED to. */
 export const REPO_EVENT_NAMES: readonly string[] = ["pull_request", "push", "pull_request_review", "deployment_status", "check_run", "workflow_run", "status"];
 
 // ---------------------------------------------------------------------------

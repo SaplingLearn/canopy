@@ -39,11 +39,41 @@ describe("repoView — section states", () => {
     }
   });
 
-  it("shows 'Source not connected' for a section with no capture path, with no dead button", () => {
+  it("shows 'Source not connected' for a section nothing has been captured for, with no dead button", () => {
     const html = repoView(props({ tab: "usage" }));
     expect((html.match(/Source not connected/g) ?? []).length).toBe(3);
     expect(html).not.toContain("Connect Cloudflare");
     expect(html).toContain('data-act="repoSampleOn"');
+  });
+
+  // Every section has a capture path now, so an unconnected one names what that
+  // path is still WAITING on (a setting/secret by name, a webhook event, the
+  // repo's CI, Sync GitHub) — never that no path exists, never a connect flow.
+  it("a not-connected section says what its capture is waiting on, in the owner's terms", () => {
+    const tab = (t: RepoProps["tab"]) => repoView(props({ tab: t }));
+    const overview = tab("overview"), code = tab("code"), ci = tab("ci"), usage = tab("usage"), planning = tab("planning");
+    expect(overview).toContain("Cards appear once REPO_ENVIRONMENTS lists an environment");
+    expect(overview).toContain("The repo cron pings each environment in REPO_ENVIRONMENTS every 10 minutes");
+    expect(code).toContain("No branch snapshot yet. One is taken when an admin runs Sync GitHub and by the 6-hourly GitHub reconcile — both need GITHUB_SERVICE_TOKEN.");
+    expect(ci).toContain("Deploys arrive when the GitHub webhook delivers deployment_status and check_run events, or when an admin runs Sync GitHub");
+    expect(ci).toContain("Runs arrive when the GitHub webhook delivers workflow_run events, or when an admin runs Sync GitHub.");
+    expect(ci).toContain("posts a canopy/coverage commit status on a push to main and the GitHub webhook delivers status events.");
+    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to main and the GitHub webhook delivers status events.");
+    expect(usage).toContain("hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID)");
+    expect(usage).toContain("metrics endpoint (SAPLING_METRICS_TOKEN)");
+    expect(usage).toContain("RAILWAY_TOKEN_&lt;ENVIRONMENT&gt; secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.");
+    expect(planning).toContain("posts a canopy/todo commit status on a push to main and the GitHub webhook delivers status events.");
+
+    const all = [overview, code, ci, usage, planning].join("\n");
+    for (const stale of ["no capture path", "aren&#39;t captured", "nothing pings", "nothing scans", "not refs", "is ingested yet", "for this repo yet"]) {
+      expect(all, stale).not.toContain(stale);
+    }
+    // The page-level legend says the same thing: nothing captured YET, not "no path".
+    expect(overview).toContain("have had nothing captured yet — each says what it is waiting on.");
+  });
+
+  it("an empty activity chart claims neither commits nor merges", () => {
+    expect(repoView(props({ tab: "code" }))).toContain("No commits or merges in the last 14 days.");
   });
 
   it("shows 'Nothing here yet' for a connected section with no rows", () => {

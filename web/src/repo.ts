@@ -4,7 +4,7 @@
 //
 // Five tabs, each ONE bordered panel divided by hairlines (the design's rule:
 // lines, not cards). Every block is a `RepoSection`, so each one renders four
-// ways — live, `empty`, `not_connected` (no capture path yet) and, while the
+// ways — live, `empty`, `not_connected` (nothing captured for it yet) and, while the
 // fetch is out or failed, loading / error. The Worker decides which sections are
 // live (`src/tools/repo.ts`); nothing here invents a number.
 //
@@ -104,7 +104,9 @@ const errorBlock = (): string =>
   </div>`;
 
 /** The design's "Source not connected" block. No button: there is no connect flow
- *  to start — the copy says what capture path the section is waiting on. */
+ *  to start. Every section HAS a capture path now, so the copy names what that
+ *  path is still waiting on, in the owner's terms — a setting or secret by NAME
+ *  (never a value), a webhook event, the repo's CI, or Sync GitHub. */
 const notConnected = (what: string): string =>
   `<div style="display:flex;align-items:center;justify-content:center;padding:14px 0;flex:1"><div style="border:1px dashed color-mix(in srgb,var(--accent) 45%,transparent);border-radius:11px;padding:18px 24px;text-align:center;width:100%;background:color-mix(in srgb,var(--accent) 4%,transparent)">
     <div style="font-size:13.5px;font-weight:600">Source not connected</div>
@@ -169,7 +171,7 @@ const kv = (k: string, v: string): string =>
 
 function overviewTab(p: RepoProps): string {
   const now = Date.now();
-  const envs = sec(p, (d) => d.environments, { nc: "No environment has reported a deploy or a CI check yet — the webhook captures them once an environment is configured.", empty: "No environments recorded." }, (rows) =>
+  const envs = sec(p, (d) => d.environments, { nc: "Nothing captured for a configured environment yet. Cards appear once REPO_ENVIRONMENTS lists an environment and a health ping, a deploy or a head check lands for it — from the 10-minute cron, the GitHub webhook, or an admin's Sync GitHub.", empty: "No environments recorded." }, (rows) =>
     `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${rows.map((e, i) => {
       const c = TONE[e.tone];
       return `<div style="padding:20px 22px 10px;min-width:0;${i ? LEFT : ""}">
@@ -223,7 +225,7 @@ function overviewTab(p: RepoProps): string {
   // nothing has ever pinged these URLs; `empty` = the pings exist but every
   // reading has aged out (the 10-minute cron has stopped) — which must NOT read
   // as "never set up".
-  const health = sec(p, (d) => d.health, { nc: "Health checks aren't connected — nothing pings the environment URLs yet.", empty: "No fresh health reading — the last ping is over 30 minutes old.", lines: 2 }, (rows) =>
+  const health = sec(p, (d) => d.health, { nc: "No health ping has landed yet. The repo cron pings each environment in REPO_ENVIRONMENTS every 10 minutes, so this fills in after its first tick.", empty: "No fresh health reading — the last ping is over 30 minutes old.", lines: 2 }, (rows) =>
     rows.map((h) => {
       const c = h.up ? "var(--green)" : "var(--red)";
       return `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 110px 90px;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)">
@@ -277,7 +279,7 @@ function codeTab(p: RepoProps): string {
     </div>`).join("")}</div>`);
 
   const barsData = okData(p, (d) => d.bars);
-  const bars = sec(p, (d) => d.bars, { nc: "Commit activity isn't connected — pushes aren't captured yet.", empty: "No merges in the last 14 days.", lines: 2 }, (b) => {
+  const bars = sec(p, (d) => d.bars, { nc: "Commit activity isn't connected.", empty: "No commits or merges in the last 14 days.", lines: 2 }, (b) => {
     const max = Math.max(1, ...b.days.map((d) => d.count));
     const w = 100 / b.days.length;
     const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -296,7 +298,7 @@ function codeTab(p: RepoProps): string {
   const prs = sec(p, (d) => d.prs, { nc: "Pull requests aren't connected.", empty: "No pull requests captured yet.", lines: 4 }, (rows) => rows.map((r) => prRow(r, now)).join(""));
 
   const br = okData(p, (d) => d.branches);
-  const branches = sec(p, (d) => d.branches, { nc: "Branches aren't connected — Canopy captures PR closes and issues, not refs.", empty: "No branches recorded." }, (b) =>
+  const branches = sec(p, (d) => d.branches, { nc: "No branch snapshot yet. One is taken when an admin runs Sync GitHub and by the 6-hourly GitHub reconcile — both need GITHUB_SERVICE_TOKEN.", empty: "No branches recorded." }, (b) =>
     b.rows.map((r) => `<div style="display:grid;grid-template-columns:minmax(0,1.4fr) 90px 130px 54px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
       <span style="font-family:var(--mono);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
       <span style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(ago(r.at, now))} ago</span>
@@ -353,7 +355,7 @@ const titled = (title: string, body: string): string => `<div style="${LABEL}">$
 function ciTab(p: RepoProps): string {
   const now = Date.now();
   const RESULT = { ok: ["var(--green)", "DEPLOYED"], fail: ["var(--red)", "FAILED"], cancel: ["var(--amber)", "CANCELLED"] } as const;
-  const deploys = sec(p, (d) => d.deploys, { nc: "No deploy has been captured for a configured environment yet.", empty: "No deploys recorded.", lines: 2 }, (rows) =>
+  const deploys = sec(p, (d) => d.deploys, { nc: "No deploy captured for a configured environment yet. Deploys arrive when the GitHub webhook delivers deployment_status and check_run events, or when an admin runs Sync GitHub; environments come from REPO_ENVIRONMENTS.", empty: "No deploys recorded.", lines: 2 }, (rows) =>
     rows.map((row) => {
       const okCount = row.deploys.filter((d) => d.result === "ok").length;
       const last = row.deploys[row.deploys.length - 1];
@@ -380,7 +382,7 @@ function ciTab(p: RepoProps): string {
   // (src/tools/repo.ts). The percentage and the sparkline both describe seven
   // days, so neither is drawn — a quiet line says why instead. The failure rows
   // themselves are facts and are always listed.
-  const failures = sec(p, (d) => d.ciFailures, { nc: "CI isn't connected — workflow runs aren't captured yet.", empty: "No CI failures this week." }, (f) =>
+  const failures = sec(p, (d) => d.ciFailures, { nc: "No workflow run captured yet. Runs arrive when the GitHub webhook delivers workflow_run events, or when an admin runs Sync GitHub.", empty: "No CI failures this week." }, (f) =>
     `${f.rate === null
         ? `<div style="margin-top:8px;font-size:12.5px;color:var(--fg-40)">A 7-day rate appears after a week of captured runs.</div>`
         : spark(f.trend, "var(--amber)", 40)}
@@ -395,9 +397,9 @@ function ciTab(p: RepoProps): string {
   // window" (src/tools/repo.ts checks `latestMetric` on the empty path) — the
   // copy says so, rather than implying nothing has ever been reported.
   const cov = okData(p, (d) => d.coverage);
-  const coverage = sec(p, (d) => d.coverage, { nc: "Coverage isn't connected — no CI report is ingested yet.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
+  const coverage = sec(p, (d) => d.coverage, { nc: "No coverage reported yet. It appears once the repo's CI posts a canopy/coverage commit status on a push to main and the GitHub webhook delivers status events.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
   const bun = okData(p, (d) => d.bundle);
-  const bundle = sec(p, (d) => d.bundle, { nc: "Bundle size isn't connected — no build report is ingested yet.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
+  const bundle = sec(p, (d) => d.bundle, { nc: "No bundle size reported yet. It appears once the repo's CI posts a canopy/bundle-kb commit status on a push to main and the GitHub webhook delivers status events.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
 
   const activity = sec(p, (d) => d.activity, { nc: "The activity feed isn't connected.", empty: "No repo events captured yet.", lines: 4 }, (rows) =>
     `<div class="cnpy-scroll" style="max-height:236px;overflow-y:auto">${rows.map((a) => activityRow(a, now)).join("")}</div>`);
@@ -459,17 +461,17 @@ function usageTab(p: RepoProps): string {
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
-  const usage = sec(p, (d) => d.usage, { nc: "App usage isn't connected — requests and error rate wait on Cloudflare analytics; active users wait on the app's own metrics endpoint.", empty: "No usage recorded in the last 30 days.", lines: 4 }, (u) =>
+  const usage = sec(p, (d) => d.usage, { nc: "No usage captured yet. Requests and error rate come from the hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID); active users come from the app's own metrics endpoint (SAPLING_METRICS_TOKEN). Both need an environment in REPO_ENVIRONMENTS.", empty: "No usage recorded in the last 30 days.", lines: 4 }, (u) =>
     `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
   // `ok` is gated on the WIDEST range (30d), so a narrower one can legitimately
   // hold no rows — say so, rather than render a titled panel with nothing in it.
-  const cf = sec(p, (d) => d.cloudflare, { nc: "The Cloudflare panel — and the requests/error metrics above — wait on a Cloudflare analytics token that isn't connected for this repo yet.", empty: "No Cloudflare metrics in the last 30 days." }, (c) =>
+  const cf = sec(p, (d) => d.cloudflare, { nc: "No Cloudflare analytics captured yet. The hourly poll runs once the CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID secrets are set and REPO_ENVIRONMENTS names each environment's Worker; it also feeds the requests and error rate above.", empty: "No Cloudflare metrics in the last 30 days." }, (c) =>
     `<div class="repo-swap">${!c[p.range].length ? `<div style="padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">No requests in this range.</div>` : ""}${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(w.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">${esc(w.label)}</span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right">${esc(w.value)}</span>
     </div>`).join("")}</div>`);
-  const hosting = sec(p, (d) => d.hosting, { nc: "Hosting metrics wait on Railway tokens that aren't connected for this repo yet.", empty: "No fresh hosting reading — the last Railway sample is over 3 hours old." }, (rows) =>
+  const hosting = sec(p, (d) => d.hosting, { nc: "No Railway reading captured yet. The hourly poll runs once an environment's RAILWAY_TOKEN_<ENVIRONMENT> secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.", empty: "No fresh hosting reading — the last Railway sample is over 3 hours old." }, (rows) =>
     rows.map((h) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(h.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">CPU <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${esc(h.cpu)}</span></span>
@@ -541,7 +543,7 @@ function planningTab(p: RepoProps): string {
   // no delta chip and no "since" text (there is nothing to date it from).
   // I2: `empty` now means "a count has landed before, just not in the last 90
   // days", not "nothing has ever scanned this".
-  const todos = sec(p, (d) => d.todos, { nc: "TODO / FIXME counts aren't connected — nothing scans the source tree yet.", empty: "No count reported in the last 90 days." }, (t) =>
+  const todos = sec(p, (d) => d.todos, { nc: "No TODO / FIXME count reported yet. It appears once the repo's CI posts a canopy/todo commit status on a push to main and the GitHub webhook delivers status events.", empty: "No count reported in the last 90 days." }, (t) =>
     `<div style="display:flex;align-items:baseline;gap:12px;margin-top:10px">
       <span data-count="${t.count}" style="font-family:var(--mono);font-size:31px;font-weight:600;letter-spacing:-0.02em">${t.count}</span>
       ${t.delta === null ? "" : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
@@ -570,7 +572,7 @@ function planningTab(p: RepoProps): string {
 // ── the screen ───────────────────────────────────────────────────────────────
 const SCREEN_LABEL: Record<RepoTab, string> = { overview: "Overview", code: "Code", ci: "CI and Deploys", usage: "Usage", planning: "Planning" };
 
-/** Does the tab in view have a section waiting on a capture path? */
+/** Does the tab in view have a section nothing has been captured for yet? */
 function hasUncaptured(p: RepoProps): boolean {
   const d = p.repo.data;
   if (!d) return false;
@@ -599,7 +601,7 @@ export function repoView(p: RepoProps): string {
       : "";
   const footer = !p.sample && hasUncaptured(p)
     ? `<div class="cnpy-rise" style="--i:6;display:flex;align-items:center;gap:9px;margin-top:14px;font-size:12px;color:var(--fg-40)">${info}
-        <span>Sections marked <span style="color:var(--fg-55)">not connected</span> have no capture path yet.</span>
+        <span>Sections marked <span style="color:var(--fg-55)">not connected</span> have had nothing captured yet — each says what it is waiting on.</span>
         <button data-act="repoSampleOn" class="repo-textbtn" style="font-size:12px;font-weight:500;color:var(--accent);padding:0;white-space:nowrap">Preview with sample data</button>
       </div>`
     : "";
