@@ -15,7 +15,7 @@
 import {
   REPO_RANGES, REPO_TABS,
   type RepoActivity, type RepoActivityKind, type RepoDashboard, type RepoPerson, type RepoPr, type RepoPrState,
-  type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
+  type RepoProductEnv, type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
   type PollOutcome, type UsagePollResult, type UsagePollSource,
 } from "@shared/repo";
 import type { Loadable } from "./render";
@@ -472,15 +472,78 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
   </div>`;
 }
 
+// ── Usage › Product metrics ──────────────────────────────────────────────────
+// What the app reports about itself (src/repo/poll.ts → `sap_*` gauges). One
+// block per environment; inside it the groups sit in a responsive grid of
+// compact label / sparkline / value rows. Every row keeps the SAME three
+// columns whatever it holds — a missing sparkline or a "no recent reading"
+// leaves its cell in place — so switching range (which only swaps `counts`
+// figures; `totals` ignore it) never shifts the layout. Labels and keys
+// originate in ANOTHER service: everything interpolated goes through `esc()`.
+const PRODUCT_ROW = `display:grid;grid-template-columns:minmax(0,1fr) 52px auto;gap:10px;align-items:center;padding:7px 0;${TOP}`;
+
+/** `spark()` for a table cell: a span (a row holds no block child), fixed width. */
+const miniSpark = (trend: number[], stroke: string): string =>
+  trend.length < 2 ? `<span></span>` :
+  `<span class="repo-spark" style="display:block;width:52px"><svg viewBox="0 0 100 26" preserveAspectRatio="none" style="width:100%;height:18px;display:block"><polyline points="${sparkPoints(trend)}" fill="none" stroke="${stroke}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline></svg></span>`;
+
+function productRow(label: string, value: string | null, raw: number | null, trend: number[]): string {
+  // The exact integer behind a compacted figure ("1.2K") — not behind a dollar amount.
+  const exact = value !== null && raw !== null && value !== String(raw) && !value.startsWith("$") ? ` title="${attr(raw.toLocaleString("en-US"))}"` : "";
+  return `<div style="${PRODUCT_ROW}"><span style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>${miniSpark(trend, "var(--fg-40)")}${
+    value === null
+      ? `<span style="font-size:11.5px;color:var(--fg-40);text-align:right;white-space:nowrap">${absentLabel(true)}</span>`
+      : `<span${exact} style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap">${esc(value)}</span>`
+  }</div>`;
+}
+
+function productGroup(title: string, rows: string[], notes: string[]): string {
+  return `<div style="min-width:0;padding:6px 0 8px">
+    <div style="${LABEL_SM};margin-bottom:6px;overflow:hidden;text-overflow:ellipsis">${esc(title)}</div>
+    ${rows.join("")}
+    ${notes.map((n) => `<div style="font-size:11px;line-height:1.5;color:var(--fg-40);margin-top:6px">${esc(n)}</div>`).join("")}
+  </div>`;
+}
+
+function productEnv(e: RepoProductEnv, range: RepoRange): string {
+  const noted = (rows: { label: string; note?: string }[]) => rows.filter((m) => m.note).map((m) => `${m.label}: ${m.note}`);
+  const groups = e.groups.map((g) =>
+    productGroup(g.title, g.metrics.map((m) => productRow(m.label, m.values[range], m.raw[range], m.trend)), noted(g.metrics)));
+  if (e.totals.length) groups.push(productGroup("Right now", e.totals.map((t) => productRow(t.label, t.value, t.raw, t.trend)), noted(e.totals)));
+  return groups.length
+    ? `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:6px 32px;margin-top:8px">${groups.join("")}</div>`
+    : `<div style="margin-top:8px;padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">This environment has reported no product metrics.</div>`;
+}
+
+/** The product blocks under the Usage tab's panels, `--i` staggered from `i`. */
+function productBlocks(p: RepoProps, i: number): string {
+  const head = (title: string, aside = "") =>
+    `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px"><span style="${LABEL};min-width:0;overflow:hidden;text-overflow:ellipsis">${title}</span>${aside}</div>`;
+  const envs = okData(p, (d) => d.product);
+  if (!envs) {
+    const state = sec(p, (d) => d.product ?? { status: "not_connected" }, { nc: "No product metrics reported yet. They appear once the app's metrics endpoint serves `counts` / `totals` and `SAPLING_METRICS_TOKEN` is set.", empty: "No current product reading — the hourly poll of the app's metrics endpoint has gone quiet.", lines: 3 }, () => "");
+    return `<div ${rise(i, `${TOP};padding:18px 20px`)}>${head("Product")}${state}</div>`;
+  }
+  const aside = `<span style="font-size:11px;color:var(--fg-40);white-space:nowrap">reported by the app · counts over ${esc(p.range)}</span>`;
+  return envs.map((e, n) => `<div ${rise(i + n, `${TOP};padding:18px 20px 12px;min-width:0`)}>
+      ${head(`Product — ${esc(e.name)}`, aside)}
+      ${productEnv(e, p.range)}
+    </div>`).join("");
+}
+
 // ── "Poll now" — the admin's on-demand run of the three hourly usage pollers ──
-const POLL_SOURCES: [keyof UsagePollResult, string][] = [["cloudflare", "Cloudflare"], ["railway", "Railway"], ["sapling", "Active users"]];
+// "App metrics": the app's own endpoint answers active users AND product metrics in one response.
+const POLL_SOURCES: [keyof UsagePollResult, string][] = [["cloudflare", "Cloudflare"], ["railway", "Railway"], ["sapling", "App metrics"]];
 const MUTED = "var(--fg-40)";
 
-/** One environment's outcome: `staging ✓ 3 new` / `✓ up to date` / `✗ <detail>` / `– skipped: <detail>`. */
+/** One environment's outcome: `staging ✓ 3 new` / `✓ up to date` / `✗ <detail>` / `– skipped: <detail>`.
+ *  An `ok` may carry a detail too (product keys the poll dropped, by name), and
+ *  a `failed` may still have written rows (the app's product metrics land even
+ *  when its active-users half is refused) — both are said, never hidden. */
 function pollOutcome(o: PollOutcome): string {
   const [color, text] =
-    o.status === "ok" ? [TONE.good, o.written > 0 ? `✓ ${o.written} new` : "✓ up to date"]
-    : o.status === "failed" ? [TONE.bad, `✗ ${o.detail ?? "failed"}`]
+    o.status === "ok" ? [TONE.good, `${o.written > 0 ? `✓ ${o.written} new` : "✓ up to date"}${o.detail ? ` — ${o.detail}` : ""}`]
+    : o.status === "failed" ? [TONE.bad, `✗ ${o.detail ?? "failed"}${o.written > 0 ? ` — ${o.written} new` : ""}`]
     : [MUTED, `– skipped${o.detail ? `: ${o.detail}` : ""}`];
   // "*" is the whole source (an arm that threw), not an environment called "*".
   return `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}</span> <span style="color:${color}">${esc(text)}</span></span>`;
@@ -550,7 +613,8 @@ function usageTab(p: RepoProps): string {
         <div style="${LABEL}">Hosting — Railway backend</div>
         ${hosting}
       </div>
-    </div>`;
+    </div>
+    ${productBlocks(p, 3)}`;
 }
 
 // ── Team & Planning ──────────────────────────────────────────────────────────
@@ -639,7 +703,7 @@ function hasUncaptured(p: RepoProps): boolean {
     overview: [d.environments, d.drift, d.stats, d.health],
     code: [d.codeStats, d.bars, d.prs, d.branches],
     ci: [d.deploys, d.ciFailures, d.coverage, d.bundle, d.activity],
-    usage: [d.usage, d.cloudflare, d.hosting],
+    usage: [d.usage, d.cloudflare, d.hosting, d.product ?? { status: "not_connected" }],
     planning: [d.sprint, d.contributors, d.labels, d.todos],
   };
   return by[p.tab].some((s) => s.status === "not_connected");

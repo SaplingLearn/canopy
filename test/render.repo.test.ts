@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
 import { render, initialState } from "../web/src/render";
-import { REPO_TABS, type RepoDashboard, type RepoPerson, type UsagePollResult } from "@shared/repo";
+import { REPO_TABS, type RepoDashboard, type RepoPerson, type RepoProductEnv, type UsagePollResult } from "@shared/repo";
 
 const NC = { status: "not_connected" } as const;
 const EMPTY = { status: "empty" } as const;
@@ -19,7 +19,7 @@ function live(over: Partial<RepoDashboard> = {}): RepoDashboard {
   return {
     repo: "SaplingLearn/sapling", generatedAt: new Date().toISOString(), degraded: false,
     environments: NC, drift: NC, health: NC, branches: NC, deploys: NC, ciFailures: NC, coverage: NC, bundle: NC,
-    usage: NC, cloudflare: NC, hosting: NC, todos: NC,
+    usage: NC, cloudflare: NC, hosting: NC, product: NC, todos: NC,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY, sprint: EMPTY, contributors: EMPTY, labels: EMPTY,
     ...over,
   };
@@ -62,7 +62,7 @@ describe("repoView — section states", () => {
 
   it("shows 'Source not connected' for a section nothing has been captured for, with no dead button", () => {
     const html = repoView(props({ tab: "usage" }));
-    expect((html.match(/Source not connected/g) ?? []).length).toBe(3);
+    expect((html.match(/Source not connected/g) ?? []).length).toBe(4); // usage, Cloudflare, hosting, product
     expect(html).not.toContain("Connect Cloudflare");
     expect(html).toContain('data-act="repoSampleOn"');
   });
@@ -237,7 +237,7 @@ describe("repoView — live content", () => {
     const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: false, users: false } };
     const data = live({
       usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } },
-      cloudflare: EMPTY, hosting: EMPTY,
+      cloudflare: EMPTY, hosting: EMPTY, product: EMPTY,
     });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     expect(html).toContain("staging");
@@ -250,7 +250,7 @@ describe("repoView — live content", () => {
   // the source is connected, there were simply no requests to take a rate of.
   it("an error rate with nothing to take a rate of reads a quiet dash, not 'not connected'", () => {
     const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: { value: "0", trend: [0, 0, 0], tone: "neutral" as const }, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const }, seen: { requests: true, users: true } };
-    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY, product: EMPTY });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
     expect(errRow).toContain(">—<");
@@ -262,7 +262,7 @@ describe("repoView — live content", () => {
 
   it("an error rate whose requests are ALSO unconnected still says 'not connected'", () => {
     const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: { value: "4", trend: [3, 4], tone: "neutral" as const }, seen: { requests: false, users: true } };
-    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY, product: EMPTY });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     const errRow = html.slice(html.indexOf("Error rate"), html.indexOf("Active users"));
     expect(errRow).toContain("not connected");
@@ -274,7 +274,7 @@ describe("repoView — live content", () => {
   // connected and quiet — saying "not connected" there was false.
   it("a null metric whose source has been seen reads 'no recent reading', never 'not connected'", () => {
     const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: true, users: true } };
-    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY, product: EMPTY });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     expect((html.match(/no recent reading/g) ?? []).length).toBe(3); // requests, error rate (follows requests), users
     expect(html).not.toContain("not connected");
@@ -283,7 +283,7 @@ describe("repoView — live content", () => {
 
   it("the two labels sit side by side: requests seen and quiet, users never connected", () => {
     const envRow = { name: "staging", host: "staging.saplinglearn.com", requests: null, errorRate: null, users: null, seen: { requests: true, users: false } };
-    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY });
+    const data = live({ usage: { status: "ok", data: { "24h": [envRow], "7d": [envRow], "30d": [envRow] } }, cloudflare: EMPTY, hosting: EMPTY, product: EMPTY });
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data } }));
     const row = (from: string, to: string) => html.slice(html.indexOf(from), html.indexOf(to));
     expect(row("Requests", "Error rate")).toContain("no recent reading");
@@ -470,6 +470,139 @@ describe("repo header chrome", () => {
 });
 
 // ── "Poll now" (admin-only, Usage tab) ───────────────────────────────────────
+// ── product metrics (Sapling contract v2) ────────────────────────────────────
+describe("repoView — product metrics", () => {
+  const all3 = (v: string | null) => ({ "24h": v, "7d": v, "30d": v });
+  const staging: RepoProductEnv = {
+    name: "staging",
+    groups: [
+      { id: "growth", title: "Growth", metrics: [
+        { key: "signups", label: "Signups", values: { "24h": "3", "7d": "21", "30d": "96" }, raw: { "24h": 3, "7d": 21, "30d": 96 }, trend: [2, 4, 3, 5] },
+        { key: "approvals", label: "Approvals", values: all3(null), raw: { "24h": null, "7d": null, "30d": null }, trend: [1] },
+      ] },
+      { id: "ai", title: "AI spend", metrics: [
+        { key: "llm_tokens", label: "LLM tokens", values: { "24h": "41.0K", "7d": "1.23M", "30d": "4.80M" }, raw: { "24h": 41_000, "7d": 1_234_567, "30d": 4_800_000 }, trend: [] },
+        { key: "llm_cost_cents", label: "LLM cost", values: { "24h": "$4.12", "7d": "$29.61", "30d": "$118.30" }, raw: { "24h": 412, "7d": 2961, "30d": 11830 }, trend: [300, 412], note: "lower bound — unpriced models are not counted" },
+      ] },
+    ],
+    totals: [
+      { key: "users", label: "Users", value: "1.2K", raw: 1204, trend: [1190, 1198, 1204] },
+      { key: "rooms", label: "Rooms", value: null, raw: null, trend: [] },
+    ],
+  };
+  const production: RepoProductEnv = { name: "production", groups: [], totals: [] };
+  const view = (over: Partial<RepoProps> = {}, data: RepoProductEnv[] = [staging, production]) =>
+    repoView(props({ tab: "usage", repo: { status: "ok", data: live({ product: { status: "ok", data } }) }, ...over }));
+  /** The markup of one labelled row: from its label to the end of its grid row. */
+  const rowOf = (html: string, label: string) => { const i = html.indexOf(`>${label}<`); expect(i, label).toBeGreaterThan(-1); return html.slice(i, html.indexOf("</div>", i)); };
+
+  it("one titled block per environment, groups as labelled blocks, totals under Right now", () => {
+    const html = view();
+    expect(html).toContain("Product — staging");
+    expect(html).toContain("Product — production");
+    for (const title of ["Growth", "AI spend", "Right now"]) expect(html).toContain(`>${title}<`);
+    expect(html).not.toMatch(/undefined|NaN|\[object/);
+    // Groups the environment did not report are not drawn as empty boxes.
+    expect(html).not.toContain(">Community<");
+  });
+
+  it("the range selector drives counts — and never totals", () => {
+    const at = (range: "24h" | "7d" | "30d") => view({ range });
+    expect(rowOf(at("24h"), "Signups")).toContain(">3<");
+    expect(rowOf(at("7d"), "Signups")).toContain(">21<");
+    expect(rowOf(at("30d"), "Signups")).toContain(">96<");
+    expect(rowOf(at("30d"), "LLM cost")).toContain("$118.30");
+    for (const range of ["24h", "7d", "30d"] as const) expect(rowOf(at(range), "Users")).toContain(">1.2K<");
+  });
+
+  it("the exact integer behind a compacted figure is its title", () => {
+    expect(rowOf(view({ range: "7d" }), "LLM tokens")).toContain('title="1,234,567"');
+  });
+
+  it("a null figure reads a quiet 'no recent reading' in place — the row and its neighbours stay", () => {
+    const html = view();
+    expect(rowOf(html, "Approvals")).toContain("no recent reading");
+    expect(rowOf(html, "Rooms")).toContain("no recent reading");
+    expect(rowOf(html, "Signups")).not.toContain("no recent reading");
+  });
+
+  it("draws a sparkline only from two trend points up", () => {
+    const html = view();
+    expect(rowOf(html, "Signups")).toContain("<polyline");
+    expect(rowOf(html, "Users")).toContain("<polyline");
+    expect(rowOf(html, "Approvals")).not.toContain("<polyline");   // one point
+    expect(rowOf(html, "LLM tokens")).not.toContain("<polyline");  // none
+  });
+
+  it("a metric's note is a footnote under its group, once", () => {
+    const html = view();
+    expect(html.split("lower bound — unpriced models are not counted").length - 1).toBe(1);
+    expect(html.indexOf("lower bound")).toBeGreaterThan(html.indexOf(">LLM cost<"));
+  });
+
+  it("an environment that reported nothing says so, inside its own block", () => {
+    const html = view();
+    const prod = html.slice(html.indexOf("Product — production"));
+    expect(prod).toContain("This environment has reported no product metrics.");
+    expect(html.slice(0, html.indexOf("Product — production"))).not.toContain("has reported no product metrics");
+  });
+
+  it("labels, keys, notes and environment names are another service's text — all escaped", () => {
+    const hostile = `<img src=x onerror=1>`;
+    const html = view({}, [{
+      name: hostile,
+      groups: [{ id: "other", title: hostile, metrics: [{ key: hostile, label: hostile, values: all3(hostile), raw: { "24h": 1, "7d": 1, "30d": 1 }, trend: [], note: hostile }] }],
+      totals: [{ key: hostile, label: hostile, value: hostile, raw: 1, trend: [], note: `"><script>alert(1)</script>` }],
+    }]);
+    expect(html).not.toContain("<img src=x");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;img src=x onerror=1&gt;");
+  });
+
+  it("not_connected and empty each say what they are waiting on; loading and error have their forms", () => {
+    const nc = repoView(props({ tab: "usage", repo: { status: "ok", data: live() } }));
+    expect(nc).toContain("No product metrics reported yet. They appear once the app&#39;s metrics endpoint serves `counts` / `totals` and `SAPLING_METRICS_TOKEN` is set.");
+    const quiet = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ product: EMPTY }) } }));
+    expect(quiet).toContain("No current product reading — the hourly poll of the app&#39;s metrics endpoint has gone quiet.");
+    expect(quiet).not.toContain("No product metrics reported yet");
+    for (const html of [nc, quiet]) expect(html).toContain(">Product<");
+    expect(repoView(props({ tab: "usage", repo: { status: "loading", data: null } }))).toContain("repo-shimmer");
+    expect(repoView(props({ tab: "usage", repo: { status: "error", data: null } }))).toContain("Couldn't load this section");
+  });
+
+  it("the not-connected footer counts the product section too", () => {
+    const others = { ...repoSample(), sample: undefined } as RepoDashboard;
+    expect(repoView(props({ tab: "usage", repo: { status: "ok", data: others } }))).not.toContain("repoSampleOn");
+    expect(repoView(props({ tab: "usage", repo: { status: "ok", data: { ...others, product: NC } } }))).toContain("repoSampleOn");
+    // …and only on the Usage tab.
+    expect(repoView(props({ tab: "code", repo: { status: "ok", data: { ...others, product: NC } } }))).not.toContain("repoSampleOn");
+  });
+
+  it("the sample set carries placeholder product metrics for both environments", () => {
+    const data = repoSample();
+    expect(data.product.status).toBe("ok");
+    const envs = (data.product as { data: RepoProductEnv[] }).data;
+    expect(envs.map((e) => e.name)).toEqual(["staging", "production"]);
+    for (const e of envs) {
+      expect(e.groups.map((g) => g.title)).toEqual(["Growth", "Learning activity", "Community", "AI spend", "Reliability"]);
+      expect(e.totals.length).toBeGreaterThan(3);
+      for (const m of e.groups.flatMap((g) => g.metrics)) {
+        expect(m.raw["24h"]! <= m.raw["7d"]! && m.raw["7d"]! <= m.raw["30d"]!, `${e.name} ${m.key}`).toBe(true); // the windows nest, as the contract guarantees
+      }
+    }
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data }, sample: true }));
+    expect(html).toContain("Product — production");
+    expect(html).toContain("lower bound — unpriced models are not counted");
+  });
+
+  it("entrances use the existing hooks only", () => {
+    const html = view();
+    const blocks = html.split("Product — ").slice(1);
+    expect(blocks).toHaveLength(2);
+    expect(html).toMatch(/class="cnpy-rise" style="--i:3;[^"]*"[^>]*>\s*<div[^>]*>\s*<span[^>]*>Product — staging/);
+  });
+});
+
 describe("repoView — Poll usage now", () => {
   const usage = (over: Partial<RepoProps> = {}) => repoView(props({ tab: "usage", ...over }));
   const done = (result: UsagePollResult) => ({ status: "done" as const, result });
@@ -494,6 +627,20 @@ describe("repoView — Poll usage now", () => {
     expect(html).not.toContain("repo-poll-strip");
   });
 
+  it("an ok outcome's detail (dropped product keys) and a failed one's partial write are both said — escaped", () => {
+    const html = usage({ admin: true, poll: done({
+      cloudflare: "not_configured", railway: "not_configured",
+      sapling: [
+        { env: "staging", status: "ok", written: 7, detail: "2 keys dropped: counts.foo, totals.<b>" },
+        { env: "production", status: "failed", written: 4, detail: "the windows do not nest (24h ≤ 7d ≤ 30d)" },
+      ],
+    }) });
+    const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain("App metrics — staging ✓ 7 new — 2 keys dropped: counts.foo, totals.&lt;b&gt;");
+    expect(text).toContain("production ✗ the windows do not nest (24h ≤ 7d ≤ 30d) — 4 new");
+    expect(html).not.toContain("totals.<b>");
+  });
+
   it("the strip gives one line per source: new rows, up to date, a failure's detail, a skip, not configured", () => {
     const html = usage({ admin: true, poll: done({
       cloudflare: [{ env: "staging", status: "ok", written: 3 }, { env: "production", status: "failed", written: 0, detail: "cloudflare analytics 403" }],
@@ -503,7 +650,7 @@ describe("repoView — Poll usage now", () => {
     const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
     expect(text).toContain("Cloudflare — staging ✓ 3 new · production ✗ cloudflare analytics 403");
     expect(text).toContain("Railway — not configured");
-    expect(text).toContain("Active users — staging ✓ up to date · production – skipped: apiUrl is not https");
+    expect(text).toContain("App metrics — staging ✓ up to date · production – skipped: apiUrl is not https");
     expect(html).toContain('data-act="repoPollDismiss"');
     // Tone comes from the existing variables: good / bad / muted.
     expect(html).toMatch(/color:var\(--green\)[^>]*>✓ 3 new/);
@@ -515,7 +662,7 @@ describe("repoView — Poll usage now", () => {
     const html = usage({ admin: true, poll: done({ ...NOT, cloudflare: [], sapling: [{ env: "*", status: "failed", written: 0, detail: "unexpected error" }] }) });
     const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
     expect(text).toContain("Cloudflare — no environment configured");
-    expect(text).toContain("Active users — all ✗ unexpected error");
+    expect(text).toContain("App metrics — all ✗ unexpected error");
   });
 
   it("never trusts a detail or an environment name as markup", () => {

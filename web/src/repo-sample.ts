@@ -7,7 +7,7 @@
 
 import type {
   RepoDashboard, RepoDeployRow, RepoEnvPart, RepoPartName, RepoPerson, RepoRange, RepoUsageEnv, RepoUsageMetric, RepoCfRow,
-  RepoActivityKind, RepoPrState,
+  RepoActivityKind, RepoPrState, RepoProductEnv, RepoProductGroup,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 
@@ -116,6 +116,39 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     { env: e.name, label: "Workers errors", value: CF_ERRORS[range][i] },
   ]);
 
+  // ── product metrics: what the app reports about itself ────────────────────
+  // Production's numbers; staging is the same shape at a twelfth of the volume.
+  // The windows nest (24h ≤ 7d ≤ 30d), as the contract guarantees, and the
+  // figures are formatted as the Worker formats them (src/tools/repo.ts).
+  const compact = (n: number): string => (n >= 999_950 ? `${(n / 1e6).toFixed(2)}M` : n >= 1_000 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n)));
+  const dollars = (cents: number): string => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+  /** Fourteen daily totals wandering up to today's — placeholder shape, deterministic. */
+  const daily = (today: number): number[] => Array.from({ length: 14 }, (_, i) => Math.round(today * (0.72 + 0.02 * i + ((i * 7) % 5) * 0.015)));
+  const COST_NOTE = "lower bound — unpriced models are not counted";
+  const PRODUCT: [string, string, [string, string, number, number, number][]][] = [
+    ["growth", "Growth", [["signups", "Signups", 3, 21, 96], ["approvals", "Approvals", 2, 18, 88]]],
+    ["learning", "Learning activity", [
+      ["tutor_sessions", "Tutor sessions", 212, 1_380, 5_640], ["chat_messages", "Chat messages", 1_840, 12_300, 49_800],
+      ["quizzes_started", "Quizzes started", 96, 640, 2_710], ["quizzes_completed", "Quizzes completed", 71, 488, 2_050],
+      ["documents_uploaded", "Documents uploaded", 38, 251, 1_020], ["flashcards_created", "Flashcards created", 410, 2_960, 11_400],
+      ["notes_created", "Notes created", 57, 392, 1_610],
+    ]],
+    ["community", "Community", [["room_messages", "Room messages", 264, 1_910, 7_320], ["feedback", "Feedback", 4, 19, 73], ["issue_reports", "Issue reports", 1, 6, 22]]],
+    ["ai", "AI spend", [["llm_calls", "LLM calls", 3_120, 21_400, 86_900], ["llm_tokens", "LLM tokens", 4_800_000, 33_100_000, 134_000_000], ["llm_cost_cents", "LLM cost", 412, 2_961, 11_830]]],
+    ["reliability", "Reliability", [["errors_5xx", "5xx errors", 3, 17, 61], ["errors_4xx", "4xx errors", 142, 980, 3_870], ["quiz_generation_failed", "Quiz generation failed", 1, 9, 31], ["rag_retrieval_failed", "RAG retrieval failed", 0, 4, 12]]],
+  ];
+  const TOTALS: [string, string, number][] = [["users", "Users", 1_204], ["users_pending", "Users pending", 7], ["documents", "Documents", 8_420], ["flashcards", "Flashcards", 96_300], ["notes", "Notes", 12_750], ["rooms", "Rooms", 58]];
+  const productEnv = (name: string, div: number): RepoProductEnv => {
+    const scale = (n: number) => Math.round(n / div);
+    const groups: RepoProductGroup[] = PRODUCT.map(([id, title, rows]) => ({ id, title, metrics: rows.map(([key, label, a, b, c]) => {
+      const raw = { "24h": scale(a), "7d": scale(b), "30d": scale(c) };
+      const fmt = key === "llm_cost_cents" ? dollars : compact;
+      return { key, label, raw, values: { "24h": fmt(raw["24h"]), "7d": fmt(raw["7d"]), "30d": fmt(raw["30d"]) }, trend: daily(raw["24h"]), ...(key === "llm_cost_cents" ? { note: COST_NOTE } : {}) };
+    }) }));
+    const totals = TOTALS.map(([key, label, n]) => ({ key, label, raw: scale(n), value: compact(scale(n)), trend: daily(scale(n)) }));
+    return { name, groups, totals };
+  };
+
   const cbVals = [3, 5, 2, 7, 4, 6, 1, 6, 7, 5, 8, 4, 7, 5];
   const commits = (rows: [string, string, number][]) => rows.map(([sha, msg, ms]) => ({ sha, msg, at: at(ms) }));
 
@@ -189,6 +222,7 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
       { env: "staging", cpu: "0.12 vCPU", memory: "410 MB" },
       { env: "production", cpu: "0.48 vCPU", memory: "1229 MB" },
     ] },
+    product: { status: "ok", data: [productEnv("staging", 12), productEnv("production", 1)] },
 
     sprint: { status: "ok", data: { id: 0, label: "M6 — Notifications GA", due: new Date(now + 12 * DAY).toISOString().slice(0, 10), closed: 21, total: 34, pct: 62 } },
     contributors: { status: "ok", data: ([["jose-a", 14, 3, 6], ["meilin", 11, 4, 8], ["dev-raj", 9, 2, 3], ["sanaok", 7, 1, 5], ["priya-k", 6, 2, 2], ["tom-h", 4, 1, 1], ["ana-r", 3, 0, 4], ["kenji-m", 2, 1, 0]] as [string, number, number, number][])
