@@ -177,6 +177,9 @@ The measured quiz-placement result (2/6 → 5/6) from that same session is a **t
 - Never write **secrets or tokens** into a doc body or artifact.
 - **Artifacts are observed** from git/gh, never recalled. Docs/ADRs are **read back before written**.
 - **Call once.** The session id makes a re-run replay-safe, but emit one payload per explicit ask.
+- **A feed entry is SHORT, always.** `summary` ≤ 100 characters; `body` ≤ 1,200 characters (aim for
+  600), ≤ 6 one-line labelled lines of its ONE type. Count before you send. Over the limit is not a
+  judgement call — cut it, or split it into more entries, or move the detail to a doc/ADR.
 
 ## Common mistakes
 
