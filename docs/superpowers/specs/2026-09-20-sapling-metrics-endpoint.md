@@ -8,6 +8,13 @@ projection in `src/tools/repo.ts`). This doc is the other half: a change to `Sap
 **different repository**, which is why it lives here as a spec rather than as a diff this repo can apply.
 Status: written, not opened — no issue or PR has been filed anywhere. Date: 2026-09-20.
 
+> **Extended by contract v2** — `2026-09-21-sapling-product-metrics.md`. The response may now ALSO carry
+> `counts` (windowed) and `totals` (point-in-time) product metrics, which Canopy stores and shows per
+> environment. v2 is purely additive: everything below about `active_users` (shape, whole-or-nothing
+> validation, auth, cadence) still holds, and a response with only `active_users` stays valid forever.
+> Where this doc says the endpoint returns "three integers and nothing else", read "for `active_users`" —
+> §5's privacy rule (aggregate counts only, nothing per-user) is unchanged and is restated in v2 §2.
+
 ## 1. Why Sapling has to answer this
 
 Every other number on the Usage tab comes from somewhere Canopy can ask on its own: requests and errors
