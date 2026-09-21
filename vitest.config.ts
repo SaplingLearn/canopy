@@ -59,5 +59,8 @@ export default defineConfig({
     // Only this checkout's suite: a git worktree parked under .claude/worktrees
     // carries its own copy of test/ and must not be discovered from here.
     exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/.wrangler/**"],
+    // Vitest stubs every CSS import to "" unless it is listed here; the app stylesheet is
+    // listed so a test can read it as text (`canopy.css?raw` — the corners layer is pinned).
+    css: { include: [/web\/src\/canopy\.css/] },
   },
 });
