@@ -131,26 +131,74 @@ describe("metricsFromStatus", () => {
     ({ sha: "abc", context, description, state: "success", updated_at: "2026-09-20T09:30:00Z", branches: [{ name: branch }] });
 
   it("reads the three canopy contexts as numbers", () => {
-    expect(metricsFromStatus(status("canopy/coverage", "78.4"), ENVS)).toEqual([{ metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T09:30:00Z" }]);
-    expect(metricsFromStatus(status("canopy/bundle-kb", "412"), ENVS)[0]).toMatchObject({ metric: "bundle_kb", value: 412 });
-    expect(metricsFromStatus(status("canopy/todo", "43"), ENVS)[0]).toMatchObject({ metric: "todo_count", value: 43 });
+    expect(metricsFromStatus(status("canopy/coverage", "78.4"), ENVS).metrics).toEqual([{ metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T09:30:00Z" }]);
+    expect(metricsFromStatus(status("canopy/bundle-kb", "412"), ENVS).metrics[0]).toMatchObject({ metric: "bundle_kb", value: 412 });
+    expect(metricsFromStatus(status("canopy/todo", "43"), ENVS).metrics[0]).toMatchObject({ metric: "todo_count", value: 43 });
   });
 
-  it("ignores other contexts, non-numbers, and other branches", () => {
-    expect(metricsFromStatus(status("Sapling - sapling", "Success"), ENVS)).toEqual([]);
-    expect(metricsFromStatus(status("canopy/coverage", "n/a"), ENVS)).toEqual([]);
-    expect(metricsFromStatus(status("canopy/coverage", "61.0", "feat/x"), ENVS)).toEqual([]);
+  it("ignores an unrelated context silently (no drop reason — it costs nothing)", () => {
+    expect(metricsFromStatus(status("Sapling - sapling", "Success"), ENVS)).toEqual({ metrics: [], dropped: null });
+  });
+
+  it("drops a status on another branch, with a drop reason naming the context", () => {
+    const out = metricsFromStatus(status("canopy/coverage", "61.0", "feat/x"), ENVS);
+    expect(out.metrics).toEqual([]);
+    expect(out.dropped).toMatchObject({ context: "canopy/coverage" });
   });
 
   it("returns [] for junk and for a status with no timestamp", () => {
-    expect(metricsFromStatus(null, ENVS)).toEqual([]);
-    expect(metricsFromStatus({ context: "canopy/coverage", description: "78.4", branches: [{ name: "main" }] }, ENVS)).toEqual([]);
+    expect(metricsFromStatus(null, ENVS)).toEqual({ metrics: [], dropped: null });
+    const noAt = metricsFromStatus({ context: "canopy/coverage", description: "78.4", branches: [{ name: "main" }] }, ENVS);
+    expect(noAt.metrics).toEqual([]);
+    expect(noAt.dropped).toMatchObject({ context: "canopy/coverage", reason: "no timestamp" });
   });
 
   // ENVS[0].branch is "main" here too, so this doesn't distinguish the fallback
   // from the configured value — a second case pins the fallback itself below.
   it("falls back to \"main\" when no environments are configured", () => {
-    expect(metricsFromStatus(status("canopy/coverage", "61.0", "main"), [])[0]).toMatchObject({ metric: "coverage", value: 61 });
-    expect(metricsFromStatus(status("canopy/coverage", "61.0", "feat/x"), [])).toEqual([]);
+    expect(metricsFromStatus(status("canopy/coverage", "61.0", "main"), []).metrics[0]).toMatchObject({ metric: "coverage", value: 61 });
+    expect(metricsFromStatus(status("canopy/coverage", "61.0", "feat/x"), []).metrics).toEqual([]);
+  });
+
+  // C1 + I3: `Number(str(description))` accepted anything Number() accepts —
+  // and `Number(null) === 0`, a finite number, so a `canopy/*` status with NO
+  // description stored coverage = 0 forever (repo_metrics is append-only and
+  // never pruned for these metrics). The description must be a strict decimal
+  // (trimmed) in the metric's plausible range, or the point is dropped.
+  describe("description validation (C1 + I3)", () => {
+    it("drops an absent or null description", () => {
+      expect(metricsFromStatus({ context: "canopy/coverage", state: "success", updated_at: "2026-09-20T09:30:00Z", branches: [{ name: "main" }] }, ENVS).metrics).toEqual([]);
+      expect(metricsFromStatus({ context: "canopy/coverage", description: null, state: "success", updated_at: "2026-09-20T09:30:00Z", branches: [{ name: "main" }] }, ENVS).metrics).toEqual([]);
+    });
+
+    it("drops a blank, non-numeric, signed, exponent, hex, or unit-suffixed description", () => {
+      for (const bad of ["", "  ", "n/a", "78.4%", "1e3", "0x10", "-5", "Infinity"]) {
+        expect(metricsFromStatus(status("canopy/coverage", bad), ENVS).metrics, JSON.stringify(bad)).toEqual([]);
+      }
+    });
+
+    it("accepts a value with surrounding whitespace, trimmed", () => {
+      expect(metricsFromStatus(status("canopy/coverage", " 78.4 "), ENVS).metrics).toEqual([{ metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T09:30:00Z" }]);
+    });
+
+    it("range-checks coverage to 0–100", () => {
+      expect(metricsFromStatus(status("canopy/coverage", "100"), ENVS).metrics[0]).toMatchObject({ value: 100 });
+      expect(metricsFromStatus(status("canopy/coverage", "100.1"), ENVS).metrics).toEqual([]);
+    });
+
+    it("requires todo_count to be an integer", () => {
+      expect(metricsFromStatus(status("canopy/todo", "43.5"), ENVS).metrics).toEqual([]);
+      expect(metricsFromStatus(status("canopy/todo", "43"), ENVS).metrics[0]).toMatchObject({ value: 43 });
+    });
+
+    it("accepts a bundle size of 0", () => {
+      expect(metricsFromStatus(status("canopy/bundle-kb", "0"), ENVS).metrics[0]).toMatchObject({ value: 0 });
+    });
+
+    it("names the dropped context and reason for an invalid description (M6)", () => {
+      const out = metricsFromStatus(status("canopy/coverage", "n/a"), ENVS);
+      expect(out.dropped).toMatchObject({ context: "canopy/coverage" });
+      expect(out.dropped?.reason).toContain("n/a");
+    });
   });
 });

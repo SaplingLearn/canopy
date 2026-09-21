@@ -141,8 +141,51 @@ function fromReview(p: Obj): RepoEvent[] {
 
 /** The commit-status contexts the target repo's CI posts (see
  *  `docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`) — one status per
- *  metric, `description` carrying the number. */
-const STATUS_METRICS: Record<string, string> = { "canopy/coverage": "coverage", "canopy/bundle-kb": "bundle_kb", "canopy/todo": "todo_count" };
+ *  metric, `description` carrying the number. The plausible range lives right
+ *  beside the metric so the two read as one table: `repo_metrics` is
+ *  append-only and these three metrics are never pruned, so an out-of-range
+ *  value (coverage 500, a negative bundle size) is not a display bug, it is a
+ *  PERMANENT bad point. `integer` additionally rejects a fractional TODO count. */
+interface StatusMetricSpec {
+  metric: string;
+  min: number;
+  max: number;
+  integer?: boolean;
+}
+const STATUS_METRICS: Record<string, StatusMetricSpec> = {
+  "canopy/coverage": { metric: "coverage", min: 0, max: 100 },
+  "canopy/bundle-kb": { metric: "bundle_kb", min: 0, max: 10_000_000 },
+  "canopy/todo": { metric: "todo_count", min: 0, max: 10_000_000, integer: true },
+};
+
+/** A strict decimal: digits, an optional `.digits` — no sign, no exponent, no
+ *  hex, no percent sign, no empty string. `Number(str(description))` alone
+ *  accepted all of those (and `Number(null) === 0`, which is finite — the bug
+ *  this guards: an absent description silently stored a metric of 0, forever). */
+const DECIMAL_RE = /^\d+(\.\d+)?$/;
+
+/** `null` for anything that is not a valid, in-range reading for this metric. */
+function parseMetricValue(raw: string | null, spec: StatusMetricSpec): number | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (!DECIMAL_RE.test(trimmed)) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  if (spec.integer && !Number.isInteger(value)) return null;
+  if (value < spec.min || value > spec.max) return null;
+  return value;
+}
+
+export interface StatusMetricOutcome {
+  metrics: RepoMetric[];
+  /** Set only when the context IS one of the three `canopy/*` names AND the
+   *  point was dropped — by the branch filter or by description validation.
+   *  `null` for a context this derivation does not report on at all (silent,
+   *  no cost — Railway/CodeRabbit statuses arrive constantly) and for a
+   *  successfully-captured point. `metricsFromStatus` stays PURE (no DB, no
+   *  console) — `src/webhook.ts` is the one that logs this, from this result. */
+  dropped: { context: string; reason: string } | null;
+}
 
 /** A commit status whose description is a number, posted by the target repo's
  *  CI — a SIBLING derivation to `repoEventsFromDelivery`, not a branch of it:
@@ -152,18 +195,32 @@ const STATUS_METRICS: Record<string, string> = { "canopy/coverage": "coverage", 
  *  branch's coverage is not the repo's. An unrelated context (Railway's own
  *  deploy statuses, CodeRabbit's review statuses — frequent once the webhook
  *  subscribes to Statuses) is dropped after one cheap map lookup. */
-export function metricsFromStatus(payload: unknown, envs: RepoEnvConfig[]): RepoMetric[] {
+export function metricsFromStatus(payload: unknown, envs: RepoEnvConfig[]): StatusMetricOutcome {
+  const none: StatusMetricOutcome = { metrics: [], dropped: null };
   const p = obj(payload);
-  if (!p) return [];
-  const metric = STATUS_METRICS[str(p.context) ?? ""];
-  if (!metric) return [];
+  if (!p) return none;
+  const context = str(p.context) ?? "";
+  const spec = STATUS_METRICS[context];
+  if (!spec) return none; // not a context we report on — silent, no cost
+  // GitHub's own `updated_at` (falling back to `created_at`) — a poster
+  // cannot future/back-date a point by claiming an `at` of its own choosing.
   const at = str(p.updated_at) ?? str(p.created_at);
-  if (!at) return [];
-  const value = Number(str(p.description));
-  if (!Number.isFinite(value)) return [];
+  if (!at) return { metrics: [], dropped: { context, reason: "no timestamp" } };
+  // GitHub caps a status payload's `branches[]` at 10: a status for an OLD sha
+  // still reachable from many branches can be dropped here even though it IS
+  // on the configured branch — and if the cap happens to include it, this
+  // records that old value as "now" (the branch list says nothing about
+  // recency, only reachability).
+  const branch = envs[0]?.branch ?? "main";
   const branches = Array.isArray(p.branches) ? p.branches.map((b) => str(obj(b)?.name)) : [];
-  if (!branches.includes(envs[0]?.branch ?? "main")) return [];
-  return [{ metric, env: "", part: "", value, at }];
+  if (!branches.includes(branch)) return { metrics: [], dropped: { context, reason: `not on ${branch}` } };
+  const raw = str(p.description);
+  const value = parseMetricValue(raw, spec);
+  if (value === null) {
+    // Never the raw description beyond ~40 chars in a log line.
+    return { metrics: [], dropped: { context, reason: `invalid description "${(raw ?? "").slice(0, 40)}"` } };
+  }
+  return { metrics: [{ metric: spec.metric, env: "", part: "", value, at }], dropped: null };
 }
 
 export function repoEventsFromDelivery(eventName: string, payload: unknown, envs: RepoEnvConfig[]): RepoEvent[] {

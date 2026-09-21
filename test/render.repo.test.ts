@@ -218,12 +218,16 @@ describe("repoView — live content", () => {
     expect(html).toContain("over 30 days");
     expect(html).not.toContain("</span> over 30 days"); // no empty delta span left behind
     expect(html).not.toMatch(/>\s+over 30 days/); // no leading space where the delta span used to sit
+    // M11: a single-point trend can't draw a line — no sparkline element at all.
+    expect(html).not.toContain("repo-spark");
   });
 
   it("still shows the delta text once the window supports a claim", () => {
     const data = live({ coverage: { status: "ok", data: { value: "78.4%", trend: [77.2, 78.4], delta: "+1.2", tone: "good", note: "over 30 days" } } });
     const html = repoView(props({ tab: "ci", repo: { status: "ok", data } }));
     expect(html).toContain('color:var(--green)">+1.2</span> over 30 days');
+    // Two points DO draw a line.
+    expect(html).toContain("repo-spark");
   });
 
   it("a TODO count with no delta claim (delta: null) shows the count with no delta and no since text", () => {
@@ -232,6 +236,8 @@ describe("repoView — live content", () => {
     expect(html).toContain("50");
     expect(html).not.toContain("since");
     expect(html).not.toMatch(/undefined|NaN/);
+    // M11: a single-point trend can't draw a line — no sparkline element at all.
+    expect(html).not.toContain("repo-spark");
   });
 
   it("still shows delta and since text once the window supports a claim", () => {
@@ -239,6 +245,7 @@ describe("repoView — live content", () => {
     const html = repoView(props({ tab: "planning", repo: { status: "ok", data } }));
     expect(html).toContain("−18");
     expect(html).toContain("since Aug 1");
+    expect(html).toContain("repo-spark");
   });
 
   it("links the current sprint to its screen", () => {

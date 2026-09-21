@@ -371,8 +371,16 @@ export async function handleGithubWebhook(
         // A SIBLING arm, not a row through repoEventsFromDelivery/ingestRepoEvent:
         // a status produces repo_metrics points, never a repo_events row. Most
         // statuses (Railway's, CodeRabbit's) carry no canopy/* context and cost
-        // one cheap parse in metricsFromStatus, which returns [] for them.
-        for (const m of metricsFromStatus(payload, cfgs)) {
+        // one cheap parse in metricsFromStatus, which returns no metrics AND no
+        // drop reason for them. metricsFromStatus stays PURE (no console) — it
+        // only reports WHY a canopy/* status was dropped; this is the one place
+        // that logs it, once, naming the context and reason (never the raw
+        // description beyond ~40 chars — metricsFromStatus already truncates it).
+        const outcome = metricsFromStatus(payload, cfgs);
+        if (outcome.dropped) {
+          console.warn("repo capture: dropped status", outcome.dropped.context, "-", outcome.dropped.reason);
+        }
+        for (const m of outcome.metrics) {
           if (await putMetric(env.DB, m)) repo.captured++; else repo.unchanged++;
         }
       } else {

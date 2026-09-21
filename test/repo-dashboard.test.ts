@@ -229,6 +229,29 @@ describe("getRepoDashboard — a D1-only projection", () => {
     const todos = data((await getRepoDashboard(env.DB, "o/r", NOW)).todos);
     expect(todos).toMatchObject({ count: 50, delta: null, trend: [50] });
   });
+
+  // I2: a metric that goes QUIET is not the same as a metric that was never
+  // connected — once something has EVER landed for it, an empty window reads
+  // `empty` ("no reading in the window"), never `not_connected` ("nothing
+  // scans this at all"). Only checked on the empty path (latestMetric costs
+  // nothing when the window already has points).
+  it("coverage reads empty, not not_connected, once a reading exists outside the 30-day window (I2)", async () => {
+    await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 70, at: ago(40) });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(d.coverage.status).toBe("empty");
+  });
+
+  it("bundle reads empty, not not_connected, once a reading exists outside the 30-day window (I2)", async () => {
+    await putMetric(env.DB, { metric: "bundle_kb", env: "", part: "", value: 400, at: ago(40) });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(d.bundle.status).toBe("empty");
+  });
+
+  it("todos reads empty, not not_connected, once a reading exists outside the 90-day window (I2)", async () => {
+    await putMetric(env.DB, { metric: "todo_count", env: "", part: "", value: 50, at: ago(100) });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW);
+    expect(d.todos.status).toBe("empty");
+  });
 });
 
 describe("GET /repo/dashboard", () => {

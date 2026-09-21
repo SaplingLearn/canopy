@@ -109,6 +109,11 @@ export interface RepoCiFailure { workflow: string; branch: string; job: string; 
  *  empty `trend`) means "not enough capture yet"; `rows` are the failures
  *  themselves, facts, and are always listed. */
 export interface RepoCiFailures { rate: number | null; trend: number[]; rows: RepoCiFailure[] }
+/** `delta` is `""` until the window holds ≥2 points whose first and last are
+ *  ≥7 days apart (see `windowDelta` in `src/tools/repo.ts`) — a single
+ *  reading, or two readings less than a week apart, cannot support a trend
+ *  claim. `""` renders no delta text (and no sparkline at all below 2 points —
+ *  see `sparkPoints`/`spark` in `web/src/repo.ts`); `value`/`trend` still show. */
 export interface RepoTrend { value: string; trend: number[]; delta: string; tone: RepoTone; note: string }
 export type RepoActivityKind = "push" | "merge" | "deploy" | "issue" | "close" | "release" | "review";
 export interface RepoActivity {

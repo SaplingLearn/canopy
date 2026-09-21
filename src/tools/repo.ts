@@ -11,7 +11,7 @@ import {
   hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
-import { getSnapshot, latestHealth, metricSeries } from "../repo/store";
+import { getSnapshot, latestHealth, latestMetric, metricSeries } from "../repo/store";
 import type { RepoEventRow, RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
@@ -530,7 +530,26 @@ export async function getRepoDashboard(
   // CI posting a commit status that `handleGithubWebhook`'s `status` branch
   // (src/webhook.ts) turns into a metric point. Never a live scan at render time.
   const monthAgo = new Date(now - 30 * DAY).toISOString();
-  const covPts = await metricSeries(db, "coverage", "", "", monthAgo);
+  // A wider window than coverage/bundle (90 days, not 30): the TODO count
+  // moves slowly, so a 30-day window would too often hold only one point.
+  const todoWindowStart = new Date(now - 90 * DAY).toISOString();
+  // Three independent reads (M9) — batched rather than three sequential round-trips.
+  const [covPts, bunPts, todoPts] = await Promise.all([
+    metricSeries(db, "coverage", "", "", monthAgo),
+    metricSeries(db, "bundle_kb", "", "", monthAgo),
+    metricSeries(db, "todo_count", "", "", todoWindowStart),
+  ]);
+  // I2: a metric that has gone QUIET (nothing in the window) is not the same
+  // as one that was never connected. `latestMetric` with no time bound answers
+  // "has ANYTHING ever landed for this metric" — non-null → `empty` ("no
+  // reading in the window"), null → `not_connected` ("nothing reports this at
+  // all"). Only reached on the empty path, so it costs nothing once the
+  // window already has points.
+  const everEmpty = async (metric: string) => ((await latestMetric(db, metric, "", "")) !== null ? EMPTY : NOT_CONNECTED);
+  // windowDelta's baseline is the window's FIRST point — once a series holds
+  // more than 10 readings, that baseline can lie to the LEFT of the 10-point
+  // sparkline drawn below (`.slice(-10)`): the delta and the drawn trend may
+  // legitimately start from different points.
   const covDelta = windowDelta(covPts);
   const coverage: RepoSection<RepoTrend> = covPts.length
     ? ok({
@@ -540,8 +559,7 @@ export async function getRepoDashboard(
         tone: covDelta === null ? "neutral" : covDelta >= 0 ? "good" : "warn",
         note: "over 30 days",
       })
-    : NOT_CONNECTED;
-  const bunPts = await metricSeries(db, "bundle_kb", "", "", monthAgo);
+    : await everEmpty("coverage");
   const bunDelta = windowDelta(bunPts);
   const bundle: RepoSection<RepoTrend> = bunPts.length
     ? ok({
@@ -551,10 +569,7 @@ export async function getRepoDashboard(
         tone: bunDelta === null ? "neutral" : bunDelta > 0 ? "warn" : "good",
         note: "over 30 days · gzip",
       })
-    : NOT_CONNECTED;
-  // A wider window than coverage/bundle (90 days, not 30): the TODO count
-  // moves slowly, so a 30-day window would too often hold only one point.
-  const todoPts = await metricSeries(db, "todo_count", "", "", new Date(now - 90 * DAY).toISOString());
+    : await everEmpty("bundle_kb");
   const todoDelta = windowDelta(todoPts);
   const todos: RepoSection<RepoTodos> = todoPts.length
     ? ok({
@@ -563,7 +578,7 @@ export async function getRepoDashboard(
         since: todoDelta === null ? "" : new Date(todoPts[0].at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }),
         trend: todoPts.slice(-10).map((p) => p.value),
       })
-    : NOT_CONNECTED;
+    : await everEmpty("todo_count");
 
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
