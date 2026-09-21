@@ -476,24 +476,28 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
 // What the app reports about itself (src/repo/poll.ts → `sap_*` gauges). One
 // block per environment; inside it the groups sit in a responsive grid of
 // compact label / sparkline / value rows. Every row keeps the SAME three
-// columns whatever it holds — a missing sparkline or a "no recent reading"
-// leaves its cell in place — so switching range (which only swaps `counts`
-// figures; `totals` ignore it) never shifts the layout. Labels and keys
+// fixed columns whatever it holds — a missing sparkline leaves its cell in
+// place, and "no recent reading" takes the sparkline's and the value's cells
+// together (a stale figure's old trend is not drawn: the line would read as
+// current) — so the sparklines line up down a group and switching range (which
+// only swaps `counts` figures; `totals` ignore it) never shifts the layout.
+// In a phone-width panel the sparkline column is dropped (canopy.css,
+// `.repo-prow` / `.repo-pspark`) so the label keeps room to be read. Labels and keys
 // originate in ANOTHER service: everything interpolated goes through `esc()`.
-const PRODUCT_ROW = `display:grid;grid-template-columns:minmax(0,1fr) 52px auto;gap:10px;align-items:center;padding:7px 0;${TOP}`;
+const PRODUCT_ROW = `display:grid;grid-template-columns:minmax(0,1fr) 52px 72px;gap:10px;align-items:center;padding:7px 0;${TOP}`;
 
 /** `spark()` for a table cell: a span (a row holds no block child), fixed width. */
 const miniSpark = (trend: number[], stroke: string): string =>
-  trend.length < 2 ? `<span></span>` :
-  `<span class="repo-spark" style="display:block;width:52px"><svg viewBox="0 0 100 26" preserveAspectRatio="none" style="width:100%;height:18px;display:block"><polyline points="${sparkPoints(trend)}" fill="none" stroke="${stroke}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline></svg></span>`;
+  trend.length < 2 ? `<span class="repo-pspark"></span>` :
+  `<span class="repo-spark repo-pspark" style="width:52px"><svg viewBox="0 0 100 26" preserveAspectRatio="none" style="width:100%;height:18px;display:block"><polyline points="${sparkPoints(trend)}" fill="none" stroke="${stroke}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline></svg></span>`;
 
 function productRow(label: string, value: string | null, raw: number | null, trend: number[]): string {
   // The exact integer behind a compacted figure ("1.2K") — not behind a dollar amount.
   const exact = value !== null && raw !== null && value !== String(raw) && !value.startsWith("$") ? ` title="${attr(raw.toLocaleString("en-US"))}"` : "";
-  return `<div style="${PRODUCT_ROW}"><span style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>${miniSpark(trend, "var(--fg-40)")}${
+  return `<div class="repo-prow" style="${PRODUCT_ROW}"><span title="${attr(label)}" style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>${
     value === null
-      ? `<span style="font-size:11.5px;color:var(--fg-40);text-align:right;white-space:nowrap">${absentLabel(true)}</span>`
-      : `<span${exact} style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap">${esc(value)}</span>`
+      ? `<span style="grid-column:2 / -1;font-size:11.5px;color:var(--fg-40);text-align:right;white-space:nowrap">${absentLabel(true)}</span>`
+      : `${miniSpark(trend, "var(--fg-40)")}<span${exact} style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap">${esc(value)}</span>`
   }</div>`;
 }
 
@@ -511,20 +515,20 @@ function productEnv(e: RepoProductEnv, range: RepoRange): string {
     productGroup(g.title, g.metrics.map((m) => productRow(m.label, m.values[range], m.raw[range], m.trend)), noted(g.metrics)));
   if (e.totals.length) groups.push(productGroup("Right now", e.totals.map((t) => productRow(t.label, t.value, t.raw, t.trend)), noted(e.totals)));
   return groups.length
-    ? `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:6px 32px;margin-top:8px">${groups.join("")}</div>`
+    ? `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:6px 32px;margin-top:8px">${groups.join("")}</div>`
     : `<div style="margin-top:8px;padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">This environment has reported no product metrics.</div>`;
 }
 
 /** The product blocks under the Usage tab's panels, `--i` staggered from `i`. */
 function productBlocks(p: RepoProps, i: number): string {
   const head = (title: string, aside = "") =>
-    `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px"><span style="${LABEL};min-width:0;overflow:hidden;text-overflow:ellipsis">${title}</span>${aside}</div>`;
+    `<div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 10px"><span style="${LABEL};min-width:0;overflow:hidden;text-overflow:ellipsis">${title}</span>${aside}</div>`;
   const envs = okData(p, (d) => d.product);
   if (!envs) {
     const state = sec(p, (d) => d.product ?? { status: "not_connected" }, { nc: "No product metrics reported yet. They appear once the app's metrics endpoint serves `counts` / `totals` and `SAPLING_METRICS_TOKEN` is set.", empty: "No current product reading — the hourly poll of the app's metrics endpoint has gone quiet.", lines: 3 }, () => "");
     return `<div ${rise(i, `${TOP};padding:18px 20px`)}>${head("Product")}${state}</div>`;
   }
-  const aside = `<span style="font-size:11px;color:var(--fg-40);white-space:nowrap">reported by the app · counts over ${esc(p.range)}</span>`;
+  const aside = `<span style="font-size:11px;color:var(--fg-40)">reported by the app · counts over ${esc(p.range)}</span>`;
   return envs.map((e, n) => `<div ${rise(i + n, `${TOP};padding:18px 20px 12px;min-width:0`)}>
       ${head(`Product — ${esc(e.name)}`, aside)}
       ${productEnv(e, p.range)}

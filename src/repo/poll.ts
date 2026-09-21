@@ -455,8 +455,8 @@ export interface ProductWindows { h24: number; d7: number; d30: number }
 export interface SaplingProductMetrics {
   counts: Record<string, ProductWindows>;
   totals: Record<string, number>;
-  /** What was refused, BY NAME — `counts.<key>` / `totals.<key>`, or the bare
-   *  section name when the whole section was ignored. At most 20 names, each cut
+  /** What was refused, BY NAME — `counts.<key>` / `totals.<key>`, or `counts.*` /
+   *  `totals.*` when the whole section was ignored. At most 20 names, each cut
    *  to 40 printable characters (a name is another service's text); never a value. */
   dropped: string[];
   /** How many were refused — `dropped` may name fewer. */
@@ -499,7 +499,7 @@ export function saplingProductMetrics(body: unknown): SaplingProductMetrics {
     if (!Object.hasOwn(top, name) || top[name] === undefined) return;
     const raw = top[name];
     const keys = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.keys(raw) : null;
-    if (!keys || keys.length > cap) { drop(name); return; }
+    if (!keys || keys.length > cap) { drop(`${name}.*`); return; } // the whole section
     for (const key of keys) {
       if (!PRODUCT_KEY.test(key) || !keep(key, (raw as Record<string, unknown>)[key])) drop(`${name}.${printable(key)}`);
     }

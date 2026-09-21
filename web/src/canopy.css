@@ -432,6 +432,9 @@ input, select { font-family: inherit; }
 
 /* the panel's two-up splits stack on a laptop-and-below width */
 @container (max-width: 760px) { .repo-split { grid-template-columns:minmax(0,1fr) !important; } .repo-split-r { border-left:none !important; border-top:1px solid var(--border); } .repo-tiles { grid-template-columns:repeat(2,minmax(0,1fr)) !important; } }
+/* Product metric rows: in a phone-width panel the sparkline column goes, so the label can be read. */
+.repo-pspark { display:block; }
+@container (max-width: 420px) { .repo-prow { grid-template-columns:minmax(0,1fr) auto !important; } .repo-pspark { display:none; } }
 .repo-panel { container-type:inline-size; }
 
 @media (prefers-reduced-motion: reduce) {

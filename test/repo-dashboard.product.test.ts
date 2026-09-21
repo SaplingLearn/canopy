@@ -105,6 +105,10 @@ describe("getRepoDashboard — product metrics", () => {
     });
     expect(metricOf(staging, "llm_tokens")?.values).toEqual({ "24h": "900", "7d": "1.23M", "30d": "2.50B" });
     expect(metricOf(staging, "llm_tokens")).not.toHaveProperty("note");
+    // From $10K up the cents are dropped — the figure stays short.
+    await env.DB.prepare(`DELETE FROM repo_metrics`).run();
+    await seed(count("llm_cost_cents", "staging", AT, 999_999, 1_234_567, 250_000_000));
+    expect(metricOf((await product())[0], "llm_cost_cents")?.values).toEqual({ "24h": "$9,999.99", "7d": "$12.3K", "30d": "$2.50M" });
   });
 
   it("a reading exactly 3 hours old still shows; one older than that reads null — the key stays listed", async () => {

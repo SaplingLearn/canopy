@@ -60,7 +60,7 @@ describe("saplingProductMetrics — spec §3, per key", () => {
 
   it.each([["null", null], ["an array", [w(1, 2, 3)]], ["a number", 3], ["a string", "signups"], ["a boolean", true]])("a section that is %s is ignored whole — and named", (_n, section) => {
     const r = saplingProductMetrics({ counts: section, totals: section });
-    expect(plain(r)).toEqual({ counts: {}, totals: {}, dropped: ["counts", "totals"], droppedCount: 2 });
+    expect(plain(r)).toEqual({ counts: {}, totals: {}, dropped: ["counts.*", "totals.*"], droppedCount: 2 });
   });
 
   it("the key caps: 48 counts / 24 totals pass, one more ignores THAT section only", () => {
@@ -73,11 +73,11 @@ describe("saplingProductMetrics — spec §3, per key", () => {
     const over = saplingProductMetrics({ counts: counts(49), totals: totals(24) });
     expect(Object.keys(over.counts)).toHaveLength(0);
     expect(Object.keys(over.totals)).toHaveLength(24);
-    expect(over.dropped).toEqual(["counts"]);
+    expect(over.dropped).toEqual(["counts.*"]);
     const overTotals = saplingProductMetrics({ counts: counts(2), totals: totals(25) });
     expect(Object.keys(overTotals.counts)).toHaveLength(2);
     expect(Object.keys(overTotals.totals)).toHaveLength(0);
-    expect(overTotals.dropped).toEqual(["totals"]);
+    expect(overTotals.dropped).toEqual(["totals.*"]);
   });
 
   const BAD_KEYS = ["Signups", "9lives", "_private", "sign-ups", "sign ups", "", "a".repeat(41), "é", "signups.total", "__proto__", "constructor".toUpperCase()];

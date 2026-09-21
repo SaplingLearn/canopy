@@ -487,7 +487,7 @@ describe("repoView — product metrics", () => {
     ],
     totals: [
       { key: "users", label: "Users", value: "1.2K", raw: 1204, trend: [1190, 1198, 1204] },
-      { key: "rooms", label: "Rooms", value: null, raw: null, trend: [] },
+      { key: "rooms", label: "Rooms", value: null, raw: null, trend: [5, 5, 6] },
     ],
   };
   const production: RepoProductEnv = { name: "production", groups: [], totals: [] };
@@ -524,6 +524,8 @@ describe("repoView — product metrics", () => {
     expect(rowOf(html, "Approvals")).toContain("no recent reading");
     expect(rowOf(html, "Rooms")).toContain("no recent reading");
     expect(rowOf(html, "Signups")).not.toContain("no recent reading");
+    // A stale figure's old trend is not drawn beside "no recent reading": the line would read as current.
+    expect(rowOf(html, "Rooms")).not.toContain("<polyline");
   });
 
   it("draws a sparkline only from two trend points up", () => {

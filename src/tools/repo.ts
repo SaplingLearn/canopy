@@ -468,10 +468,11 @@ function projectHosting(
 /** The trend's reach: the 00:00 UTC readings of the last 30 days. */
 const PRODUCT_TREND_DAYS = 30;
 
-/** Integer cents as dollars — "$118.30"; past $100K the cents are noise: "$1.2M". */
+/** Integer cents as dollars — "$118.30"; from $10K up the cents are noise (and
+ *  the screen's value cell is narrow): "$12.3K". */
 const productValue = (v: number, format: ProductFormat): string =>
   format !== "cents" ? compact(v)
-  : v >= 10_000_000 ? `$${compact(v / 100)}`
+  : v >= 1_000_000 ? `$${compact(v / 100)}`
   : (v / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 /**
