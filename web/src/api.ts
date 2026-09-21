@@ -15,7 +15,7 @@ import type {
   TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory, TicketCreate,
 } from "@shared/tickets";
 import type { DashboardData } from "@shared/dashboard";
-import type { RepoDashboard, UsagePollResult } from "@shared/repo";
+import type { RepoDashboard, RepoRefreshResult } from "@shared/repo";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
 
@@ -194,12 +194,14 @@ export function adminBackfill(batch: number, of: number): Promise<{
   return postJson("/admin/backfill", { batch, of });
 }
 
-// ADMIN action: run the three hourly usage pollers NOW (admin-only route, no
-// body) — the same function as the repo cron's minute-0 tick, so it is
-// idempotent with it. Resolves to per-source, per-environment outcomes; the
-// response never carries a token, a header or an account id.
-export function adminPollUsage(): Promise<UsagePollResult> {
-  return postJson("/admin/poll-usage");
+// ADMIN action: "Poll now" — refresh EVERY source the Repo dashboard shows
+// (admin-only route, no body): health pings, the three usage pollers, then the
+// GitHub reconcile. Every write is idempotent with the cron's. Resolves to
+// per-source outcomes; the response never carries a token, a header or an
+// account id. A 409 (`ApiError.status`) means another refresh holds the lock.
+// (The older, narrower `POST /admin/poll-usage` still exists; the SPA no longer calls it.)
+export function adminPoll(): Promise<RepoRefreshResult> {
+  return postJson("/admin/poll");
 }
 
 export function getMyDashboard(): Promise<DashboardData> {

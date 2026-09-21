@@ -449,10 +449,27 @@ input, select { font-family: inherit; }
 /* phone: the bar drops under its label and figure, so the label keeps room to be read */
 @container (max-width: 520px) { .repo-rank { grid-template-columns:minmax(0,1fr) auto; gap:5px 12px; padding:7px 0; } .repo-rank > .repo-rank-bar { grid-column:1 / -1; grid-row:2; } }
 .repo-panel { container-type:inline-size; }
+/* "Poll now" in the Repo top bar (admins only). The bar's room depends on the
+   rail as much as on the viewport, so this keys off the BAR's own width — and
+   only a bar that HAS the button becomes a container, so nobody else's changes.
+   Measured (a container query sees the CONTENT box, 48px inside the bar): the
+   crumb needs ~271px + a 16px gap, the labelled controls 446px → 733px. Under
+   740px the button is icon-only, the size of the refresh icon beside it
+   (controls 383px → 670px); under 676px the "updated …" text gives up its room
+   too (281px — narrower than the 343px a non-admin's bar already takes, so the
+   phone-width bar is never tighter for having the button). In viewport terms
+   with the rail collapsed (it is, under 900px): icon-only below ~850px, no
+   "updated …" below ~790px. */
+[data-screen="repo"] header:has(.repo-pollbtn) { container:repohead / inline-size; }
+@container repohead (max-width: 740px) {
+  .repo-pollbtn { width:32px; padding:0 !important; justify-content:center; }
+  .repo-pollbtn-label { display:none; }
+}
+@container repohead (max-width: 676px) { [data-repo-updated] { display:none; } }
 
 @media (prefers-reduced-motion: reduce) {
   .cnpy-aside, .cnpy-aside *, .cnpy-aside *::before, .cnpy-aside *::after { transition:none !important; }
-  [data-enter] *, .cnpy-flash, .cnpy-flash *, .repo-shimmer, .repo-pulse { animation:none !important; }
+  [data-enter] *, .cnpy-flash, .cnpy-flash *, .repo-shimmer, .repo-pulse, .repo-pollbtn svg { animation:none !important; }
   .repo-tip, .repo-dot, .repo-row, .repo-chev, .repo-rank-l { transition:none !important; }
   .cnpy-statusbtn, .cnpy-statusbtn svg { transition:none !important; }
 }
