@@ -75,7 +75,7 @@ Build at most one of each, only for what the session genuinely touched:
 
 - **Feed** — one entry **per shipped unit** of work. `{ summary, body, tags[], artifacts:{ prs[],
   commits[], issues[] } }`. Artifacts are the observed git/gh values from step 1. This is the default;
-  almost everything is a feed entry.
+  almost everything is a feed entry. **Its size and shape are fixed — see "Feed entry format" below.**
 - **Doc** — only when the session durably changed a convention/architecture note that belongs in a doc.
   `{ slug, section, space, title?, body, change_summary, confidence, base_version }` (`base_version`
   from step 2; `space` is `sapling` for product docs, `canopy` for tooling docs).
@@ -105,6 +105,63 @@ principal.** Then **report the structured counts** the tool returns, e.g.
 `{ "docs": { "staged": 1, "unchanged": 2, "triaged": 0 }, … }` → "3 docs: 1 staged, 2 unchanged."
 `unchanged` means the gate recognised a no-op or a replay and correctly dropped it.
 
+## Feed entry format — pick ONE type; the type fixes the structure
+
+The Feed is a timeline people skim. An entry is a **headline plus a few labelled lines**, not a
+report. Anything longer belongs in a doc, an ADR or the PR — link it through `artifacts`, don't
+paste it.
+
+**Hard limits (every type):**
+
+- `summary` — **one line, ≤ 100 characters**, plain sentence, no trailing period needed. Inline
+  markdown only (`code`, **bold**). It starts with the type word: `Shipped:`, `Decision:`,
+  `Triage:`, `Status:`, `Finding:`, `Incident:`.
+- `body` — **≤ 1,200 characters, aim for 600.** At most **6 lines/bullets**, each **one line
+  (≤ 160 characters)**. Use exactly the labelled lines of the chosen type, in order, as
+  `**Label** text`. Drop a label that has nothing true to say — never pad, never add labels.
+- **No `#` headings, no tables, no nested lists, no code blocks, no sign-off** in a body. PR and
+  issue numbers go in `artifacts` (write `#123` in prose only when the sentence needs it).
+- **One entry = one type = one subject.** If the session did two things (a triage AND a status
+  check), that is **two entries**, each within the limits — never one long mixed entry.
+- Over the limit? Cut detail, then cut a line, then move the detail to a doc/ADR block. Do not
+  exceed it.
+
+**The six types — choose by what the entry is FOR:**
+
+| Type | Use it when | Body lines, in this order |
+|---|---|---|
+| `Shipped:` | work merged / deployed (the default) | `**What**` · `**Why**` · `**Impact**` · `**Follow-up**` (optional) |
+| `Decision:` | a call was made that is not ADR-sized | `**Decided**` · `**Because**` · `**Instead of**` |
+| `Triage:` | PRs / issues / queue were closed, kept, split or moved | `**Closed**` · `**Kept**` · `**Moved to**` · `**Why**` |
+| `Status:` | where something in flight stands, incl. what it is waiting on | `**State**` · `**Blocked on**` · `**Next**` |
+| `Finding:` | an investigation or measurement produced a result | `**Found**` · `**Evidence**` · `**So**` |
+| `Incident:` | something broke in a shared environment | `**What broke**` · `**Cause**` · `**Fix**` · `**Guard**` |
+
+A list inside one label is comma-separated on that one line (`**Closed** #533, #534 (work split
+out), #579 (obsolete)`), not a bullet list.
+
+**Worked example — one over-long mixed entry becomes two:**
+
+```
+summary: Triage: closed #533/#534/#579 instead of rebasing; their work moved to #656 and #631
+body:
+**Closed** #533, #534 (47 commits behind; #534's headline fix already shipped in #562), #579 (obsolete)
+**Kept** #578 — its fix is on main, its regression guards are not
+**Moved to** #656 (quiz half of #534), #631 (both tutor halves)
+**Why** rebasing meant billed eval-cassette re-records for work already partly merged
+```
+
+```
+summary: Status: promotion held — main is 9 commits ahead of production on three owner-only blockers
+body:
+**State** all five workflows green on c8fd2446; both ledgers clean; prod has 3 pending migrations
+**Blocked on** STAGING_SUPABASE_DB_URL secret (#619), the staging chunk-text backfill, a real GEMINI_API_KEY in prod
+**Next** migrate prod → deploy → encrypt-chunk backfill → shareability backfill → re-index, in that order
+```
+
+The measured quiz-placement result (2/6 → 5/6) from that same session is a **third** entry,
+`Finding:` — not a paragraph inside the triage.
+
 ## Vocabulary — source of truth is `shared/vocabulary.ts` (verify before tagging)
 
 - **Feed tags:** `auth`, `architecture`, `infra`, `api`, `ui`, `data`.
@@ -120,6 +177,9 @@ principal.** Then **report the structured counts** the tool returns, e.g.
 - Never write **secrets or tokens** into a doc body or artifact.
 - **Artifacts are observed** from git/gh, never recalled. Docs/ADRs are **read back before written**.
 - **Call once.** The session id makes a re-run replay-safe, but emit one payload per explicit ask.
+- **A feed entry is SHORT, always.** `summary` ≤ 100 characters; `body` ≤ 1,200 characters (aim for
+  600), ≤ 6 one-line labelled lines of its ONE type. Count before you send. Over the limit is not a
+  judgement call — cut it, or split it into more entries, or move the detail to a doc/ADR.
 
 ## Common mistakes
 
@@ -128,6 +188,9 @@ principal.** Then **report the structured counts** the tool returns, e.g.
 - Listing a commit/PR/issue `git`/`gh` does not show → fabricated artifact.
 - Forcing an in-vocab tag/section onto work it doesn't describe → should have been low/triage.
 - Auto-firing at a natural stopping point instead of waiting for an explicit ask.
+- Writing a feed entry as a report — headings, paragraphs, several subjects in one body. Pick one
+  type, use its labelled lines, stay under 1,200 characters, and split the rest into more entries
+  or a doc.
 
 ## Install (one-time, per teammate)
 

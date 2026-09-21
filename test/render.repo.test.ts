@@ -6,11 +6,11 @@
  * forms, nothing captured is trusted as markup, and the sample set is labelled.
  */
 import { describe, it, expect } from "vitest";
-import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, errorShare, formatCount, parseCompact, type RepoProps } from "../web/src/repo";
+import { repoView, repoControls, repoCrumb, repoPollFor, repoUpdatedLabel, sparkPoints, ago, errorShare, formatCount, parseCompact, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
 import { productKeyInfo } from "../src/repo/product";
 import { render, initialState } from "../web/src/render";
-import { REPO_TABS, type RepoDashboard, type RepoPerson, type RepoProductCount, type RepoProductEnv, type UsagePollResult } from "@shared/repo";
+import { REPO_TABS, type RepoDashboard, type RepoPerson, type RepoProductCount, type RepoProductEnv, type RepoRefreshResult } from "@shared/repo";
 
 const NC = { status: "not_connected" } as const;
 const EMPTY = { status: "empty" } as const;
@@ -80,12 +80,12 @@ describe("repoView — section states", () => {
     expect(ci).toContain("Deploys arrive when the GitHub webhook delivers deployment_status and check_run events, or when an admin runs Sync GitHub");
     expect(ci).toContain("Runs arrive when the GitHub webhook delivers workflow_run events, or when an admin runs Sync GitHub.");
     // P5-8: no branch NAME — the screen does not know which branch the first environment deploys from.
-    expect(ci).toContain("posts a canopy/coverage commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
-    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(ci).toContain("posts a canopy/coverage commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.");
+    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.");
     expect(usage).toContain("hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID)");
     expect(usage).toContain("metrics endpoint (SAPLING_METRICS_TOKEN)");
     expect(usage).toContain("RAILWAY_TOKEN_&lt;ENVIRONMENT&gt; secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.");
-    expect(planning).toContain("posts a canopy/todo commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(planning).toContain("posts a canopy/todo commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.");
     expect([ci, planning].join("\n")).not.toContain("push to main");
 
     const all = [overview, code, ci, usage, planning].join("\n");
@@ -991,39 +991,157 @@ describe("repoView — usage infrastructure", () => {
   });
 });
 
-describe("repoView — Poll usage now", () => {
-  const usage = (over: Partial<RepoProps> = {}) => repoView(props({ tab: "usage", ...over }));
-  const done = (result: UsagePollResult) => ({ status: "done" as const, result });
-  const NOT: UsagePollResult = { cloudflare: "not_configured", railway: "not_configured", sapling: "not_configured" };
+describe("Poll now — the Repo top bar, every tab", () => {
+  const done = (result: RepoRefreshResult) => ({ status: "done" as const, result });
+  const NOT: RepoRefreshResult = { health: "not_configured", cloudflare: "not_configured", railway: "not_configured", sapling: "not_configured", github: "not_configured" };
+  const TABS = REPO_TABS.map(([t]) => t);
+  const stripText = (html: string) => html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const view = (over: Partial<RepoProps> = {}) => repoView(props({ admin: true, ...over }));
 
-  it("the button is there for an admin — and absent for a non-admin, in sample mode, and off the Usage tab", () => {
-    expect(usage({ admin: true })).toContain('data-act="repoPollNow"');
-    expect(usage({ admin: true })).toContain(">Poll now</button>");
-    expect(usage({ admin: false })).not.toContain("repoPollNow");
-    expect(usage({ admin: true, sample: true, repo: { status: "ok", data: repoSample() } })).not.toContain("repoPollNow");
-    expect(repoView(props({ tab: "ci", admin: true }))).not.toContain("repoPollNow");
+  it("the button is in the top bar on all five tabs for an admin — and absent for a non-admin and in sample mode", () => {
+    for (const tab of TABS) {
+      const bar = repoControls(props({ tab, admin: true }));
+      expect(bar, tab).toContain('data-act="repoPollNow"');
+      expect(bar, tab).toContain('<span class="repo-pollbtn-label">Poll now</span>');
+      expect(repoControls(props({ tab, admin: false })), tab).not.toContain("repoPollNow");
+      expect(repoControls(props({ tab, admin: true, sample: true, repo: { status: "ok", data: repoSample() } })), tab).not.toContain("repoPollNow");
+      // It left the tab's own content: the bar is the one place it lives.
+      expect(repoView(props({ tab, admin: true })), tab).not.toContain("repoPollNow");
+    }
   });
 
-  it("a non-admin's header row is exactly what it was — nothing wraps the range buttons", () => {
-    const html = usage({ admin: false });
-    expect(html).toMatch(/App usage<\/span><div class="repo-seg"/);
+  // The pin: a non-admin's bar (and an admin's in sample mode) is byte-for-byte
+  // what it was before the button existed — no wrapper, no new title, no class.
+  it("a non-admin's top bar is exactly what it was", () => {
+    const REFRESH = `<button data-act="repoRefresh" title="Refresh" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
+    </button>`;
+    const PINNED = `
+    <span data-repo-updated style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">updated just now</span>
+    ${REFRESH}`;
+    expect(repoControls(props({ admin: false }))).toBe(PINNED);
+    expect(repoControls(props({ admin: true, sample: true }))).toBe(PINNED);
+    // With environments connected the bar only gains the pills it always had.
+    const withEnvs = repoControls(props({ admin: false, repo: { status: "ok", data: repoSample() } }));
+    expect(withEnvs.endsWith(PINNED)).toBe(true);
+    expect(withEnvs).not.toContain("repo-pollbtn");
+  });
+
+  it("is there whatever state the dashboard is in — every section not connected, degraded, still loading, or failed", () => {
+    const states: RepoProps["repo"][] = [
+      { status: "ok", data: live() }, // every capturable section not_connected / empty
+      { status: "ok", data: live({ degraded: true }) },
+      { status: "loading", data: null },
+      { status: "loading", data: live() },
+      { status: "error", data: null, error: "boom" },
+    ];
+    for (const repo of states) expect(repoControls(props({ admin: true, repo })), repo.status).toContain('data-act="repoPollNow"');
+  });
+
+  it("the two controls say different things, and the button has a name when its label is hidden", () => {
+    const bar = repoControls(props({ admin: true }));
+    const TITLE = "Poll deploys, CI, usage and health now (admin) — issues refresh with Sync GitHub";
+    expect(bar).toContain(`data-act="repoPollNow" title="${TITLE}" aria-label="${TITLE}"`);
+    expect(bar).not.toContain("every source"); // it does not: issues refresh with Sync GitHub
+    // While it runs, the title says so too — not only the label a narrow bar hides.
+    expect(repoControls(props({ admin: true, poll: { status: "polling" } }))).toContain('data-act="repoPollNow" title="Polling…" aria-label="Polling…"');
+    expect(bar).toMatch(/data-act="repoRefresh" title="Reload from Canopy's database"/);
+    // Narrow widths hide the label by CLASS (canopy.css) — the markup is the same at every width.
+    expect(bar).toContain('class="cnpy-outlinebtn repo-pollbtn"');
   });
 
   it("while polling the button is disabled and says so; no strip yet", () => {
-    const html = usage({ admin: true, poll: { status: "polling" } });
-    expect(html).toMatch(/<button data-act="repoPollNow"[^>]* disabled[^>]*>Polling…<\/button>/);
-    expect(html).not.toContain("repo-poll-strip");
+    const bar = repoControls(props({ admin: true, poll: { status: "polling" } }));
+    expect(bar).toMatch(/<button data-act="repoPollNow"[^>]* disabled aria-busy="true"[^>]*pointer-events:none[^>]*>/);
+    expect(bar).toContain('<span class="repo-pollbtn-label">Polling…</span>');
+    expect(bar).toContain("animation:cnpy-spin"); // the refresh icon's own spinner — no new animation
+    expect(view({ poll: { status: "polling" } })).not.toContain("repo-poll-strip");
+  });
+
+  it("the strip is at the top of WHICHEVER tab is open — it survives a tab switch", () => {
+    const poll = done({ ...NOT, github: { written: 12, unchanged: 240, failed: [] } });
+    for (const tab of TABS) {
+      const html = view({ tab, poll });
+      expect(html, tab).toMatch(/class="repo-panel"[^>]*><div class="repo-poll-strip"/);
+      expect(stripText(html), tab).toContain("GitHub — 12 new · 240 unchanged");
+      expect(html, tab).toContain('data-act="repoPollDismiss"');
+    }
+  });
+
+  it("is kept anywhere on the Repo screen and cleared on leaving it", () => {
+    const poll = done(NOT);
+    expect(repoPollFor(poll, true)).toBe(poll);
+    expect(repoPollFor({ status: "polling" }, true)).toEqual({ status: "polling" });
+    expect(repoPollFor(poll, false)).toBeNull();
+    expect(repoPollFor({ status: "polling" }, false)).toBeNull(); // an in-flight answer is then dropped on arrival
+    expect(repoPollFor(null, true)).toBeNull();
+  });
+
+  it("the strip is for an admin on the live dashboard only", () => {
+    const poll = done(NOT);
+    expect(view({ admin: false, poll })).not.toContain("repo-poll-strip");
+    expect(view({ poll, sample: true, repo: { status: "ok", data: repoSample() } })).not.toContain("repo-poll-strip");
+  });
+
+  it("Health is summarised: how many are up, and each one that is not, by name", () => {
+    const up = (env: string, part: "frontend" | "backend") => ({ env, part, status: "ok" as const, written: 2 });
+    const allUp = view({ poll: done({ ...NOT, health: [up("staging", "frontend"), up("staging", "backend"), up("production", "frontend"), up("production", "backend")] }) });
+    expect(stripText(allUp)).toContain("Health — 4 up Cloudflare");
+    expect(allUp).toMatch(/color:var\(--green\)[^>]*>4 up</);
+
+    const oneDown = view({ poll: done({ ...NOT, health: [up("staging", "frontend"), { env: "staging", part: "backend", status: "failed", written: 2, detail: "timeout" }, up("production", "frontend"), up("production", "backend")] }) });
+    expect(stripText(oneDown)).toContain("Health — 3 up · staging api ✗ timeout");
+    expect(oneDown).toMatch(/color:var\(--red\)[^>]*>✗ timeout</);
+
+    const allDown = view({ poll: done({ ...NOT, health: [{ env: "staging", part: "frontend", status: "failed", written: 0, detail: "HTTP 503" }, { env: "staging", part: "backend", status: "failed", written: 0, detail: "unreachable" }] }) });
+    expect(stripText(allDown)).toContain("Health — staging web ✗ HTTP 503 · staging api ✗ unreachable");
+    expect(stripText(allDown)).not.toContain("0 up");
+
+    expect(stripText(view({ poll: done(NOT) }))).toContain("Health — not configured");
+    expect(stripText(view({ poll: done({ ...NOT, health: [{ env: "*", status: "failed", written: 0, detail: "unexpected error" }] }) }))).toContain("Health — all ✗ unexpected error");
+  });
+
+  it("GitHub is one line: the counts, the failed arms by name, a budget skip, or not configured", () => {
+    expect(stripText(view({ poll: done({ ...NOT, github: { written: 12, unchanged: 240, failed: [] } }) }))).toContain("GitHub — 12 new · 240 unchanged");
+    const failed = view({ poll: done({ ...NOT, github: { written: 3, unchanged: 40, failed: ["deployments", "runs"] } }) });
+    expect(stripText(failed)).toContain("GitHub — ✗ failed: deployments, runs — 3 new · 40 unchanged");
+    expect(failed).toMatch(/color:var\(--red\)[^>]*>✗ failed: deployments, runs</);
+    expect(stripText(view({ poll: done({ ...NOT, github: { written: 0, unchanged: 0, failed: ["unexpected error"] } }) }))).toContain("GitHub — ✗ failed: unexpected error");
+    // The budget skip rides `failed`, but nothing failed — it reads as a skip, muted.
+    const skipped = view({ poll: done({ ...NOT, github: { written: 0, unchanged: 0, failed: ["skipped: would exceed the subrequest budget"] } }) });
+    expect(stripText(skipped)).toContain("GitHub — – skipped: would exceed the subrequest budget");
+    expect(skipped).not.toContain("✗ failed");
+    expect(stripText(view({ poll: done(NOT) }))).toContain("GitHub — not configured");
+  });
+
+  it("the usage sources read as they always did: new rows, up to date, a failure's detail, a skip, not configured", () => {
+    const html = view({ tab: "usage", poll: done({
+      ...NOT,
+      cloudflare: [{ env: "staging", status: "ok", written: 3 }, { env: "production", status: "failed", written: 0, detail: "cloudflare analytics 403" }],
+      sapling: [{ env: "staging", status: "ok", written: 0 }, { env: "production", status: "skipped", written: 0, detail: "apiUrl is not https" }],
+    }) });
+    const text = stripText(html);
+    expect(text).toContain("Cloudflare — staging ✓ 3 new · production ✗ cloudflare analytics 403");
+    expect(text).toContain("Railway — not configured");
+    expect(text).toContain("App metrics — staging ✓ up to date · production – skipped: apiUrl is not https");
+    // The five lines, in the order the sources ran.
+    expect(text.indexOf("Health")).toBeLessThan(text.indexOf("Cloudflare"));
+    expect(text.indexOf("App metrics")).toBeLessThan(text.indexOf("GitHub"));
+    // Tone comes from the existing variables: good / bad / muted.
+    expect(html).toMatch(/color:var\(--green\)[^>]*>✓ 3 new/);
+    expect(html).toMatch(/color:var\(--red\)[^>]*>✗ cloudflare analytics 403/);
+    expect(html).toMatch(/color:var\(--fg-40\)[^>]*>not configured/);
   });
 
   it("an ok outcome's detail (dropped product keys) and a failed one's partial write are both said — escaped", () => {
-    const html = usage({ admin: true, poll: done({
-      cloudflare: "not_configured", railway: "not_configured",
+    const html = view({ poll: done({
+      ...NOT,
       sapling: [
         { env: "staging", status: "ok", written: 7, detail: "2 keys dropped: counts.foo, totals.<b>" },
         { env: "production", status: "failed", written: 4, detail: "the windows do not nest (24h ≤ 7d ≤ 30d)" },
       ],
     }) });
-    const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const text = stripText(html);
     expect(text).toContain("App metrics — staging ✓ 7 new — 2 keys dropped: counts.foo, totals.&lt;b&gt;");
     expect(text).toContain("production ✗ the windows do not nest (24h ≤ 7d ≤ 30d) — 4 new");
     expect(html).not.toContain("totals.<b>");
@@ -1032,58 +1150,55 @@ describe("repoView — Poll usage now", () => {
     expect(html).toMatch(/color:var\(--fg-40\)[^>]*> — 4 new<\/span>/);
   });
 
-  it("the strip gives one line per source: new rows, up to date, a failure's detail, a skip, not configured", () => {
-    const html = usage({ admin: true, poll: done({
-      cloudflare: [{ env: "staging", status: "ok", written: 3 }, { env: "production", status: "failed", written: 0, detail: "cloudflare analytics 403" }],
-      railway: "not_configured",
-      sapling: [{ env: "staging", status: "ok", written: 0 }, { env: "production", status: "skipped", written: 0, detail: "apiUrl is not https" }],
-    }) });
-    const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-    expect(text).toContain("Cloudflare — staging ✓ 3 new · production ✗ cloudflare analytics 403");
-    expect(text).toContain("Railway — not configured");
-    expect(text).toContain("App metrics — staging ✓ up to date · production – skipped: apiUrl is not https");
-    expect(html).toContain('data-act="repoPollDismiss"');
-    // Tone comes from the existing variables: good / bad / muted.
-    expect(html).toMatch(/color:var\(--green\)[^>]*>✓ 3 new/);
-    expect(html).toMatch(/color:var\(--red\)[^>]*>✗ cloudflare analytics 403/);
-    expect(html).toMatch(/color:var\(--fg-40\)[^>]*>not configured/);
-  });
-
   it("a source with no environment says so, and the unexpected-error arm reads as all environments", () => {
-    const html = usage({ admin: true, poll: done({ ...NOT, cloudflare: [], sapling: [{ env: "*", status: "failed", written: 0, detail: "unexpected error" }] }) });
-    const text = html.slice(html.indexOf("repo-poll-strip")).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const text = stripText(view({ poll: done({ ...NOT, cloudflare: [], sapling: [{ env: "*", status: "failed", written: 0, detail: "unexpected error" }] }) }));
     expect(text).toContain("Cloudflare — no environment configured");
     expect(text).toContain("App metrics — all ✗ unexpected error");
   });
 
-  it("never trusts a detail or an environment name as markup", () => {
-    const html = usage({ admin: true, poll: done({ ...NOT, cloudflare: [{ env: `<b>stg</b>`, status: "failed", written: 0, detail: `<img src=x onerror=1>` }] }) });
-    expect(html).not.toContain("<img src=x");
-    expect(html).not.toContain("<b>stg</b>");
+  it("never trusts a detail, an environment name, a part or a failed-arm name as markup", () => {
+    const html = view({ poll: done({
+      ...NOT,
+      health: [{ env: `<i>prod</i>`, part: `<u>p</u>` as never, status: "failed", written: 0, detail: `<svg onload=1>` }],
+      cloudflare: [{ env: `<b>stg</b>`, status: "failed", written: 0, detail: `<img src=x onerror=1>` }],
+      github: { written: 0, unchanged: 0, failed: [`<script>alert(1)</script>`, `"><img src=y>`] },
+    }) });
+    for (const raw of ["<img src=x", "<b>stg</b>", "<i>prod</i>", "<u>p</u>", "<svg onload", "<script>alert", "<img src=y"]) expect(html, raw).not.toContain(raw);
     expect(html).toContain("&lt;img src=x onerror=1&gt;");
     expect(html).toContain("&lt;b&gt;stg&lt;/b&gt;");
+    expect(html).toContain("&lt;i&gt;prod&lt;/i&gt; &lt;u&gt;p&lt;/u&gt;");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;, &quot;&gt;&lt;img src=y&gt;");
   });
 
-  it("a failed request is one line, still dismissible", () => {
-    const html = usage({ admin: true, poll: { status: "error" } });
+  it("a malformed result (an older Worker's three-key body) renders without throwing", () => {
+    const old = { cloudflare: "not_configured", railway: "not_configured", sapling: "not_configured" } as unknown as RepoRefreshResult;
+    const text = stripText(view({ poll: done(old) }));
+    expect(text).toContain("Health — not configured");
+    expect(text).toContain("GitHub — not configured");
+  });
+
+  it("a 409 is one line — another refresh holds the lock — still dismissible", () => {
+    const html = view({ poll: { status: "busy" } });
+    expect(html).toContain("A refresh is already running — try again in a minute.");
+    expect(html).not.toContain("Poll failed");
+    expect(html).toContain('data-act="repoPollDismiss"');
+  });
+
+  it("a failed request is one line, still dismissible, and the button is live again", () => {
+    const html = view({ poll: { status: "error" } });
     expect(html).toContain("Poll failed — try again.");
     expect(html).toContain('data-act="repoPollDismiss"');
-    expect(html).toContain(">Poll now</button>"); // and the button is live again
+    expect(repoControls(props({ admin: true, poll: { status: "error" } }))).toMatch(/<button data-act="repoPollNow"(?![^>]* disabled)[^>]*>/);
   });
 
-  it("the strip is for the Usage tab of the live dashboard only", () => {
-    const poll = done(NOT);
-    expect(repoView(props({ tab: "overview", admin: true, poll }))).not.toContain("repo-poll-strip");
-    expect(usage({ admin: false, poll })).not.toContain("repo-poll-strip");
-    expect(usage({ admin: true, poll, sample: true, repo: { status: "ok", data: repoSample() } })).not.toContain("repo-poll-strip");
-  });
-
-  it("render() hands the viewer's admin flag and the session-only poll state through", () => {
-    const base = { ...initialState(), view: "app" as const, screen: "repo" as const, repoTab: "usage" as const, repo: { status: "ok" as const, data: live() } };
+  it("render() hands the viewer's admin flag and the session-only poll state through — on any tab", () => {
+    const base = { ...initialState(), view: "app" as const, screen: "repo" as const, repoTab: "code" as const, repo: { status: "ok" as const, data: live() } };
     const me = { handle: "andres", name: null, avatar_url: null, color: "green", identities: [], org: "SaplingLearn" };
     expect(render({ ...base, me: { ...me, admin: true } as typeof base.me })).toContain('data-act="repoPollNow"');
     expect(render({ ...base, me: { ...me, admin: false } as typeof base.me })).not.toContain("repoPollNow");
     expect(render({ ...base, me: { ...me, admin: true } as typeof base.me, repoPoll: { status: "error" } })).toContain("Poll failed — try again.");
+    // A dashboard that failed its first load still offers the button.
+    expect(render({ ...base, repo: { status: "error" as const, data: null, error: "x" }, me: { ...me, admin: true } as typeof base.me })).toContain('data-act="repoPollNow"');
   });
 });
 

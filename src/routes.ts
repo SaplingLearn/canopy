@@ -29,7 +29,7 @@ import { getMyWork } from "./tools/mywork";
 import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
 import { reconcileRepo, type ReconcileResult } from "./repo/github";
 import { repoEnvironments } from "./repo/config";
-import { runUsagePolls } from "./repo/cron";
+import { runLockedRepoRefresh, runUsagePolls } from "./repo/cron";
 import type { DashboardData } from "@shared/dashboard";
 import { first } from "./db";
 import { createInvite, revokeInvite, listInvites } from "./auth/invites";
@@ -335,6 +335,34 @@ app.post("/admin/backfill", async (c) => {
   return c.json(repo ? { ...res, repo } : res);
 });
 
+// ADMIN action (session-gated + admin-gated, NEVER an MCP tool): "Poll now" —
+// refresh what the Repo dashboard shows, on demand: health pings, the three
+// usage pollers, then the GitHub reconcile (`runRepoRefresh`, src/repo/cron.ts
+// — the budget, 19 + 7N subrequests, is stated there). NOT the issue-derived
+// sections (open issues / bugs, issues by label, the feed's issue lines): those
+// read `events`, whose only non-webhook writer is Sync GitHub's runBackfill. No
+// request body. 200 even when every source failed — the body says so; it
+// carries outcomes and NEVER a token, a header or an account id (`github.failed`
+// is reconcile's ARM NAMES). Overlapping runs are correct (every write is
+// idempotent) but wasteful, so a `refresh_lock` snapshot younger than 3 minutes
+// is a 409 that runs nothing; the lock is cleared in a `finally`. Never a 500.
+app.post("/admin/poll", async (c) => {
+  const handle = c.get("principal").handle;
+  if (!isAdmin(c.env, handle)) return c.json({ error: "admin only" }, 403);
+  try {
+    const res = await runLockedRepoRefresh(c.env, handle, Date.now());
+    return res.ok ? c.json(res.result) : c.json({ error: "a refresh is already running", since: res.since }, 409);
+  } catch (e) {
+    // The lock statement itself failing (D1) — runRepoRefresh is total. Only
+    // the error's NAME: nothing here knows which secret a message might quote.
+    console.error("poll", e instanceof Error ? e.name : "error");
+    return c.json({ error: "poll failed" }, 502);
+  }
+});
+
+// The NARROWER, OLDER route — the three usage pollers only. "Poll now" calls
+// `/admin/poll` above; this one is kept, unchanged, so nothing that still calls
+// it breaks.
 // ADMIN action (session-gated + admin-gated, NEVER an MCP tool): "Poll usage
 // now" — run the three hourly usage pollers on demand and SEE the outcome,
 // instead of waiting up to an hour for the repo cron's minute-0 tick and reading

@@ -9,6 +9,8 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../web/src/markdown", () => ({
+  renderMarkdownInline: (text: string) =>
+    text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>"),
   renderMarkdown: (body: string) => `<div class="mock-live-md">${body}</div>`,
 }));
 

@@ -1,7 +1,7 @@
 ---
 name: load-context
 description: Orient against Canopy (the team's working memory) BEFORE working an existing area. Fire when you start work on a named/existing subsystem, pick up an issue that references an area, or when the person says things like "the X system", "how we do Y", "our approach to Z", "where is the … code/doc" — and ALWAYS before proposing a doc change. Do NOT fire on trivial one-off questions, on a brand-new area with no prior context, or just to chat. Read-only — this skill never writes.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work, mcp__canopy__list_tickets, mcp__canopy__get_sprint
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work, mcp__canopy__list_tickets, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard
 ---
 
 # Load Context ← Canopy
@@ -59,6 +59,14 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
    calls are reads, and **orientation stays a read**: ticket and sprint write tools DO exist over MCP
    now, but they are never this skill's to call. Report what the queue says; if a write is warranted,
    that is the explicit-only `tickets` skill, asked for by a person.
+7. **When the work touches deploys, CI health, usage or product metrics,** add
+   `mcp__canopy__get_repo_dashboard` with the matching `tab` (`overview` / `code` / `ci` / `usage` /
+   `planning`; `range` `24h` / `7d` / `30d` for usage) — the Repo dashboard, read from Canopy's own
+   database, never live GitHub. Every section is `ok`, `empty` or `not_connected`: **anything not `ok`
+   is unknown, not zero** — never report a missing section as "no failures" or "no traffic". The same
+   goes for a `null` figure *inside* an `ok` section (`usage[].requests`, a `product` value,
+   `contributors[].reviews`, `ciFailures.rate`, a delta): unknown, never zero — `usage[].seen` says
+   whether that source has ever reported.
 
 ## Hard rules
 

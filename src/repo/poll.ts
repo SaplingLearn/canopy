@@ -42,15 +42,36 @@ const PING_TIMEOUT_MS = 8_000;
  *
  *  `at` is the 10-minute bucket the whole ping run shares; `putMetric`
  *  normalises it, and every read of `repo_metrics` (`latestMetric` /
- *  `metricSeries` / `latestHealth`) compares that one format as a raw string. */
-export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const at = new Date(Math.floor(now / TEN_MIN) * TEN_MIN).toISOString();
+ *  `metricSeries` / `latestHealth`) compares that one format as a raw string.
+ *
+ *  Returns one `PollOutcome` per TARGET (`part` set), in config order — the
+ *  cron ignores it; the admin's "Poll now" shows it. `ok` = up; `failed` = down,
+ *  its `detail` a few FIXED words (`timeout` / `HTTP <status>` / `unreachable`)
+ *  — never the thrown error's text, never a URL. `written` = new rows (0–2).
+ *
+ *  `bucketMs` is the width `at` is floored to. The cron leaves it at ten
+ *  minutes (a double-fired tick is a no-op). The on-demand run passes ONE
+ *  SECOND: `putMetric` is first-write-wins, so a reading floored to the cron's
+ *  bucket would be dropped and the screen would keep showing the tick's — and
+ *  a ONE-MINUTE floor still collided with it for the whole of the tick's own
+ *  minute (`:X0:00`–`:X0:59` floors to the tick's `at` either way): a real
+ *  "down" shown in the strip was dropped and the pill stayed HEALTHY. A second
+ *  lands a NEWER row, which `latestHealth` (the only reader, latest row per
+ *  target) picks up. The floor no longer guards a double fire on this path —
+ *  the refresh lock does, and more strictly (`REFRESH_LOCK_MS`). Second-stamped
+ *  rows read and prune like any other (`at` is one normalised format; pruned at
+ *  45 days): a poll every 2 minutes for a day is 720 × 2 rows per target —
+ *  5,760 rows for two environments, beside the cron's own 1,152. */
+export const HEALTH_ON_DEMAND_BUCKET_MS = 1_000;
+export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch, bucketMs: number = TEN_MIN): Promise<PollOutcome[]> {
+  const at = new Date(Math.floor(now / bucketMs) * bucketMs).toISOString();
   const targets = envs.flatMap((cfg) =>
     ([["frontend", cfg.frontendUrl], ["backend", cfg.apiUrl + cfg.healthPath]] as const).map(([part, url]) => ({ env: cfg.key, part, url }))
   );
   const readings = await Promise.all(targets.map(async (t) => {
     const started = Date.now();
     let up = 0;
+    let why = "";
     try {
       const res = await fetchImpl(t.url, {
         method: "GET",
@@ -59,15 +80,22 @@ export async function pingHealth(db: DB, envs: RepoEnvConfig[], now: number, fet
         headers: { "user-agent": "canopy-health" },
       });
       up = res.ok ? 1 : 0;
-    } catch {
+      if (!up) why = `HTTP ${res.status}`;
+    } catch (e) {
       up = 0; // a thrown fetch (timeout, DNS, connection refused) is "down", never an exception out of the cron
+      why = e instanceof Error && e.name === "TimeoutError" ? "timeout" : "unreachable";
     }
-    return { ...t, up, ms: Date.now() - started };
+    return { ...t, up, why, ms: Date.now() - started };
   }));
+  const out: PollOutcome[] = [];
   for (const r of readings) {
-    await putMetric(db, { metric: "health_up", env: r.env, part: r.part, value: r.up, at });
-    await putMetric(db, { metric: "health_ms", env: r.env, part: r.part, value: r.ms, at });
+    const wrote = [
+      await putMetric(db, { metric: "health_up", env: r.env, part: r.part, value: r.up, at }),
+      await putMetric(db, { metric: "health_ms", env: r.env, part: r.part, value: r.ms, at }),
+    ].filter(Boolean).length;
+    out.push(r.up ? { env: r.env, part: r.part, status: "ok", written: wrote } : { env: r.env, part: r.part, status: "failed", written: wrote, detail: r.why });
   }
+  return out;
 }
 
 // ── Cloudflare Workers analytics (source K) ──────────────────────────────────
@@ -297,7 +325,8 @@ export async function pollCloudflare(
     }
     if (changed) await putSnapshot(db, CF_POLLED, bounds as CfPolled, new Date(now).toISOString());
   } catch (e) {
-    console.error("pollCloudflare", CF_POLLED, e);
+    // The message only, scrubbed — the rule every other log line in this file keeps.
+    console.error("pollCloudflare", CF_POLLED, scrub(e instanceof Error ? e.message : String(e)));
   }
   return outcomes;
 }

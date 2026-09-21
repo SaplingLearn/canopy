@@ -46,6 +46,16 @@ export function renderMarkdown(body: string): string {
 }
 
 /**
+ * Inline-only markdown for a ONE-LINE field (a feed entry's summary): emphasis, code spans,
+ * links and issue refs — never block elements, so a leading `#` or `1.` cannot turn a headline
+ * into a heading or a list. Same trust boundary as `renderMarkdown`: marked, then DOMPurify.
+ */
+export function renderMarkdownInline(text: string): string {
+  const html = marked.parseInline(text ?? "", { async: false }) as string;
+  return DOMPurify.sanitize(html);
+}
+
+/**
  * Progressive-enhancement pass over the already-sanitized HTML, done in a detached
  * <template> (never re-inserts unsanitized markup):
  *  • wrap each fenced code block in a `.cnpy-code` panel, tagged with its language;

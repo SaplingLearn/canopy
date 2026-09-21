@@ -10,7 +10,7 @@ import {
   completeSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
-  getMe, logout, mintMcpToken, adminBackfill, adminPollUsage,
+  getMe, logout, mintMcpToken, adminBackfill, adminPoll,
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
@@ -36,7 +36,7 @@ import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
 import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
-import { formatCount, repoUpdatedLabel } from "./repo";
+import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
 
 const root = document.getElementById("app");
@@ -154,7 +154,8 @@ function rerender(): void {
   // The "Poll now" result is session-only and belongs to the Repo screen: leaving
   // it (any route, or signing out) clears it, and an in-flight poll's answer is
   // then dropped on arrival (runRepoPoll checks it is still the one polling).
-  if (state.repoPoll && (state.view !== "app" || state.screen !== "repo")) state.repoPoll = null;
+  // Switching between the Repo TABS keeps it — the strip renders on all five.
+  state.repoPoll = repoPollFor(state.repoPoll, state.view === "app" && state.screen === "repo");
   // Entering a group's pages opens its sub-page list, and leaving folds it again —
   // unless the person opened or closed it by hand, which sticks (and is what persists).
   const group = state.view === "app" ? navGroupOf(state.screen) : null;
@@ -393,17 +394,23 @@ function loadRepo(): void {
       rerender();
     });
 }
-// "Poll now" (admins, Usage tab): run the three hourly usage pollers on demand,
-// then re-read the dashboard so whatever they wrote is on screen, with the
-// per-source outcomes in a strip under the APP USAGE header. Never in sample
-// mode — that never touches the Worker. A failed request (network / 403 / 502)
-// is one line in the same strip; no alert(), no flash().
+// "Poll now" (admins, the Repo top bar — every tab): refresh the sources the
+// dashboard shows (health pings, the usage pollers, the GitHub reconcile), then
+// re-read the dashboard so whatever they wrote is on screen, with the per-source
+// outcomes in a strip at the top of whichever tab is open — it survives a tab
+// switch and is cleared on leaving the Repo screen (`rerender`). Never in sample
+// mode — that never touches the Worker. A second click while one is in flight
+// does nothing. A 409 (another refresh holds the lock) and a failed request
+// (network / 403 / 502) are each one line in the same strip; no alert(), no
+// flash(). The reload keeps the payload on screen, so the entrance key does not
+// change and the screen entrance is NOT replayed — only the strip flashes
+// (`pendingFlash`, off under reduced motion).
 async function runRepoPoll(): Promise<void> {
   if (!state.me?.admin || state.repoSample || state.repoPoll?.status === "polling") return;
   state.repoPoll = { status: "polling" };
   rerender();
   try {
-    const result = await adminPollUsage();
+    const result = await adminPoll();
     if (state.repoPoll?.status !== "polling") return; // left the screen (or went to sample data) meanwhile
     state.repoPoll = { status: "done", result };
     pendingFlash = ".repo-poll-strip";
@@ -411,7 +418,7 @@ async function runRepoPoll(): Promise<void> {
   } catch (e) {
     if (e instanceof Unauthorized) { state.repoPoll = null; state.view = "auth"; state.authStep = "login"; rerender(); return; }
     if (state.repoPoll?.status !== "polling") return;
-    state.repoPoll = { status: "error" };
+    state.repoPoll = { status: e instanceof ApiError && e.status === 409 ? "busy" : "error" };
     pendingFlash = ".repo-poll-strip";
     rerender();
   }

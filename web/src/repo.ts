@@ -13,10 +13,10 @@
 // an unrelated reason never replays them.
 
 import {
-  REPO_RANGES, REPO_TABS,
+  REPO_RANGES, REPO_TABS, REPO_TAB_SECTIONS,
   type RepoActivity, type RepoActivityKind, type RepoDashboard, type RepoPerson, type RepoPr, type RepoPrState,
   type RepoProductEnv, type RepoRange, type RepoSection, type RepoTab, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
-  type PollOutcome, type UsagePollResult, type UsagePollSource,
+  type PollOutcome, type RepoRefreshGithub, type RepoRefreshResult, type UsagePollSource,
 } from "@shared/repo";
 import type { Loadable } from "./render";
 import { esc, attr, statusBadge } from "./ui";
@@ -29,16 +29,16 @@ export interface RepoProps {
   repo: Loadable<RepoDashboard | null>;
   fetchedAt: number | null;
   sample: boolean;
-  /** The viewer is an admin — the only one offered "Poll now" on the Usage tab. */
+  /** The viewer is an admin — the only one offered "Poll now" (the Repo top bar, every tab). */
   admin: boolean;
-  /** The last on-demand usage poll. Session-only; null = none / dismissed. */
+  /** The last on-demand poll. Session-only; null = none / dismissed. */
   poll: RepoPollState | null;
   /** The environment the Usage tab's Product section shows. Session-only; null = the default. */
   productEnv: string | null;
 }
 
-/** "Poll now" (POST /admin/poll-usage): in flight, its per-source outcomes, or a failed request. */
-export type RepoPollState = { status: "polling" } | { status: "done"; result: UsagePollResult } | { status: "error" };
+/** "Poll now" (POST /admin/poll): in flight, its per-source outcomes, a 409 (another refresh holds the lock), or a failed request. */
+export type RepoPollState = { status: "polling" } | { status: "done"; result: RepoRefreshResult } | { status: "busy" } | { status: "error" };
 
 // ── design tokens (verbatim from the .dc.html) ───────────────────────────────
 const LABEL = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
@@ -175,9 +175,26 @@ export function repoControls(p: RepoProps): string {
     return `<span title="${attr(`${e.name} — ${e.pill.toLowerCase()}`)}" style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;white-space:nowrap;color:var(--fg-70)"><span class="repo-envdot${e.tone === "good" || e.tone === "neutral" ? "" : " repo-pulse"}" style="--c:${c};width:7px;height:7px;border-radius:50%;background:${c};box-shadow:0 0 0 3px color-mix(in srgb,${c} 16%,transparent)"></span>${esc(e.name)}</span>`;
   }).join("");
   const busy = p.repo.status === "loading";
+  // "Poll now" sits beside the refresh icon on EVERY tab and in every state of
+  // the dashboard (loading, failed, degraded, all not_connected) — it depends on
+  // nothing but who is looking. Admins only, never in sample mode; for everyone
+  // else this bar is byte-for-byte what it was (pinned by a test), which is why
+  // the refresh icon takes its longer title only when there are two controls to
+  // tell apart. When the BAR is too narrow for crumb + labelled controls (a
+  // container query in canopy.css, `.repo-pollbtn` — the room depends on the
+  // rail, not only the viewport) the label is hidden and the button is the
+  // icon's size; narrower still, the "updated …" text gives up its room, so at
+  // phone width an admin's controls are narrower than a non-admin's.
+  const canPoll = canPollRepo(p);
+  const polling = p.poll?.status === "polling";
+  const pollBtn = canPoll
+    ? `<button data-act="repoPollNow" title="${polling ? "Polling…" : POLL_TITLE}" aria-label="${polling ? "Polling…" : POLL_TITLE}" class="cnpy-outlinebtn repo-pollbtn"${polling ? ' disabled aria-busy="true"' : ""} style="height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--border);display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:500;white-space:nowrap;color:var(--fg-55);${polling ? "opacity:.6;cursor:default;pointer-events:none" : ""}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none${polling ? ";animation:cnpy-spin .8s linear infinite" : ""}">${polling ? `<path d="M21 12a9 9 0 1 1-9-9"></path>` : `<path d="M3 12h4l3-8 4 16 3-8h4"></path>`}</svg><span class="repo-pollbtn-label">${polling ? "Polling…" : "Poll now"}</span>
+    </button>`
+    : "";
   return `${pills}${pills ? `<div style="width:1px;height:20px;background:var(--border);margin:0 2px"></div>` : ""}
-    <span data-repo-updated style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(repoUpdatedLabel(p))}</span>
-    <button data-act="repoRefresh" title="Refresh" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
+    <span data-repo-updated style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(repoUpdatedLabel(p))}</span>${pollBtn}
+    <button data-act="repoRefresh" title="${canPoll ? REFRESH_TITLE : "Refresh"}" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"${busy ? ' style="animation:cnpy-spin .8s linear infinite"' : ""}><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>
     </button>`;
 }
@@ -414,9 +431,9 @@ function ciTab(p: RepoProps): string {
   // window" (src/tools/repo.ts checks `latestMetric` on the empty path) — the
   // copy says so, rather than implying nothing has ever been reported.
   const cov = okData(p, (d) => d.coverage);
-  const coverage = sec(p, (d) => d.coverage, { nc: "No coverage reported yet. It appears once the repo's CI posts a canopy/coverage commit status on a push to the default environment branch and the GitHub webhook delivers status events.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
+  const coverage = sec(p, (d) => d.coverage, { nc: "No coverage reported yet. It appears once the repo's CI posts a canopy/coverage commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.", empty: "No coverage reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Test coverage", t, "var(--green)"));
   const bun = okData(p, (d) => d.bundle);
-  const bundle = sec(p, (d) => d.bundle, { nc: "No bundle size reported yet. It appears once the repo's CI posts a canopy/bundle-kb commit status on a push to the default environment branch and the GitHub webhook delivers status events.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
+  const bundle = sec(p, (d) => d.bundle, { nc: "No bundle size reported yet. It appears once the repo's CI posts a canopy/bundle-kb commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.", empty: "No bundle size reported in the last 30 days.", lines: 2 }, (t) => trendBlock("Bundle size — web", t, "var(--fg-55)"));
 
   const activity = sec(p, (d) => d.activity, { nc: "The activity feed isn't connected.", empty: "No repo events captured yet.", lines: 4 }, (rows) =>
     `<div class="cnpy-scroll" style="max-height:236px;overflow-y:auto">${rows.map((a) => activityRow(a, now)).join("")}</div>`);
@@ -734,10 +751,23 @@ function productSection(p: RepoProps, i: number): string {
     </div>`;
 }
 
-// ── "Poll now" — the admin's on-demand run of the three hourly usage pollers ──
+// ── "Poll now" — the admin's on-demand refresh of health, usage and GitHub ──
+// (POST /admin/poll: health pings, the three usage pollers, the GitHub reconcile.)
 // "App metrics": the app's own endpoint answers active users AND product metrics in one response.
-const POLL_SOURCES: [keyof UsagePollResult, string][] = [["cloudflare", "Cloudflare"], ["railway", "Railway"], ["sapling", "App metrics"]];
+const POLL_SOURCES: ["cloudflare" | "railway" | "sapling", string][] = [["cloudflare", "Cloudflare"], ["railway", "Railway"], ["sapling", "App metrics"]];
 const MUTED = "var(--fg-40)";
+/** The two top-bar controls say different things: one re-reads D1, one goes out to the sources. */
+const REFRESH_TITLE = "Reload from Canopy's database";
+// TRUE, not tidy: the issue-derived blocks (open issues / bugs, issues by label,
+// the feed's issue lines) read `events`, which only Sync GitHub refreshes.
+const POLL_TITLE = "Poll deploys, CI, usage and health now (admin) — issues refresh with Sync GitHub";
+/** The poll result belongs to the Repo SCREEN, not to one of its tabs: it is kept
+ *  while the person is anywhere on Repo and dropped the moment they are not
+ *  (main.ts applies this on every rerender, so an in-flight poll's answer is
+ *  dropped on arrival too). */
+export const repoPollFor = (poll: RepoPollState | null, onRepoScreen: boolean): RepoPollState | null => (onRepoScreen ? poll : null);
+/** Admins only, and never in sample mode (which never touches the Worker). Nothing else decides it. */
+const canPollRepo = (p: Pick<RepoProps, "admin" | "sample">): boolean => p.admin && !p.sample;
 
 /** One environment's outcome: `staging ✓ 3 new` / `✓ up to date` / `✗ <detail>` / `– skipped: <detail>`.
  *  An `ok` may carry a detail too (product keys the poll dropped, by name), and
@@ -756,15 +786,41 @@ function pollOutcome(o: PollOutcome): string {
 const pollSource = (s: UsagePollSource): string =>
   s === "not_configured" || !Array.isArray(s) ? `<span style="color:${MUTED}">not configured</span>`
   : !s.length ? `<span style="color:${MUTED}">no environment configured</span>`
-  : s.map(pollOutcome).join(`<span style="color:${MUTED}"> · </span>`);
+  : s.map(pollOutcome).join(SEP);
 
-/** The result strip under the APP USAGE header: one line per source, or the one-line failure. */
+const SEP = `<span style="color:${MUTED}"> · </span>`;
+const PART_NAME: Record<string, string> = { backend: "api", frontend: "web" };
+/** Health, summarised: how many targets are up, and each one that is not, by name — `4 up` / `3 up · staging api ✗ timeout`. */
+function pollHealth(s: UsagePollSource | undefined): string {
+  if (!Array.isArray(s)) return `<span style="color:${MUTED}">not configured</span>`;
+  if (!s.length) return `<span style="color:${MUTED}">no environment configured</span>`;
+  const up = s.filter((o) => o.status === "ok").length;
+  const downs = s.filter((o) => o.status !== "ok").map((o) =>
+    `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}${o.part ? ` ${esc(PART_NAME[o.part] ?? o.part)}` : ""}</span> <span style="color:${TONE.bad}">${esc(`✗ ${o.detail ?? "down"}`)}</span></span>`);
+  return [...(up || !downs.length ? [`<span style="color:${TONE.good}">${up} up</span>`] : []), ...downs].join(SEP);
+}
+/** GitHub: the reconcile's counts, or the arms that failed BY NAME, or why it did not run. */
+function pollGithub(g: RepoRefreshGithub | "not_configured" | undefined): string {
+  if (!g || g === "not_configured") return `<span style="color:${MUTED}">not configured</span>`;
+  const failed = Array.isArray(g.failed) ? g.failed.map(String) : [];
+  const counts = `${Number(g.written) || 0} new · ${Number(g.unchanged) || 0} unchanged`;
+  if (!failed.length) return `<span style="color:${TONE.good}">${esc(counts)}</span>`;
+  // The budget skip is reported through `failed`, but nothing FAILED — it never ran.
+  if (failed.length === 1 && failed[0].startsWith("skipped:")) return `<span style="color:${MUTED}">${esc(`– ${failed[0]}`)}</span>`;
+  const landed = g.written || g.unchanged ? `<span style="color:${MUTED}"> — ${esc(counts)}</span>` : "";
+  return `<span style="color:${TONE.bad}">${esc(`✗ failed: ${failed.join(", ")}`)}</span>${landed}`;
+}
+
+/** The result strip at the top of whichever tab is open: one line per source, or the one-line refusal / failure. */
 function pollStrip(poll: RepoPollState | null): string {
   if (!poll || poll.status === "polling") return "";
-  const lines = poll.status === "error"
-    ? `<div style="color:${TONE.bad}">Poll failed — try again.</div>`
-    : POLL_SOURCES.map(([key, label]) =>
-      `<div><span style="font-weight:600;color:var(--fg-70)">${label}</span><span style="color:${MUTED}"> — </span>${pollSource(poll.result[key])}</div>`).join("");
+  const line = (label: string, body: string): string =>
+    `<div><span style="font-weight:600;color:var(--fg-70)">${label}</span><span style="color:${MUTED}"> — </span>${body}</div>`;
+  const lines = poll.status === "error" ? `<div style="color:${TONE.bad}">Poll failed — try again.</div>`
+    : poll.status === "busy" ? `<div style="color:var(--fg-70)">A refresh is already running — try again in a minute.</div>`
+    : line("Health", pollHealth(poll.result.health))
+      + POLL_SOURCES.map(([key, label]) => line(label, pollSource(poll.result[key]))).join("")
+      + line("GitHub", pollGithub(poll.result.github));
   return `<div class="repo-poll-strip" role="status" style="display:flex;align-items:flex-start;gap:12px;padding:10px 20px;border-bottom:1px solid var(--border);font-size:12px;line-height:1.7;color:var(--fg-55)">
       <div style="flex:1;min-width:0;overflow-wrap:anywhere">${lines}</div>
       <button data-act="repoPollDismiss" title="Dismiss" aria-label="Dismiss poll result" class="cnpy-iconbtn" style="flex:none;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:14px;line-height:1;color:${MUTED}">×</button>
@@ -786,12 +842,6 @@ export function errorShare(requests: string | undefined, errors: string | undefi
 
 function usageTab(p: RepoProps): string {
   const usageLive = okData(p, (d) => d.usage) !== null;
-  // Admins only, and never in sample mode (which never touches the Worker). A
-  // non-admin gets the header exactly as it was — the button and its wrapper
-  // exist only for an admin, and the wrapper (not the row) is what wraps at
-  // phone width: the button drops above the range buttons, right-aligned.
-  const canPoll = p.admin && !p.sample;
-  const polling = p.poll?.status === "polling";
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
@@ -837,13 +887,10 @@ function usageTab(p: RepoProps): string {
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px">${stat(h.cpu, "CPU")}${stat(h.memory, "Memory")}</div>
     </div>`)));
 
-  const pollBtn = `<button data-act="repoPollNow" title="Run the hourly usage polls now" class="cnpy-outlinebtn"${polling ? " disabled" : ""} style="padding:7px 12px;border-radius:9px;border:1px solid var(--border);font-size:12px;font-weight:500;white-space:nowrap;color:var(--fg-55);${polling ? "opacity:.6;cursor:default;pointer-events:none" : ""}">${polling ? "Polling…" : "Poll now"}</button>`;
-  const controls = canPoll ? `<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0">${pollBtn}${ranges}</div>` : ranges;
-
+  // "Poll now" used to live in this header; it is in the Repo top bar now, on every tab.
   return `<div ${rise(0, `display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;padding:14px 20px;border-bottom:1px solid var(--border)`)}>
-      <span style="${LABEL}">App usage</span>${controls}
+      <span style="${LABEL}">App usage</span>${ranges}
     </div>
-    ${canPoll ? pollStrip(p.poll) : ""}
     <div ${rise(1)}>${usageLive ? usage : `<div style="padding:6px 20px">${usage}</div>`}</div>
     ${productSection(p, 2)}
     <div ${rise(5, `${TOP};flex:1`, "repo-cells")}><div style="grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))">
@@ -907,7 +954,7 @@ function planningTab(p: RepoProps): string {
   // no delta chip and no "since" text (there is nothing to date it from).
   // I2: `empty` now means "a count has landed before, just not in the last 90
   // days", not "nothing has ever scanned this".
-  const todos = sec(p, (d) => d.todos, { nc: "No TODO / FIXME count reported yet. It appears once the repo's CI posts a canopy/todo commit status on a push to the default environment branch and the GitHub webhook delivers status events.", empty: "No count reported in the last 90 days." }, (t) =>
+  const todos = sec(p, (d) => d.todos, { nc: "No TODO / FIXME count reported yet. It appears once the repo's CI posts a canopy/todo commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.", empty: "No count reported in the last 90 days." }, (t) =>
     `<div style="display:flex;align-items:baseline;gap:12px;margin-top:10px">
       <span data-count="${t.count}" style="font-family:var(--mono);font-size:31px;font-weight:600;letter-spacing:-0.02em">${t.count}</span>
       ${t.delta === null ? "" : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
@@ -940,14 +987,9 @@ const SCREEN_LABEL: Record<RepoTab, string> = { overview: "Overview", code: "Cod
 function hasUncaptured(p: RepoProps): boolean {
   const d = p.repo.data;
   if (!d) return false;
-  const by: Record<RepoTab, RepoSection<unknown>[]> = {
-    overview: [d.environments, d.drift, d.stats, d.health],
-    code: [d.codeStats, d.bars, d.prs, d.branches],
-    ci: [d.deploys, d.ciFailures, d.coverage, d.bundle, d.activity],
-    usage: [d.usage, d.cloudflare, d.hosting, d.product ?? { status: "not_connected" }],
-    planning: [d.sprint, d.contributors, d.labels, d.todos],
-  };
-  return by[p.tab].some((s) => s.status === "not_connected");
+  // The ONE section→tab mapping (shared with the MCP `get_repo_dashboard` tool).
+  // `?? not_connected`: a payload from before a section existed lacks its key.
+  return REPO_TAB_SECTIONS[p.tab].some((k) => ((d[k] as RepoSection<unknown> | undefined)?.status ?? "not_connected") === "not_connected");
 }
 
 export function repoView(p: RepoProps): string {
@@ -972,7 +1014,7 @@ export function repoView(p: RepoProps): string {
 
   return `<div class="repo-frame" style="${FRAME}" data-screen-label="${SCREEN_LABEL[p.tab]}">
     ${banner}
-    <div class="repo-panel" style="${PANEL}">${body}</div>
+    <div class="repo-panel" style="${PANEL}">${canPollRepo(p) ? pollStrip(p.poll) : ""}${body}</div>
     ${footer}
   </div>`;
 }

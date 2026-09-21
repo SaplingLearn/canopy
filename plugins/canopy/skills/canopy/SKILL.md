@@ -1,7 +1,7 @@
 ---
 name: canopy
 description: Overview and entry point for working with Canopy, the team's shared context store ("the team brain"). Use when someone asks how Canopy works, how to use it, how to connect an agent, what can be read or written, or wants the whole orient→work→record loop — and as the map to the load-context (orient before work) and record-session (record at the end) skills. Read-only itself; it explains the loop and points to the right tool/skill.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard
 ---
 
 # Canopy — the team's shared context store
@@ -88,10 +88,27 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
   PRs from the last 14 days) + to-do (open assigned issues); built from captured GitHub events, no live
   GitHub.
 - **`get_events`** — recent captured GitHub events, filterable by type/subject/limit.
+- **`get_repo_dashboard`** — the Repo dashboard for the org's main repository, read from Canopy's own
+  database (never live GitHub): environments and deploys, CI, code activity, usage (requests, errors,
+  hosting, active users), the app's product metrics, and planning. **Use it to orient before work that
+  touches deploys, CI health, usage or product metrics.** Optional `tab` (`overview` / `code` / `ci` /
+  `usage` / `planning`) returns just that tab's sections; `range` (`24h` / `7d` / `30d`, default `7d`)
+  picks the usage, Cloudflare and product-count views; `include_trends` (default off) adds the
+  sparkline series AND the full drift breakdown — without it `drift.groups` is the first 20 groups,
+  each with a `commitCount` instead of its commits, and `drift.groupCount` is the full number; with it
+  every group comes back with its commits. Every section is `ok`, `empty` or `not_connected` —
+  **anything not `ok` is unknown, not zero.** The same holds *inside* an `ok` section: a `null` figure
+  (`usage[].requests` / `errorRate` / `users`, a `product` value, `contributors[].reviews`,
+  `ciFailures.rate`, a `null` or empty delta) is unknown / not captured, **never zero**, and
+  `usage[].seen` says whether that source has ever reported. Read-only: polling and Sync GitHub are
+  admin actions in the web app, never MCP tools.
 
 ## Writing (agents stage, humans confirm)
 
-Agents stage through the gate via MCP: **`append_feed`**, **`propose_doc_update`**. The gate reconciles
+Agents stage through the gate via MCP: **`append_feed`**, **`propose_doc_update`**. (A feed entry
+has a fixed size and one of six typed structures — `Shipped:` / `Decision:` / `Triage:` / `Status:` /
+`Finding:` / `Incident:` — see the `record-session` skill's "Feed entry format"; it applies to
+`append_feed` exactly as it does to `record_session`.) The gate reconciles
 every write — it de-duplicates no-op proposals, tags each doc change `new` / `edit` / `rewrite`, and
 routes out-of-vocab or low-confidence entries to Triage. **Confirming** (promote / ratify / reject /
 assign / discard) is done by a human in the web Triage desk over session-cookie routes — **never** MCP
