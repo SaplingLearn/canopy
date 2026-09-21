@@ -159,10 +159,15 @@ describe("pollRailway", () => {
       }) as typeof fetch;
       await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, fetchImpl);
       await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, (async () => json({ errors: [{ message: "bad token tok-staging tok-production" }] })) as typeof fetch);
+      // A token STRADDLING the 200-char cut of the 200-with-`errors` arm: cutting
+      // before scrubbing would leave its first half in the log AND in the detail.
+      const straddle = await pollRailway(env.DB, TOKENS, WITH_IDS, NOW, (async () => json({ errors: [{ message: `${"p".repeat(192)}tok-staging tok-production` }] })) as typeof fetch);
       expect(spy).toHaveBeenCalled();
       const logged = JSON.stringify(spy.mock.calls.map((c) => c.map((a) => (a instanceof Error ? `${a.message} ${a.stack}` : a))));
       expect(logged).not.toContain("tok-staging");
       expect(logged).not.toContain("tok-production");
+      expect(logged).not.toContain("tok-st");
+      expect(JSON.stringify(straddle)).not.toContain("tok-");
     } finally {
       spy.mockRestore();
     }

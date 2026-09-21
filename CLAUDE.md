@@ -612,7 +612,7 @@ instead of waiting up to an hour for a log line. **Idempotent with the cron**: e
 FLOOR of `now` and every write is `INSERT OR IGNORE`, so a run at any minute asks for the same hours and
 writes the same rows. **3N subrequests** (6 today; no health pings). Each poller returns one `PollOutcome`
 per environment (`shared/repo.ts`, types only: `ok` with `written` = NEW `repo_metrics` rows — `0` is a
-legitimate re-poll; `failed` with `detail` = the SAME scrubbed, truncated message it logs; `skipped` with a
+legitimate re-poll; `failed` with `detail` = the SAME scrubbed message it logs (scrubbed BEFORE any cut, on the non-2xx AND the 200-with-`errors` path; an error body is read to at most 8 KB); `skipped` with a
 few fixed words — no worker / no project token / no `railwayEnvironmentId` / no `railwayServiceId` /
 `apiUrl` not https), and `UsagePollResult` is those per source, or `"not_configured"` when the source's
 secret(s) are absent — exactly when the cron skips it. The response is 200 even when every source failed
@@ -646,7 +646,9 @@ the previous interval reaches the new window (`prev.to >= window.from`) it keeps
 the max; otherwise (no previous, or a GAP — an outage longer than the 3-hour window) `from` RESTARTS at the
 window's start, and that jump is the record of the hole. One read + at most one write per poll (an unlocked
 read-modify-write, safe because ticks never overlap and a lost update re-writes identically); a failed
-environment keeps its interval, and neither end moves BACKWARDS. A LEGACY string value (the pre-interval
+environment keeps its interval, and within one run neither end moves BACKWARDS (the write is an unlocked
+read-modify-write, so an on-demand run overlapping a cron tick can put back an older `to` — accepted: that
+stretch draws unknown, never zero, and the next poll re-extends it). A LEGACY string value (the pre-interval
 shape, still in local dev DBs) reads through `cfCovered` as `{ from: bound − 3h, to: bound }`.
 The projection (`projectUsage`) costs the render **ONE statement** — `metricsSince` (`src/repo/store.ts`)
 for every range, environment and series, sliced in memory. It takes GROUPS, each with its OWN bound

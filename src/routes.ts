@@ -348,7 +348,9 @@ app.post("/admin/poll-usage", async (c) => {
   if (!isAdmin(c.env, c.get("principal").handle)) return c.json({ error: "admin only" }, 403);
   try {
     return c.json(await runUsagePolls(c.env, Date.now()));
-  } catch {
+  } catch (e) {
+    // Unreachable today (runUsagePolls is total) — but never swallow it silently.
+    console.error("poll-usage", e instanceof Error ? e.message : String(e));
     return c.json({ error: "poll failed" }, 502);
   }
 });

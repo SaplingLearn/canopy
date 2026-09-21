@@ -227,6 +227,28 @@ describe("pollCloudflare — outcomes", () => {
       for (const d of [json400, raw]) { expect(d).not.toContain(secret.token); expect(d).not.toContain(secret.accountId); }
     });
 
+    it("the 200-with-`errors` arm scrubs BEFORE it cuts too — a token straddling the 200-char cut leaves nothing behind", async () => {
+      const secret = { token: "cf-live-9aQ7x2Lm4Pz8Rv1Kd3Nb6Tc0We5Yh", accountId: "acct-1d-9f3b" };
+      // 170 chars of prose, then the token: it straddles the cut at 200.
+      const body = JSON.stringify({ errors: [{ message: `${"p".repeat(170)}${secret.token} — use a scoped token` }] });
+      const detail = await failing(200, body, secret);
+      expect(detail).toContain("[redact"); // the OUTER 200-char cut may clip the marker itself — never the token
+      expect(detail).not.toContain("cf-live");
+      expect(detail).not.toContain(secret.token.slice(0, 8));
+    });
+
+    it("an enormous error body is read to a bound, not buffered whole", async () => {
+      let pulled = 0;
+      const chunk = new TextEncoder().encode("e".repeat(4096));
+      const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled++; if (pulled > 5000) c.close(); else c.enqueue(chunk); } });
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const out = await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, (async () => new Response(stream, { status: 502 })) as typeof fetch);
+        expect(out[0].detail).toMatch(/^cloudflare analytics 502: e{120}$/);
+        expect(pulled).toBeLessThan(20); // ~8 KB wanted of ~20 MB offered
+      } finally { spy.mockRestore(); }
+    });
+
     it("a non-JSON body does not throw: the raw text's start, one line; and the hint survives a long body", async () => {
       expect(await failing(502, "<html>\n  <body>Bad   gateway</body></html>")).toBe("cloudflare analytics 502: <html> <body>Bad gateway</body></html>");
       const long = await failing(403, "y".repeat(5000));

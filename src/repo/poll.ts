@@ -92,10 +92,34 @@ const CF_QUERY = `query($a: string!, $s: string!, $from: Time!, $to: Time!) {
  *  because cutting first could leave half a token behind. Never throws: a body
  *  that cannot be read, or is not JSON, costs only the reason. */
 const REASON_CHARS = 300;
+const REASON_READ_BYTES = 8192;
+/** At most `cap` bytes of a body, decoded; the rest of the stream is cancelled.
+ *  A Response without a readable stream (a test double) falls back to text(). */
+async function readCapped(res: Response, cap: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return (await res.text()).slice(0, cap);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (size < cap) {
+    const { done, value } = await reader.read();
+    if (done || !value) break;
+    chunks.push(value.subarray(0, cap - size));
+    size += Math.min(value.byteLength, cap - size);
+  }
+  await reader.cancel().catch(() => undefined);
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(all);
+}
 const RAW_REASON_CHARS = 120;
 async function failureReason(res: Response, scrub: (s: string) => string): Promise<string> {
+  // BOUNDED: an edge/proxy error page can be megabytes, and a Worker that
+  // buffers past its memory ceiling is killed uncatchably — which would cost the
+  // tick's other pollers and break the route's "never a 500". A few KB is far
+  // more than any reason we keep.
   let text = "";
-  try { text = await res.text(); } catch { return ""; }
+  try { text = await readCapped(res, REASON_READ_BYTES); } catch { return ""; }
   const oneLine = (v: string) => scrub(v.replace(/\s+/g, " ").trim());
   let reason = "";
   try {
@@ -195,7 +219,10 @@ export async function pollCloudflare(
       }
       const body = record(await res.json());
       if (Array.isArray(body.errors) && body.errors.length) {
-        throw new Error(`cloudflare analytics: ${String(record(body.errors[0]).message ?? "graphql error").slice(0, 200)}`);
+        // Scrubbed BEFORE the cut, like `failureReason`: a token straddling the
+        // boundary would otherwise leave its first half behind — and this message
+        // is now a PollOutcome.detail an admin's browser receives.
+        throw new Error(`cloudflare analytics: ${scrub(String(record(body.errors[0]).message ?? "graphql error")).slice(0, 200)}`);
       }
       const accounts = record(record(body.data).viewer).accounts;
       const rows = Array.isArray(accounts) ? record(accounts[0]).workersInvocationsAdaptive : null;
@@ -234,9 +261,13 @@ export async function pollCloudflare(
   }
   if (!succeeded.length) return outcomes;
   try {
-    // A read-modify-write with no lock, which is safe only because ticks do not
-    // overlap (hourly, against ~10s timeouts per environment) — and a lost update
-    // would be harmless anyway: every writer inside one hour computes the SAME
+    // A read-modify-write with NO lock. Cron ticks do not overlap each other
+    // (hourly, against ~10s timeouts per environment), but an admin's on-demand
+    // run (POST /admin/poll-usage) CAN overlap a tick or another admin's run, and
+    // the later writer may then put back an OLDER `to`. That is accepted, not
+    // prevented: the direction is safe (a stretch reads "never looked at", so it
+    // draws unknown — never a fabricated zero) and the next successful poll
+    // re-extends the interval. Beyond that a lost update is harmless anyway: every writer inside one hour computes the SAME
     // window, so the loser's interval is re-written identically next tick.
     const bounds = { ...record((await getSnapshot<unknown>(db, CF_POLLED))?.data) } as Record<string, unknown>;
     let changed = false;
@@ -327,7 +358,7 @@ export async function pollRailway(
       if (!res.ok) throw new Error(`railway metrics ${res.status}${await failureReason(res, scrub)}`);
       const body = record(await res.json());
       if (Array.isArray(body.errors) && body.errors.length) {
-        throw new Error(`railway metrics: ${String(record(body.errors[0]).message ?? "graphql error").slice(0, 200)}`);
+        throw new Error(`railway metrics: ${scrub(String(record(body.errors[0]).message ?? "graphql error")).slice(0, 200)}`); // scrubbed BEFORE the cut
       }
       const series = record(body.data).metrics;
       if (!Array.isArray(series)) throw new Error("railway metrics: no metrics in the response");

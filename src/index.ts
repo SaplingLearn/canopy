@@ -53,7 +53,7 @@ export default {
   //    notification_settings (send_hour + timezone) at fire time;
   //  • the repo trigger (every 10 minutes) → handleRepoCron (src/repo/cron.ts),
   //    which spreads ONE heavy job per invocation across the ticks: health
-  //    pings every tick; the hourly-polls slot at :00 (empty today); and, every
+  //    pings every tick; the three hourly usage polls at :00; and, every
   //    6th hour, the sprint-progress cache backstop at :10, the GitHub reconcile
   //    (deploys/checks/runs/branches/drift/open-PRs) at :20 and the capture
   //    prune at :30 — see the subrequest budget at that dispatcher.
