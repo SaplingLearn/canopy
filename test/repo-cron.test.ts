@@ -159,7 +159,7 @@ describe("handleRepoCron", () => {
     expect(await snapshots()).toHaveLength(0);
   });
 
-  it("at minute 0 only health runs — the hourly-polls slot carries no heavy job yet", async () => {
+  it("at minute 0 only health runs when no hourly poller is configured — never a 6-hourly heavy job", async () => {
     await seedSprint();
     // A GitHub that would answer every arm: nothing may run here regardless.
     const gh = fakeGithub({ "/issues/1": { state: "closed" } });

@@ -22,7 +22,7 @@
 - **Cron triggers stay at three.** Replace `0 */6 * * *` with `*/10 * * * *` and gate work by minute/hour in code. Cloudflare weekday fields are `1-7`/`SUN-SAT`, never `0`; a bad cron fails the deploy AFTER the Worker uploads.
 - **A push to `main` auto-deploys prod.** Each phase is one PR; apply its migration to prod (`npm run db:migrate:remote`, needs `CLOUDFLARE_ACCOUNT_ID`) BEFORE merging.
 - New web tests must be listed in BOTH `tsconfig.worker.json` `exclude` and `tsconfig.web.json` `include`.
-- `npm run typecheck` does not run inside `npm test` — run both. One `summarize.test.ts` failure is environmental when `GEMINI_API_KEY` is in `.dev.vars`.
+- `npm run typecheck` does not run inside `npm test` — run both. Since Phase 5 the suite is fully green — the vitest pool blanks every network-enabling secret — so any failure is real.
 - Commit messages: imperative sentence, body explains why; end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 
 ## Spec (inline) — verified facts about `SaplingLearn/sapling` (2026-09-20)

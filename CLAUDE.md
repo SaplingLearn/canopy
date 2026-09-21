@@ -639,7 +639,9 @@ range — and ENDS at `min(last complete hour, that environment's covered `to`)`
 last real point, so a dead poll draws no zeros after it. **The first bucket drawn is the first WHOLE one**: a
 7d/30d day-bucket that capture or coverage began inside is counted in the total but not drawn as a day.
 `requests` is non-null when something is known in the range — a point in range, or capture predating the
-range AND covered hours inside it (a true "0") — otherwise `null`, never "0". `errorRate`
+range AND covered hours inside it (a "0" that is true of the COVERED hours — known limit: when only part of
+the range was covered, e.g. a poll that resumed three quiet hours ago after a long outage, the card still
+reads "0" for the whole range label) — otherwise `null`, never "0". `errorRate`
 needs a real point in range: points summing to 0 requests read "0.00%", but with NO point 0 of 0 is not a
 rate → `null` (the screen shows "—" beside live requests). Totals are sums of real points only. `usage` is
 `ok` when any metric of any range is non-null; the `cloudflare` panel when the WIDEST (30d) range has rows,
