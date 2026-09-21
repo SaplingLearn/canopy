@@ -5,6 +5,24 @@ export const ENVS: RepoEnvConfig[] = [
   { key: "production", label: "production", note: "production", branch: "production", railwayEnv: "Sapling / production", worker: "frontend", workerCheck: "Workers Builds: frontend", frontendUrl: "https://saplinglearn.com", apiUrl: "https://api.saplinglearn.com", healthPath: "/api/health" },
 ];
 
+/** A 64-character stand-in for a real `SAPLING_METRICS_TOKEN` — the length
+ *  `openssl rand -hex 32` produces. A short fixture token hid a real leak once:
+ *  a name cut to 40 characters still contained a 12-character token WHOLE, so
+ *  the scrub matched it; it could not match 40 characters of a 64-character one.
+ *  Obviously fake (a fixed arithmetic pattern), so no scanner mistakes it. */
+export const LONG_TOKEN = Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(i * 7 + 3) % 16]).join("");
+
+/** The 8-character fragments of `secret` that appear in `text` — `[]` means not
+ *  even a PART of the secret got out, which is the property that matters. */
+export function leakedFragments(text: string, secret: string, size = 8): string[] {
+  const found: string[] = [];
+  for (let i = 0; i + size <= secret.length; i++) {
+    const piece = secret.slice(i, i + size);
+    if (text.includes(piece) && !found.includes(piece)) found.push(piece);
+  }
+  return found;
+}
+
 interface GraphqlCall { query: string; variables: Record<string, unknown> }
 
 /** A fake api.github.com keyed by path prefix. Two GraphQL queries POST to the

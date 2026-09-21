@@ -152,6 +152,33 @@ export interface RepoUsageEnv {
 export interface RepoCfRow { env: string; label: string; value: string }
 export interface RepoHosting { env: string; cpu: string; memory: string }
 
+// ── Usage › Product metrics ─────────────────────────────────────────────────
+// What the target app reports about ITSELF (contract:
+// docs/superpowers/specs/2026-09-21-sapling-product-metrics.md): `counts` are
+// windowed — one figure per range, picked by the tab's 24h / 7d / 30d selector —
+// and `totals` are point-in-time, so they ignore it. Canopy is generic over
+// keys: label, group and formatting are decided by the Worker
+// (src/repo/product.ts) and travel here, so the browser needs no registry.
+// A figure is `null` when that metric's latest reading is over 3 hours old
+// ("no recent reading"); a key never reported is simply absent. `raw` is the
+// exact integer behind a compacted `value`. `trend` is the 00:00 UTC readings
+// (the `24h` window for a count) of the last 30 days, oldest first, a missed
+// midnight ABSENT — the same line whatever the range.
+export interface RepoProductCount {
+  key: string;
+  label: string;
+  values: Record<RepoRange, string | null>;
+  raw: Record<RepoRange, number | null>;
+  trend: number[];
+  note?: string;
+}
+export interface RepoProductTotal { key: string; label: string; value: string | null; raw: number | null; trend: number[]; note?: string }
+export interface RepoProductGroup { id: string; title: string; metrics: RepoProductCount[] }
+/** Every configured environment is listed, in config order — one that has
+ *  reported nothing has no groups and no totals. */
+export interface RepoProductEnv { name: string; groups: RepoProductGroup[]; totals: RepoProductTotal[] }
+export type RepoProduct = RepoProductEnv[];
+
 // ── Team & Planning ─────────────────────────────────────────────────────────
 export interface RepoSprint {
   id: number;
@@ -200,6 +227,7 @@ export interface RepoDashboard {
   usage: RepoSection<Record<RepoRange, RepoUsageEnv[]>>;
   cloudflare: RepoSection<Record<RepoRange, RepoCfRow[]>>;
   hosting: RepoSection<RepoHosting[]>;
+  product: RepoSection<RepoProduct>;
 
   sprint: RepoSection<RepoSprint>;
   contributors: RepoSection<RepoContributor[]>;
@@ -209,9 +237,11 @@ export interface RepoDashboard {
 
 // ── "Poll usage now" (POST /admin/poll-usage) — TYPES ONLY, nothing the SPA bundles ──
 /** One environment's outcome from one hourly usage poller. `written` = NEW
- *  `repo_metrics` rows (0 on `ok` = those hours were already stored). `detail`
- *  is the poller's scrubbed, truncated log message (`failed`) or a few words on
- *  what is not configured (`skipped`) — never a token, a header or an id. */
+ *  `repo_metrics` rows — `0` on `ok` means those hours were already stored, and
+ *  a `failed` may still be non-zero when part of a body was storable. `detail`
+ *  is the poller's scrubbed, truncated message: a failure reason (`failed`),
+ *  what is not configured (`skipped`), or — on `ok` — the product keys the poll
+ *  dropped, by name. Never a token, a header or an id. */
 export interface PollOutcome { env: string; status: "ok" | "failed" | "skipped"; written: number; detail?: string }
 /** Per source; `"not_configured"` = that source's secret(s) are absent. */
 export type UsagePollSource = PollOutcome[] | "not_configured";

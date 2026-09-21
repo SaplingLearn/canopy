@@ -74,9 +74,11 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `repoEventsFromDelivery` — no DB, no clock, no network, and stores only a SLICE of each payload in `raw`),
   `store.ts` (the snapshot and metric seam: `putSnapshot` / `getSnapshot` over the five snapshot kinds —
   `prs_reconciled`, `env_heads`, `drift`, `branches`, `cf_polled`; `putMetric`, the ONE write seam that
-  normalises `repo_metrics.at`; the metric reads `metricSeries` / `latestMetric` / `latestHealth` and the
-  Usage tab's two whole-tab reads `metricsSince` / `metricsEver`; and `pruneRepoCapture`, the retention
-  rules), `reads.ts` (every SELECT over `repo_events` — D1 only, nothing here may fetch — including
+  normalises `repo_metrics.at`, and `putMetrics`, the same write for MANY rows in `db.batch` chunks of 50;
+  the metric reads `metricSeries` / `latestMetric` / `latestHealth` and the Usage tab's whole-tab reads
+  `metricsSince` / `productReadings` / `metricsEver`; and `pruneRepoCapture`, the retention rules),
+  `product.ts` (Sapling's product metrics: the `sap_c_*` / `sap_t_*` metric naming and the key → group /
+  label / format registry — one place, server-side), `reads.ts` (every SELECT over `repo_events` — D1 only, nothing here may fetch — including
   `recordingSince`, the earliest `recorded_at` per kind that the week-over-week deltas gate on, and the ONE
   non-decisive-conclusion policy at `foldResult`/`checkState`), `github.ts` (service-token GitHub reads —
   `ghJson` / `ghGraphql`, `reconcileRepo` with its drift and branches arms, `refreshDrift`, `fillFailedJob` —
@@ -384,6 +386,7 @@ Three capture shapes feed it: `repo_events` rows (through the `ingestRepoEvent` 
 | `usage` (Usage) | metrics `cf_requests` / `cf_errors` (requests, error rate) and `active_users_*` | cron `:00` — `pollCloudflare`, `pollSaplingMetrics` |
 | `cloudflare` | metrics `cf_*` + snapshot `cf_polled` | cron `:00` — `pollCloudflare` |
 | `hosting` | metrics `rw_cpu` / `rw_mem_mb` | cron `:00` — `pollRailway` |
+| `product` (Usage) | metrics `sap_c_<key>_<24h\|7d\|30d>` / `sap_t_<key>` — whatever keys the app reports | cron `:00` — `pollSaplingMetrics` (the same response as active users) |
 | `sprint`, `labels`, `contributors` (Planning) | live D1: the sprint a person marked `active` (the Roadmap's `sprintProgress`); open-issue snapshots; webhook pushes · merged PRs · `review` rows this week | none / webhook `issues` / `push`, `pull_request`, `pull_request_review` |
 
 "Reconcile" is `reconcileRepo` (`src/repo/github.ts`), run by an admin's Sync GitHub and by the cron's
@@ -624,7 +627,9 @@ Cloudflare's 400 / 401 / 403 each append a fixed hint (malformed token value / i
 Analytics: Read). On screen it is the Usage tab's quiet **Poll now** button beside the range buttons —
 admins only, hidden in sample mode, the header untouched for everyone else — then a reload of the dashboard
 and a dismissible result strip under the APP USAGE header, one line per source (`state.repoPoll`:
-session-only, cleared on leaving the Repo screen; a failed request reads "Poll failed — try again.").
+session-only, cleared on leaving the Repo screen; a failed request reads "Poll failed — try again."). The
+Sapling line is labelled "App metrics" (one response carries active users AND product metrics); an `ok`
+outcome's `detail` (dropped product keys) and a `failed` outcome's partial `written` are both shown.
 
 **Cloudflare Workers analytics** (`pollCloudflare`, `src/repo/poll.ts`) asks Cloudflare's GraphQL analytics
 API (`https://api.cloudflare.com/client/v4/graphql`, dataset `workersInvocationsAdaptive`, `scriptName` =
@@ -722,10 +727,47 @@ THINNED for the wider ranges, never truncated (`thinGauge`): 30d keeps the LAST 
 points), 7d the last of each 6-hour block ending at the current hour (≤ 28), 24h stays hourly. A
 current users reading makes `usage` `ok` on its own; readings all gone stale leave it `empty`.
 
+**Product metrics ride that SAME response** (contract v2,
+`docs/superpowers/specs/2026-09-21-sapling-product-metrics.md`): optional `counts` (windowed `{24h,7d,30d}`
+integers) and `totals` (point-in-time integers). `saplingProductMetrics` (`src/repo/poll.ts`, pure) validates
+them **per key** — key `^[a-z][a-z0-9_]{0,39}$`, JSON integers `0..1e12`, a count's windows exactly three and
+nesting; a section that is not an object or holds more than 48 / 24 keys is ignored whole — reading OWN keys
+only into prototype-less objects. Canopy is **generic over keys**: every valid key is stored, as
+`sap_c_<key>_<window>` / `sap_t_<key>` hourly gauges (`part = ''`, the hour floor, first write wins), so
+Sapling adds a metric with no Canopy change. The two halves never cost each other: a v1 body is a plain
+success, and a body whose `active_users` is refused still stores its product keys — that environment reads
+`failed`, with `written` the rows that landed. One environment's rows (≤ 171) go in ONE `putMetrics` call.
+Dropped keys are logged once per environment by NAME only and named in the outcome's `detail` — an `ok`'s,
+and (appended to the refusal) a `failed`'s; an ignored SECTION is one name (`counts.*`) but counts every key
+it held. **A rejected name is scrubbed BEFORE it is cut to 40 characters**: the validator takes the poller's
+`scrub` as its optional `clean` argument (default identity, so it stays pure), because a scrub matches a WHOLE
+secret and 40 characters of a 64-character token (`openssl rand -hex 32`) match nothing — the same rule as
+every other cut in `src/repo/poll.ts`, including `failureReason`'s 8 KB READ cap, which scrubs the capped text
+whole and then drops a 256-character tail a cut-off secret could be hiding in. Token-leak tests use a
+64-character token (`LONG_TOKEN`, `test/helpers/repo.ts`) and assert no 8-character piece of it gets out.
+The `product` section (`projectProduct`, `src/tools/repo.ts`) lists every configured environment: `counts`
+grouped Growth / Learning activity / Community / AI spend / Reliability / Other (`src/repo/product.ts`; an
+unknown key → Other, labelled from the key; `llm_cost_cents` reads as dollars with a "lower bound" note —
+`flashcards_created` and `errors_4xx` carry notes too, printed as one footnote block under their group, a
+line per noted key; the registry lists what Sapling SERVES, so `study_guides` is not in it and
+`rag_chunks_dropped` is labelled "RAG runs that dropped chunks"), one
+figure per range, and `totals` on their own ("Right now" — they ignore the range selector). A figure shows
+only while its latest reading is ≤ 3 hours old (`HOSTING_STALE_MS`), else `null` → "no recent reading"; a key
+with no row in the read is absent. The trend is the daily totals — for a `counts` key its `24h` reading, for a `totals` key its own reading —
+stamped EXACTLY 00:00 UTC of each of the last 30 days, a missed midnight ABSENT, the same line for every range. `ok` = any
+figure current; `empty` = a `sap_*` row has ever landed (`metricsEver`'s prefix family, in its existing
+statement); else `not_connected`. It costs the render **ONE statement** — `productReadings`, a loose index
+scan (a recursive CTE hops distinct `sap_*` names, then seeks each name × environment: the fresh range, and
+each midnight by equality), because the plain `metric GLOB 'sap_*'` form walks every stored `sap_` entry
+(~33k at steady state for two environments) to return ~3k. The shape saves rows READ, not the sort — the
+`UNION ALL … ORDER BY` still costs a temp b-tree in both arms.
+
 **Pruning** (`pruneRepoCapture`, `src/repo/store.ts`, the cron's 6-hourly `:30` tick): `health_*` metrics
 and `check` rows older than 45 days — the `check` deletion ONLY `WHERE part IS NULL`, because a FRONTEND
 deploy record IS a `check` row (`part = 'frontend'`) and must be kept forever like `deploy` rows; and the
-HOURLY usage metrics (`cf_*` / `rw_*` / `active_users_*`) older than 100 days. `pr` / `push` / `deploy` /
+HOURLY usage metrics (`cf_*` / `rw_*` / `active_users_*`) older than 100 days; and `sap_*` product metrics
+older than **7 days, EXCEPT the rows stamped exactly 00:00 UTC, kept 100 days** (the daily totals the trend
+reads — `sap_*` and the usage globs never match each other's names). `pr` / `push` / `deploy` /
 `run` / `review` rows and `coverage` / `bundle_kb` / `todo_count` match no rule and are kept forever.
 
 ## Sidebar & motion — the `<aside>` outlives rerenders

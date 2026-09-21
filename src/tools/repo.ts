@@ -2,7 +2,8 @@ import {
   REPO_RANGES,
   type RepoActivity, type RepoBars, type RepoBranches, type RepoCfRow, type RepoCodeStat, type RepoContributor,
   type RepoDashboard, type RepoDeploy, type RepoDeployRow, type RepoDrift, type RepoEnv, type RepoEnvPart,
-  type RepoHealth, type RepoHosting, type RepoLabels, type RepoPerson, type RepoPr, type RepoRange, type RepoSection, type RepoSprint,
+  type RepoHealth, type RepoHosting, type RepoLabels, type RepoPerson, type RepoPr, type RepoProductCount, type RepoProductEnv,
+  type RepoProductGroup, type RepoProductTotal, type RepoRange, type RepoSection, type RepoSprint,
   type RepoStat, type RepoTodos, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
@@ -13,7 +14,10 @@ import {
   hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
-import { type MetricGroup, getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince } from "../repo/store";
+import { PRODUCT_GROUPS, PRODUCT_PREFIX, type ProductFormat, compareProductKeys, parseProductMetric, productKeyInfo } from "../repo/product";
+import {
+  MIDNIGHT_TAIL, type MetricGroup, getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince, productReadings,
+} from "../repo/store";
 import { CF_POLLED, cfCovered, type RepoEventRow, type RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
@@ -38,6 +42,11 @@ import { CF_POLLED, cfCovered, type RepoEventRow, type RepoPrRow } from "../repo
 // Active users (Task 18) ride it too: hourly `active_users_<range>` GAUGES the
 // minute-0 tick asks Sapling's own backend for — Canopy cannot compute them —
 // shown, like hosting, only while the latest reading is current.
+//
+// Product metrics (contract v2) are the same poll's OTHER half: whatever
+// `counts` / `totals` Sapling reports, stored generically as `sap_c_*` /
+// `sap_t_*` gauges and read back in ONE more statement (`productReadings`) —
+// their names are dynamic, so they cannot ride `metricsSince`'s named groups.
 //
 // Every SECTION now has a capture path, so the `UNCAPTURED` object that used to
 // list the ones without is gone with its last entry (hosting). A section — or
@@ -68,7 +77,7 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
     repo, generatedAt: nowIso(), degraded,
-    usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
+    usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED, product: NOT_CONNECTED,
     environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
     branches: NOT_CONNECTED, health: NOT_CONNECTED, coverage: NOT_CONNECTED, bundle: NOT_CONNECTED, todos: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
@@ -240,8 +249,11 @@ function usageReadGroups(usageEnd: number, now: number): MetricGroup[] {
   ];
 }
 
-/** 1_234 → "1.2K", 2_500_000 → "2.50M". (999_950 up rounds to "1000.0K", so it is already an M.) */
+/** 1_234 → "1.2K", 2_500_000 → "2.50M", 2_500_000_000 → "2.50B". (999_950 up
+ *  rounds to "1000.0K", so it is already an M — and likewise at each tier above.) */
 function compact(n: number): string {
+  if (n >= 999_995_000_000) return `${(n / 1e12).toFixed(2)}T`;
+  if (n >= 999_995_000) return `${(n / 1e9).toFixed(2)}B`;
   if (n >= 999_950) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1e3).toFixed(1)}K`;
   return String(Math.round(n));
@@ -450,6 +462,93 @@ function projectHosting(
     out.push({ env: cfg.label, cpu: cpu === null ? "—" : `${cpu.toFixed(2)} vCPU`, memory: mem === null ? "—" : `${Math.round(mem)} MB` });
   }
   return out;
+}
+
+// ── product metrics (Sapling contract v2) ────────────────────────────────────
+/** The trend's reach: the 00:00 UTC readings of the last 30 days. */
+const PRODUCT_TREND_DAYS = 30;
+
+/** Integer cents as dollars — "$118.30"; from $10K up the cents are noise (and
+ *  the screen's value cell is narrow): "$12.3K". */
+const productValue = (v: number, format: ProductFormat): string =>
+  format !== "cents" ? compact(v)
+  : v >= 1_000_000 ? `$${compact(v / 100)}`
+  : (v / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+/**
+ * The product section, derived IN MEMORY from `productReadings` (`rows`,
+ * ascending by `at`): per configured environment — every one, in config order;
+ * one that reported nothing has no groups — the `counts` keys grouped and
+ * ordered by the registry (src/repo/product.ts; an unknown key → "Other",
+ * labelled from the key) and the `totals` keys on their own.
+ *
+ * Never guess:
+ *  - a figure is the LATEST reading of its own metric (`sap_c_<key>_<range>` /
+ *    `sap_t_<key>`), shown only while CURRENT — at most `HOSTING_STALE_MS` (the
+ *    one staleness rule of an hourly gauge) older than `now`, and not stamped
+ *    ahead of it — else `null`, which the screen reads as "no recent reading".
+ *    The key stays listed: it HAS been reported. A key with no row in the read
+ *    (never reported, or silent past the 30-day trend) is simply absent.
+ *  - the trend is the readings stamped exactly 00:00 UTC — the `24h` window for
+ *    a count, i.e. the daily totals — oldest first, never zero-filled: a missed
+ *    midnight is a poll that did not land, not a day on which nothing happened.
+ *    One trend per key, the same whatever the range.
+ * `anyProduct` = some figure is current somewhere (the caller's `ok`).
+ */
+function projectProduct(
+  rows: { metric: string; env: string; at: string; value: number }[], envs: RepoEnvConfig[], now: number
+): { product: RepoProductEnv[]; anyProduct: boolean } {
+  interface Reading { t: number; value: number }
+  interface Series { latest: Partial<Record<RepoRange | "total", Reading>>; trend: number[] }
+  const trendFrom = now - PRODUCT_TREND_DAYS * DAY;
+  let anyProduct = false;
+  const current = (r: Reading | undefined): number | null => (r && now - r.t <= HOSTING_STALE_MS ? r.value : null);
+
+  const product = envs.map((cfg): RepoProductEnv => {
+    const counts = new Map<string, Series>();
+    const totals = new Map<string, Series>();
+    for (const r of rows) {
+      if (r.env !== cfg.key) continue;
+      const name = parseProductMetric(r.metric);
+      const t = Date.parse(r.at);
+      // `t <= now`: a point stamped ahead of the clock is not a reading of now.
+      if (!name || !Number.isFinite(t) || t > now) continue;
+      const bucket = name.kind === "count" ? counts : totals;
+      let series = bucket.get(name.key);
+      if (!series) bucket.set(name.key, (series = { latest: {}, trend: [] }));
+      series.latest[name.kind === "count" ? name.range : "total"] = { t, value: r.value }; // ascending: the last one wins
+      if ((name.kind === "total" || name.range === "24h") && t >= trendFrom && r.at.endsWith(MIDNIGHT_TAIL)) series.trend.push(r.value);
+    }
+
+    const byGroup = new Map<string, RepoProductCount[]>();
+    for (const key of [...counts.keys()].sort(compareProductKeys)) {
+      const series = counts.get(key)!;
+      const info = productKeyInfo(key);
+      const values = {} as Record<RepoRange, string | null>;
+      const raw = {} as Record<RepoRange, number | null>;
+      for (const range of REPO_RANGES) {
+        raw[range] = current(series.latest[range]);
+        values[range] = raw[range] === null ? null : productValue(raw[range], info.format);
+        if (raw[range] !== null) anyProduct = true;
+      }
+      const list = byGroup.get(info.group) ?? [];
+      list.push({ key, label: info.label, values, raw, trend: series.trend, ...(info.note ? { note: info.note } : {}) });
+      byGroup.set(info.group, list);
+    }
+    const groups: RepoProductGroup[] = PRODUCT_GROUPS.flatMap(([id, title]) => {
+      const metrics = byGroup.get(id);
+      return metrics ? [{ id, title, metrics }] : [];
+    });
+    const totalRows: RepoProductTotal[] = [...totals.keys()].sort(compareProductKeys).map((key) => {
+      const series = totals.get(key)!;
+      const info = productKeyInfo(key);
+      const raw = current(series.latest.total);
+      if (raw !== null) anyProduct = true;
+      return { key, label: info.label, value: raw === null ? null : productValue(raw, info.format), raw, trend: series.trend, ...(info.note ? { note: info.note } : {}) };
+    });
+    return { name: cfg.label, groups, totals: totalRows };
+  });
+  return { product, anyProduct };
 }
 
 /** `YYYY-MM-DD` (UTC) for each of the last `n` days, oldest first. */
@@ -868,19 +967,29 @@ export async function getRepoDashboard(
   // environment, `empty` when an `rw_*` row has ever landed but none is current
   // (the Railway poll has stopped), `not_connected` when none ever did.
   const usageEnd = Math.floor(now / HOUR) * HOUR;
-  const [usageRows, polledSnap] = envs.length
+  // Product metrics (contract v2) are ONE more statement beside those two —
+  // `productReadings`: their names are dynamic, so they cannot be a named
+  // `metricsSince` group. Its states are its own (a `sap_*` row says nothing
+  // about whether usage is connected), but its "has anything EVER landed?"
+  // question rides the SAME `metricsEver` statement, as a prefix family.
+  const [usageRows, polledSnap, productRows] = envs.length
     ? await Promise.all([
         metricsSince(db, usageReadGroups(usageEnd, now)),
         getSnapshot<unknown>(db, CF_POLLED),
+        // DISTINCT keys: the read joins against a `VALUES` list of them, so a key
+        // listed twice in `REPO_ENVIRONMENTS` would return every row twice — and
+        // every midnight would be pushed into its trend twice.
+        productReadings(db, [...new Set(envs.map((e) => e.key))], new Date(now - HOSTING_STALE_MS).toISOString(), new Date(now - PRODUCT_TREND_DAYS * DAY).toISOString()),
       ])
-    : [[], null];
+    : [[], null, []];
   const polled = polledSnap?.data && typeof polledSnap.data === "object" ? (polledSnap.data as Record<string, unknown>) : {};
   const used = projectUsage(usageRows, envs, usageEnd, polled, now);
   // Gated on the WIDEST range; a narrower one may legitimately hold no rows.
   const anyCf = used.cloudflare["30d"].length > 0;
   const hosting = projectHosting(usageRows, envs, now);
-  const ever = envs.length && (!used.anyUsage || !anyCf || !hosting.length)
-    ? await metricsEver(db, [...USAGE_METRICS, ...HOSTING_METRICS])
+  const produced = projectProduct(productRows, envs, now);
+  const ever = envs.length && (!used.anyUsage || !anyCf || !hosting.length || !produced.anyProduct)
+    ? await metricsEver(db, [...USAGE_METRICS, ...HOSTING_METRICS], [PRODUCT_PREFIX])
     : new Set<string>();
   const everAny = (metrics: string[]) => metrics.some((m) => ever.has(m));
 
@@ -889,6 +998,7 @@ export async function getRepoDashboard(
     usage: used.anyUsage ? ok(used.usage) : everAny(USAGE_METRICS) ? EMPTY : NOT_CONNECTED,
     cloudflare: anyCf ? ok(used.cloudflare) : ever.has("cf_requests") ? EMPTY : NOT_CONNECTED,
     hosting: hosting.length ? ok(hosting) : everAny(HOSTING_METRICS) ? EMPTY : NOT_CONNECTED,
+    product: produced.anyProduct ? ok(produced.product) : ever.has(`${PRODUCT_PREFIX}*`) ? EMPTY : NOT_CONNECTED,
     coverage, bundle, todos,
     drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
     branches: branchSnap ? ok(branchSnap.data) : NOT_CONNECTED,

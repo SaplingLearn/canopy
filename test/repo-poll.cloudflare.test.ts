@@ -15,7 +15,7 @@ import { all } from "../src/db";
 import { pollCloudflare } from "../src/repo/poll";
 import { getSnapshot, putMetric, putSnapshot } from "../src/repo/store";
 import { getRepoDashboard } from "../src/tools/repo";
-import { ENVS } from "./helpers/repo";
+import { ENVS, leakedFragments } from "./helpers/repo";
 
 const NOW = Date.parse("2026-09-20T12:05:00Z");
 const HOUR = 3_600_000;
@@ -235,6 +235,22 @@ describe("pollCloudflare — outcomes", () => {
       expect(detail).toContain("[redact"); // the OUTER 200-char cut may clip the marker itself — never the token
       expect(detail).not.toContain("cf-live");
       expect(detail).not.toContain(secret.token.slice(0, 8));
+    });
+
+    // The 8 KB read cap is ALSO a cut that comes before the scrub. A mostly-blank
+    // body collapses to one line, so a token cut in half by the cap would land
+    // inside the 120 characters that are kept — and half a token matches no scrub.
+    it("a token cut in half by the 8 KB read cap never reaches the detail", async () => {
+      const secret = { token: "cf-live-9aQ7x2Lm4Pz8Rv1Kd3Nb6Tc0We5Yh", accountId: "acct-1d-9f3b" };
+      for (const inside of [8, 20, secret.token.length - 1]) {
+        const body = `gateway${" ".repeat(8192 - "gateway".length - inside)}${secret.token} and the rest of a long page`;
+        const detail = await failing(502, body, secret);
+        expect(detail).toBe("cloudflare analytics 502: gateway");
+        expect(leakedFragments(detail, secret.token)).toEqual([]);
+      }
+      // A token wholly inside the cap is still scrubbed as before, not lost.
+      const whole = await failing(502, `gateway ${secret.token}${" ".repeat(9000)}tail`, secret);
+      expect(whole).toBe("cloudflare analytics 502: gateway [redacted]");
     });
 
     it("an enormous error body is read to a bound, not buffered whole", async () => {

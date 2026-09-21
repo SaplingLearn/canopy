@@ -19,7 +19,7 @@ import { all } from "../src/db";
 import { pollSaplingMetrics } from "../src/repo/poll";
 import { putMetric } from "../src/repo/store";
 import { getRepoDashboard } from "../src/tools/repo";
-import { ENVS } from "./helpers/repo";
+import { ENVS, LONG_TOKEN, leakedFragments } from "./helpers/repo";
 
 const NOW = Date.parse("2026-09-20T12:05:00Z");
 const HOUR = 3_600_000;
@@ -174,18 +174,27 @@ describe("pollSaplingMetrics", () => {
     expect(await stored()).toHaveLength(6);
   });
 
-  it("never logs the token, whatever fails", async () => {
+  it("never logs the token — or any 8-character piece of it — whatever fails", async () => {
+    // 64 characters, as `openssl rand -hex 32` makes it: longer than every cut
+    // this poller makes (40 / 80 / 200), so a cut-before-scrub cannot hide.
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      // The worst cases: the failure quotes the request back; the body echoes the header.
-      await pollSaplingMetrics(env.DB, "s3cret-token", ENVS, NOW, (async (_u: RequestInfo | URL, init?: RequestInit) => {
+      // The worst cases: the failure quotes the request back; the body echoes the header —
+      // at the start, and straddling the 80-character excerpt cut and the 200-character message cut.
+      await pollSaplingMetrics(env.DB, LONG_TOKEN, ENVS, NOW, (async (_u: RequestInfo | URL, init?: RequestInit) => {
         throw new Error(`request failed: ${JSON.stringify(init?.headers)}`);
       }) as typeof fetch);
-      await pollSaplingMetrics(env.DB, "s3cret-token", ENVS, NOW, (async () => new Response("bad token: Bearer s3cret-token", { status: 200 })) as typeof fetch);
-      await pollSaplingMetrics(env.DB, "s3cret-token", ENVS, NOW, (async () => new Response("no", { status: 401 })) as typeof fetch);
+      await pollSaplingMetrics(env.DB, LONG_TOKEN, ENVS, NOW, (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        throw new Error(`${"p".repeat(170)}${JSON.stringify(init?.headers)}`);
+      }) as typeof fetch);
+      await pollSaplingMetrics(env.DB, LONG_TOKEN, ENVS, NOW, (async () => new Response(`bad token: Bearer ${LONG_TOKEN}`, { status: 200 })) as typeof fetch);
+      await pollSaplingMetrics(env.DB, LONG_TOKEN, ENVS, NOW, (async () => new Response(`${"p".repeat(50)}${LONG_TOKEN}`, { status: 200 })) as typeof fetch);
+      await pollSaplingMetrics(env.DB, LONG_TOKEN, ENVS, NOW, (async () => new Response(`{"active_users":null,"echo":"${"p".repeat(30)}${LONG_TOKEN}"}`, { status: 200 })) as typeof fetch);
+      await pollSaplingMetrics(env.DB, LONG_TOKEN, ENVS, NOW, (async () => new Response("no", { status: 401 })) as typeof fetch);
       expect(spy).toHaveBeenCalled();
       const logged = JSON.stringify(spy.mock.calls.map((c) => c.map((a) => (a instanceof Error ? `${a.message} ${a.stack}` : a))));
-      expect(logged).not.toContain("s3cret-token");
+      expect(logged).toContain("[redacted]");
+      expect(leakedFragments(logged, LONG_TOKEN)).toEqual([]);
     } finally {
       spy.mockRestore();
     }
