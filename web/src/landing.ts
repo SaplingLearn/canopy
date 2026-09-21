@@ -480,7 +480,7 @@ function agents(): string {
       ${chips(names, admin)}
     </div>`;
   const tools = `
-          ${group("Read", ["query", "get_doc", "list_docs", "get_feed", "get_roadmap", "get_my_work", "get_events"])}
+          ${group("Read", ["query", "get_doc", "list_docs", "get_feed", "get_roadmap", "get_my_work", "get_events", "get_repo_dashboard"])}
           ${group("Contribute", ["append_feed", "propose_doc_update", "record_session"])}
           ${group("Tickets", ["list_tickets", "get_ticket", "create_ticket", "transition_ticket", "add_ticket_comment", "add_ticket_link", "set_ticket_sprint", "set_ticket_parent", "list_sprints", "get_sprint"])}
           ${group("Admin", ["update_plan", "create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource"], true)}`;

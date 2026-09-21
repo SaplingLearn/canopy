@@ -65,7 +65,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   else to the Hono app; plus `scheduled()`, which dispatches the repo cron and the two digest crons by exact
   cron expression), `routes.ts` (Hono HTTP), `mcp.ts` (MCP
   tools), `consumer.ts` (THE GATE), `webhook.ts` (GitHub event capture), `tools/` (`writes.ts`, `reads.ts`,
-  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `repo.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
+  `plan.ts`, `tickets.ts`, `sprints.ts`, `mywork.ts`, `repo.ts`, `repo-agent.ts`, `progress.ts`, `summarize.ts`), `notifications/` (email digests — see the
   Email notifications section), `db.ts` (D1 helpers), `auth/` (`persons.ts` — the identity root;
   `google.ts` — second provider; `onboard.ts` — the sign-in fork + onboarding cookie; `invites.ts`),
   `env.ts`. `repo/` is the repo-capture package behind `tools/repo.ts`: `types.ts` (the `RepoEvent` /
@@ -216,6 +216,18 @@ Roadmap (tickets + cache), never the cache alone.
 (`seg` / `assignee` where `me` = the bearer principal / `category`), `get_ticket`, `list_sprints` and
 `get_sprint` for EVERY principal (not admin-gated): seeing the org's queue is how an agent orients.
 
+**`get_repo_dashboard` is the Repo dashboard's read over MCP, for every principal too** — it exposes nothing
+a signed-in member cannot see at `#repo`, and nothing per-user. `src/tools/repo-agent.ts` is a VIEW over
+`getRepoDashboard` (the same D1-only projection the route serves — never a second projection, never a
+fetch): `tab` returns only that tab's sections via `REPO_TAB_SECTIONS` (`shared/repo.ts` — the ONE
+section→tab mapping, also read by the screen's "not connected" footer, and compile-time exhaustive over
+`RepoDashboard`'s sections); `range` (default `7d`) collapses `usage` / `cloudflare` / each `product` count
+to that one range; `include_trends` (default `false`) governs every `trend` array and the drift per-commit
+breakdown (groups carry `commitCount` instead — drift is the one list with no small bound). A section's
+STATUS is never touched — `not_connected` / `empty` pass through, never coerced to zeros — and a projection
+throw is the degraded empty payload, not an MCP error. Output: `{ repo, generatedAt, degraded, tab, range,
+sections }`.
+
 **The write surface is `src/tools/tickets-agent.ts` — the ONE place the lane rule is drawn** (spec:
 `docs/superpowers/specs/2026-09-17-agent-ticket-writes-design.md`). A ticket write over MCP is permitted
 exactly when the bearer principal is ALREADY an assignee of that ticket, else `TicketError('forbidden')`
@@ -356,7 +368,9 @@ that renders a "No summary recorded" placeholder. Stored as columns on `pr_summa
 
 **The Repo dashboard** (`GET /repo/dashboard` → `getRepoDashboard` in `src/tools/repo.ts`; screen `#repo`,
 `#repo/code|ci|usage|planning`) is the same class of read as My Work: D1-only, session-cookie, never a 500
-(a throw yields `emptyRepoDashboard(repo, degraded:true)`), NOT an MCP tool — and **nothing on its render
+(a throw yields `emptyRepoDashboard(repo, degraded:true)`) — and, like My Work, the READ is also an MCP tool
+for every principal (`get_repo_dashboard`, see Read side); "Poll now" and Sync GitHub stay session-cookie +
+admin, NEVER MCP. **Nothing on its render
 path fetches**: every external read happens in the webhook, in `reconcileRepo`, or in the repo cron. Every
 block travels as a `RepoSection<T>`, and **never guess** governs all of them: `ok` = something to show;
 `empty` = capture HAS landed but nothing falls in the window, or every reading has gone stale (the poll

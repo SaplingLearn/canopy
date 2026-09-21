@@ -23,6 +23,9 @@ FTS5 full-text search: `query()` ranks by bm25 + authority flag, assembles full 
 top hits, and returns ranked pointers for the rest. Backs `GET /search` and MCP `query`.
 `get_doc` fetches a single doc with all its versions; `get_feed` streams the activity feed;
 `get_roadmap` merges live GitHub progress at read time (degrades gracefully if token absent).
+`get_repo_dashboard` is the Repo dashboard's read (deploys, CI, code activity, usage, product metrics,
+planning) from Canopy's own database — optional `tab` / `range` / `include_trends`; every section is
+`ok`, `empty` or `not_connected`, and anything not `ok` is unknown, never zero.
 
 ## Write side (agents stage, humans confirm)
 
