@@ -105,6 +105,32 @@ describe("pollRailway", () => {
     expect((await stored()).map((r) => r.at)).toEqual(["2026-09-20T11:00:00.000Z"]);
   });
 
+  // Railway's array order is undocumented, and the write is INSERT OR IGNORE —
+  // so without a rule, whichever sample came first in the array would win.
+  it.each([
+    ["ascending", [{ ts: ts(1), value: 0.1 }, { ts: ts(1) + 1800, value: 0.9 }]],
+    ["descending", [{ ts: ts(1) + 1800, value: 0.9 }, { ts: ts(1), value: 0.1 }]],
+  ])("several samples in one hour bucket (%s): the LATEST ts wins, whatever the array order", async (_name, cpu) => {
+    await pollRailway(env.DB, TOKENS, [WITH_IDS[0]], NOW, (async () => json(rwBody(cpu, []))) as typeof fetch);
+    expect((await stored()).map((r) => [r.metric, r.value, r.at])).toEqual([["rw_cpu", 0.9, "2026-09-20T11:00:00.000Z"]]);
+  });
+
+  // The pick happens AFTER validation: an invalid later sample never beats a
+  // valid earlier one, and the same measurement split across two series entries
+  // is still one pick per bucket.
+  it("picks among VALID samples only, across every series entry of the response", async () => {
+    const fetchImpl = (async () => json({ data: { metrics: [
+      { measurement: "CPU_USAGE", values: [{ ts: ts(1) + 60, value: 0.2 }, { ts: ts(2) + 10, value: 0.3 }] },
+      { measurement: "CPU_USAGE", values: [{ ts: ts(1) + 1800, value: 0.5 }, { ts: ts(1) + 3000, value: 5000 }, { ts: ts(1) + 3300, value: null }] },
+      { measurement: "MEMORY_USAGE_GB", values: [{ ts: ts(1), value: 2 }, { ts: ts(1) + 1800, value: 1 }] },
+    ] } })) as typeof fetch;
+    await pollRailway(env.DB, TOKENS, [WITH_IDS[0]], NOW, fetchImpl);
+    expect((await stored()).map((r) => [r.metric, r.value, r.at])).toEqual([
+      ["rw_cpu", 0.3, "2026-09-20T10:00:00.000Z"], ["rw_cpu", 0.5, "2026-09-20T11:00:00.000Z"],
+      ["rw_mem_mb", 1024, "2026-09-20T11:00:00.000Z"],
+    ]);
+  });
+
   it.each([
     ["a rejected token (non-2xx)", () => json({ errors: [{ message: "Not Authorized" }] }, 401)],
     // A GraphQL failure arrives with HTTP 200: `data` beside `errors` is never read.

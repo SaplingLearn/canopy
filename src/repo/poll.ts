@@ -196,7 +196,9 @@ const RW_MEASUREMENTS: Record<string, { metric: string; max: number; store: (v: 
  * ingestion-lag undercount and no extra hour of lag.) The window asked for is
  * the 3 hours before that floor: the overlap heals a missed tick, `INSERT OR
  * IGNORE` dedupes it. Each sample is bucketed to its hour, so the UNIQUE key
- * holds one point per hour whatever second Railway stamps it with.
+ * holds one point per hour whatever second Railway stamps it with — and when
+ * one response holds several valid samples for one bucket, the LATEST `ts`
+ * is the one written (see the pick below), not whichever came first.
  *
  * Never throws. One request per environment, sequentially (2 today). A non-2xx,
  * a thrown fetch, a 200 whose body carries a non-empty `errors` array (how
@@ -228,6 +230,15 @@ export async function pollRailway(
       }
       const series = record(body.data).metrics;
       if (!Array.isArray(series)) throw new Error("railway metrics: no metrics in the response");
+      // ONE row per metric per hour bucket, and WITHIN one response the sample
+      // with the LATEST `ts` is the one kept — Railway's array order is
+      // undocumented, and with `INSERT OR IGNORE` writing as it went, whichever
+      // sample happened to come first won. The pick is made among VALID samples
+      // only (every skip rule below runs before it), across every series entry
+      // of the response; on an exact `ts` tie the first seen stays. This settles
+      // ONE response only: a row an EARLIER poll already stored for that bucket
+      // still wins (`putMetric` is first-write-wins across polls, unchanged).
+      const picked = new Map<string, { metric: string; at: number; ts: number; value: number }>();
       for (const entry of series) {
         const { measurement, values } = record(entry);
         const spec = typeof measurement === "string" && Object.hasOwn(RW_MEASUREMENTS, measurement) ? RW_MEASUREMENTS[measurement] : null;
@@ -241,8 +252,13 @@ export async function pollRailway(
           const at = Math.floor((ts * 1000) / HOUR) * HOUR;
           if (!Number.isFinite(at) || at < from || at >= to) continue;
           if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > spec.max) continue;
-          await putMetric(db, { metric: spec.metric, env: cfg.key, part: "backend", value: spec.store(value), at: new Date(at).toISOString() });
+          const key = `${spec.metric}|${at}`;
+          const held = picked.get(key);
+          if (!held || ts > held.ts) picked.set(key, { metric: spec.metric, at, ts, value: spec.store(value) });
         }
+      }
+      for (const p of picked.values()) {
+        await putMetric(db, { metric: p.metric, env: cfg.key, part: "backend", value: p.value, at: new Date(p.at).toISOString() });
       }
     } catch (e) {
       // The message only — never the error object, the request init or a header.

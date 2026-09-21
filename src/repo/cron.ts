@@ -16,8 +16,9 @@ export const REPO_CRON = "*/10 * * * *";
  *  — `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION`. A project token
  *  reaches ONE environment, so there is no shared one; a third environment is
  *  its secret and nothing here. The ONE place `Env` is indexed by a computed
- *  name — hence the narrow cast, and the string check on what comes back. */
-function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, string | undefined> {
+ *  name — hence the narrow cast, and the string check on what comes back.
+ *  Exported for its test only. */
+export function railwayTokens(env: Env, envs: RepoEnvConfig[]): Record<string, string | undefined> {
   const bag = env as unknown as Record<string, unknown>;
   return Object.fromEntries(envs.map((cfg) => {
     const value = bag[`RAILWAY_TOKEN_${cfg.key.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
