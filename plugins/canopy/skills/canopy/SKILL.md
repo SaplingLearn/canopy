@@ -105,7 +105,10 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
 
 ## Writing (agents stage, humans confirm)
 
-Agents stage through the gate via MCP: **`append_feed`**, **`propose_doc_update`**. The gate reconciles
+Agents stage through the gate via MCP: **`append_feed`**, **`propose_doc_update`**. (A feed entry
+has a fixed size and one of six typed structures — `Shipped:` / `Decision:` / `Triage:` / `Status:` /
+`Finding:` / `Incident:` — see the `record-session` skill's "Feed entry format"; it applies to
+`append_feed` exactly as it does to `record_session`.) The gate reconciles
 every write — it de-duplicates no-op proposals, tags each doc change `new` / `edit` / `rewrite`, and
 routes out-of-vocab or low-confidence entries to Triage. **Confirming** (promote / ratify / reject /
 assign / discard) is done by a human in the web Triage desk over session-cookie routes — **never** MCP

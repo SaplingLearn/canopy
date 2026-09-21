@@ -6,7 +6,19 @@
  * Pure (no D1 / Miniflare); assertions are HTML-string based, over a real render()
  * pass with the feed screen active.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// marked + DOMPurify cannot run in this pool (no DOM) — the same mock the ticket and sprint
+// render tests use: escapes, then **x** → <strong> and `x` → <code>. A `<strong>` therefore
+// proves the text went through the markdown fn; an escaped `<script>` proves it never reached
+// the DOM raw.
+const mdMock = (text: string) =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+vi.mock("../web/src/markdown", () => ({
+  renderMarkdown: (body: string) => `<div class="mock-live-md">${mdMock(body)}</div>`,
+  renderMarkdownInline: (text: string) => mdMock(text),
+}));
 import { render, initialState } from "../web/src/render";
 import type { FeedRow } from "@shared/rows";
 
@@ -59,5 +71,36 @@ describe("Feed — handle text carries the mapped person's color", () => {
     const html = render(feedState([feedRow({ author: "octo-stranger" })]));
     expect(html).toContain("@octo-stranger");
     expect(html).not.toContain("var(--p-moss)");
+  });
+});
+
+describe("Feed — entries are markdown", () => {
+  it("renders the body through the markdown fn, in the scaled-down md container", () => {
+    const html = render(feedState([feedRow({ body: "- **Poll now** moved to the top bar\n- see `runRepoRefresh`" })]));
+    expect(html).toContain('class="cnpy-md cnpy-feed-body"');
+    expect(html).toContain("mock-live-md");
+    expect(html).toContain("<strong>Poll now</strong>");
+    expect(html).toContain("<code>runRepoRefresh</code>");
+    expect(html).not.toContain("**Poll now**");
+  });
+
+  it("renders the summary as INLINE markdown — emphasis and code, never block elements", () => {
+    const html = render(feedState([feedRow({ summary: "Shipped **Poll now** via `POST /admin/poll`" })]));
+    expect(html).toContain('class="cnpy-md-inline"');
+    expect(html).toContain("Shipped <strong>Poll now</strong> via <code>POST /admin/poll</code>");
+    expect(html).not.toContain("mock-live-md"); // the block renderer is not used for a summary
+  });
+
+  it("XSS: summary and body reach the DOM ONLY through the markdown fns", () => {
+    const html = render(feedState([feedRow({ summary: "<img src=x onerror=1>", body: "<script>alert(1)</script>" })]));
+    expect(html).not.toContain("<img src=x onerror=1>");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;img src=x onerror=1&gt;");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("an empty or whitespace body renders no container", () => {
+    expect(render(feedState([feedRow({ body: null })]))).not.toContain("cnpy-feed-body");
+    expect(render(feedState([feedRow({ body: "   " })]))).not.toContain("cnpy-feed-body");
   });
 });

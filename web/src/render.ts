@@ -14,7 +14,7 @@ import type { SprintUrgency, SprintDomain } from "@shared/sprints";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
 import type { DashboardData, MyWorkPr, MyWorkTodo, MyWorkTicket } from "@shared/dashboard";
 import { TAGS } from "@shared/vocabulary";
-import { renderMarkdown } from "./markdown";
+import { renderMarkdown, renderMarkdownInline } from "./markdown";
 import { extractOutline } from "./outline";
 import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
@@ -625,6 +625,15 @@ function wrapFeed(inner: string): string {
   </div>`;
 }
 
+/** A feed entry's body is agent-written markdown (lists, code, links, bold), so it goes through
+ *  `renderMarkdown` — marked + DOMPurify, the same pipeline as a doc or a ticket body — and is
+ *  NEVER additionally esc()'d. `.cnpy-feed-body` scales the doc typography down to a card's and
+ *  keeps a typed single line break inside a paragraph. The summary is one line: inline-only. */
+function feedBody(body: string | null): string {
+  if (!body || !body.trim()) return "";
+  return `<div class="cnpy-md cnpy-feed-body" style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${renderMarkdown(body)}</div>`;
+}
+
 function feedView(s: AppState): string {
   if (s.feed.status === "loading" && s.feed.data.length === 0) return wrapFeed(notice("Loading feed&hellip;"));
   if (s.feed.status === "error") return wrapFeed(notice("Couldn't load the feed."));
@@ -640,8 +649,8 @@ function feedView(s: AppState): string {
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="margin-top:1px">${personChip(personFor(s, e.author), 30, e.author)}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${linkifyRefs(e.summary)}</div>
-          ${e.body ? `<div style="font-size:13px;color:var(--fg-55);line-height:1.6;margin-top:6px">${esc(e.body)}</div>` : ""}
+          <div class="cnpy-md-inline" style="font-size:14px;font-weight:500;line-height:1.5;letter-spacing:-0.005em">${renderMarkdownInline(e.summary)}</div>
+          ${feedBody(e.body)}
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px">
             <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-55)">${handleTag(personFor(s, e.author), e.author)}</div>
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 5px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M12 8V4M8 13h.01M16 13h.01"></path></svg>agent</span>
@@ -974,7 +983,7 @@ function roadmapDigest(s: AppState): string {
     return `<tr style="border-top:1px solid var(--border)">
       <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${relTime(e.created_at)}</td>
       <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)"><span style="display:inline-flex;align-items:center;gap:6px">${personChip(personFor(s, e.author), 18, e.author)}${handleTag(personFor(s, e.author), e.author, 11.5)}</span></td>
-      <td style="padding:11px 0;vertical-align:top;font-size:13px;color:var(--fg);line-height:1.5">${linkifyRefs(e.summary)}${chips.length ? ` <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:4px;vertical-align:middle">${chips.map(ghChip).join("")}</span>` : ""}</td>
+      <td style="padding:11px 0;vertical-align:top;font-size:13px;color:var(--fg);line-height:1.5"><span class="cnpy-md-inline">${renderMarkdownInline(e.summary)}</span>${chips.length ? ` <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:4px;vertical-align:middle">${chips.map(ghChip).join("")}</span>` : ""}</td>
     </tr>`;
   }).join("");
   const happenings = s.feed.status === "loading" && entries.length === 0
