@@ -1,8 +1,10 @@
-// Scheduled pulls for the repo dashboard. Each writes repo_metrics; none may throw
+// Scheduled pulls for the repo dashboard. Each writes repo_metrics (the
+// Cloudflare poll also its `cf_polled` snapshot); none may throw
 // — a dead target or a bad token costs one data point, never the cron tick.
 import type { DB } from "../db";
 import type { RepoEnvConfig } from "./config";
-import { putMetric } from "./store";
+import { getSnapshot, putMetric, putSnapshot } from "./store";
+import { CF_POLLED, type CfPolled } from "./types";
 
 const TEN_MIN = 600_000;
 const PING_TIMEOUT_MS = 8_000;
@@ -74,28 +76,40 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
  * Hourly `cf_requests` / `cf_errors` per environment's FRONTEND Worker
  * (`cfg.worker`), `env` = the config key, `part` = "frontend".
  *
- * Only COMPLETE hours are stored, and that is load-bearing: `putMetric` is
- * first-write-wins, so a partial count written once is PERMANENT. The window is
- * the 3 hours before the current hour's floor (`to`) — the overlap heals a
- * missed tick, `INSERT OR IGNORE` dedupes it — but `datetime_leq: $to` is
- * INCLUSIVE, so the bucket AT `to` (the hour in progress) can come back and is
- * skipped here, as is anything outside the window.
+ * The window is LAGGED one hour, and that is load-bearing: `putMetric` is
+ * first-write-wins, so a short count written once is PERMANENT — and this runs
+ * at minute 0, seconds after the newest hour closes, when Cloudflare's adaptive
+ * dataset may not have caught up with it yet. So `to` is the current hour's
+ * floor MINUS an hour and the window is the 3 hours before it: every bucket has
+ * had at least an hour to settle before its one and only write. The overlap
+ * heals a missed tick, `INSERT OR IGNORE` dedupes it — but `datetime_leq: $to`
+ * is INCLUSIVE, so the bucket AT `to` can come back and is skipped here, as is
+ * anything outside the window.
  *
  * Never throws. One request per environment, sequentially (2 today). A non-2xx,
- * a thrown fetch, or a 200 whose body carries a non-empty `errors` array (how
- * GraphQL reports a failure) is logged and costs THAT environment this tick's
- * points — `data` beside `errors` is never read — and the loop moves on. A
- * malformed row is skipped on its own and never aborts the rows after it.
+ * a thrown fetch, a 200 whose body carries a non-empty `errors` array (how
+ * GraphQL reports a failure) or a body with no account in it (nothing was
+ * looked at) is logged and costs THAT environment this tick's points — `data`
+ * beside `errors` is never read — and the loop moves on. A malformed row is
+ * skipped on its own and never aborts the rows after it.
  *
  * A quiet hour has NO row (the dataset groups invocations; none → no group), so
- * an absent hour is not written as 0 here — the projection zero-fills between
- * captured points instead (src/tools/repo.ts).
+ * an absent hour is not written as 0 here — the projection zero-fills instead
+ * (src/tools/repo.ts). But "no row" only means "zero" for an hour a poll is
+ * KNOWN to have looked at, so each environment whose poll SUCCEEDED — even with
+ * zero rows — is recorded as polled through `to` in the ONE `cf_polled`
+ * snapshot: ONE read-modify-write per call, after the loop (read, merge every
+ * environment that succeeded, write once) — no read when none succeeded, no
+ * write unless a bound actually advanced. A failed environment keeps its
+ * previous bound, and a bound never moves BACKWARDS (compared as parsed
+ * instants). A failure here is logged and costs only the marker.
  */
 export async function pollCloudflare(
   db: DB, cf: { token: string; accountId: string }, envs: RepoEnvConfig[], now: number, fetchImpl: typeof fetch = fetch
 ): Promise<void> {
-  const to = Math.floor(now / HOUR) * HOUR;
+  const to = Math.floor(now / HOUR) * HOUR - HOUR;
   const from = to - CF_HOURS * HOUR;
+  const succeeded: string[] = [];
   for (const cfg of envs) {
     if (!cfg.worker) continue;
     try {
@@ -112,7 +126,10 @@ export async function pollCloudflare(
       }
       const accounts = record(record(body.data).viewer).accounts;
       const rows = Array.isArray(accounts) ? record(accounts[0]).workersInvocationsAdaptive : null;
-      for (const row of Array.isArray(rows) ? rows : []) {
+      // No account matched (a wrong account id, a token that cannot see it):
+      // the Worker was never looked at, so this is NOT "polled and found quiet".
+      if (!Array.isArray(rows)) throw new Error("cloudflare analytics: no account in the response");
+      for (const row of rows) {
         const hour = record(record(row).dimensions).datetimeHour;
         const at = typeof hour === "string" ? Date.parse(hour) : NaN;
         const sum = record(record(row).sum);
@@ -123,8 +140,23 @@ export async function pollCloudflare(
         await putMetric(db, { metric: "cf_requests", env: cfg.key, part: "frontend", value: requests, at: iso });
         await putMetric(db, { metric: "cf_errors", env: cfg.key, part: "frontend", value: errors, at: iso });
       }
+      succeeded.push(cfg.key);
     } catch (e) {
       console.error("pollCloudflare", cfg.key, e);
     }
+  }
+  if (!succeeded.length) return;
+  try {
+    const bounds: CfPolled = { ...record((await getSnapshot<unknown>(db, CF_POLLED))?.data) } as CfPolled;
+    let advanced = false;
+    for (const key of succeeded) {
+      const prev = typeof bounds[key] === "string" ? Date.parse(bounds[key]) : NaN;
+      if (Number.isFinite(prev) && prev >= to) continue;
+      bounds[key] = new Date(to).toISOString();
+      advanced = true;
+    }
+    if (advanced) await putSnapshot(db, CF_POLLED, bounds, new Date(now).toISOString());
+  } catch (e) {
+    console.error("pollCloudflare", CF_POLLED, e);
   }
 }

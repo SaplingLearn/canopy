@@ -181,7 +181,7 @@ describe("handleRepoCron", () => {
         calls.push(String(u));
         if (String(u) !== CF_URL) return new Response("ok", { status: 200 });
         return new Response(JSON.stringify({ data: { viewer: { accounts: [{ workersInvocationsAdaptive: [
-          { dimensions: { datetimeHour: "2026-09-20T11:00:00Z" }, sum: { requests: 640, errors: 3 } },
+          { dimensions: { datetimeHour: "2026-09-20T10:00:00Z" }, sum: { requests: 640, errors: 3 } },
         ] }] } } }), { status: 200 });
       }) as typeof fetch;
       return { calls, fetchImpl, cf: () => calls.filter((c) => c === CF_URL) };
@@ -197,8 +197,9 @@ describe("handleRepoCron", () => {
         { env: "production", metric: "cf_errors", value: 3 }, { env: "production", metric: "cf_requests", value: 640 },
         { env: "staging", metric: "cf_errors", value: 3 }, { env: "staging", metric: "cf_requests", value: 640 },
       ]);
-      // Still nothing ELSE on this tick.
-      expect(await snapshots()).toHaveLength(0);
+      // Still nothing ELSE on this tick: the only snapshot is the poll's own
+      // polled-through marker (Task 16b), none of reconcileRepo's.
+      expect(await all(env.DB, `SELECT kind FROM repo_snapshots`)).toEqual([{ kind: "cf_polled" }]);
     });
 
     it("at minute 10 it is not called", async () => {

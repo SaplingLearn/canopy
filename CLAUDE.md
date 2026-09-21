@@ -71,8 +71,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `RepoEventRow` / `RepoMetric` shapes), `config.ts` (parses the `REPO_ENVIRONMENTS` var into
   `RepoEnvConfig[]`, `[]` on absent/malformed), `capture.ts` (PURE delivery→`RepoEvent[]` derivation,
   `repoEventsFromDelivery` — no DB, no clock, no network, and stores only a SLICE of each payload in `raw`),
-  `store.ts` (snapshot/metric upserts — including the `prs_reconciled` completeness marker and the
-  `env_heads` branch-head snapshot (and `putMetric`, the ONE seam that normalises `repo_metrics.at`) — plus
+  `store.ts` (snapshot/metric upserts — including the `prs_reconciled` completeness marker, the
+  `env_heads` branch-head snapshot and the Cloudflare poll's `cf_polled` polled-through marker (and
+  `putMetric`, the ONE seam that normalises `repo_metrics.at`) — plus
   `pruneRepoCapture`, CALLED by the repo cron's 6-hourly `:30` tick:
   45-day retention for high-frequency `check` rows and matching metrics, deliberately NOT covering `pr`/`push`,
   and the `check` deletion is further gated `part IS NULL` — a FRONTEND deploy record is a `check` row too
@@ -576,24 +577,40 @@ merged/closed — so the feed never claims an actor it does not have. "Preview w
 `pollCloudflare` (`src/repo/poll.ts`) runs on the repo cron's minute-0 tick and asks Cloudflare's GraphQL
 analytics API (`https://api.cloudflare.com/client/v4/graphql`, dataset `workersInvocationsAdaptive`, filtered
 by `scriptName` = each environment's `cfg.worker`, grouped by `datetimeHour`, `sum { requests errors }`) for
-the last 3 hours, writing hourly `cf_requests` / `cf_errors` into `repo_metrics` (`env` = the config key,
+a 3-hour window, writing hourly `cf_requests` / `cf_errors` into `repo_metrics` (`env` = the config key,
 `part = 'frontend'`). Cloudflare's schema spells its scalar **`string`, lowercase** (`$a: string!`) —
-`String!` is rejected. **Only COMPLETE hours are stored**: `putMetric` is first-write-wins, so a partial
-count would be PERMANENT, and `datetime_leq` is inclusive — the bucket AT the current hour's floor can come
-back and is skipped (`at >= to`). The 3-hour overlap heals a missed tick; it cannot re-count an hour already
-written. A GraphQL failure arrives as HTTP **200 with an `errors` array** — that, a non-2xx, or a thrown
-fetch costs THAT environment the tick (logged, `data` never read beside `errors`) and the loop moves on; a
-malformed row (non-finite or negative count, unparseable hour) is skipped on its own. Never throws.
+`String!` is rejected. **The window is LAGGED one hour** — `to` = the current hour's floor − 1h, `from` =
+`to` − 3h (at 12:00 it reads 08:00–11:00): `putMetric` is first-write-wins, so a short count would be
+PERMANENT, and the poll fires seconds after the newest hour closes, when the adaptive dataset may not have
+caught up with it — every bucket gets an hour to settle before its only write. `datetime_leq` is inclusive,
+so the bucket AT `to` can come back and is skipped (`at >= to`). The 3-hour overlap heals a missed tick; it
+cannot re-count an hour already written. A GraphQL failure arrives as HTTP **200 with an `errors` array** —
+that, a non-2xx, a thrown fetch, or a body with no account in it (nothing was looked at) costs THAT
+environment the tick (logged, `data` never read beside `errors`) and the loop moves on; a malformed row
+(non-finite or negative count, unparseable hour) is skipped on its own. Never throws.
+**The `cf_polled` marker — no row ≠ zero unless we know we looked**: Cloudflare returns NO row for an hour
+with no invocations, so a quiet hour and a dead poll look identical in `repo_metrics`. Each environment
+whose poll SUCCEEDED (even with zero rows) is recorded as polled through `to` in ONE `repo_snapshots` row,
+kind `cf_polled` (`CF_POLLED` in `src/repo/types.ts`), `{ [envKey]: "<to ISO>" }` — an EXCLUSIVE bound
+(polled through 11:00 = the 10:00 bucket is the last one seen). One read + at most one write per poll, only
+when a bound advanced; a failed environment keeps its bound, and a bound never moves BACKWARDS (compared as
+parsed instants).
 The projection (`projectUsage` in `src/tools/repo.ts`) costs the render **ONE statement** — `metricsSince`
 (`src/repo/store.ts`: `metric IN (…)`, bound normalised like `metricSeries`) over 30 days for every range,
-environment and series, sliced in memory — plus ONE more (`metricsEver`, an index seek per metric name)
-only on the not-`ok` path. A range is its last N COMPLETE hours (24 / 168 / 720), cut into equal buckets
+environment and series, sliced in memory — beside ONE `getSnapshot('cf_polled')` issued concurrently with
+it (never per environment), plus ONE more (`metricsEver`, an index seek per metric name) only on the
+not-`ok` path. A range is its last N COMPLETE hours (24 / 168 / 720), cut into equal buckets
 (1h / 24h / 24h) that END at the last complete hour, never at UTC midnight. **Never guess, here**:
-`requests` / `errorRate` are non-null only when that environment has a `cf_requests` point IN THAT RANGE
-(else `null` → "not connected", never "0"); points summing to 0 requests read "0" and a true "0.00%"; the
-trend is DENSE (Cloudflare returns no row for an hour with no invocations, so a gap between captured points
-is 0) but zero-filled only from the first captured point — or from the range's start when the same read shows
-capture predates it — because before capture began the value is unknown, not zero. `usage` is `ok` when any
+the trend is DENSE (a missing bucket is drawn as 0, else the x-axis silently compresses) but only where a
+zero is entitled: the fill STARTS at the first captured point — or at the range's start when the same read
+shows capture predates it (before capture began the value is unknown, not zero) — and ENDS at `min(last
+complete hour, that environment's cf_polled bound)`; with NO bound it ends at the last real point, so a poll
+that died days ago draws no zeros after it (a real point is always drawn, whatever the bound says). Because
+of the lag, the newest hour of every range is never drawn. `requests` is non-null when there is a bucket to
+draw: a `cf_requests` point IN THAT RANGE, or capture predating the range AND a polled bound inside it — the
+latter a true "0" with an all-zero trend; otherwise `null` → "not connected", never "0". `errorRate` needs a
+real point in range: points summing to 0 requests read a true "0.00%", but with NO point 0 of 0 is not a
+rate → `null`. Totals are sums of real points only — the bound never changes a number. `usage` is `ok` when any
 metric of any range is non-null, the `cloudflare` panel when the WIDEST (30d) range has rows — so a narrower
 range can be `[]`, which the screen renders as "No requests in this range." — and both follow the
 health/coverage three-state rule: a point EVER landed but nothing in the window → `empty`, never landed (or

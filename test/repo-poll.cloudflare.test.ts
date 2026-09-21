@@ -2,8 +2,10 @@
  * Task 16 — Cloudflare Workers analytics (source K).
  *
  * `pollCloudflare` writes hourly `cf_requests` / `cf_errors` per frontend Worker
- * for the last 3 COMPLETE hours; `getRepoDashboard` projects the Usage tab's
- * requests / error rate and the Cloudflare panel from ONE read of those rows.
+ * for 3 COMPLETE hours, lagged one hour (Task 16b), and records how far each
+ * environment has been polled in the `cf_polled` snapshot; `getRepoDashboard`
+ * projects the Usage tab's requests / error rate and the Cloudflare panel from
+ * ONE read of those rows, zero-filling only as far as a poll has looked.
  * The fetch is stubbed at the Response level; every assertion is on D1 rows or
  * on the projection built from them.
  */
@@ -11,7 +13,7 @@ import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { all } from "../src/db";
 import { pollCloudflare } from "../src/repo/poll";
-import { putMetric } from "../src/repo/store";
+import { getSnapshot, putMetric, putSnapshot } from "../src/repo/store";
 import { getRepoDashboard } from "../src/tools/repo";
 import { ENVS } from "./helpers/repo";
 
@@ -35,29 +37,31 @@ describe("pollCloudflare", () => {
       expect((init?.headers as Record<string, string>).authorization).toBe("Bearer t");
       const sent = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, string> };
       seen.push(sent.variables.s);
-      // The last 3 COMPLETE hours: `to` is the floor of the current hour.
-      expect(sent.variables).toMatchObject({ a: "acct", from: "2026-09-20T09:00:00.000Z", to: "2026-09-20T12:00:00.000Z" });
+      // 3 COMPLETE hours, LAGGED one: `to` is the current hour's floor minus an
+      // hour, so the adaptive dataset has had an hour to settle before the
+      // first (and only) write of each bucket.
+      expect(sent.variables).toMatchObject({ a: "acct", from: "2026-09-20T08:00:00.000Z", to: "2026-09-20T11:00:00.000Z" });
       // Cloudflare's schema spells the scalar `string`, lowercase — `String!` is rejected.
       expect(sent.query).toContain("$a: string!");
       expect(sent.query).toContain("$s: string!");
       expect(sent.query).toContain("$from: Time!");
       expect(sent.query).not.toContain("String");
       expect(sent.query).toContain("workersInvocationsAdaptive");
-      return json(cfBody([hourRow("2026-09-20T10:00:00Z", 500, 12), hourRow("2026-09-20T11:00:00Z", 640, 3)]));
+      return json(cfBody([hourRow("2026-09-20T09:00:00Z", 500, 12), hourRow("2026-09-20T10:00:00Z", 640, 3)]));
     }) as typeof fetch;
     await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl);
     expect(seen).toEqual(["frontend-staging", "frontend"]);
     expect((await stored()).filter((r) => r.env === "staging")).toEqual([
-      { metric: "cf_errors", env: "staging", part: "frontend", value: 12, at: "2026-09-20T10:00:00.000Z" },
-      { metric: "cf_errors", env: "staging", part: "frontend", value: 3, at: "2026-09-20T11:00:00.000Z" },
-      { metric: "cf_requests", env: "staging", part: "frontend", value: 500, at: "2026-09-20T10:00:00.000Z" },
-      { metric: "cf_requests", env: "staging", part: "frontend", value: 640, at: "2026-09-20T11:00:00.000Z" },
+      { metric: "cf_errors", env: "staging", part: "frontend", value: 12, at: "2026-09-20T09:00:00.000Z" },
+      { metric: "cf_errors", env: "staging", part: "frontend", value: 3, at: "2026-09-20T10:00:00.000Z" },
+      { metric: "cf_requests", env: "staging", part: "frontend", value: 500, at: "2026-09-20T09:00:00.000Z" },
+      { metric: "cf_requests", env: "staging", part: "frontend", value: 640, at: "2026-09-20T10:00:00.000Z" },
     ]);
     expect((await stored()).filter((r) => r.env === "production")).toHaveLength(4);
   });
 
   it("the overlap is a no-op: a second poll of the same hours writes nothing new, and the first value stands", async () => {
-    const at = "2026-09-20T11:00:00Z";
+    const at = "2026-09-20T10:00:00Z";
     await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, (async () => json(cfBody([hourRow(at, 640, 3)]))) as typeof fetch);
     await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, (async () => json(cfBody([hourRow(at, 999, 9)]))) as typeof fetch);
     expect((await stored()).map((r) => [r.metric, r.value])).toEqual([["cf_errors", 3], ["cf_requests", 640]]);
@@ -81,23 +85,26 @@ describe("pollCloudflare", () => {
     const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) => {
       const s = (JSON.parse(String(init?.body)) as { variables: { s: string } }).variables.s;
       return s === "frontend-staging"
-        ? json({ errors: [{ message: "unknown field" }], ...cfBody([hourRow("2026-09-20T11:00:00Z", 1, 1)]) })
-        : json(cfBody([hourRow("2026-09-20T11:00:00Z", 640, 3)]));
+        ? json({ errors: [{ message: "unknown field" }], ...cfBody([hourRow("2026-09-20T10:00:00Z", 1, 1)]) })
+        : json(cfBody([hourRow("2026-09-20T10:00:00Z", 640, 3)]));
     }) as typeof fetch;
     await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toBeUndefined();
     expect((await stored()).map((r) => [r.env, r.metric, r.value])).toEqual([["production", "cf_errors", 3], ["production", "cf_requests", 640]]);
   });
 
-  // `datetime_leq: to` is INCLUSIVE, so the current (incomplete) hour's bucket can
-  // come back. INSERT OR IGNORE would make that partial count PERMANENT.
-  it("skips the bucket AT `to` — the current, incomplete hour is never stored", async () => {
+  // `datetime_leq: to` is INCLUSIVE, so the bucket AT `to` can come back. It is
+  // the hour that closed seconds ago — complete by the clock, but the adaptive
+  // dataset may still be short of it, and INSERT OR IGNORE would make that
+  // short count PERMANENT. It is stored an hour later instead.
+  it("skips the bucket AT `to` — the hour that only just closed is never stored", async () => {
     const fetchImpl = (async () => json(cfBody([
-      hourRow("2026-09-20T11:00:00Z", 640, 3),
+      hourRow("2026-09-20T10:00:00Z", 640, 3),
+      hourRow("2026-09-20T11:00:00Z", 7, 0),  // AT `to`: closed at 12:00, five minutes before NOW
       hourRow("2026-09-20T12:00:00Z", 7, 0),  // the hour in progress at NOW (12:05)
-      hourRow("2026-09-20T13:00:00Z", 1, 0),  // a clock ahead of ours — not complete either
+      hourRow("2026-09-20T13:00:00Z", 1, 0),  // a clock ahead of ours
     ]))) as typeof fetch;
     await pollCloudflare(env.DB, CF, [ENVS[0]], NOW, fetchImpl);
-    expect((await stored()).map((r) => r.at)).toEqual(["2026-09-20T11:00:00.000Z", "2026-09-20T11:00:00.000Z"]);
+    expect((await stored()).map((r) => r.at)).toEqual(["2026-09-20T10:00:00.000Z", "2026-09-20T10:00:00.000Z"]);
   });
 
   it("skips a malformed row without losing the rows after it, and never stores NaN", async () => {
@@ -120,6 +127,83 @@ describe("pollCloudflare", () => {
     const fetchImpl = (async () => json({ data: { viewer: { accounts: [] } } })) as typeof fetch;
     await expect(pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl)).resolves.toBeUndefined();
     expect(await stored()).toEqual([]);
+    // Nothing was looked at — no account matched — so nothing is "polled through".
+    expect(await polled()).toBeNull();
+  });
+});
+
+// ── the `cf_polled` marker (Task 16b) ────────────────────────────────────────
+// Cloudflare returns NO row for an hour without invocations, so "no row" only
+// means "zero" for hours a poll is known to have looked at. Each environment's
+// successful poll records the (exclusive) bound it looked through.
+const polled = async () => (await getSnapshot<Record<string, string>>(env.DB, "cf_polled"))?.data ?? null;
+const TO = "2026-09-20T11:00:00.000Z";           // pollCloudflare's `to` at NOW
+const EARLIER = NOW - 2 * HOUR;                   // a poll two hours before …
+const EARLIER_TO = "2026-09-20T09:00:00.000Z";    // … looked through here
+const quiet = (async () => json(cfBody([]))) as typeof fetch;
+const workerOf = (init?: RequestInit) => (JSON.parse(String(init?.body)) as { variables: { s: string } }).variables.s;
+
+describe("pollCloudflare — the polled-through marker", () => {
+  it("a successful poll records every environment as polled through `to`, in ONE snapshot row", async () => {
+    await pollCloudflare(env.DB, CF, ENVS, NOW, (async () => json(cfBody([hourRow("2026-09-20T10:00:00Z", 640, 3)]))) as typeof fetch);
+    expect(await polled()).toEqual({ staging: TO, production: TO });
+    expect(await all(env.DB, `SELECT kind FROM repo_snapshots`)).toEqual([{ kind: "cf_polled" }]);
+  });
+
+  // The whole point of the marker: a poll that LOOKED and found nothing is what
+  // entitles the projection to draw a zero.
+  it("a successful poll that returned zero rows still advances the bound", async () => {
+    await pollCloudflare(env.DB, CF, ENVS, NOW, quiet);
+    expect(await stored()).toEqual([]);
+    expect(await polled()).toEqual({ staging: TO, production: TO });
+  });
+
+  it.each([
+    ["a 403", () => json({ errors: [{ message: "unauthorized" }] }, 403)],
+    ["a 200 carrying `errors`", () => json({ errors: [{ message: "unknown field" }], ...cfBody([]) })],
+    ["a body with no account", () => json({ data: { viewer: { accounts: [] } } })],
+  ])("%s keeps that environment's previous bound while the other environment's advances", async (_name, failure) => {
+    await pollCloudflare(env.DB, CF, ENVS, EARLIER, quiet);
+    expect(await polled()).toEqual({ staging: EARLIER_TO, production: EARLIER_TO });
+    const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) =>
+      workerOf(init) === "frontend-staging" ? failure() : json(cfBody([]))) as typeof fetch;
+    await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl);
+    expect(await polled()).toEqual({ staging: EARLIER_TO, production: TO });
+  });
+
+  it("an environment that has never succeeded has no bound at all", async () => {
+    const fetchImpl = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+      if (workerOf(init) === "frontend-staging") throw new Error("connect timeout");
+      return json(cfBody([]));
+    }) as typeof fetch;
+    await pollCloudflare(env.DB, CF, ENVS, NOW, fetchImpl);
+    expect(await polled()).toEqual({ production: TO });
+  });
+
+  it("never moves a bound backwards: a poll with an earlier clock leaves it where it was", async () => {
+    await pollCloudflare(env.DB, CF, ENVS, NOW, quiet);
+    const before = await getSnapshot(env.DB, "cf_polled");
+    await pollCloudflare(env.DB, CF, ENVS, EARLIER, quiet);
+    expect(await getSnapshot(env.DB, "cf_polled")).toEqual(before); // same bounds, and not even rewritten
+  });
+
+  // Compared as parsed instants: a bound stored without milliseconds is the SAME
+  // instant as `to`, not an older string.
+  it("compares bounds as instants, and replaces one it cannot parse", async () => {
+    await putSnapshot(env.DB, "cf_polled", { staging: "2026-09-20T13:00:00Z", production: "not a date" });
+    await pollCloudflare(env.DB, CF, ENVS, NOW, quiet);
+    expect(await polled()).toEqual({ staging: "2026-09-20T13:00:00Z", production: TO });
+  });
+
+  it("writes nothing when every environment fails", async () => {
+    const down = (async () => json({}, 500)) as typeof fetch;
+    await pollCloudflare(env.DB, CF, ENVS, NOW, down);
+    expect(await polled()).toBeNull();
+    // … and leaves an existing marker exactly as it was.
+    await pollCloudflare(env.DB, CF, ENVS, EARLIER, quiet);
+    const before = await getSnapshot(env.DB, "cf_polled");
+    await pollCloudflare(env.DB, CF, ENVS, NOW, down);
+    expect(await getSnapshot(env.DB, "cf_polled")).toEqual(before);
   });
 });
 
@@ -221,6 +305,85 @@ describe("getRepoDashboard — usage and Cloudflare from cf_* metrics", () => {
     const d = await getRepoDashboard(env.DB, "o/r", NOW, []);
     expect(d.usage.status).toBe("not_connected");
     expect(d.cloudflare.status).toBe("not_connected");
+  });
+
+  // ── Task 16b: zeros are drawn only as far as a poll is known to have looked ──
+  // `cf_polled` is `{ [envKey]: <exclusive bound> }`: polled through 11:00 means
+  // the 10:00 bucket (hoursBack(2)) is the last one known.
+  const markPolled = (bounds: Record<string, string>) => putSnapshot(env.DB, "cf_polled", bounds);
+
+  it("zero-fills past the last real point up to the polled bound — and no further", async () => {
+    await point("staging", hoursBack(5), 100, 10);
+    await point("staging", hoursBack(3), 300, 0);
+    await point("production", hoursBack(5), 70, 0);
+    await markPolled({ staging: hoursBack(1) }); // staging only: a bound never leaks to another environment
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    const [staging, production] = ok(d.usage)["24h"];
+    // 07:00, 08:00, 09:00, 10:00. The 11:00 bucket (hoursBack(1)) is NOT drawn: no poll has looked at it yet.
+    expect(staging.requests).toEqual({ value: "400", trend: [100, 0, 300, 0], tone: "neutral" });
+    expect(staging.errorRate).toEqual({ value: "2.50%", trend: [10, 0, 0, 0], tone: "warn" });
+    expect(production.requests).toEqual({ value: "70", trend: [70], tone: "neutral" });
+  });
+
+  it("with NO marker the trend ends at the last real point", async () => {
+    await point("staging", hoursBack(5), 100, 10);
+    await point("staging", hoursBack(3), 300, 0);
+    const [staging] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests).toEqual({ value: "400", trend: [100, 0, 300], tone: "neutral" });
+    expect(staging.errorRate?.trend).toEqual([10, 0, 0]);
+  });
+
+  // The poll died three days ago: nothing after its bound is known to be zero.
+  it("a marker days old draws no zeros after it", async () => {
+    await point("staging", hoursBack(100), 50, 0);
+    await markPolled({ staging: hoursBack(72) });
+    const usage = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage);
+    // 7d = seven 24h buckets ending at 12:00. The point sits in bucket 2; the last
+    // polled hour (hoursBack(73)) in bucket 3. Buckets 4–6 are unknown, not zero.
+    expect(usage["7d"][0].requests).toEqual({ value: "50", trend: [50, 0], tone: "neutral" });
+    // 24h: capture predates the range, but no poll has looked inside it.
+    expect(usage["24h"][0]).toMatchObject({ requests: null, errorRate: null });
+  });
+
+  it("a marker older than the last real point never truncates real points", async () => {
+    await point("staging", hoursBack(5), 100, 0);
+    await point("staging", hoursBack(3), 300, 0);
+    await markPolled({ staging: hoursBack(10) });
+    const [staging] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests).toEqual({ value: "400", trend: [100, 0, 300], tone: "neutral" });
+  });
+
+  it("a range with no real point, but polled and captured before it, reads a true 0 — and no error rate", async () => {
+    await point("staging", hoursBack(30), 50, 5); // outside 24h, inside 7d
+    await markPolled({ staging: hoursBack(1) });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    const day = ok(d.usage)["24h"][0];
+    // 23 buckets, not 24: the range's last hour (11:00) has not been polled yet.
+    expect(day.requests).toEqual({ value: "0", trend: new Array(23).fill(0), tone: "neutral" });
+    expect(day.errorRate).toBeNull(); // 0 of 0 is not a rate
+    expect(ok(d.cloudflare)["24h"]).toEqual([
+      { env: "staging", label: "Workers requests", value: "0" },
+      { env: "staging", label: "Workers errors", value: "0" },
+    ]);
+    // 7d: the point sits in bucket 5, the last polled hour in bucket 6.
+    expect(ok(d.usage)["7d"][0].requests).toEqual({ value: "50", trend: [50, 0], tone: "neutral" });
+    expect(ok(d.usage)["7d"][0].errorRate).toMatchObject({ value: "10.00%", trend: [10, 0] });
+  });
+
+  it("a marker alone — polled, but nothing ever captured — connects nothing", async () => {
+    await markPolled({ staging: hoursBack(1), production: hoursBack(1) });
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    expect(d.usage.status).toBe("not_connected");
+    expect(d.cloudflare.status).toBe("not_connected");
+  });
+
+  it("a bound ahead of the clock fills only to the last complete hour; an unparseable one is no bound", async () => {
+    await point("staging", hoursBack(3), 300, 0);
+    await point("production", hoursBack(3), 300, 0);
+    await markPolled({ staging: hoursBack(-5), production: "not a date" });
+    const [staging, production] = ok((await getRepoDashboard(env.DB, "o/r", NOW, ENVS)).usage)["24h"];
+    expect(staging.requests?.trend).toEqual([300, 0, 0]);
+    expect(production.requests?.trend).toEqual([300]);
   });
 
   it("active users alone connect the usage section but not the Cloudflare panel", async () => {

@@ -14,7 +14,7 @@ import {
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
 import { getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince } from "../repo/store";
-import type { RepoEventRow, RepoPrRow } from "../repo/types";
+import { CF_POLLED, type RepoEventRow, type RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
 // no live GitHub, no per-user token, nothing written. It reads what the webhook,
@@ -29,7 +29,8 @@ import type { RepoEventRow, RepoPrRow } from "../repo/types";
 // live scan at render time. The Usage tab's requests / error rate and the
 // Cloudflare panel (Task 16) are `repo_metrics` too: hourly `cf_requests` /
 // `cf_errors` the repo cron's minute-0 tick polls from Cloudflare's analytics
-// API (src/repo/poll.ts), read back here in ONE statement.
+// API (src/repo/poll.ts), read back here in ONE statement — beside the poll's
+// `cf_polled` snapshot, which bounds how far a missing hour may be drawn as 0.
 //
 // Everything Canopy has NO capture path for — today only hosting (and, inside
 // the usage section, each environment's active users) — is returned as
@@ -215,20 +216,31 @@ interface UsagePoint { t: number; value: number }
 /**
  * The Usage tab and the Cloudflare panel, derived IN MEMORY from one read of
  * the last 30 days (`rows`, ascending by `at`). `endExcl` is the start of the
- * current hour: only complete hours count, whatever the table holds.
+ * current hour: only complete hours count, whatever the table holds. `polled`
+ * is the `cf_polled` snapshot — per environment, the EXCLUSIVE instant its
+ * polls are known to have looked through (src/repo/poll.ts).
  *
- * Never guess:
- *  - `requests` / `errorRate` are non-null only when that environment has a
- *    `cf_requests` point IN THAT RANGE; otherwise `null`, never "0".
- *  - Points exist but sum to 0 requests → "0" and a true "0.00%" (0 errors).
- *  - The trend is DENSE — Cloudflare returns no row for an hour without
- *    invocations, so a missing bucket between captured ones is 0, and leaving
- *    it out would silently compress the x-axis. But it is filled only from the
- *    first captured point (or from the range's start when this read shows
- *    capture predates it): before capture began the value is unknown, not zero.
+ * Never guess. Cloudflare returns NO row for an hour without invocations, so a
+ * missing bucket is drawn as 0 — leaving it out would silently compress the
+ * x-axis — but only where a zero is something we are entitled to say:
+ *  - The fill STARTS at the first captured point in the range, or at the
+ *    range's start when this read shows capture predates it. Before capture
+ *    began the value is unknown, not zero.
+ *  - The fill ENDS at `min(last complete hour, that environment's polled
+ *    bound)` — and, with NO bound, at the last real point. "No row" means zero
+ *    only for an hour a poll looked at; past that the poll may simply be dead.
+ *    (A real point is always drawn, whatever the bound says.)
+ *  - `requests` is non-null when there is at least one bucket to draw: a real
+ *    point in the range, OR capture predating the range AND a polled bound
+ *    inside it — the second reads a true "0" with an all-zero trend.
+ *  - `errorRate` needs a real point in the range. With points that sum to 0
+ *    requests it is a true "0.00%"; with NO point, 0 of 0 is not a rate: `null`.
+ *  - Totals are sums of real points only; the bound changes which zero buckets
+ *    the sparkline may draw, never a number.
  */
 function projectUsage(
-  rows: { metric: string; env: string; part: string; at: string; value: number }[], envs: RepoEnvConfig[], endExcl: number
+  rows: { metric: string; env: string; part: string; at: string; value: number }[], envs: RepoEnvConfig[], endExcl: number,
+  polled: Record<string, unknown>
 ): { usage: Record<RepoRange, RepoUsageEnv[]>; cloudflare: Record<RepoRange, RepoCfRow[]>; anyUsage: boolean } {
   const usage = {} as Record<RepoRange, RepoUsageEnv[]>;
   const cloudflare = {} as Record<RepoRange, RepoCfRow[]>;
@@ -242,6 +254,10 @@ function projectUsage(
     const complete = (pts: UsagePoint[]) => pts.filter((p) => p.t < endExcl);
     const reqAll = complete(series("cf_requests", "frontend"));
     const errAll = complete(series("cf_errors", "frontend"));
+    // Floored to the hour and clamped to the last complete one; −∞ = no bound.
+    const bound = polled[cfg.key];
+    const boundAt = typeof bound === "string" ? Date.parse(bound) : NaN;
+    const polledExcl = Number.isFinite(boundAt) ? Math.min(endExcl, Math.floor(boundAt / HOUR) * HOUR) : -Infinity;
 
     for (const range of REPO_RANGES) {
       const { hours, step } = USAGE_RANGES[range];
@@ -251,27 +267,34 @@ function projectUsage(
       const err = inRange(errAll);
       const usr = inRange(series(`active_users_${range}`, ""));
 
+      // `reqAll` is ascending: its first point predating the range means
+      // capture was already running when the range began.
+      const predates = reqAll.length > 0 && reqAll[0].t < start;
+      const fillFrom = predates ? start : req.length ? req[0].t : null;
+      const fillToExcl = Math.max(polledExcl, req.length ? req[req.length - 1].t + HOUR : -Infinity);
+
       let requests: RepoUsageMetric | null = null;
       let errorRate: RepoUsageMetric | null = null;
-      if (req.length) {
-        const idx = (p: UsagePoint) => Math.floor((p.t - start) / step);
+      if (fillFrom !== null && fillToExcl > fillFrom) {
+        const idx = (t: number) => Math.floor((t - start) / step);
         const bucket = (pts: UsagePoint[]): number[] => {
           const out = new Array<number>((hours * HOUR) / step).fill(0);
-          for (const p of pts) out[idx(p)] += p.value;
-          // `reqAll` is ascending: its first point predating the range means
-          // capture was already running when the range began.
-          return out.slice(reqAll[0].t < start ? 0 : idx(req[0]));
+          for (const p of pts) out[idx(p.t)] += p.value;
+          // The last bucket drawn is the one holding the last KNOWN hour.
+          return out.slice(idx(fillFrom), idx(fillToExcl - HOUR) + 1);
         };
         const reqBuckets = bucket(req);
         const errBuckets = bucket(err);
         const total = req.reduce((n, p) => n + p.value, 0);
         const errors = err.reduce((n, p) => n + p.value, 0);
-        const rate = total ? (errors / total) * 100 : 0;
         requests = { value: compact(total), trend: reqBuckets, tone: "neutral" };
-        errorRate = {
-          value: `${rate.toFixed(2)}%`, tone: rate >= 1 ? "warn" : "good",
-          trend: errBuckets.map((e, i) => (reqBuckets[i] ? (e / reqBuckets[i]) * 100 : 0)),
-        };
+        if (req.length) {
+          const rate = total ? (errors / total) * 100 : 0;
+          errorRate = {
+            value: `${rate.toFixed(2)}%`, tone: rate >= 1 ? "warn" : "good",
+            trend: errBuckets.map((e, i) => (reqBuckets[i] ? (e / reqBuckets[i]) * 100 : 0)),
+          };
+        }
         cloudflare[range].push(
           { env: cfg.label, label: "Workers requests", value: compact(total) },
           { env: cfg.label, label: "Workers errors", value: compact(errors) },
@@ -692,9 +715,18 @@ export async function getRepoDashboard(
   // quiet), `not_connected` when none ever did — and that existence read
   // (`metricsEver`, one more statement) is only made on the not-ok path. No
   // environment configured → nothing to attribute a Worker to: not_connected.
+  // The `cf_polled` snapshot (how far each environment's polls have looked —
+  // what entitles a missing hour to be drawn as 0) is ONE more read, issued
+  // beside the first and never per environment.
   const usageEnd = Math.floor(now / HOUR) * HOUR;
-  const usageRows = envs.length ? await metricsSince(db, USAGE_METRICS, new Date(usageEnd - USAGE_RANGES["30d"].hours * HOUR).toISOString()) : [];
-  const used = projectUsage(usageRows, envs, usageEnd);
+  const [usageRows, polledSnap] = envs.length
+    ? await Promise.all([
+        metricsSince(db, USAGE_METRICS, new Date(usageEnd - USAGE_RANGES["30d"].hours * HOUR).toISOString()),
+        getSnapshot<unknown>(db, CF_POLLED),
+      ])
+    : [[], null];
+  const polled = polledSnap?.data && typeof polledSnap.data === "object" ? (polledSnap.data as Record<string, unknown>) : {};
+  const used = projectUsage(usageRows, envs, usageEnd, polled);
   // Gated on the WIDEST range; a narrower one may legitimately hold no rows.
   const anyCf = used.cloudflare["30d"].length > 0;
   const usageEver = envs.length && (!used.anyUsage || !anyCf) ? await metricsEver(db, USAGE_METRICS) : new Set<string>();

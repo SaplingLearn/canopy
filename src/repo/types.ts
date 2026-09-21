@@ -63,3 +63,11 @@ export interface RepoReviewRow {
 }
 
 export interface RepoMetric { metric: string; env: string; part: string; value: number; at: string }
+
+/** The `repo_snapshots` kind recording how far the Cloudflare analytics poll
+ *  (src/repo/poll.ts) has LOOKED, per environment: `{ [envKey]: "<ISO>" }`, each
+ *  an EXCLUSIVE bound — polled through 11:00 means the 10:00 bucket is the last
+ *  one a poll has seen. Cloudflare returns no row for a quiet hour, so this is
+ *  what entitles the projection (src/tools/repo.ts) to draw a missing hour as 0. */
+export const CF_POLLED = "cf_polled";
+export type CfPolled = Record<string, string>;
