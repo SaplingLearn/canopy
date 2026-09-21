@@ -976,7 +976,10 @@ export async function getRepoDashboard(
     ? await Promise.all([
         metricsSince(db, usageReadGroups(usageEnd, now)),
         getSnapshot<unknown>(db, CF_POLLED),
-        productReadings(db, envs.map((e) => e.key), new Date(now - HOSTING_STALE_MS).toISOString(), new Date(now - PRODUCT_TREND_DAYS * DAY).toISOString()),
+        // DISTINCT keys: the read joins against a `VALUES` list of them, so a key
+        // listed twice in `REPO_ENVIRONMENTS` would return every row twice — and
+        // every midnight would be pushed into its trend twice.
+        productReadings(db, [...new Set(envs.map((e) => e.key))], new Date(now - HOSTING_STALE_MS).toISOString(), new Date(now - PRODUCT_TREND_DAYS * DAY).toISOString()),
       ])
     : [[], null, []];
   const polled = polledSnap?.data && typeof polledSnap.data === "object" ? (polledSnap.data as Record<string, unknown>) : {};

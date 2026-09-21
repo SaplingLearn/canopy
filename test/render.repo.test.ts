@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
+import { productKeyInfo } from "../src/repo/product";
 import { render, initialState } from "../web/src/render";
 import { REPO_TABS, type RepoDashboard, type RepoPerson, type RepoProductEnv, type UsagePollResult } from "@shared/repo";
 
@@ -542,6 +543,29 @@ describe("repoView — product metrics", () => {
     expect(html.indexOf("lower bound")).toBeGreaterThan(html.indexOf(">LLM cost<"));
   });
 
+  it("two notes in one group are two labelled footnotes, in row order, each once", () => {
+    const html = view({}, [{ name: "staging", totals: [], groups: [{ id: "reliability", title: "Reliability", metrics: [
+      { key: "errors_5xx", label: "5xx errors", values: all3("3"), raw: { "24h": 3, "7d": 3, "30d": 3 }, trend: [] },
+      { key: "errors_4xx", label: "4xx errors", values: all3("9"), raw: { "24h": 9, "7d": 9, "30d": 9 }, trend: [], note: "includes bot traffic and refused polls" },
+      { key: "x", label: "Other thing", values: all3("1"), raw: { "24h": 1, "7d": 1, "30d": 1 }, trend: [], note: "lower bound — a second note" },
+    ] }] }]);
+    const a = html.indexOf("4xx errors: includes bot traffic and refused polls");
+    const b = html.indexOf("Other thing: lower bound — a second note");
+    expect(a).toBeGreaterThan(html.indexOf(">Other thing<")); // under the rows
+    expect(b).toBeGreaterThan(a);
+    expect(html.split("includes bot traffic and refused polls").length - 1).toBe(1);
+    // ONE footnote block per group, a line per note — not a stack of separately-spaced boxes.
+    expect((html.match(/class="repo-pnotes"/g) ?? []).length).toBe(1);
+    expect(html).not.toMatch(/undefined|NaN/);
+  });
+
+  it("an ok section carrying NO environment renders the section's empty state, never nothing", () => {
+    const html = view({}, []);
+    expect(html).toContain(">Product<");
+    expect(html).toContain("No current product reading — the hourly poll of the app&#39;s metrics endpoint has gone quiet.");
+    expect(html).not.toContain("Product — ");
+  });
+
   it("an environment that reported nothing says so, inside its own block", () => {
     const html = view();
     const prod = html.slice(html.indexOf("Product — production"));
@@ -559,6 +583,9 @@ describe("repoView — product metrics", () => {
     expect(html).not.toContain("<img src=x");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;img src=x onerror=1&gt;");
+    // …escaped exactly ONCE: the block title escapes inside `head()`, not at the call site as well.
+    expect(html).toContain("Product — &lt;img src=x onerror=1&gt;");
+    expect(html).not.toContain("&amp;lt;");
   });
 
   it("not_connected and empty each say what they are waiting on; loading and error have their forms", () => {
@@ -595,6 +622,21 @@ describe("repoView — product metrics", () => {
     const html = repoView(props({ tab: "usage", repo: { status: "ok", data }, sample: true }));
     expect(html).toContain("Product — production");
     expect(html).toContain("lower bound — unpriced models are not counted");
+    // The placeholder set is labelled by hand (the sample chunk cannot import the
+    // Worker's registry), so it is held to it here: same label, group and note.
+    const keys = envs[0].groups.flatMap((g) => g.metrics.map((m) => m.key));
+    expect(keys).toEqual(expect.arrayContaining(["logins", "quiz_context_write_failed", "rag_visibility_resync_failed", "rag_chunks_dropped"]));
+    expect(keys).not.toContain("study_guides");
+    for (const e of envs) {
+      for (const g of e.groups) for (const m of g.metrics) {
+        const info = productKeyInfo(m.key);
+        expect([m.key, g.id, m.label, m.note]).toEqual([m.key, info.group, info.label, info.note]);
+      }
+      for (const t of e.totals) expect([t.key, t.label, t.note]).toEqual([t.key, productKeyInfo(t.key).label, productKeyInfo(t.key).note]);
+    }
+    expect(html).toContain("Flashcards created: lower bound — deleted cards are not counted");
+    expect(html).toContain("4xx errors: includes bot traffic and refused polls");
+    expect(html).toContain(">RAG runs that dropped chunks<");
   });
 
   it("entrances use the existing hooks only", () => {
@@ -641,6 +683,9 @@ describe("repoView — Poll usage now", () => {
     expect(text).toContain("App metrics — staging ✓ 7 new — 2 keys dropped: counts.foo, totals.&lt;b&gt;");
     expect(text).toContain("production ✗ the windows do not nest (24h ≤ 7d ≤ 30d) — 4 new");
     expect(html).not.toContain("totals.<b>");
+    // The failure is red; the rows that DID land are not a failure, so "— 4 new" is muted, not red.
+    expect(html).toMatch(/color:var\(--red\)[^>]*>✗ the windows do not nest \(24h ≤ 7d ≤ 30d\)<\/span>/);
+    expect(html).toMatch(/color:var\(--fg-40\)[^>]*> — 4 new<\/span>/);
   });
 
   it("the strip gives one line per source: new rows, up to date, a failure's detail, a skip, not configured", () => {

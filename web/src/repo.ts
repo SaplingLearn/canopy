@@ -501,11 +501,14 @@ function productRow(label: string, value: string | null, raw: number | null, tre
   }</div>`;
 }
 
+/** `notes` are the group's caveats, already `"<label>: <note>"` — a group may
+ *  hold several (Reliability's 4xx note beside another): ONE footnote block, a
+ *  line each, so two notes read as a list rather than as two spaced-out boxes. */
 function productGroup(title: string, rows: string[], notes: string[]): string {
   return `<div style="min-width:0;padding:6px 0 8px">
     <div style="${LABEL_SM};margin-bottom:6px;overflow:hidden;text-overflow:ellipsis">${esc(title)}</div>
     ${rows.join("")}
-    ${notes.map((n) => `<div style="font-size:11px;line-height:1.5;color:var(--fg-40);margin-top:6px">${esc(n)}</div>`).join("")}
+    ${notes.length ? `<div class="repo-pnotes" style="font-size:11px;line-height:1.5;color:var(--fg-40);margin-top:6px">${notes.map((n) => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
   </div>`;
 }
 
@@ -521,16 +524,22 @@ function productEnv(e: RepoProductEnv, range: RepoRange): string {
 
 /** The product blocks under the Usage tab's panels, `--i` staggered from `i`. */
 function productBlocks(p: RepoProps, i: number): string {
+  // `title` is ESCAPED HERE, like every other helper in this file — an
+  // environment's name is config text; `aside` is markup the caller built.
   const head = (title: string, aside = "") =>
-    `<div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 10px"><span style="${LABEL};min-width:0;overflow:hidden;text-overflow:ellipsis">${title}</span>${aside}</div>`;
+    `<div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 10px"><span style="${LABEL};min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(title)}</span>${aside}</div>`;
   const envs = okData(p, (d) => d.product);
-  if (!envs) {
-    const state = sec(p, (d) => d.product ?? { status: "not_connected" }, { nc: "No product metrics reported yet. They appear once the app's metrics endpoint serves `counts` / `totals` and `SAPLING_METRICS_TOKEN` is set.", empty: "No current product reading — the hourly poll of the app's metrics endpoint has gone quiet.", lines: 3 }, () => "");
+  // No environment to draw — not connected, empty, loading, an error, OR an `ok`
+  // that carries none (the Worker never sends that; the fallback is total anyway,
+  // and an `ok` with nothing in it reads as the section's empty state, never as nothing).
+  if (!envs?.length) {
+    const copy = { nc: "No product metrics reported yet. They appear once the app's metrics endpoint serves `counts` / `totals` and `SAPLING_METRICS_TOKEN` is set.", empty: "No current product reading — the hourly poll of the app's metrics endpoint has gone quiet.", lines: 3 };
+    const state = sec(p, (d) => d.product ?? { status: "not_connected" }, copy, () => emptyBlock(copy.empty));
     return `<div ${rise(i, `${TOP};padding:18px 20px`)}>${head("Product")}${state}</div>`;
   }
   const aside = `<span style="font-size:11px;color:var(--fg-40)">reported by the app · counts over ${esc(p.range)}</span>`;
   return envs.map((e, n) => `<div ${rise(i + n, `${TOP};padding:18px 20px 12px;min-width:0`)}>
-      ${head(`Product — ${esc(e.name)}`, aside)}
+      ${head(`Product — ${e.name}`, aside)}
       ${productEnv(e, p.range)}
     </div>`).join("");
 }
@@ -547,10 +556,12 @@ const MUTED = "var(--fg-40)";
 function pollOutcome(o: PollOutcome): string {
   const [color, text] =
     o.status === "ok" ? [TONE.good, `${o.written > 0 ? `✓ ${o.written} new` : "✓ up to date"}${o.detail ? ` — ${o.detail}` : ""}`]
-    : o.status === "failed" ? [TONE.bad, `✗ ${o.detail ?? "failed"}${o.written > 0 ? ` — ${o.written} new` : ""}`]
+    : o.status === "failed" ? [TONE.bad, `✗ ${o.detail ?? "failed"}`]
     : [MUTED, `– skipped${o.detail ? `: ${o.detail}` : ""}`];
+  // What a FAILED poll stored anyway is not part of the failure: muted, not red.
+  const landed = o.status === "failed" && o.written > 0 ? `<span style="color:${MUTED}"> — ${o.written} new</span>` : "";
   // "*" is the whole source (an arm that threw), not an environment called "*".
-  return `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}</span> <span style="color:${color}">${esc(text)}</span></span>`;
+  return `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}</span> <span style="color:${color}">${esc(text)}</span>${landed}</span>`;
 }
 const pollSource = (s: UsagePollSource): string =>
   s === "not_configured" || !Array.isArray(s) ? `<span style="color:${MUTED}">not configured</span>`

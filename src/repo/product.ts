@@ -50,10 +50,18 @@ interface ProductKey { group: ProductGroupId; label: string; format?: ProductFor
 
 /** Registry ORDER is display order within a group. One table for `counts` and
  *  `totals` keys alike — the two never share a name in the contract, and a
- *  total's group only matters if the screen ever groups them. */
+ *  total's group only matters if the screen ever groups them.
+ *
+ *  The keys are what Sapling SERVES (SaplingLearn/Sapling#654), not the first
+ *  draft of the contract: `study_guides` is not here (that table is a cache, so
+ *  Sapling omits it — were it ever sent it would simply land under "Other"). A
+ *  label says what the number IS — `rag_chunks_dropped` counts RUNS — and a
+ *  `note` is the caveat the screen prints under the group, one line per noted
+ *  key, so a group may carry more than one. */
 const KNOWN: [string, ProductKey][] = [
   ["signups", { group: "growth", label: "Signups" }],
   ["approvals", { group: "growth", label: "Approvals" }],
+  ["logins", { group: "growth", label: "Logins" }],
   ["users", { group: "growth", label: "Users" }],
   ["users_pending", { group: "growth", label: "Users pending" }],
 
@@ -64,8 +72,7 @@ const KNOWN: [string, ProductKey][] = [
   ["documents_uploaded", { group: "learning", label: "Documents uploaded" }],
   ["documents_processed", { group: "learning", label: "Documents processed" }],
   ["notes_created", { group: "learning", label: "Notes created" }],
-  ["flashcards_created", { group: "learning", label: "Flashcards created" }],
-  ["study_guides", { group: "learning", label: "Study guides" }],
+  ["flashcards_created", { group: "learning", label: "Flashcards created", note: "lower bound — deleted cards are not counted" }],
   ["xp_events", { group: "learning", label: "XP events" }],
   ["achievements_earned", { group: "learning", label: "Achievements earned" }],
   ["documents", { group: "learning", label: "Documents" }],
@@ -82,10 +89,12 @@ const KNOWN: [string, ProductKey][] = [
   ["llm_cost_cents", { group: "ai", label: "LLM cost", format: "cents", note: "lower bound — unpriced models are not counted" }],
 
   ["errors_5xx", { group: "reliability", label: "5xx errors" }],
-  ["errors_4xx", { group: "reliability", label: "4xx errors" }],
+  ["errors_4xx", { group: "reliability", label: "4xx errors", note: "includes bot traffic and refused polls" }],
   ["quiz_generation_failed", { group: "reliability", label: "Quiz generation failed" }],
+  ["quiz_context_write_failed", { group: "reliability", label: "Quiz context write failed" }],
   ["rag_retrieval_failed", { group: "reliability", label: "RAG retrieval failed" }],
-  ["rag_chunks_dropped", { group: "reliability", label: "RAG chunks dropped" }],
+  ["rag_visibility_resync_failed", { group: "reliability", label: "RAG visibility resync failed" }],
+  ["rag_chunks_dropped", { group: "reliability", label: "RAG runs that dropped chunks" }], // it counts RUNS, not chunks
   ["rag_chunks", { group: "reliability", label: "RAG chunks" }],
   ["rag_document_chunks", { group: "reliability", label: "RAG document chunks" }],
 ];

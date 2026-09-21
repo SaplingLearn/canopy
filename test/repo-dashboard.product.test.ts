@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { pollSaplingMetrics } from "../src/repo/poll";
 import { putMetrics } from "../src/repo/store";
+import { productKeyInfo } from "../src/repo/product";
 import { getRepoDashboard, emptyRepoDashboard } from "../src/tools/repo";
 import type { RepoProductEnv } from "@shared/repo";
 import { ENVS } from "./helpers/repo";
@@ -96,6 +97,44 @@ describe("getRepoDashboard — product metrics", () => {
     expect(staging.totals.map((t) => t.label)).toEqual(["Users", "Rooms", "Mystery total"]);
   });
 
+  // What Sapling actually serves (SaplingLearn/Sapling#654): `study_guides` is
+  // omitted (that table is a cache), three keys are new, and two labels / two
+  // notes say what the number really is.
+  describe("the registry matches what Sapling serves", () => {
+    it.each([
+      ["logins", "growth", "Logins", undefined],
+      ["quiz_context_write_failed", "reliability", "Quiz context write failed", undefined],
+      ["rag_visibility_resync_failed", "reliability", "RAG visibility resync failed", undefined],
+      ["rag_chunks_dropped", "reliability", "RAG runs that dropped chunks", undefined], // it counts RUNS, not chunks
+      ["flashcards_created", "learning", "Flashcards created", "lower bound — deleted cards are not counted"],
+      ["errors_4xx", "reliability", "4xx errors", "includes bot traffic and refused polls"],
+      ["llm_cost_cents", "ai", "LLM cost", "lower bound — unpriced models are not counted"],
+    ])("%s → %s / %j", (key, group, label, note) => {
+      const info = productKeyInfo(key);
+      expect(info).toMatchObject({ group, label, format: key === "llm_cost_cents" ? "cents" : "int" });
+      expect(info.note).toBe(note);
+    });
+
+    it("`study_guides` is no longer a known key — it would still be shown, under Other", () => {
+      expect(productKeyInfo("study_guides")).toEqual({ group: "other", label: "Study guides", format: "int" });
+    });
+
+    it("the new keys sit in their groups, in order, with their notes — two notes in one group both travel", async () => {
+      await seed(["signups", "approvals", "logins", "flashcards_created", "study_guides", "errors_5xx", "errors_4xx", "quiz_generation_failed",
+        "quiz_context_write_failed", "rag_retrieval_failed", "rag_visibility_resync_failed", "rag_chunks_dropped"].flatMap((k) => count(k, "staging", AT, 1, 2, 3)));
+      const [staging] = await product();
+      expect(staging.groups.map((g) => [g.title, g.metrics.map((m) => m.label)])).toEqual([
+        ["Growth", ["Signups", "Approvals", "Logins"]],
+        ["Learning activity", ["Flashcards created"]],
+        ["Reliability", ["5xx errors", "4xx errors", "Quiz generation failed", "Quiz context write failed", "RAG retrieval failed", "RAG visibility resync failed", "RAG runs that dropped chunks"]],
+        ["Other", ["Study guides"]],
+      ]);
+      expect(metricOf(staging, "flashcards_created")?.note).toBe("lower bound — deleted cards are not counted");
+      expect(metricOf(staging, "errors_4xx")?.note).toBe("includes bot traffic and refused polls");
+      expect(metricOf(staging, "logins")).not.toHaveProperty("note");
+    });
+  });
+
   it("llm_cost_cents reads as dollars with its lower-bound note; llm_tokens is compact", async () => {
     await seed([...count("llm_cost_cents", "staging", AT, 412, 2961, 11830), ...count("llm_tokens", "staging", AT, 900, 1_234_000, 2_500_000_000)]);
     const [staging] = await product();
@@ -150,6 +189,20 @@ describe("getRepoDashboard — product metrics", () => {
     expect(signups.trend).toEqual([129, 105, 103, 102, 100]);
     expect(signups.values).toEqual({ "24h": "3", "7d": "21", "30d": "96" }); // ONE trend, whatever the range
     expect(staging.totals[0].trend).toEqual([971, 995, 997, 998, 1000]);
+  });
+
+  it("a `REPO_ENVIRONMENTS` key listed twice does not double a trend", async () => {
+    await seed([
+      ...[3, 2, 1, 0].flatMap((d) => count("signups", "staging", MIDNIGHT - d * DAY, 10 + d, 500, 900)),
+      ...[3, 2, 1, 0].map((d): Row => ["sap_t_users", "staging", MIDNIGHT - d * DAY, 1000 - d]),
+      ...count("signups", "staging", AT, 3, 21, 96), ["sap_t_users", "staging", AT, 1204],
+    ]);
+    // a copy-paste while adding a third environment: two entries, one key
+    const s = (await getRepoDashboard(env.DB, "o/r", NOW, [ENVS[0], { ...ENVS[0], label: "staging (copy)" }, ENVS[1]])).product;
+    const data = (s as { data: RepoProductEnv[] }).data;
+    const staging = data.find((e) => e.name === "staging")!;
+    expect(metricOf(staging, "signups")?.trend).toEqual([13, 12, 11, 10]);
+    expect(staging.totals[0].trend).toEqual([997, 998, 999, 1000]);
   });
 
   it("fewer than two midnights is a short trend the screen will not draw", async () => {

@@ -124,9 +124,15 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
   const dollars = (cents: number): string => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
   /** Fourteen daily totals wandering up to today's — placeholder shape, deterministic. */
   const daily = (today: number): number[] => Array.from({ length: 14 }, (_, i) => Math.round(today * (0.72 + 0.02 * i + ((i * 7) % 5) * 0.015)));
-  const COST_NOTE = "lower bound — unpriced models are not counted";
+  // Labels and notes as the Worker's registry has them (src/repo/product.ts) —
+  // this chunk cannot import it, so test/render.repo.test.ts holds the two together.
+  const NOTES: Record<string, string> = {
+    llm_cost_cents: "lower bound — unpriced models are not counted",
+    flashcards_created: "lower bound — deleted cards are not counted",
+    errors_4xx: "includes bot traffic and refused polls",
+  };
   const PRODUCT: [string, string, [string, string, number, number, number][]][] = [
-    ["growth", "Growth", [["signups", "Signups", 3, 21, 96], ["approvals", "Approvals", 2, 18, 88]]],
+    ["growth", "Growth", [["signups", "Signups", 3, 21, 96], ["approvals", "Approvals", 2, 18, 88], ["logins", "Logins", 74, 182, 306]]],
     ["learning", "Learning activity", [
       ["tutor_sessions", "Tutor sessions", 212, 1_380, 5_640], ["chat_messages", "Chat messages", 1_840, 12_300, 49_800],
       ["quizzes_started", "Quizzes started", 96, 640, 2_710], ["quizzes_completed", "Quizzes completed", 71, 488, 2_050],
@@ -135,7 +141,9 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     ]],
     ["community", "Community", [["room_messages", "Room messages", 264, 1_910, 7_320], ["feedback", "Feedback", 4, 19, 73], ["issue_reports", "Issue reports", 1, 6, 22]]],
     ["ai", "AI spend", [["llm_calls", "LLM calls", 3_120, 21_400, 86_900], ["llm_tokens", "LLM tokens", 4_800_000, 33_100_000, 134_000_000], ["llm_cost_cents", "LLM cost", 412, 2_961, 11_830]]],
-    ["reliability", "Reliability", [["errors_5xx", "5xx errors", 3, 17, 61], ["errors_4xx", "4xx errors", 142, 980, 3_870], ["quiz_generation_failed", "Quiz generation failed", 1, 9, 31], ["rag_retrieval_failed", "RAG retrieval failed", 0, 4, 12]]],
+    ["reliability", "Reliability", [["errors_5xx", "5xx errors", 3, 17, 61], ["errors_4xx", "4xx errors", 142, 980, 3_870], ["quiz_generation_failed", "Quiz generation failed", 1, 9, 31], ["quiz_context_write_failed", "Quiz context write failed", 0, 2, 5],
+      ["rag_retrieval_failed", "RAG retrieval failed", 0, 4, 12], ["rag_visibility_resync_failed", "RAG visibility resync failed", 0, 1, 3], ["rag_chunks_dropped", "RAG runs that dropped chunks", 2, 11, 40],
+    ]],
   ];
   const TOTALS: [string, string, number][] = [["users", "Users", 1_204], ["users_pending", "Users pending", 7], ["documents", "Documents", 8_420], ["flashcards", "Flashcards", 96_300], ["notes", "Notes", 12_750], ["rooms", "Rooms", 58]];
   const productEnv = (name: string, div: number): RepoProductEnv => {
@@ -143,7 +151,7 @@ export function repoSample(now: number = Date.now()): RepoDashboard {
     const groups: RepoProductGroup[] = PRODUCT.map(([id, title, rows]) => ({ id, title, metrics: rows.map(([key, label, a, b, c]) => {
       const raw = { "24h": scale(a), "7d": scale(b), "30d": scale(c) };
       const fmt = key === "llm_cost_cents" ? dollars : compact;
-      return { key, label, raw, values: { "24h": fmt(raw["24h"]), "7d": fmt(raw["7d"]), "30d": fmt(raw["30d"]) }, trend: daily(raw["24h"]), ...(key === "llm_cost_cents" ? { note: COST_NOTE } : {}) };
+      return { key, label, raw, values: { "24h": fmt(raw["24h"]), "7d": fmt(raw["7d"]), "30d": fmt(raw["30d"]) }, trend: daily(raw["24h"]), ...(NOTES[key] ? { note: NOTES[key] } : {}) };
     }) }));
     const totals = TOTALS.map(([key, label, n]) => ({ key, label, raw: scale(n), value: compact(scale(n)), trend: daily(scale(n)) }));
     return { name, groups, totals };
