@@ -762,6 +762,29 @@ each midnight by equality), because the plain `metric GLOB 'sap_*'` form walks e
 (~33k at steady state for two environments) to return ~3k. The shape saves rows READ, not the sort — the
 `UNION ALL … ORDER BY` still costs a temp b-tree in both arms.
 
+**On screen the Usage tab is a hierarchy, not tables** (`web/src/repo.ts`): APP USAGE compare (side by side —
+comparing environments is its job) → ONE **Product** section → infrastructure. Product shows ONE environment,
+picked by a segmented control (`state.repoProductEnv`, session-only; default = the LAST configured environment
+that has reported anything, else the first; the pressed button carries no `data-act`, so re-pressing it never
+replays the cross-fade; `repoProductEnv` flashes only `.repo-pswap`, a range switch flashes every `.repo-swap`).
+Inside it: the `totals` as an inline "Right now" stat strip; up to four headline tiles picked by KEY in a fixed
+order (`signups`, `tutor_sessions`, `llm_cost_cents`, `errors_5xx`, then `chat_messages`, `logins`,
+`quizzes_completed`; fewer than two present → no strip; `errors_5xx` > 0 is the one toned tile); then a block
+per group on a 12-column grid, its SHAPE keyed by the group `id` — `learning` a ranked bar list (sorted by the
+range's raw figure, bar = raw ÷ group max, null last with no bar), `ai` one feature figure (`llm_cost_cents`
+leads, the other keys are one quiet line — nothing derived, no cost-per-call), `reliability` a status list
+(non-zero rows with a tone dot — `bad`, except `errors_4xx` which stays neutral; every measured ZERO folds into
+one "N at zero — …" line; a null is named on its own "no recent reading" line and is NEVER counted a zero; the
+block's `min-height` is its tallest form across every range and environment so a switch shifts nothing under
+it), `growth` / `community` stat pairs, and `other` or ANY unrecognised group id as quiet rows at the end — no
+shape may depend on a key existing. `data-count` now takes an optional `data-count-fmt` (`compact` / `usd`,
+`formatCount`): `countUp` formats the in-between frames and LANDS on the element's own rendered text, so a
+compacted or dollar figure counts up without the browser ever re-deriving the Worker's string. Cloudflare and
+Railway are figure-over-label blocks per environment; the Cloudflare error-share bar is `errorShare` over the
+two compact strings that block itself shows (`parseCompact`), drawn only when both parse and requests > 0, and
+it prints NO percentage (the Worker's own error rate sits in the compare block above — a second, re-derived
+figure could disagree with it by a rounding).
+
 **Pruning** (`pruneRepoCapture`, `src/repo/store.ts`, the cron's 6-hourly `:30` tick): `health_*` metrics
 and `check` rows older than 45 days — the `check` deletion ONLY `WHERE part IS NULL`, because a FRONTEND
 deploy record IS a `check` row (`part = 'frontend'`) and must be kept forever like `deploy` rows; and the
