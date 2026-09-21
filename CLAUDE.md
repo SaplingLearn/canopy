@@ -737,19 +737,30 @@ only into prototype-less objects. Canopy is **generic over keys**: every valid k
 Sapling adds a metric with no Canopy change. The two halves never cost each other: a v1 body is a plain
 success, and a body whose `active_users` is refused still stores its product keys — that environment reads
 `failed`, with `written` the rows that landed. One environment's rows (≤ 171) go in ONE `putMetrics` call.
-Dropped keys are logged once per environment by NAME only and named in the `ok` outcome's `detail`.
+Dropped keys are logged once per environment by NAME only and named in the outcome's `detail` — an `ok`'s,
+and (appended to the refusal) a `failed`'s; an ignored SECTION is one name (`counts.*`) but counts every key
+it held. **A rejected name is scrubbed BEFORE it is cut to 40 characters**: the validator takes the poller's
+`scrub` as its optional `clean` argument (default identity, so it stays pure), because a scrub matches a WHOLE
+secret and 40 characters of a 64-character token (`openssl rand -hex 32`) match nothing — the same rule as
+every other cut in `src/repo/poll.ts`, including `failureReason`'s 8 KB READ cap, which scrubs the capped text
+whole and then drops a 256-character tail a cut-off secret could be hiding in. Token-leak tests use a
+64-character token (`LONG_TOKEN`, `test/helpers/repo.ts`) and assert no 8-character piece of it gets out.
 The `product` section (`projectProduct`, `src/tools/repo.ts`) lists every configured environment: `counts`
 grouped Growth / Learning activity / Community / AI spend / Reliability / Other (`src/repo/product.ts`; an
-unknown key → Other, labelled from the key; `llm_cost_cents` reads as dollars with a "lower bound" note), one
+unknown key → Other, labelled from the key; `llm_cost_cents` reads as dollars with a "lower bound" note —
+`flashcards_created` and `errors_4xx` carry notes too, printed as one footnote block under their group, a
+line per noted key; the registry lists what Sapling SERVES, so `study_guides` is not in it and
+`rag_chunks_dropped` is labelled "RAG runs that dropped chunks"), one
 figure per range, and `totals` on their own ("Right now" — they ignore the range selector). A figure shows
 only while its latest reading is ≤ 3 hours old (`HOSTING_STALE_MS`), else `null` → "no recent reading"; a key
-with no row in the read is absent. The trend is the readings stamped EXACTLY 00:00 UTC (the `24h` window for a
-count — the daily totals) over 30 days, a missed midnight ABSENT, the same line for every range. `ok` = any
+with no row in the read is absent. The trend is the daily totals — for a `counts` key its `24h` reading, for a `totals` key its own reading —
+stamped EXACTLY 00:00 UTC of each of the last 30 days, a missed midnight ABSENT, the same line for every range. `ok` = any
 figure current; `empty` = a `sap_*` row has ever landed (`metricsEver`'s prefix family, in its existing
 statement); else `not_connected`. It costs the render **ONE statement** — `productReadings`, a loose index
 scan (a recursive CTE hops distinct `sap_*` names, then seeks each name × environment: the fresh range, and
 each midnight by equality), because the plain `metric GLOB 'sap_*'` form walks every stored `sap_` entry
-(~45k at steady state) to return ~2.5k.
+(~33k at steady state for two environments) to return ~3k. The shape saves rows READ, not the sort — the
+`UNION ALL … ORDER BY` still costs a temp b-tree in both arms.
 
 **Pruning** (`pruneRepoCapture`, `src/repo/store.ts`, the cron's 6-hourly `:30` tick): `health_*` metrics
 and `check` rows older than 45 days — the `check` deletion ONLY `WHERE part IS NULL`, because a FRONTEND
