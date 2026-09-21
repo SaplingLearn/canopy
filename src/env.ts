@@ -16,4 +16,9 @@ export interface Env {
   NOTIFICATIONS_MODE?: "local" | "resend"; // delivery gate; absent → local (bodies to the dev table, Resend never called)
   RESEND_API_KEY?: string; // Resend API key; required only when NOTIFICATIONS_MODE = "resend"
   REPO_ENVIRONMENTS?: string; // JSON RepoEnvConfig[] (src/repo/config.ts): which branch deploys to which environment, and its URLs
+  // Both SECRETS, and both needed: absent either → the hourly Cloudflare analytics poll (src/repo/poll.ts) is skipped
+  // and the Usage tab's requests/error-rate + Cloudflare panel stay not_connected. Deliberately NOT named
+  // CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID — those are the names the wrangler CLI authenticates with.
+  CF_ANALYTICS_TOKEN?: string;      // Cloudflare API token with Account Analytics: Read
+  CF_ANALYTICS_ACCOUNT_ID?: string; // the Cloudflare account tag the frontend Workers live under
 }

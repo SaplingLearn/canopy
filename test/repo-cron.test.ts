@@ -160,11 +160,75 @@ describe("handleRepoCron", () => {
     await seedSprint();
     // A GitHub that would answer every arm: nothing may run here regardless.
     const gh = fakeGithub({ "/issues/1": { state: "closed" } });
-    await handleRepoCron(ghEnv(), HOURLY, gh.fetchImpl);
+    // Both analytics secrets pinned absent: a local `.dev.vars` must not decide this test.
+    await handleRepoCron(ghEnv({ CF_ANALYTICS_TOKEN: undefined, CF_ANALYTICS_ACCOUNT_ID: undefined }), HOURLY, gh.fetchImpl);
     expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
     expect(await snapshots()).toHaveLength(0);
     expect(await progressRows()).toHaveLength(0);
     expect(gh.calls).toHaveLength(4); // the four health pings, nothing else
+  });
+
+  // Task 16: the hourly-polls slot. Cloudflare analytics runs at minute 0 ONLY,
+  // and only when BOTH the token and the account id are set.
+  describe("the hourly Cloudflare analytics poll", () => {
+    const CF_URL = "https://api.cloudflare.com/client/v4/graphql";
+    const cfEnv = (over: Partial<Env> = {}): Env =>
+      ghEnv({ REPO_ENVIRONMENTS: JSON.stringify(ENVS), CF_ANALYTICS_TOKEN: "cf-token", CF_ANALYTICS_ACCOUNT_ID: "acct", ...over });
+    /** Health pings answer 200; the analytics endpoint answers one complete hour. */
+    const recorder = () => {
+      const calls: string[] = [];
+      const fetchImpl = (async (u: RequestInfo | URL) => {
+        calls.push(String(u));
+        if (String(u) !== CF_URL) return new Response("ok", { status: 200 });
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [{ workersInvocationsAdaptive: [
+          { dimensions: { datetimeHour: "2026-09-20T11:00:00Z" }, sum: { requests: 640, errors: 3 } },
+        ] }] } } }), { status: 200 });
+      }) as typeof fetch;
+      return { calls, fetchImpl, cf: () => calls.filter((c) => c === CF_URL) };
+    };
+    const cfRows = () => all<{ env: string; metric: string; value: number }>(env.DB, `SELECT env, metric, value FROM repo_metrics WHERE metric LIKE 'cf_%' ORDER BY env, metric`);
+
+    it("at minute 0 with both values set, polls once per environment and stores the hour", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv(), HOURLY, r.fetchImpl);
+      expect(r.cf()).toHaveLength(2);
+      expect(r.calls).toHaveLength(6); // 4 health pings + 2 analytics queries — far under the 50 cap
+      expect(await cfRows()).toEqual([
+        { env: "production", metric: "cf_errors", value: 3 }, { env: "production", metric: "cf_requests", value: 640 },
+        { env: "staging", metric: "cf_errors", value: 3 }, { env: "staging", metric: "cf_requests", value: 640 },
+      ]);
+      // Still nothing ELSE on this tick.
+      expect(await snapshots()).toHaveLength(0);
+    });
+
+    it("at minute 10 it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv(), PROGRESS_TICK, r.fetchImpl);
+      expect(r.cf()).toHaveLength(0);
+      expect(await cfRows()).toEqual([]);
+    });
+
+    it("with the token absent it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv({ CF_ANALYTICS_TOKEN: undefined }), HOURLY, r.fetchImpl);
+      expect(r.cf()).toHaveLength(0);
+      expect(await cfRows()).toEqual([]);
+    });
+
+    it("with the account id absent it is not called", async () => {
+      const r = recorder();
+      await handleRepoCron(cfEnv({ CF_ANALYTICS_ACCOUNT_ID: undefined }), HOURLY, r.fetchImpl);
+      expect(r.cf()).toHaveLength(0);
+    });
+
+    it("an analytics endpoint that throws never costs the tick", async () => {
+      const fetchImpl = (async (u: RequestInfo | URL) => {
+        if (String(u) === CF_URL) throw new Error("connect timeout");
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+      await expect(handleRepoCron(cfEnv(), HOURLY, fetchImpl)).resolves.toBeUndefined();
+      expect((await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric = 'health_up'`)).length).toBe(4);
+    });
   });
 
   it("at :10 of a 6-hourly hour the progress backstop runs, and the reconcile does not", async () => {

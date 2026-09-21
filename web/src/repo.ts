@@ -456,10 +456,12 @@ function usageTab(p: RepoProps): string {
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
-  const usage = sec(p, (d) => d.usage, { nc: "App usage isn't connected — requests and error rate wait on Cloudflare analytics; active users wait on the app's own metrics endpoint.", empty: "No usage recorded for this window.", lines: 4 }, (u) =>
+  const usage = sec(p, (d) => d.usage, { nc: "App usage isn't connected — requests and error rate wait on Cloudflare analytics; active users wait on the app's own metrics endpoint.", empty: "No usage recorded in the last 30 days.", lines: 4 }, (u) =>
     `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
-  const cf = sec(p, (d) => d.cloudflare, { nc: "The Cloudflare panel — and the requests/error metrics above — wait on a Cloudflare analytics token that isn't connected for this repo yet.", empty: "No Cloudflare metrics for this window." }, (c) =>
-    `<div class="repo-swap">${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
+  // `ok` is gated on the WIDEST range (30d), so a narrower one can legitimately
+  // hold no rows — say so, rather than render a titled panel with nothing in it.
+  const cf = sec(p, (d) => d.cloudflare, { nc: "The Cloudflare panel — and the requests/error metrics above — wait on a Cloudflare analytics token that isn't connected for this repo yet.", empty: "No Cloudflare metrics in the last 30 days." }, (c) =>
+    `<div class="repo-swap">${!c[p.range].length ? `<div style="padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">No requests in this range.</div>` : ""}${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
       <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(w.env)}</span>
       <span style="font-size:12.5px;color:var(--fg-55)">${esc(w.label)}</span>
       <span style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right">${esc(w.value)}</span>

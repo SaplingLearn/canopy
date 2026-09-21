@@ -76,7 +76,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `pruneRepoCapture`, CALLED by the repo cron's 6-hourly `:30` tick:
   45-day retention for high-frequency `check` rows and matching metrics, deliberately NOT covering `pr`/`push`,
   and the `check` deletion is further gated `part IS NULL` — a FRONTEND deploy record is a `check` row too
-  (`part = 'frontend'`) and must be kept forever like `deploy` rows, not aged out with plain CI checks),
+  (`part = 'frontend'`) and must be kept forever like `deploy` rows, not aged out with plain CI checks; plus a
+  separate 100-day bound on the HOURLY usage metrics — `cf_*` / `rw_*` / `active_users_*` — while
+  `coverage` / `bundle_kb` / `todo_count` match neither rule and are kept forever),
   `reads.ts` (every SELECT over the capture tables — D1 only, nothing here may fetch,
   including `recordingSince`, the earliest `recorded_at` per kind that the week-over-week deltas below gate
   on, and the ONE non-decisive-conclusion policy at `foldResult`/`checkState`), `github.ts`
@@ -514,8 +516,9 @@ did not.
 
 **The repo cron's per-tick schedule** (`src/repo/cron.ts`, `REPO_CRON = "*/10 * * * *"`, budget arithmetic
 stated at the dispatcher) — ONE heavy job per invocation, keyed off the fire time's UTC minute/hour:
-EVERY tick pings health (2 requests per environment, 4 today); `:00` is the hourly-polls slot, EMPTY today
-and reserved for Phase 5 (nothing else may run on it); and every 6th hour `:10` runs `recomputeAllProgress`
+EVERY tick pings health (2 requests per environment, 4 today); `:00` is the hourly-polls slot (nothing else
+may run on it) — today `pollCloudflare`, one GraphQL request per environment, skipped entirely unless BOTH
+`CF_ANALYTICS_TOKEN` and `CF_ANALYTICS_ACCOUNT_ID` are set; Phase 5's later pollers join it there; and every 6th hour `:10` runs `recomputeAllProgress`
 alone (unbounded — one request per issue number of every array-ref sprint), `:20` runs `reconcileRepo`
 alone (logging `failed` when non-empty), and `:30` runs `pruneRepoCapture` (D1 only). A tick of a
 non-6-hourly hour does health and nothing else.
@@ -548,22 +551,53 @@ count-1 row PER COMMIT) are excluded from the activity feed and the contributors
 40-commit backfill would otherwise read as 40 feed lines and P=40 for one person — but still count toward
 the Commits tile's totals and the 14-day bars, which read `repo_events` unfiltered by provenance.
 
-**Everything with no capture path is `not_connected`, never guessed** — usage, Cloudflare, hosting (the
+**Everything with no capture path is `not_connected`, never guessed** — today only hosting, plus each
+environment's ACTIVE USERS inside the usage section (`users: null` until Task 18's writer exists) (the
 `UNCAPTURED` object is the auditable list; drift/branches/health left it with Phase 3, environments/deploys/
-CI failures with Phase 2's Task 10, coverage/bundle/TODO counts with Phase 4's Task 14 — see below). Adding a
+CI failures with Phase 2's Task 10, coverage/bundle/TODO counts with Phase 4's Task 14, usage + the
+Cloudflare panel with Phase 5's Task 16 — see below). Adding a
 capture path = flip one section there to `ok`; the screen already renders every section's live shape.
 **Phase 3 closed drift, branches and health** (lighting up the drift strip, the branches list + Active
 branches tile, and the health block feeding the HEALTHY/DEGRADED/DOWN pill — see above; no GitHub settings
 change, no new secret); **Phase 4 (Task 14) closed coverage, bundle size and the TODO/FIXME count** (see the
-paragraph below); the phases after it, covering usage, Cloudflare and hosting, are specified in
+paragraph below); **Phase 5 (Task 16) closed the Usage tab's requests / error rate and the Cloudflare panel**
+(see "Cloudflare Workers analytics" below); what remains — active users and hosting — is specified in
 `docs/superpowers/plans/2026-09-20-repo-dashboard-capture.md`. `pruneRepoCapture` (`src/repo/store.ts`) is
 now CALLED — the repo cron's 6-hourly `:30` tick (`src/repo/cron.ts`) — and deletes `check` rows older than
 45 days ONLY `WHERE part IS NULL`: a FRONTEND deploy record IS a `check` row (the Workers Builds check,
 carrying `part = 'frontend'`), and pruning it on the same schedule as a plain CI check would silently lose
-the deploy dot strip's web half. Because those deploy rows are never pruned, `deployHistories`
+the deploy dot strip's web half. The same prune also drops HOURLY usage metrics (`cf_*`, `rw_*`,
+`active_users_*`) older than 100 days — the Usage tab reads 30 days at most. Because those deploy rows are never pruned, `deployHistories`
 (`src/repo/reads.ts`) carries its own 90-day bound instead of grouping the whole table forever. The capture names a PR's AUTHOR and an issue's subject, not who
 merged/closed — so the feed never claims an actor it does not have. "Preview with sample data" swaps in
 `repo-sample.ts` client-side (session-only, labelled on screen); it never touches the Worker.
+
+**Cloudflare Workers analytics feed the Usage tab** (Phase 5, Task 16) — a POLL, not event capture:
+`pollCloudflare` (`src/repo/poll.ts`) runs on the repo cron's minute-0 tick and asks Cloudflare's GraphQL
+analytics API (`https://api.cloudflare.com/client/v4/graphql`, dataset `workersInvocationsAdaptive`, filtered
+by `scriptName` = each environment's `cfg.worker`, grouped by `datetimeHour`, `sum { requests errors }`) for
+the last 3 hours, writing hourly `cf_requests` / `cf_errors` into `repo_metrics` (`env` = the config key,
+`part = 'frontend'`). Cloudflare's schema spells its scalar **`string`, lowercase** (`$a: string!`) —
+`String!` is rejected. **Only COMPLETE hours are stored**: `putMetric` is first-write-wins, so a partial
+count would be PERMANENT, and `datetime_leq` is inclusive — the bucket AT the current hour's floor can come
+back and is skipped (`at >= to`). The 3-hour overlap heals a missed tick; it cannot re-count an hour already
+written. A GraphQL failure arrives as HTTP **200 with an `errors` array** — that, a non-2xx, or a thrown
+fetch costs THAT environment the tick (logged, `data` never read beside `errors`) and the loop moves on; a
+malformed row (non-finite or negative count, unparseable hour) is skipped on its own. Never throws.
+The projection (`projectUsage` in `src/tools/repo.ts`) costs the render **ONE statement** — `metricsSince`
+(`src/repo/store.ts`: `metric IN (…)`, bound normalised like `metricSeries`) over 30 days for every range,
+environment and series, sliced in memory — plus ONE more (`metricsEver`, an index seek per metric name)
+only on the not-`ok` path. A range is its last N COMPLETE hours (24 / 168 / 720), cut into equal buckets
+(1h / 24h / 24h) that END at the last complete hour, never at UTC midnight. **Never guess, here**:
+`requests` / `errorRate` are non-null only when that environment has a `cf_requests` point IN THAT RANGE
+(else `null` → "not connected", never "0"); points summing to 0 requests read "0" and a true "0.00%"; the
+trend is DENSE (Cloudflare returns no row for an hour with no invocations, so a gap between captured points
+is 0) but zero-filled only from the first captured point — or from the range's start when the same read shows
+capture predates it — because before capture began the value is unknown, not zero. `usage` is `ok` when any
+metric of any range is non-null, the `cloudflare` panel when the WIDEST (30d) range has rows — so a narrower
+range can be `[]`, which the screen renders as "No requests in this range." — and both follow the
+health/coverage three-state rule: a point EVER landed but nothing in the window → `empty`, never landed (or
+no environment configured) → `not_connected`.
 
 **Coverage, bundle size and the TODO/FIXME count are commit-status metrics** (Phase 4, Task 14) — a THIRD
 capture shape beside `repo_events` and the environment/deploy `repo_snapshots`: the target repo's CI posts
@@ -579,7 +613,7 @@ frequent once the webhook subscribes to Statuses) is dropped after one cheap par
 **`description` must be a strict decimal, range-checked per metric** — `repo_metrics` is append-only and
 these three metrics are never pruned, so a bad point is PERMANENT. `Number(str(description))` alone accepted
 far too much (`Number(null) === 0`, a finite number — a `canopy/*` status with NO description silently
-stored a metric of `0` forever; `Number` also accepts `"1e3"`, `"0x10"`, a leading `-`, a trailing `%`).
+stored a metric of `0` forever; `Number` also accepts `"1e3"`, `"0x10"`, a leading `-`).
 `metricsFromStatus` now requires the trimmed description to match `/^\d+(\.\d+)?$/` (no sign, exponent, hex,
 percent sign, or empty string) AND fall inside the metric's plausible range — coverage 0–100, bundle_kb
 0–10,000,000, todo_count 0–10,000,000 as an INTEGER — kept beside the context→metric map (`STATUS_METRICS`)
@@ -731,21 +765,28 @@ cron's `:10` and `:20` 6-hourly ticks are skipped; the `:30` prune is D1-only an
 the health pings on every tick),
 `GEMINI_API_KEY`
 (Google Gemini key for capture-time PR/issue summaries — absent → the excerpt fallback), `RESEND_API_KEY`
-(email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`). Vars
+(email delivery; needed only when `NOTIFICATIONS_MODE = "resend"`), `CF_ANALYTICS_TOKEN` (a Cloudflare API
+token with Account Analytics: Read) and `CF_ANALYTICS_ACCOUNT_ID` (the account the frontend Workers live
+under — a SECRET too, never a `[vars]` entry: a var and a secret sharing a binding name collide and fail the
+deploy); absent either → the hourly Cloudflare analytics poll is skipped and the Usage tab's requests /
+error rate and Cloudflare panel stay `not_connected`. They are deliberately NOT named `CLOUDFLARE_API_TOKEN`
+/ `CLOUDFLARE_ACCOUNT_ID`, because those are the names the wrangler CLI itself authenticates with. Vars
 (`[vars]` in `wrangler.toml`): `GITHUB_REPO` (e.g. `SaplingLearn/sapling`), `ADMIN_LOGINS`, `PUBLIC_ORIGIN`
 (absolute origin for links inside email), `NOTIFICATIONS_MODE` (`local` default / `resend`),
 `REPO_ENVIRONMENTS` (a JSON list, parsed by `src/repo/config.ts`'s `repoEnvironments()` — which branch
 deploys to which environment plus its Worker/URLs; absent or malformed → `[]`. Today it encodes two:
 **staging** deploys from `main`, **production** from a `production` branch; backend on Railway, frontend on
-Cloudflare Workers. Now read in FOUR places: the webhook's repo capture
+Cloudflare Workers. Now read in FIVE places: the webhook's repo capture
 (matching a `deployment_status`/`check_run` delivery to its environment), the dashboard projection
 (`getRepoDashboard`'s `envs` param — the `environments`/`deploys`/`health` sections stay `not_connected` when
 it is empty; `ciFailures` does NOT consult it and is gated only on `run` capture), `reconcileRepo` — which
 reads it for the GitHub ENVIRONMENT NAMES the deployments GraphQL query filters on, and separately for the
 BRANCHES whose head commit, head checks, and drift/branch comparisons it polls — and the repo cron's
 `pingHealth` (`src/repo/poll.ts`), which reads it for the two ping targets (frontend URL, `apiUrl +
-healthPath`) per environment. Absent → no deployments arm, no env-head or head-checks arms, no drift
-compare (it needs two environments) and no health pings, and `environments`/`deploys`/`health` stay
+healthPath`) per environment — and `pollCloudflare`, which reads each environment's `worker` (the
+script name the analytics query filters on) and `key`. Absent → no deployments arm, no env-head or head-checks arms, no drift
+compare (it needs two environments), no health pings and no analytics poll, and
+`environments`/`deploys`/`health`/`usage`/`cloudflare` stay
 `not_connected` — but the **branches arm still runs**: `computeBranches` degrades correctly with `envs: []`
 (head `main`, nothing excluded from the list), so a repo with no `REPO_ENVIRONMENTS` still gets a branches
 snapshot rather than losing one for no structural reason).
@@ -753,8 +794,8 @@ Bindings: `DB`
 (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`), never at render —
 not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` is three expressions: `*/10 * * * *`
 drives the repo cron (`src/repo/cron.ts`'s `handleRepoCron`), which spreads ONE heavy job per invocation
-across its six ticks an hour — environment health pings on EVERY tick; `:00` the hourly-polls slot (none
-wired yet); and, every 6th hour, `:10` the sprint-progress backstop, `:20` the GitHub reconcile and `:30`
+across its six ticks an hour — environment health pings on EVERY tick; `:00` the hourly-polls slot (today
+the Cloudflare analytics poll); and, every 6th hour, `:10` the sprint-progress backstop, `:20` the GitHub reconcile and `:30`
 the capture prune, each alone in its invocation because Cloudflare caps one at 50 subrequests — plus the two
 hourly digest candidates (see Email notifications). `src/index.ts` dispatches by EXACT string equality on
 `controller.cron`, so `REPO_CRON` and the expression in `wrangler.toml` must stay identical (pinned by a

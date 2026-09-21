@@ -171,6 +171,18 @@ describe("repoView — live content", () => {
     expect(html).not.toMatch(/undefined|NaN/);
   });
 
+  // Task 16: the Cloudflare panel is `ok` once the WIDEST range has rows, so a
+  // narrower range can legitimately be empty — say so, never a blank panel.
+  it("a Cloudflare range with no rows says so instead of rendering a blank panel", () => {
+    const rows = [{ env: "staging", label: "Workers requests", value: "2.50M" }];
+    const data = live({ cloudflare: { status: "ok", data: { "24h": [], "7d": rows, "30d": rows } } });
+    const quiet = repoView(props({ tab: "usage", range: "24h", repo: { status: "ok", data } }));
+    expect(quiet).toContain("No requests in this range.");
+    const week = repoView(props({ tab: "usage", range: "7d", repo: { status: "ok", data } }));
+    expect(week).toContain("2.50M");
+    expect(week).not.toContain("No requests in this range.");
+  });
+
   it("M11: renders a null reviews count as an em dash, excluded from the bar width", () => {
     const person = (login: string): RepoPerson => ({ login, handle: login, name: null, color: null });
     const data = live({

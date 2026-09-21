@@ -6,7 +6,7 @@ import type { Env } from "../env";
 import { recomputeAllProgress } from "../tools/progress";
 import { repoEnvironments } from "./config";
 import { reconcileRepo } from "./github";
-import { pingHealth } from "./poll";
+import { pingHealth, pollCloudflare } from "./poll";
 import { pruneRepoCapture } from "./store";
 
 export const REPO_CRON = "*/10 * * * *";
@@ -19,8 +19,11 @@ export const REPO_CRON = "*/10 * * * *";
  * calls do not count) on the free plan, so the budget, counted from the code:
  *
  *   every tick   health pings — 2 per environment (`pingHealth`), 4 today.
- *   :00          the hourly-polls slot. EMPTY today; Phase 5 fills it, and
- *                nothing else may run on this tick.
+ *   :00          the hourly-polls slot, and nothing else may run on this
+ *                tick. Today: `pollCloudflare` — 1 GraphQL request per
+ *                environment (2 today), skipped entirely unless BOTH
+ *                `CF_ANALYTICS_TOKEN` and `CF_ANALYTICS_ACCOUNT_ID` are set.
+ *                Phase 5's later pollers join it here.
  *   :10 (h%6)    `recomputeAllProgress` — UNBOUNDED: `fetchGithubRefProgress`
  *                issues one request per issue number of every array-ref
  *                sprint, so it gets an invocation to itself.
@@ -52,8 +55,13 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
   await safely("health", () => pingHealth(env.DB, envs, scheduledTime, fetchImpl));
 
   if (minute === 0) {
-    // hourly polls land here in a later phase — and NOTHING else may join this
-    // tick: the slot exists so Phase 5's pollers get an invocation of their own.
+    // The hourly polls — and NOTHING else may join this tick: the slot exists
+    // so these pollers get an invocation of their own. Each is skipped entirely
+    // when its credentials are absent (its sections then stay not_connected).
+    const { CF_ANALYTICS_TOKEN: token, CF_ANALYTICS_ACCOUNT_ID: accountId } = env;
+    if (token && accountId) {
+      await safely("cloudflare", () => pollCloudflare(env.DB, { token, accountId }, envs, scheduledTime, fetchImpl));
+    }
     return;
   }
 

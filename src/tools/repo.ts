@@ -1,7 +1,9 @@
-import type {
-  RepoActivity, RepoBars, RepoBranches, RepoCodeStat, RepoContributor, RepoDashboard, RepoDeploy, RepoDeployRow,
-  RepoDrift, RepoEnv, RepoEnvPart, RepoHealth, RepoLabels, RepoPerson, RepoPr, RepoSection, RepoSprint, RepoStat,
-  RepoTodos, RepoTone, RepoTrend,
+import {
+  REPO_RANGES,
+  type RepoActivity, type RepoBars, type RepoBranches, type RepoCfRow, type RepoCodeStat, type RepoContributor,
+  type RepoDashboard, type RepoDeploy, type RepoDeployRow, type RepoDrift, type RepoEnv, type RepoEnvPart,
+  type RepoHealth, type RepoLabels, type RepoPerson, type RepoPr, type RepoRange, type RepoSection, type RepoSprint,
+  type RepoStat, type RepoTodos, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
 import { type DB, all, first, nowIso } from "../db";
@@ -11,7 +13,7 @@ import {
   hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
-import { getSnapshot, latestHealth, latestMetric, metricSeries } from "../repo/store";
+import { getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince } from "../repo/store";
 import type { RepoEventRow, RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
@@ -24,11 +26,15 @@ import type { RepoEventRow, RepoPrRow } from "../repo/types";
 // CI posting a commit status (`canopy/coverage` / `canopy/bundle-kb` /
 // `canopy/todo`) that the webhook's `status` branch turns into a metric point
 // (see `docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`) — never a
-// live scan at render time.
+// live scan at render time. The Usage tab's requests / error rate and the
+// Cloudflare panel (Task 16) are `repo_metrics` too: hourly `cf_requests` /
+// `cf_errors` the repo cron's minute-0 tick polls from Cloudflare's analytics
+// API (src/repo/poll.ts), read back here in ONE statement.
 //
-// Everything Canopy has NO capture path for — usage, Cloudflare analytics,
-// hosting — is returned as `not_connected`, never guessed (the `UNCAPTURED`
-// object below is the auditable list). Adding a capture path later means
+// Everything Canopy has NO capture path for — today only hosting (and, inside
+// the usage section, each environment's active users) — is returned as
+// `not_connected`, never guessed (the `UNCAPTURED` object below is the
+// auditable list). Adding a capture path later means
 // flipping ONE section here from `not_connected` to `ok`; the screen already
 // renders every section's live shape.
 
@@ -54,12 +60,13 @@ const NOT_CONNECTED = { status: "not_connected" } as const;
 
 /** The sections no capture path feeds yet. One object so the list is auditable. */
 const UNCAPTURED = {
-  usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED, hosting: NOT_CONNECTED,
+  hosting: NOT_CONNECTED,
 } as const;
 
 export function emptyRepoDashboard(repo: string, degraded: boolean): RepoDashboard {
   return {
     repo, generatedAt: nowIso(), degraded, ...UNCAPTURED,
+    usage: NOT_CONNECTED, cloudflare: NOT_CONNECTED,
     environments: NOT_CONNECTED, deploys: NOT_CONNECTED, ciFailures: NOT_CONNECTED, drift: NOT_CONNECTED,
     branches: NOT_CONNECTED, health: NOT_CONNECTED, coverage: NOT_CONNECTED, bundle: NOT_CONNECTED, todos: NOT_CONNECTED,
     stats: EMPTY, codeStats: EMPTY, bars: EMPTY, prs: EMPTY, activity: EMPTY,
@@ -182,6 +189,103 @@ function windowDelta(points: { at: string; value: number }[]): number | null {
 
 const fixed = (n: number, d: number): string => (Math.round(n * 10 ** d) / 10 ** d).toString();
 const signed = (n: number, d: number, unit = ""): string => `${n > 0 ? "+" : n < 0 ? "−" : ""}${fixed(Math.abs(n), d)}${unit}`;
+
+// ── usage + Cloudflare (Task 16) ─────────────────────────────────────────────
+const HOUR = 3_600_000;
+/** Every series the Usage tab reads, fetched in ONE statement. The
+ *  `active_users_*` gauges have no writer yet (Task 18) — reading them now
+ *  costs nothing and keeps `users: null` until one exists. */
+const USAGE_METRICS = ["cf_requests", "cf_errors", "active_users_24h", "active_users_7d", "active_users_30d"];
+/** A range is its last N COMPLETE hours, cut into equal buckets that END at the
+ *  last complete hour — so every bucket of a range covers the same span, and
+ *  the newest one is never a half-finished UTC day drawn as a drop. */
+const USAGE_RANGES: Record<RepoRange, { hours: number; step: number }> = {
+  "24h": { hours: 24, step: HOUR }, "7d": { hours: 168, step: DAY }, "30d": { hours: 720, step: DAY },
+};
+
+/** 1_234 → "1.2K", 2_500_000 → "2.50M". (999_950 up rounds to "1000.0K", so it is already an M.) */
+function compact(n: number): string {
+  if (n >= 999_950) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+
+interface UsagePoint { t: number; value: number }
+
+/**
+ * The Usage tab and the Cloudflare panel, derived IN MEMORY from one read of
+ * the last 30 days (`rows`, ascending by `at`). `endExcl` is the start of the
+ * current hour: only complete hours count, whatever the table holds.
+ *
+ * Never guess:
+ *  - `requests` / `errorRate` are non-null only when that environment has a
+ *    `cf_requests` point IN THAT RANGE; otherwise `null`, never "0".
+ *  - Points exist but sum to 0 requests → "0" and a true "0.00%" (0 errors).
+ *  - The trend is DENSE — Cloudflare returns no row for an hour without
+ *    invocations, so a missing bucket between captured ones is 0, and leaving
+ *    it out would silently compress the x-axis. But it is filled only from the
+ *    first captured point (or from the range's start when this read shows
+ *    capture predates it): before capture began the value is unknown, not zero.
+ */
+function projectUsage(
+  rows: { metric: string; env: string; part: string; at: string; value: number }[], envs: RepoEnvConfig[], endExcl: number
+): { usage: Record<RepoRange, RepoUsageEnv[]>; cloudflare: Record<RepoRange, RepoCfRow[]>; anyUsage: boolean } {
+  const usage = {} as Record<RepoRange, RepoUsageEnv[]>;
+  const cloudflare = {} as Record<RepoRange, RepoCfRow[]>;
+  for (const range of REPO_RANGES) { usage[range] = []; cloudflare[range] = []; }
+  let anyUsage = false;
+
+  for (const cfg of envs) {
+    const series = (metric: string, part: string): UsagePoint[] =>
+      rows.filter((r) => r.metric === metric && r.env === cfg.key && r.part === part)
+        .map((r) => ({ t: Date.parse(r.at), value: r.value })).filter((p) => Number.isFinite(p.t));
+    const complete = (pts: UsagePoint[]) => pts.filter((p) => p.t < endExcl);
+    const reqAll = complete(series("cf_requests", "frontend"));
+    const errAll = complete(series("cf_errors", "frontend"));
+
+    for (const range of REPO_RANGES) {
+      const { hours, step } = USAGE_RANGES[range];
+      const start = endExcl - hours * HOUR;
+      const inRange = (pts: UsagePoint[]) => pts.filter((p) => p.t >= start);
+      const req = inRange(reqAll);
+      const err = inRange(errAll);
+      const usr = inRange(series(`active_users_${range}`, ""));
+
+      let requests: RepoUsageMetric | null = null;
+      let errorRate: RepoUsageMetric | null = null;
+      if (req.length) {
+        const idx = (p: UsagePoint) => Math.floor((p.t - start) / step);
+        const bucket = (pts: UsagePoint[]): number[] => {
+          const out = new Array<number>((hours * HOUR) / step).fill(0);
+          for (const p of pts) out[idx(p)] += p.value;
+          // `reqAll` is ascending: its first point predating the range means
+          // capture was already running when the range began.
+          return out.slice(reqAll[0].t < start ? 0 : idx(req[0]));
+        };
+        const reqBuckets = bucket(req);
+        const errBuckets = bucket(err);
+        const total = req.reduce((n, p) => n + p.value, 0);
+        const errors = err.reduce((n, p) => n + p.value, 0);
+        const rate = total ? (errors / total) * 100 : 0;
+        requests = { value: compact(total), trend: reqBuckets, tone: "neutral" };
+        errorRate = {
+          value: `${rate.toFixed(2)}%`, tone: rate >= 1 ? "warn" : "good",
+          trend: errBuckets.map((e, i) => (reqBuckets[i] ? (e / reqBuckets[i]) * 100 : 0)),
+        };
+        cloudflare[range].push(
+          { env: cfg.label, label: "Workers requests", value: compact(total) },
+          { env: cfg.label, label: "Workers errors", value: compact(errors) },
+        );
+      }
+      const users: RepoUsageMetric | null = usr.length
+        ? { value: compact(usr[usr.length - 1].value), trend: usr.map((p) => p.value), tone: "neutral" }
+        : null;
+      if (requests || users) anyUsage = true;
+      usage[range].push({ name: cfg.label, host: cfg.frontendUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""), requests, errorRate, users });
+    }
+  }
+  return { usage, cloudflare, anyUsage };
+}
 
 /** `YYYY-MM-DD` (UTC) for each of the last `n` days, oldest first. */
 function lastDays(now: number, n: number): string[] {
@@ -580,8 +684,25 @@ export async function getRepoDashboard(
       })
     : await everEmpty("todo_count");
 
+  // ── usage + the Cloudflare panel — hourly `cf_*` metrics the repo cron polls
+  // at minute 0 (src/repo/poll.ts). ONE statement for every range, environment
+  // and series; the 24h / 7d / 30d views are sliced in memory. Same three
+  // states as health and coverage: `ok` with something to show, `empty` when a
+  // point has EVER landed but nothing is in the window (the poll has gone
+  // quiet), `not_connected` when none ever did — and that existence read
+  // (`metricsEver`, one more statement) is only made on the not-ok path. No
+  // environment configured → nothing to attribute a Worker to: not_connected.
+  const usageEnd = Math.floor(now / HOUR) * HOUR;
+  const usageRows = envs.length ? await metricsSince(db, USAGE_METRICS, new Date(usageEnd - USAGE_RANGES["30d"].hours * HOUR).toISOString()) : [];
+  const used = projectUsage(usageRows, envs, usageEnd);
+  // Gated on the WIDEST range; a narrower one may legitimately hold no rows.
+  const anyCf = used.cloudflare["30d"].length > 0;
+  const usageEver = envs.length && (!used.anyUsage || !anyCf) ? await metricsEver(db, USAGE_METRICS) : new Set<string>();
+
   return {
     repo, generatedAt: nowAt, degraded: false, ...UNCAPTURED,
+    usage: used.anyUsage ? ok(used.usage) : usageEver.size ? EMPTY : NOT_CONNECTED,
+    cloudflare: anyCf ? ok(used.cloudflare) : usageEver.has("cf_requests") ? EMPTY : NOT_CONNECTED,
     coverage, bundle, todos,
     drift: driftSnap ? ok(driftSnap.data) : NOT_CONNECTED,
     branches: branchSnap ? ok(branchSnap.data) : NOT_CONNECTED,

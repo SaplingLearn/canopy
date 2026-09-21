@@ -22,6 +22,8 @@ declare global {
       PUBLIC_ORIGIN?: string;
       NOTIFICATIONS_MODE?: "local" | "resend";
       REPO_ENVIRONMENTS?: string;
+      CF_ANALYTICS_TOKEN?: string;
+      CF_ANALYTICS_ACCOUNT_ID?: string;
     }
   }
 }

@@ -9,6 +9,13 @@ const DAY = 86_400_000;
 const FAST_METRICS = ["health_up", "health_ms"];
 const FAST_KINDS = ["check"];
 const FAST_RETENTION_DAYS = 45;
+/** Hourly usage series — Cloudflare analytics (`cf_*`), and the Railway
+ *  (`rw_*`) and active-user (`active_users_*`) gauges later tasks add. The Usage
+ *  tab reads 30 days at most, so 100 days is ample; unbounded, two environments
+ *  add ~35,000 rows a year. GLOB, not LIKE: in LIKE `_` is itself a wildcard
+ *  (`cf_%` would also match `cfx…`), and GLOB is case-sensitive like the names. */
+const USAGE_METRIC_GLOBS = ["cf_*", "rw_*", "active_users_*"];
+const USAGE_RETENTION_DAYS = 100;
 
 export async function putSnapshot(db: DB, kind: string, data: unknown, now: string = nowIso()): Promise<void> {
   await run(db,
@@ -67,6 +74,35 @@ export async function metricSeries(db: DB, metric: string, env: string, part: st
     metric, env, part, since);
 }
 
+/** Several series in ONE statement — every (env, part) of every named metric
+ *  from `sinceIso` on, ascending by `at`. The Usage tab's read: the caller asks
+ *  once for its widest window and slices the narrower ranges in memory, instead
+ *  of a `metricSeries` per range × environment × metric. The bound is normalised
+ *  exactly as `metricSeries` normalises its own (see above); an unparseable one,
+ *  or no metric names, returns []. */
+export async function metricsSince(db: DB, metrics: string[], sinceIso: string): Promise<{ metric: string; env: string; part: string; at: string; value: number }[]> {
+  const since = normaliseAt(sinceIso);
+  if (since === null || !metrics.length) return [];
+  return all<{ metric: string; env: string; part: string; at: string; value: number }>(db,
+    `SELECT metric, env, part, at, value FROM repo_metrics WHERE metric IN (${ph(metrics.length)}) AND at >= ? ORDER BY at ASC, id ASC`,
+    ...metrics, since);
+}
+
+/** Which of `metrics` have EVER landed — any env, any part, any age. ONE
+ *  statement, an index seek per name (`idx_repo_metrics_series` leads with
+ *  `metric`), never a scan of the series. It is what separates a section that
+ *  is `empty` (the source reported before and has gone quiet) from one that is
+ *  `not_connected` — the many-metric sibling of the `latestMetric` existence
+ *  check the coverage/bundle/TODO sections make. */
+export async function metricsEver(db: DB, metrics: string[]): Promise<Set<string>> {
+  if (!metrics.length) return new Set();
+  const rows = await all<{ metric: string }>(db,
+    `WITH asked(metric) AS (VALUES ${metrics.map(() => "(?)").join(", ")})
+     SELECT metric FROM asked WHERE EXISTS (SELECT 1 FROM repo_metrics r WHERE r.metric = asked.metric)`,
+    ...metrics);
+  return new Set(rows.map((r) => r.metric));
+}
+
 export async function latestMetric(db: DB, metric: string, env: string, part: string): Promise<{ at: string; value: number } | null> {
   return first<{ at: string; value: number }>(db,
     `SELECT at, value FROM repo_metrics WHERE metric = ? AND env = ? AND part = ? ORDER BY at DESC LIMIT 1`, metric, env, part);
@@ -91,6 +127,10 @@ export async function latestHealth(db: DB): Promise<Map<string, { at: string; va
 export async function pruneRepoCapture(db: DB, now: number): Promise<void> {
   const cutoff = new Date(now - FAST_RETENTION_DAYS * DAY).toISOString();
   await run(db, `DELETE FROM repo_metrics WHERE metric IN (${ph(FAST_METRICS.length)}) AND at < ?`, ...FAST_METRICS, cutoff);
+  // Hourly usage series get their own, longer bound. Every other metric
+  // (coverage, bundle_kb, todo_count) matches neither rule and is kept forever.
+  const usageCutoff = new Date(now - USAGE_RETENTION_DAYS * DAY).toISOString();
+  await run(db, `DELETE FROM repo_metrics WHERE (${USAGE_METRIC_GLOBS.map(() => "metric GLOB ?").join(" OR ")}) AND at < ?`, ...USAGE_METRIC_GLOBS, usageCutoff);
   // `part IS NULL` only: a `check` row carrying a `part` (a Workers Builds run
   // tagged as a frontend deploy — see the migration's column notes) is a
   // DEPLOY record and must be kept forever like `deploy` rows, or the
