@@ -576,22 +576,41 @@ contexts, one metric each: `canopy/coverage` → `coverage`, `canopy/bundle-kb` 
 branch (today `main`; falling back to the literal `"main"` when no environment is configured) — a feature
 branch's coverage is not the repo's — and an unrelated context (Railway's or CodeRabbit's own statuses,
 frequent once the webhook subscribes to Statuses) is dropped after one cheap parse, costing zero D1 writes.
-`putMetric` (`src/repo/store.ts`) now returns whether it wrote a NEW row (false for a redelivery or an
+**`description` must be a strict decimal, range-checked per metric** — `repo_metrics` is append-only and
+these three metrics are never pruned, so a bad point is PERMANENT. `Number(str(description))` alone accepted
+far too much (`Number(null) === 0`, a finite number — a `canopy/*` status with NO description silently
+stored a metric of `0` forever; `Number` also accepts `"1e3"`, `"0x10"`, a leading `-`, a trailing `%`).
+`metricsFromStatus` now requires the trimmed description to match `/^\d+(\.\d+)?$/` (no sign, exponent, hex,
+percent sign, or empty string) AND fall inside the metric's plausible range — coverage 0–100, bundle_kb
+0–10,000,000, todo_count 0–10,000,000 as an INTEGER — kept beside the context→metric map (`STATUS_METRICS`)
+so the two read as one table; anything else is dropped, never stored. `metricsFromStatus` stays PURE (no
+`console`) — it returns a `StatusMetricOutcome` (`{ metrics, dropped }`) where `dropped` is set only when the
+context WAS one of the three `canopy/*` names and the point was dropped (by the branch filter or by
+validation); `src/webhook.ts`'s `status` arm is the one that `console.warn`s it once, naming the context and
+reason (never the raw description beyond ~40 chars) — an unrelated context stays silent and free.
+`putMetric` (`src/repo/store.ts`) returns whether it wrote a NEW row (false for a redelivery or an
 unparseable `at`), so the webhook counts only newly-captured metrics into `repo.captured`, a redelivery into
 `repo.unchanged` — the same shape every other repo-capture kind reports. **`metricSeries`'s `sinceIso` bound
-is now normalised the same way `at` is stored** (`Date.parse` → `toISOString()`) before the comparison: `at`
+is normalised the same way `at` is stored** (`Date.parse` → `toISOString()`) before the comparison: `at`
 is compared as a raw string, and a caller-computed bound lacking milliseconds (`…00Z`) would otherwise sort
 AFTER a normalised `…00.000Z` row of the exact same instant and wrongly exclude it; an unparseable bound now
 returns `[]` instead of every row ever written. **A delta claims a trend only once the window holds ≥2
 points whose first and last are ≥7 days apart** (`windowDelta` in `src/tools/repo.ts`) — a single reading,
 or two readings a day apart, cannot support "over 30 days" (coverage/bundle read a 30-day window) or a
 "since" date (the TODO count reads a 90-day window — it moves slowly enough that 30 days too often holds
-only one point). Below that bar, `RepoTrend.delta` is `""` (the screen renders no delta text and no stray
-leading space where it used to sit) and `RepoTodos.delta` is `null` (`number | null` in `shared/repo.ts` —
-no delta chip and no "since" text); the value/count and sparkline still show regardless. Both sections stay
-`not_connected` until BOTH the webhook subscribes to `status` (see above) AND the target repo's CI actually
-posts these statuses — the CI-side YAML (the workflow `permissions` block, the `pytest-cov` lockfile caveat,
-why bundle size is left optional) is written up in
+only one point); its baseline is the window's FIRST point, which — once a series holds more than 10 readings
+— may lie left of the 10-point sparkline drawn beside it. Below that bar, `RepoTrend.delta` is `""` (the
+screen renders no delta text and no stray leading space where it used to sit) and `RepoTodos.delta` is
+`null` (`number | null` in `shared/repo.ts` — no delta chip and no "since" text); the value/count still show
+regardless, but the sparkline itself is now also suppressed below 2 points (`sparkPoints` already returned
+`""` for fewer than 2 — `web/src/repo.ts`'s `spark()` now renders no element at all rather than an empty
+box). **All three sections — not two — read `empty`, not `not_connected`, once a metric has landed before
+but nothing falls inside its window**: `getRepoDashboard` checks `latestMetric(db, metric, "", "")` only on
+the empty path (non-null → `empty`, null → `not_connected`), so a metric that stopped reporting reads
+truthfully as "gone quiet" rather than "never connected" — same distinction the `health` block already drew.
+All three stay `not_connected` from a cold start, until BOTH the webhook subscribes to `status` (see above)
+AND the target repo's CI actually posts these statuses — the CI-side YAML (the workflow `permissions` block,
+the `pytest-cov` lockfile caveat, why bundle size is left optional) is written up in
 `docs/superpowers/specs/2026-09-20-sapling-ci-metrics.md`, a PR against the separate `SaplingLearn/sapling`
 repository that this repo cannot carry directly.
 
