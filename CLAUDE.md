@@ -757,8 +757,11 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   GitHub I/O and the PR summarizer are dependency-injected (`fetchImpl?: typeof fetch`, `summarizer`)
   because the vitest pool exports no fetch/AI mock — stub at the `Response`/`Summarizer` level, never hit
   the network in tests.
-- A `GEMINI_API_KEY` in your local `.dev.vars` leaks into the vitest pool and fails ONE summarizer test
-  ("GEMINI_API_KEY unset in tests → excerpt"); it is environmental, not a regression.
+- The vitest pool loads your local `.dev.vars` through the wrangler config, so `vitest.config.ts` BLANKS every
+  secret that would make a test resolve a real network client (`GEMINI_API_KEY`, `GITHUB_SERVICE_TOKEN`,
+  `RESEND_API_KEY`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN_STAGING` /
+  `_PRODUCTION`, `SAPLING_METRICS_TOKEN`) — a test that needs one passes its own value in a per-test env
+  object, and the suite is fully green with no carve-out.
 - **Deferred seams — do NOT activate:** Cloudflare Queue, Vectorize, the GitHub OAuth provider for MCP.
   They exist as `// SEAM:` comments only.
 

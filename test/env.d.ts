@@ -18,6 +18,8 @@ declare global {
       GITHUB_WEBHOOK_SECRET?: string;
       GITHUB_REPO?: string;
       GITHUB_SERVICE_TOKEN?: string;
+      GEMINI_API_KEY?: string;
+      RESEND_API_KEY?: string;
       ADMIN_LOGINS?: string;
       PUBLIC_ORIGIN?: string;
       NOTIFICATIONS_MODE?: "local" | "resend";
