@@ -251,7 +251,7 @@ export interface PollOutcome {
 export type UsagePollSource = PollOutcome[] | "not_configured";
 export interface UsagePollResult { cloudflare: UsagePollSource; railway: UsagePollSource; sapling: UsagePollSource }
 
-// ── "Poll now" (POST /admin/poll) — every source the dashboard shows, on demand. TYPES ONLY ──
+// ── "Poll now" (POST /admin/poll) — health, usage and GitHub, on demand. TYPES ONLY ──
 /** `reconcileRepo`'s own result: `failed` holds ARM NAMES (`"deployments"`,
  *  `"runs"`, …) or one fixed phrase — never an error message, never a secret. */
 export interface RepoRefreshGithub { written: number; unchanged: number; failed: string[] }

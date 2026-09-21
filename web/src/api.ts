@@ -194,7 +194,7 @@ export function adminBackfill(batch: number, of: number): Promise<{
   return postJson("/admin/backfill", { batch, of });
 }
 
-// ADMIN action: "Poll now" — refresh EVERY source the Repo dashboard shows
+// ADMIN action: "Poll now" — refresh what the Repo dashboard polls for
 // (admin-only route, no body): health pings, the three usage pollers, then the
 // GitHub reconcile. Every write is idempotent with the cron's. Resolves to
 // per-source outcomes; the response never carries a token, a header or an

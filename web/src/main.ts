@@ -396,7 +396,7 @@ function loadRepo(): void {
       rerender();
     });
 }
-// "Poll now" (admins, the Repo top bar — every tab): refresh every source the
+// "Poll now" (admins, the Repo top bar — every tab): refresh the sources the
 // dashboard shows (health pings, the usage pollers, the GitHub reconcile), then
 // re-read the dashboard so whatever they wrote is on screen, with the per-source
 // outcomes in a strip at the top of whichever tab is open — it survives a tab

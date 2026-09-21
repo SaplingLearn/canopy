@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { all } from "../src/db";
+import { ingestRepoEvent } from "../src/consumer";
 import { reconcileRepo } from "../src/repo/github";
 import { repoEventsFromDelivery } from "../src/repo/capture";
 import { hasCaptured } from "../src/repo/reads";
@@ -184,6 +185,24 @@ describe("reconcileRepo — the statuses arm (coverage / bundle / TODO)", () => 
   });
 });
 
+describe("reconcileRepo — every GitHub read is bounded", () => {
+  it("sends an abort signal with every request, and a timeout is that arm's failure by name", async () => {
+    const base = fakeGithub({ "/commits?sha=main&per_page=1": [headCommit] });
+    const signals: unknown[] = [];
+    const hanging = (async (u: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal);
+      if (String(u).includes("/statuses")) throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      if (String(u).endsWith("/graphql") && String(init?.body ?? "").includes("pullRequests(")) throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      return base.fetchImpl(u, init);
+    }) as typeof fetch;
+    const { out } = await quietly(() => reconcileRepo(env.DB, OPTS(hanging), ENVS, NOW));
+    expect(out.failed).toEqual(["statuses", "reviews"]);
+    expect(signals.length).toBeGreaterThan(10);
+    for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+    expect((await all(env.DB, `SELECT kind FROM repo_snapshots WHERE kind = 'branches'`))).toHaveLength(1); // the arms after them ran
+  });
+});
+
 describe("reconcileRepo — the reviews arm", () => {
   // THE parity test: the polled row's key is what the webhook's own derivation
   // yields for the same review id — so whichever lands first, the other drops.
@@ -253,15 +272,71 @@ describe("reconcileRepo — the reviews arm", () => {
     expect(dismissed.semantic_key).toBe("gh:review:12:dismissed");
   });
 
-  it("after a poll `hasCaptured('review')` is true, so the contributors' reviews stop being null", async () => {
-    expect(await hasCaptured(env.DB, "review")).toBe(false);
+  // The review's M2. A polled row proves a review HAPPENED; it can never prove
+  // one did not (open PRs only, the last 10 each) — so it must not turn the
+  // contributors' `R` from "—" (unknown) into a number, where everyone the arm
+  // could not see would read a hard 0.
+  const contributors = async () => {
+    const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+    return d.contributors.status === "ok"
+      ? (d.contributors as { data: { person: { login: string }; pushes: number; reviews: number | null }[] }).data.map((r) => [r.person.login, r.reviews])
+      : d.contributors.status;
+  };
+  const aPush = (login: string) => ingestRepoEvent(env.DB, {
+    semantic_key: `gh:push:${login}`, kind: "push", ref: "main", sha: `sha-${login}`, actor_login: login, count: 1, title: "work",
+    raw: "{}", provenance: "webhook", occurred_at: "2026-09-20T08:00:00Z",
+  });
+
+  it("polled-only reviews: captured, but `R` stays null for EVERYONE — never a hard 0 off an incomplete source", async () => {
+    await aPush("alice"); // reviewed a PR that was merged before the poll — the arm can never see it
+    await aPush("Darkest-Teddy");
     const gh = fakeGithub({ reviewsGraphql: reviews({ number: 480, nodes: [reviewNode()] }) });
     await reconcileRepo(env.DB, OPTS(gh.fetchImpl), ENVS, NOW);
     expect(await hasCaptured(env.DB, "review")).toBe(true);
+    expect(await hasCaptured(env.DB, "review", "backfill")).toBe(true);
+    expect(await hasCaptured(env.DB, "review", "webhook")).toBe(false);
+    expect(await contributors()).toEqual([["alice", null], ["Darkest-Teddy", null]]);
+  });
+
+  it("one WEBHOOK review row opens the gate — and the numbers then include the polled rows", async () => {
+    await aPush("alice");
+    const gh = fakeGithub({ reviewsGraphql: reviews({ number: 480, nodes: [
+      reviewNode(),
+      reviewNode({ databaseId: 3002, state: "COMMENTED", author: { login: "meilin", __typename: "User" } }),
+    ] }) });
+    await reconcileRepo(env.DB, OPTS(gh.fetchImpl), ENVS, NOW);
+    // Gate closed: a hidden tally neither orders the list nor adds a row for
+    // someone known only by a polled review.
+    expect(await contributors()).toEqual([["alice", null]]);
+
+    // The hook gets subscribed: a delivery for a review the poll already stored
+    // is `unchanged` — it must NOT open the gate (no webhook row was written)…
+    await deliver("pull_request_review", reviewFixture, withEnvs);
+    expect(await hasCaptured(env.DB, "review", "webhook")).toBe(false);
+    // …a NEW review's delivery does.
+    await deliver("pull_request_review", { ...reviewFixture, review: { ...reviewFixture.review, id: 3003, user: { login: "alice" } } }, withEnvs);
+    expect(await hasCaptured(env.DB, "review", "webhook")).toBe(true);
+    expect(await contributors()).toEqual([["alice", 1], ["Darkest-Teddy", 1], ["meilin", 1]]); // two of them polled rows
+  });
+
+  // "Awaiting review" and APPROVED are NOT gated: they are about OPEN PRs, the
+  // set the arm reads, and they act on an approval that EXISTS.
+  it("Awaiting review reacts to a polled approval at once", async () => {
+    const pr = (number: number) => ({ number, title: `PR ${number}`, html_url: `https://github.com/o/r/pull/${number}`, state: "open", draft: false, merged_at: null, updated_at: "2026-09-20T09:10:00Z", user: { login: "lpcooper-arch" }, head: { ref: `b${number}`, sha: `s${number}` }, base: { ref: "main" } });
+    const awaiting = async () => {
+      const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
+      return (d.stats as { data: { label: string; value: number }[] }).data.find((t) => t.label === "Awaiting review")?.value;
+    };
+    const prsOnly = fakeGithub({ "/pulls?state=open": [pr(480), pr(481)] });
+    await reconcileRepo(env.DB, OPTS(prsOnly.fetchImpl), ENVS, NOW);
+    expect(await awaiting()).toBe(2);
+
+    const withApproval = fakeGithub({ "/pulls?state=open": [pr(480), pr(481)], reviewsGraphql: reviews({ number: 480, nodes: [reviewNode()] }) });
+    await reconcileRepo(env.DB, OPTS(withApproval.fetchImpl), ENVS, NOW);
+    expect(await hasCaptured(env.DB, "review", "webhook")).toBe(false);
+    expect(await awaiting()).toBe(1);
     const d = await getRepoDashboard(env.DB, "o/r", NOW, ENVS);
-    expect(d.contributors.status).toBe("ok");
-    const rows = (d.contributors as { data: { person: { login: string }; reviews: number | null }[] }).data;
-    expect(rows.map((r) => [r.person.login, r.reviews])).toEqual([["Darkest-Teddy", 1]]);
+    expect((d.prs as { data: { number: number; state: string }[] }).data.map((r) => [r.number, r.state]).sort()).toEqual([[480, "approved"], [481, "review"]]);
   });
 
   it("a failing reviews query is named in `failed`, stops nothing, and never logs the token", async () => {

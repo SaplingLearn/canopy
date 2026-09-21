@@ -9,8 +9,15 @@ import type { RepoEventKind, RepoEventRow, RepoPart, RepoPrRow, RepoReviewRow, R
  *  narrow the same way. */
 const PR_ROW_COLS = "number, state, ref, sha, actor_login, title, url, occurred_at";
 
-export async function hasCaptured(db: DB, kind: RepoEventKind): Promise<boolean> {
-  return (await first<{ n: number }>(db, `SELECT 1 AS n FROM repo_events WHERE kind = ? LIMIT 1`, kind)) !== null;
+/** Has a row of `kind` EVER been captured? With `provenance`, only a row from
+ *  that source counts — for the one claim a polled row cannot support: the
+ *  reconcile's `reviews` arm sees the 30 most recently updated OPEN PRs and
+ *  their last 10 reviews, so it can never say someone reviewed NOTHING; only
+ *  the webhook, complete going forward once subscribed, can. */
+export async function hasCaptured(db: DB, kind: RepoEventKind, provenance?: "webhook" | "backfill"): Promise<boolean> {
+  return provenance
+    ? (await first<{ n: number }>(db, `SELECT 1 AS n FROM repo_events WHERE kind = ? AND provenance = ? LIMIT 1`, kind, provenance)) !== null
+    : (await first<{ n: number }>(db, `SELECT 1 AS n FROM repo_events WHERE kind = ? LIMIT 1`, kind)) !== null;
 }
 
 /** When capture of `kind` began recording (the earliest `recorded_at`, NOT

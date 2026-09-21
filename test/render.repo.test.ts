@@ -1040,7 +1040,11 @@ describe("Poll now — the Repo top bar, every tab", () => {
 
   it("the two controls say different things, and the button has a name when its label is hidden", () => {
     const bar = repoControls(props({ admin: true }));
-    expect(bar).toMatch(/data-act="repoPollNow" title="Poll every source now \(admin\)" aria-label="Poll every source now \(admin\)"/);
+    const TITLE = "Poll deploys, CI, usage and health now (admin) — issues refresh with Sync GitHub";
+    expect(bar).toContain(`data-act="repoPollNow" title="${TITLE}" aria-label="${TITLE}"`);
+    expect(bar).not.toContain("every source"); // it does not: issues refresh with Sync GitHub
+    // While it runs, the title says so too — not only the label a narrow bar hides.
+    expect(repoControls(props({ admin: true, poll: { status: "polling" } }))).toContain('data-act="repoPollNow" title="Polling…" aria-label="Polling…"');
     expect(bar).toMatch(/data-act="repoRefresh" title="Reload from Canopy's database"/);
     // Narrow widths hide the label by CLASS (canopy.css) — the markup is the same at every width.
     expect(bar).toContain('class="cnpy-outlinebtn repo-pollbtn"');

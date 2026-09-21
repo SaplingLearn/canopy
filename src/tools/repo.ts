@@ -848,13 +848,29 @@ export async function getRepoDashboard(
   // push's P=1 for the same 40 commits.
   for (const p of pushesThisWeek) if (p.actor_login && !p.actor_login.endsWith("[bot]") && p.provenance === "webhook") bump(p.actor_login, "pushes");
   for (const p of mergedThisWeek) bump(p.subject_login, "merged");
-  // Same rule as the pushes above: a review bot (CodeRabbit, Copilot) is not a
-  // person having a week, and would dwarf every human column.
-  for (const r of reviews) if (r.occurred_at > weekAgo && r.actor_login && !r.actor_login.endsWith("[bot]")) bump(r.actor_login, "reviews");
   // A tally of 0 would render as a real "0 reviews" column. Show the count only
-  // once a `review` row has ever been captured; until then it is `null` (never
-  // guessed) — `reviews` in the window can legitimately be 0 for a person.
-  const hasReviewCapture = await hasCaptured(db, "review");
+  // once a `review` row has been captured BY THE WEBHOOK; until then it is
+  // `null` (never guessed) — `reviews` in the window can legitimately be 0 for a
+  // person. A polled row does not open the gate: reconcile's `reviews` arm sees
+  // only the 30 most recently updated OPEN PRs × their last 10 reviews, so a
+  // person whose one review sits on a PR merged before the poll would read a
+  // hard `0` — a claim ("reviewed nothing") that arm cannot support. The
+  // webhook, once subscribed, is complete going forward. With the gate open,
+  // polled rows count like any other (they dedupe against the webhook's).
+  // `approvedPrs` / "Awaiting review" above are NOT gated, and use polled rows
+  // at once: they ask only about OPEN PRs — the set the arm reads — and act on
+  // a POSITIVE fact (an approval or a change request exists). What the arm can
+  // miss (an open PR past the 30th, an approval buried under 10 later reviews)
+  // leaves that PR reading "awaiting review", which is what EVERY open PR read
+  // before the arm existed: a polled row can only make that tile more right.
+  const hasReviewCapture = await hasCaptured(db, "review", "webhook");
+  // Tallied only with the gate open: a hidden count must not order the list or
+  // add a row ("0 · 0 · —") for someone known only by a polled review. Same
+  // rule as the pushes above: a review bot (CodeRabbit, Copilot) is not a
+  // person having a week, and would dwarf every human column.
+  if (hasReviewCapture) {
+    for (const r of reviews) if (r.occurred_at > weekAgo && r.actor_login && !r.actor_login.endsWith("[bot]")) bump(r.actor_login, "reviews");
+  }
   const contributors: RepoContributor[] = [...tally.values()]
     .sort((a, b) => (b.pushes + b.merged + b.reviews) - (a.pushes + a.merged + a.reviews) || a.login.localeCompare(b.login))
     .slice(0, CONTRIBUTOR_LIMIT)
