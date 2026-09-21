@@ -336,14 +336,16 @@ app.post("/admin/backfill", async (c) => {
 });
 
 // ADMIN action (session-gated + admin-gated, NEVER an MCP tool): "Poll now" —
-// refresh EVERYTHING the Repo dashboard shows, on demand: health pings, the
-// three usage pollers, then the GitHub reconcile (`runRepoRefresh`,
-// src/repo/cron.ts — the budget, 19 + 7N subrequests, is stated there). No
+// refresh what the Repo dashboard shows, on demand: health pings, the three
+// usage pollers, then the GitHub reconcile (`runRepoRefresh`, src/repo/cron.ts
+// — the budget, 19 + 7N subrequests, is stated there). NOT the issue-derived
+// sections (open issues / bugs, issues by label, the feed's issue lines): those
+// read `events`, whose only non-webhook writer is Sync GitHub's runBackfill. No
 // request body. 200 even when every source failed — the body says so; it
 // carries outcomes and NEVER a token, a header or an account id (`github.failed`
 // is reconcile's ARM NAMES). Overlapping runs are correct (every write is
-// idempotent) but wasteful, so a `refresh_lock` snapshot younger than 90 s is a
-// 409 that runs nothing; the lock is cleared in a `finally`. Never a 500.
+// idempotent) but wasteful, so a `refresh_lock` snapshot younger than 3 minutes
+// is a 409 that runs nothing; the lock is cleared in a `finally`. Never a 500.
 app.post("/admin/poll", async (c) => {
   const handle = c.get("principal").handle;
   if (!isAdmin(c.env, handle)) return c.json({ error: "admin only" }, 403);

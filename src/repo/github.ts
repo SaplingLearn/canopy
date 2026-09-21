@@ -35,10 +35,16 @@ export const scrubbedMessage = (e: unknown, token: string): string => {
   const message = e instanceof Error ? e.message : String(e);
   return token ? message.split(token).join("[redacted]") : message;
 };
+/** Every GitHub read is bounded, like every poller's fetch: an un-timed call
+ *  let ONE hung connection hold a reconcile (and the refresh lock, and the
+ *  admin's spinner) for as long as the platform allowed. A timeout is a thrown
+ *  `TimeoutError`, so it surfaces exactly like any other failed read — in
+ *  `reconcileRepo`, as that arm's name in `failed[]`. */
+const GH_TIMEOUT_MS = 15_000;
 const HEADERS = (token: string) => ({ authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "canopy-worker" });
 
 export async function ghJson<T>(opts: GhOpts, path: string): Promise<T> {
-  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token) });
+  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token), signal: AbortSignal.timeout(GH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`github ${res.status} ${path}`);
   return (await res.json()) as T;
 }
@@ -47,7 +53,7 @@ export async function ghJson<T>(opts: GhOpts, path: string): Promise<T> {
  *  nothing posted on it, or one that does not exist yet. Every other non-2xx
  *  still throws. */
 export async function ghJsonOrNull<T>(opts: GhOpts, path: string): Promise<T | null> {
-  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token) });
+  const res = await (opts.fetchImpl ?? fetch)(`https://api.github.com/repos/${opts.repo}${path}`, { headers: HEADERS(opts.token), signal: AbortSignal.timeout(GH_TIMEOUT_MS) });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`github ${res.status} ${path}`);
   return (await res.json()) as T;
@@ -62,6 +68,7 @@ export async function ghGraphql<T>(opts: GhOpts, query: string, variables: Recor
     method: "POST",
     headers: { ...HEADERS(opts.token), "content-type": "application/json" },
     body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(GH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`github graphql ${res.status}`);
   const body = (await res.json()) as { data?: T; errors?: { message?: string }[] };
@@ -337,6 +344,9 @@ export async function reconcileRepo(db: DB, opts: GhOpts, envs: RepoEnvConfig[],
   // status's `updated_at` (else `created_at`), which `putMetric` normalises —
   // so a polled point and a webhook-delivered one for the same status collide
   // on `(metric, env, part, at)`. A 404 or an empty list is not a failure.
+  // HEAD ONLY, on purpose: a status posted on a commit that was superseded
+  // before this reconcile is the webhook's to capture or nobody's — older
+  // commits would cost a request each, and this arm's budget is one.
   await safely("statuses", async () => {
     const branch = envs[0]?.branch ?? "main";
     const ref = heads.get(branch) ?? branch;

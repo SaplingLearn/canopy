@@ -16,6 +16,8 @@ import {
   BUDGET_SKIP, REFRESH_LOCK, REFRESH_LOCK_MS, SUBREQUEST_CAP,
   handleRepoCron, refreshSubrequests, runLockedRepoRefresh, runRepoRefresh,
 } from "../src/repo/cron";
+import { latestHealth, pruneRepoCapture } from "../src/repo/store";
+import { getRepoDashboard } from "../src/tools/repo";
 import { cookieFor } from "./helpers/persons";
 import { ENVS, LONG_TOKEN, fakeGithub, leakedFragments } from "./helpers/repo";
 import type { Env } from "../src/env";
@@ -119,10 +121,10 @@ describe("runRepoRefresh", () => {
     expect(kinds).toContain("branches");
   });
 
-  // First write wins, so inside the cron's ten-minute bucket an on-demand
-  // reading would be dropped and the screen would keep the tick's. The
-  // on-demand run stamps the MINUTE: a newer row, which the read picks up.
-  it("lands a health reading NEWER than the cron's of the same ten minutes; a second run in the minute is a no-op", async () => {
+  // First write wins, so a reading floored to the cron's ten-minute bucket
+  // would be dropped and the screen would keep the tick's. The on-demand run
+  // stamps the SECOND: a newer row, which the read picks up.
+  it("lands a health reading NEWER than the cron's of the same ten minutes", async () => {
     const tick = Date.parse("2026-09-20T12:30:00Z");
     await handleRepoCron(refreshEnv(NONE), tick, world().fetchImpl);
     const down = world((url) => (url === ENVS[0].apiUrl + ENVS[0].healthPath ? new Response("", { status: 503 }) : undefined));
@@ -133,9 +135,45 @@ describe("runRepoRefresh", () => {
     ]);
     const rows = await all<{ value: number; at: string }>(env.DB,
       `SELECT value, at FROM repo_metrics WHERE metric = 'health_up' AND env = 'staging' AND part = 'backend' ORDER BY at`);
-    expect(rows).toEqual([{ value: 1, at: "2026-09-20T12:30:00.000Z" }, { value: 0, at: "2026-09-20T12:37:00.000Z" }]);
+    expect(rows).toEqual([{ value: 1, at: "2026-09-20T12:30:00.000Z" }, { value: 0, at: "2026-09-20T12:37:12.000Z" }]);
+  });
 
-    const again = await runRepoRefresh(refreshEnv(NONE), NOW + 20_000, world().fetchImpl);
+  // The review's M1: a ONE-MINUTE floor still collided with the tick for the
+  // whole of the tick's own minute (12:30:40 floors to 12:30:00 either way), so
+  // a real "down" was shown in the strip and then DROPPED — the health block and
+  // the pill went on saying up.
+  it("a DOWN seen 40 seconds after the cron's tick is stored, read back as the latest, and turns the pill DOWN", async () => {
+    const tick = Date.parse("2026-09-20T12:30:00Z");
+    await handleRepoCron(refreshEnv(NONE), tick, world().fetchImpl);
+    const backend = ENVS[0].apiUrl + ENVS[0].healthPath;
+    const before = await getRepoDashboard(env.DB, "o/r", tick + 5_000, ENVS);
+    expect((before.environments as { data: { name: string; pill: string }[] }).data.map((e) => e.pill)).not.toContain("DOWN");
+
+    const at = Date.parse("2026-09-20T12:30:40Z");
+    const res = await runRepoRefresh(refreshEnv(NONE), at, world((url) => (url === backend ? new Response("", { status: 503 }) : undefined)).fetchImpl);
+    expect((res.health as { part?: string; status: string; written: number; detail?: string }[])[1])
+      .toEqual({ env: "staging", part: "backend", status: "failed", written: 2, detail: "HTTP 503" }); // written: the row LANDED
+
+    expect(await all(env.DB, `SELECT value, at FROM repo_metrics WHERE metric = 'health_up' AND env = 'staging' AND part = 'backend' ORDER BY at`))
+      .toEqual([{ value: 1, at: "2026-09-20T12:30:00.000Z" }, { value: 0, at: "2026-09-20T12:30:40.000Z" }]);
+    expect((await latestHealth(env.DB)).get("health_up:staging:backend")).toEqual({ at: "2026-09-20T12:30:40.000Z", value: 0 });
+
+    const after = await getRepoDashboard(env.DB, "o/r", at + 5_000, ENVS);
+    const pills = (after.environments as { data: { name: string; pill: string; tone: string }[] }).data;
+    expect(pills.map((e) => [e.name, e.pill, e.tone])[0]).toEqual(["staging", "DOWN", "bad"]);
+    expect(pills[1].pill).not.toBe("DOWN");
+
+    // The cron's NEXT tick is newer still, and the 45-day prune treats a
+    // second-stamped row like any other.
+    await handleRepoCron(refreshEnv(NONE), tick + 600_000, world().fetchImpl);
+    expect((await latestHealth(env.DB)).get("health_up:staging:backend")).toEqual({ at: "2026-09-20T12:40:00.000Z", value: 1 });
+    await pruneRepoCapture(env.DB, at + 46 * 86_400_000);
+    expect(await all(env.DB, `SELECT 1 FROM repo_metrics WHERE metric IN ('health_up', 'health_ms')`)).toEqual([]);
+  });
+
+  it("a repeat inside the same second writes nothing new", async () => {
+    await runRepoRefresh(refreshEnv(NONE), NOW, world().fetchImpl);
+    const again = await runRepoRefresh(refreshEnv(NONE), NOW + 300, world().fetchImpl);
     expect(again.health).toEqual(ALL_UP.map((o) => ({ ...o, written: 0 })));
   });
 
@@ -273,6 +311,58 @@ describe("runRepoRefresh", () => {
   });
 });
 
+// N1: the cron's own generic logger (and runUsagePolls' arm) used to log the
+// raw Error. "These arms never throw" is the argument that was already wrong
+// once in src/repo/github.ts: the progress arm fetches GitHub with the service
+// token, so whatever it throws may quote it.
+describe("the repo cron's own log sites never print a secret", () => {
+  /** env.DB, except that a statement matching `pattern` throws an error quoting every secret. */
+  const poisonedDb = (pattern: RegExp): Env["DB"] => new Proxy(env.DB, {
+    get(target, key) {
+      if (key === "prepare") return (sql: string) => {
+        if (pattern.test(sql)) throw new Error(`D1 exploded near authorization: Bearer ${GH_TOKEN} / ${Object.values(SECRETS).join(" / ")}`);
+        return target.prepare(sql);
+      };
+      const value = Reflect.get(target, key) as unknown;
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+
+  it("the progress arm (`:10`, fetches GitHub with the service token) throwing an error that echoes the token", async () => {
+    const tick = Date.parse("2026-09-20T12:10:00Z");
+    const { logged } = await captured(() => handleRepoCron({ ...refreshEnv(), DB: poisonedDb(/FROM sprints/) } as Env, tick, world().fetchImpl));
+    expect(logged).toContain('"repo cron","progress"'); // it WAS logged…
+    expect(logged).toContain("D1 exploded near authorization: Bearer [redacted]"); // …as a message, scrubbed
+    for (const secret of Object.values(SECRETS)) expect(logged).not.toContain(secret);
+    expect(leakedFragments(logged, GH_TOKEN)).toEqual([]);
+    expect(logged).not.toContain("    at "); // the message only — never the Error object and its stack
+  });
+
+  // The pollers never throw, so the only way INTO runUsagePolls' arm logger (and
+  // the health arm's) is for the arm's own closure to throw: `env.DB` itself.
+  it("every arm of the `:00` tick throwing — health and the three pollers — logs scrubbed messages only", async () => {
+    const tick = Date.parse("2026-09-20T12:00:00Z");
+    const noDb = Object.defineProperty({ ...refreshEnv() }, "DB", {
+      get() { throw new Error(`no database for ${Object.values(SECRETS).join(" / ")}`); },
+    }) as Env;
+    const { logged } = await captured(() => handleRepoCron(noDb, tick, world().fetchImpl));
+    for (const label of ["health", "cloudflare", "railway", "sapling"]) expect(logged, label).toContain(`"repo cron","${label}","no database for [redacted]`);
+    for (const secret of Object.values(SECRETS)) expect(logged).not.toContain(secret);
+    expect(leakedFragments(logged, GH_TOKEN)).toEqual([]);
+    expect(logged).not.toContain("    at ");
+  });
+
+  it("pollCloudflare's own marker write failing logs its message with the Cloudflare secrets scrubbed", async () => {
+    const tick = Date.parse("2026-09-20T12:00:00Z");
+    const w = world();
+    const { logged } = await captured(() => handleRepoCron({ ...refreshEnv(), DB: poisonedDb(/repo_snapshots/) } as Env, tick, w.fetchImpl));
+    expect(logged).toContain('"pollCloudflare","cf_polled","D1 exploded');
+    for (const secret of [SECRETS.CF_ANALYTICS_TOKEN, SECRETS.CF_ANALYTICS_ACCOUNT_ID]) expect(logged).not.toContain(secret);
+    expect(logged).not.toContain("    at ");
+    expect(w.calls.filter((u) => u === RW_URL)).toHaveLength(2); // Railway, after Cloudflare, still ran
+  });
+});
+
 describe("runLockedRepoRefresh — the refresh_lock snapshot", () => {
   it("takes the lock for the run, records who and when, and clears it after success", async () => {
     let during: { json: string; computed_at: string } | null = null;
@@ -300,7 +390,14 @@ describe("runLockedRepoRefresh — the refresh_lock snapshot", () => {
     expect(await lockRow()).toBeNull();
   });
 
-  it("a lock younger than 90 s blocks; a stale one (> 90 s) is ignored and overwritten", async () => {
+  it("a lock younger than 3 minutes blocks — 100 s old included; a stale one is ignored and overwritten", async () => {
+    expect(REFRESH_LOCK_MS).toBe(180_000);
+    await putLock(100_000, NOW); // stale under the old 90 s; a slow-but-live run today
+    const slow = world();
+    expect((await runLockedRepoRefresh(refreshEnv(NONE), "admin-user", NOW, slow.fetchImpl)).ok).toBe(false);
+    expect(slow.calls).toEqual([]);
+    await run(env.DB, `DELETE FROM repo_snapshots WHERE kind = ?`, REFRESH_LOCK);
+
     await putLock(REFRESH_LOCK_MS - 1_000, NOW);
     const blocked = world();
     expect((await runLockedRepoRefresh(refreshEnv(NONE), "admin-user", NOW, blocked.fetchImpl)).ok).toBe(false);
