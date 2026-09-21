@@ -80,12 +80,12 @@ describe("repoView — section states", () => {
     expect(ci).toContain("Deploys arrive when the GitHub webhook delivers deployment_status and check_run events, or when an admin runs Sync GitHub");
     expect(ci).toContain("Runs arrive when the GitHub webhook delivers workflow_run events, or when an admin runs Sync GitHub.");
     // P5-8: no branch NAME — the screen does not know which branch the first environment deploys from.
-    expect(ci).toContain("posts a canopy/coverage commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
-    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(ci).toContain("posts a canopy/coverage commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.");
+    expect(ci).toContain("posts a canopy/bundle-kb commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.");
     expect(usage).toContain("hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID)");
     expect(usage).toContain("metrics endpoint (SAPLING_METRICS_TOKEN)");
     expect(usage).toContain("RAILWAY_TOKEN_&lt;ENVIRONMENT&gt; secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.");
-    expect(planning).toContain("posts a canopy/todo commit status on a push to the default environment branch and the GitHub webhook delivers status events.");
+    expect(planning).toContain("posts a canopy/todo commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.");
     expect([ci, planning].join("\n")).not.toContain("push to main");
 
     const all = [overview, code, ci, usage, planning].join("\n");
