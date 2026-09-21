@@ -222,11 +222,17 @@ a signed-in member cannot see at `#repo`, and nothing per-user. `src/tools/repo-
 fetch): `tab` returns only that tab's sections via `REPO_TAB_SECTIONS` (`shared/repo.ts` — the ONE
 section→tab mapping, also read by the screen's "not connected" footer, and compile-time exhaustive over
 `RepoDashboard`'s sections); `range` (default `7d`) collapses `usage` / `cloudflare` / each `product` count
-to that one range; `include_trends` (default `false`) governs every `trend` array and the drift per-commit
-breakdown (groups carry `commitCount` instead — drift is the one list with no small bound). A section's
-STATUS is never touched — `not_connected` / `empty` pass through, never coerced to zeros — and a projection
-throw is the degraded empty payload, not an MCP error. Output: `{ repo, generatedAt, degraded, tab, range,
-sections }`.
+to that one range; `include_trends` (default `false`) governs every `trend` array and the drift breakdown —
+drift is the one section with no small bound, TWICE over (up to 250 commits a side, and one group per
+squash-merged PR among them, on the OVERVIEW tab), so without the flag a group carries `commitCount` instead
+of its `commits` AND only the first `DRIFT_GROUP_LIMIT` (20) groups travel, with `groupCount` the full number
+beside GitHub's own `ahead` / `behind`; with it, every group and its commits. A section's STATUS is never
+touched — `not_connected` / `empty` pass through, never coerced to zeros — and the tool's description says
+the same of a `null` INSIDE an `ok` section (`usage[].requests`, a `product` value, `contributors[].reviews`,
+`ciFailures.rate`, a delta): unknown, never zero, with `usage[].seen` saying whether the source ever
+reported. A projection throw is the degraded empty payload, not an MCP error. The view is per-call and only
+serialized — it SHARES structure with the projection, it is not a deep copy. Output: `{ repo, generatedAt,
+degraded, tab, range, sections }`.
 
 **The write surface is `src/tools/tickets-agent.ts` — the ONE place the lane rule is drawn** (spec:
 `docs/superpowers/specs/2026-09-17-agent-ticket-writes-design.md`). A ticket write over MCP is permitted

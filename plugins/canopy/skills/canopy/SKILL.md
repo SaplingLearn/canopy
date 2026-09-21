@@ -92,10 +92,16 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
   database (never live GitHub): environments and deploys, CI, code activity, usage (requests, errors,
   hosting, active users), the app's product metrics, and planning. **Use it to orient before work that
   touches deploys, CI health, usage or product metrics.** Optional `tab` (`overview` / `code` / `ci` /
-  `usage` / `planning`) returns just that tab's sections, `range` (`24h` / `7d` / `30d`, default `7d`)
-  picks the usage view, and `include_trends` (default off) adds the sparkline series. Every section is
-  `ok`, `empty` or `not_connected` — **anything not `ok` is unknown, not zero.** Read-only: polling
-  and Sync GitHub are admin actions in the web app, never MCP tools.
+  `usage` / `planning`) returns just that tab's sections; `range` (`24h` / `7d` / `30d`, default `7d`)
+  picks the usage, Cloudflare and product-count views; `include_trends` (default off) adds the
+  sparkline series AND the full drift breakdown — without it `drift.groups` is the first 20 groups,
+  each with a `commitCount` instead of its commits, and `drift.groupCount` is the full number; with it
+  every group comes back with its commits. Every section is `ok`, `empty` or `not_connected` —
+  **anything not `ok` is unknown, not zero.** The same holds *inside* an `ok` section: a `null` figure
+  (`usage[].requests` / `errorRate` / `users`, a `product` value, `contributors[].reviews`,
+  `ciFailures.rate`, a `null` or empty delta) is unknown / not captured, **never zero**, and
+  `usage[].seen` says whether that source has ever reported. Read-only: polling and Sync GitHub are
+  admin actions in the web app, never MCP tools.
 
 ## Writing (agents stage, humans confirm)
 

@@ -63,7 +63,10 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
    `mcp__canopy__get_repo_dashboard` with the matching `tab` (`overview` / `code` / `ci` / `usage` /
    `planning`; `range` `24h` / `7d` / `30d` for usage) — the Repo dashboard, read from Canopy's own
    database, never live GitHub. Every section is `ok`, `empty` or `not_connected`: **anything not `ok`
-   is unknown, not zero** — never report a missing section as "no failures" or "no traffic".
+   is unknown, not zero** — never report a missing section as "no failures" or "no traffic". The same
+   goes for a `null` figure *inside* an `ok` section (`usage[].requests`, a `product` value,
+   `contributors[].reviews`, `ciFailures.rate`, a delta): unknown, never zero — `usage[].seen` says
+   whether that source has ever reported.
 
 ## Hard rules
 

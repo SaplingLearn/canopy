@@ -14,7 +14,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildCanopyMcpServer } from "../src/mcp";
 import { putMetrics, putSnapshot } from "../src/repo/store";
 import { emptyRepoDashboard } from "../src/tools/repo";
-import { shapeRepoDashboard, type RepoAgentView } from "../src/tools/repo-agent";
+import { DRIFT_GROUP_LIMIT, shapeRepoDashboard, type RepoAgentView } from "../src/tools/repo-agent";
 import { REPO_RANGES, REPO_TAB_SECTIONS, type RepoDashboard, type RepoDrift, type RepoRange, type RepoUsageEnv } from "@shared/repo";
 import type { Env } from "../src/env";
 import { LONG_TOKEN, leakedFragments } from "./helpers/repo";
@@ -130,6 +130,13 @@ describe("MCP get_repo_dashboard — registration", () => {
     expect(Object.keys(tool.inputSchema.properties ?? {}).sort()).toEqual(["include_trends", "range", "tab"]);
     expect(tool.inputSchema.required ?? []).toEqual([]);
     expect(tool.description).toMatch(/not_connected/);
+    // …and the FIELD-level rule: a null inside an `ok` section is unknown too.
+    expect(tool.description).toMatch(/null/);
+    expect(tool.description).toMatch(/never zero/i);
+    expect(tool.description).toMatch(/seen/);
+    // …and what include_trends does to drift.
+    expect(tool.description).toMatch(/groupCount/);
+    expect(tool.description).toMatch(/every group/i);
   });
 
   it("exposes no repo WRITE or poll over MCP — not even to an admin", async () => {
@@ -176,6 +183,32 @@ describe("MCP get_repo_dashboard — the default call", () => {
     expect(drift.ahead).toBe(3);
     expect(drift.groups[0]).toMatchObject({ tag: "#482", title: "Add the thing", commitCount: 3 });
     expect(drift.groups[0]).not.toHaveProperty("commits");
+    expect(drift).toMatchObject({ groupCount: 1 });
+  });
+
+  it("drift: the default lists the first 20 groups and says how many there are; include_trends returns them all", async () => {
+    const at = new Date().toISOString();
+    const big: RepoDrift = {
+      head: "main", base: "production", ahead: 120, behind: 0,
+      groups: Array.from({ length: 120 }, (_, g) => ({
+        tag: `#${600 - g}`, kind: "pr" as const, title: `Squash merge ${600 - g}`, meta: "jose-a · 1 commit",
+        commits: [{ sha: `sha${g}`, msg: `Squash merge ${600 - g} (#${600 - g})`, at }],
+      })),
+    };
+    await putSnapshot(env.DB, "drift", big);
+
+    type DriftView = { ahead: number; groupCount: number; groups: { tag: string; commitCount: number; commits?: unknown[] }[] };
+    const cut = okData<DriftView>((await view({ tab: "overview" })).sections.drift);
+    expect(DRIFT_GROUP_LIMIT).toBe(20);
+    expect(cut.ahead).toBe(120); // the header stays truthful…
+    expect(cut.groupCount).toBe(120); // …and says the list below was cut
+    expect(cut.groups.map((g) => g.tag)).toEqual(big.groups.slice(0, 20).map((g) => g.tag)); // the snapshot's own order
+    expect(cut.groups.every((g) => g.commitCount === 1 && g.commits === undefined)).toBe(true);
+
+    const full = okData<DriftView>((await view({ tab: "overview", include_trends: true })).sections.drift);
+    expect(full.groupCount).toBe(120);
+    expect(full.groups).toHaveLength(120);
+    expect(full.groups.every((g) => g.commits?.length === 1)).toBe(true);
   });
 
   it("never coerces: not_connected stays not_connected, empty stays empty", async () => {
@@ -269,8 +302,12 @@ describe("MCP get_repo_dashboard — never an MCP error, never a secret", () => 
     expect(r.text).not.toContain("D1 is down");
   });
 
-  it("serializes no secret value — not even a fragment of one", async () => {
+  it("serializes no secret value — not even a fragment of one — and no internal config id", async () => {
     await seedDashboard();
+    const NEVER_IN_DTO = ["railwayEnvironmentId", "railwayServiceId", "worker", "workerCheck", "railwayEnv"] as const;
+    const DTO_WORDS = new Set(["frontend", "backend"]);
+    const configured = JSON.parse((env as unknown as Env).REPO_ENVIRONMENTS ?? "[]") as Record<string, unknown>[];
+    expect(configured.length).toBeGreaterThanOrEqual(2); // wrangler.toml's staging + production
     for (const args of [{}, { include_trends: true }, { tab: "usage", range: "30d" }]) {
       const { text } = await call(args);
       for (const [name, secret] of Object.entries(SECRETS)) {
@@ -278,6 +315,19 @@ describe("MCP get_repo_dashboard — never an MCP error, never a secret", () => 
         expect(leakedFragments(text, secret, 12), name).toEqual([]);
       }
       expect(text).not.toMatch(/canopy_mcp_|Bearer |Project-Access-Token/);
+      // Config-derived: `repoEnvironments()` hands the projection the WHOLE parsed
+      // entry, so these are one careless `...cfg` away from the DTO. Only key /
+      // label / note / branch and the public URLs may travel.
+      for (const cfg of configured) {
+        for (const field of NEVER_IN_DTO) {
+          const value = cfg[field];
+          expect(typeof value, `${cfg.key}.${field} is configured`).toBe("string");
+          // Production's Worker is literally named "frontend" — also the DTO's own
+          // part name, so its absence proves nothing; every other value is distinctive.
+          if (DTO_WORDS.has(value as string)) continue;
+          expect(text, `${cfg.key}.${field}`).not.toContain(value as string);
+        }
+      }
     }
   });
 });
@@ -312,10 +362,11 @@ function richDashboard(): RepoDashboard {
       parts: (["backend", "frontend"] as const).map((part) => ({ part, host: part === "backend" ? "Railway" as const : "Cloudflare" as const, sha: "abc1234", deployedAt: at, deployedBy: "jose-a", result: "ok" as const })),
     }))),
     drift: ok({
+      // The compare cap in a squash-merge repo: 250 commits = 250 PRs = 250 groups.
       head: "main", base: "production", ahead: 250, behind: 40,
-      groups: Array.from({ length: 30 }, (_, g) => ({
-        tag: `#${400 + g}`, kind: "pr" as const, title: `A pull request title of ordinary length, number ${g}`, meta: "jose-a · 8 commits",
-        commits: Array.from({ length: 8 }, (_, i) => ({ sha: `deadbe${g}${i}`, msg: `A commit message of ordinary length for commit ${i}`, at })),
+      groups: Array.from({ length: 250 }, (_, g) => ({
+        tag: `#${900 - g}`, kind: "pr" as const, title: `A pull request title of ordinary length, number ${g}`, meta: "jose-a · 1 commit",
+        commits: [{ sha: `deadbeef${g}`, msg: `A pull request title of ordinary length, number ${g} (#${900 - g})`, at }],
       })),
     }),
     stats: ok(Array.from({ length: 4 }, (_, i) => ({ label: `Stat ${i}`, value: 12, delta: 3, tone: "neutral" as const }))),
@@ -348,7 +399,7 @@ function richDashboard(): RepoDashboard {
 describe("get_repo_dashboard — size discipline", () => {
   const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
 
-  it("the default view of a rich dashboard stays under 40 KB; tab + range shrink it further", () => {
+  it("the default view of a rich dashboard (250 drift groups) stays under 40 KB; tab + range shrink it further", () => {
     const dash = richDashboard();
     const raw = bytes(dash);
     const withTrends = bytes(shapeRepoDashboard(dash, { includeTrends: true }));
@@ -363,6 +414,13 @@ describe("get_repo_dashboard — size discipline", () => {
     expect(usageTab).toBeLessThan(compact);
     expect(overviewTab).toBeLessThan(compact);
     expect(usageTab).toBeLessThan(20_000);
+    // Drift is on the overview tab: 250 groups must not make the narrowest call a big one.
+    expect(overviewTab).toBeLessThan(10_000);
+    const drift = shapeRepoDashboard(dash, { tab: "overview" }).sections.drift as { data: { groupCount: number; groups: unknown[] } };
+    expect(drift.data.groupCount).toBe(250);
+    expect(drift.data.groups).toHaveLength(DRIFT_GROUP_LIMIT);
+    const all = shapeRepoDashboard(dash, { tab: "overview", includeTrends: true }).sections.drift as { data: { groupCount: number; groups: unknown[] } };
+    expect(all.data.groups).toHaveLength(250);
   });
 
   it("the shaper never mutates the projection it was given", () => {

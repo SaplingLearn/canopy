@@ -496,7 +496,7 @@ function agents(): string {
       <div ${rv("agents-mcp")} style="border:1px solid var(--border);border-radius:13px;padding:26px 28px">
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
           <span style="font-size:17px;font-weight:650">MCP server</span>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">20 tools, plus 5 admin-only</span>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">21 tools, plus 5 admin-only</span>
         </div>
         <div style="margin-top:20px;display:flex;flex-direction:column;gap:16px">${tools}
         </div>

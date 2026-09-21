@@ -8,7 +8,8 @@
 //               section→tab mapping, shared with web/src/repo.ts);
 //   · `range` — the usage / cloudflare / product sections carry three ranges
 //               for the screen's selector; an agent gets ONE;
-//   · trends  — sparkline arrays are stripped unless asked for.
+//   · trends  — sparkline arrays are stripped, and the drift breakdown is cut
+//               to a bounded list of group headers, unless asked for.
 // A section's STATUS is never touched: `not_connected` and `empty` pass through
 // as they are — unknown is never coerced into a zero or an empty list.
 //
@@ -30,7 +31,8 @@ export interface RepoAgentOptions {
   tab?: RepoTab;
   /** Omitted → `7d`. */
   range?: RepoRange;
-  /** Omitted → false: no `trend` arrays, and drift groups carry a count, not commits. */
+  /** Omitted → false: no `trend` arrays, and drift is cut to `DRIFT_GROUP_LIMIT`
+   *  groups, each carrying a count rather than its commits. */
   includeTrends?: boolean;
 }
 
@@ -59,19 +61,32 @@ function productForRange(product: RepoProduct, range: RepoRange): unknown {
   }));
 }
 
-/** Drift can carry up to 250 commits a side — the one list in the DTO with no
- *  small bound. The header (`ahead` / `behind`) and each group's tag / title /
- *  meta always travel; the per-commit breakdown only with `include_trends`. */
+/** Without `include_trends`, a drift section lists at most this many groups. */
+export const DRIFT_GROUP_LIMIT = 20;
+
+/** Drift is the one section with no small bound, twice over: a compare returns
+ *  up to 250 commits a side, and `computeDrift` makes one GROUP per PR among
+ *  them — up to 250 groups in a squash-merge repo (~33 KB of headers alone, and
+ *  drift is on the OVERVIEW tab). So without `include_trends` both are cut: a
+ *  group carries `commitCount` instead of its `commits`, and only the first
+ *  `DRIFT_GROUP_LIMIT` groups travel (the snapshot's own order — PRs newest
+ *  first, then the PUSH / BEHIND buckets). `groupCount` is always the FULL
+ *  number, beside GitHub's own `ahead` / `behind` totals, so the header stays
+ *  truthful and a reader can see the list was cut. With `include_trends`: every
+ *  group, with its commits. */
 function driftView(drift: RepoDrift, includeTrends: boolean): unknown {
+  const groups = includeTrends ? drift.groups : drift.groups.slice(0, DRIFT_GROUP_LIMIT);
   return {
     ...drift,
-    groups: drift.groups.map(({ commits, ...g }) => ({ ...g, commitCount: commits.length, ...(includeTrends ? { commits } : {}) })),
+    groupCount: drift.groups.length,
+    groups: groups.map(({ commits, ...g }) => ({ ...g, commitCount: commits.length, ...(includeTrends ? { commits } : {}) })),
   };
 }
 
-/** A deep copy without any key named `trend` — every sparkline series in the
- *  DTO is spelled that way (usage metrics, product counts/totals, CI failures,
- *  coverage, bundle, TODOs), so a new one is stripped without a change here. */
+/** A copy — fresh objects and arrays all the way down — without any key named
+ *  `trend`: every sparkline series in the DTO is spelled that way (usage
+ *  metrics, product counts/totals, CI failures, coverage, bundle, TODOs), so a
+ *  new one is stripped without a change here. */
 function withoutTrends(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(withoutTrends);
   if (v && typeof v === "object") {
@@ -82,7 +97,11 @@ function withoutTrends(v: unknown): unknown {
   return v;
 }
 
-/** PURE: the projection in, the agent's view out. Never mutates `dash`. */
+/** PURE: the projection in, the agent's view out. It never writes into `dash`
+ *  — but it is NOT a deep copy: with `includeTrends` (and for any `ok` section
+ *  it does not reshape) the view SHARES arrays and objects with `dash`. That is
+ *  safe because the projection is built per call and the view is only ever
+ *  serialized; a caller that wants to mutate the result must clone it first. */
 export function shapeRepoDashboard(dash: RepoDashboard, opts: RepoAgentOptions = {}): RepoAgentView {
   const range = opts.range ?? DEFAULT_AGENT_RANGE;
   const includeTrends = opts.includeTrends ?? false;
