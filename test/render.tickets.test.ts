@@ -12,7 +12,20 @@
  *    engineering work" (call #8), the sub-ticket candidate filter, the merged
  *    thread with "opened this ticket", the sprint menu's tick, assignee controls
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// marked + DOMPurify cannot run in this pool (no DOM) — same mock as
+// render.sprints.test.ts: escapes, then turns **x** into <strong>, so a
+// `<strong>` proves the body went through the markdown fn and an escaped
+// `<script>` proves it never reached the DOM raw.
+vi.mock("../web/src/markdown", () => ({
+  renderMarkdown: (body: string) =>
+    `<div class="mock-live-md">${body
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")}</div>`,
+}));
 import { render, initialState, type AppState } from "../web/src/render";
 import {
   queueView, newTicketView, ticketDetailView, relCandidates, queueGroups,
@@ -623,7 +636,45 @@ describe("newTicketView", () => {
 
 // ── ticket detail ────────────────────────────────────────────────────────────
 
+describe("ticketDetailView — the body is markdown", () => {
+  it("renders the body through the markdown fn, inside the md container", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", body: "1. **Handling handoff prompts** (#51)" })));
+    expect(html).toContain('class="cnpy-md cnpy-td-body"');
+    expect(html).toContain("mock-live-md");
+    expect(html).toContain("<strong>Handling handoff prompts</strong>");
+    expect(html).not.toContain("**Handling");
+    expect(html).not.toContain("white-space:pre-wrap");
+  });
+
+  it("XSS: the body reaches the DOM ONLY through the markdown fn", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", body: "<script>alert(1)</script>" })));
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("an empty body renders no container at all", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", body: "  " })));
+    expect(html).not.toContain("cnpy-td-body");
+  });
+});
+
 describe("ticketDetailView — the status control (design call #7)", () => {
+  it("the trigger IS the pill — no outlined box around it", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: null }));
+    const triggers = html.match(/<button data-act="ticketStatusMenu"[^>]*>/g) ?? [];
+    expect(triggers).toHaveLength(2);
+    for (const t of triggers) {
+      expect(t).toContain('class="cnpy-statusbtn"');
+      expect(t).not.toContain("cnpy-outlinebtn");
+      expect(t).not.toContain("var(--border-strong)"); // the old box's border
+      expect(t).toContain("var(--blue)"); // tinted as the status itself
+      expect(t).toContain('aria-expanded="false"');
+    }
+    const open = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: "header" }));
+    expect(open).toContain('data-arg="header" title="Set status" aria-haspopup="menu" aria-expanded="true"');
+    expect(open).toContain('data-arg="rail" title="Set status" aria-haspopup="menu" aria-expanded="false"');
+  });
+
   const props = (status: TicketStatus, stMenu: "header" | "rail" | null = null) =>
     detailProps(detail({ id: 1, title: "T", status }), { stMenu });
 
