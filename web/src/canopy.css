@@ -432,15 +432,28 @@ input, select { font-family: inherit; }
 
 /* the panel's two-up splits stack on a laptop-and-below width */
 @container (max-width: 760px) { .repo-split { grid-template-columns:minmax(0,1fr) !important; } .repo-split-r { border-left:none !important; border-top:1px solid var(--border); } .repo-tiles { grid-template-columns:repeat(2,minmax(0,1fr)) !important; } }
-/* Product metric rows: in a phone-width panel the sparkline column goes, so the label can be read. */
-.repo-pspark { display:block; }
-@container (max-width: 420px) { .repo-prow { grid-template-columns:minmax(0,1fr) auto !important; } .repo-pspark { display:none; } }
+/* Usage › Product. `.repo-cells` is a hairline lattice that survives any column
+   count: every cell draws its left + top line and the -1px margin tucks the outer
+   ones under the wrapper's clip — so a 4-up strip can fold to 2×2 with no stray edge. */
+.repo-cells { overflow:hidden; }
+.repo-cells > div { display:grid; margin:-1px 0 0 -1px; }
+.repo-cells > div > * { border-left:1px solid var(--border); border-top:1px solid var(--border); min-width:0; }
+.repo-rank { display:grid; grid-template-columns:minmax(0,156px) minmax(0,1fr) 60px; gap:14px; align-items:center; padding:5.5px 0; }
+.repo-rank-l { transition:color .12s ease; }
+.repo-rank:hover .repo-rank-l, .repo-rank-h:hover .repo-rank-l { color:var(--fg) !important; }
+.cnpy-flash .repo-fill { animation:cnpy-grow-x .5s cubic-bezier(.2,.7,.2,1) both; animation-delay:calc(var(--i, 0) * 22ms + 60ms); }
+@container (max-width: 760px) { .repo-kpis { grid-template-columns:repeat(2,minmax(0,1fr)) !important; } .repo-pgrid > * { grid-column:1 / -1 !important; } }
+@container (max-width: 420px) { .repo-kpis > * { padding:14px 14px 14px !important; } .repo-kpi-n { font-size:20px !important; } .repo-kpi-s { flex-basis:100%; } }
+/* phone: the frame keeps a 16px gutter instead of the desktop 32px */
+@media (max-width: 600px) { .repo-frame { padding-left:16px !important; padding-right:16px !important; } }
+/* phone: the bar drops under its label and figure, so the label keeps room to be read */
+@container (max-width: 520px) { .repo-rank { grid-template-columns:minmax(0,1fr) auto; gap:5px 12px; padding:7px 0; } .repo-rank > .repo-rank-bar { grid-column:1 / -1; grid-row:2; } }
 .repo-panel { container-type:inline-size; }
 
 @media (prefers-reduced-motion: reduce) {
   .cnpy-aside, .cnpy-aside *, .cnpy-aside *::before, .cnpy-aside *::after { transition:none !important; }
   [data-enter] *, .cnpy-flash, .cnpy-flash *, .repo-shimmer, .repo-pulse { animation:none !important; }
-  .repo-tip, .repo-dot, .repo-row, .repo-chev { transition:none !important; }
+  .repo-tip, .repo-dot, .repo-row, .repo-chev, .repo-rank-l { transition:none !important; }
   .cnpy-statusbtn, .cnpy-statusbtn svg { transition:none !important; }
 }
 

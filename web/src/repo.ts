@@ -33,6 +33,8 @@ export interface RepoProps {
   admin: boolean;
   /** The last on-demand usage poll. Session-only; null = none / dismissed. */
   poll: RepoPollState | null;
+  /** The environment the Usage tab's Product section shows. Session-only; null = the default. */
+  productEnv: string | null;
 }
 
 /** "Poll now" (POST /admin/poll-usage): in flight, its per-source outcomes, or a failed request. */
@@ -472,62 +474,239 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
   </div>`;
 }
 
-// ── Usage › Product metrics ──────────────────────────────────────────────────
-// What the app reports about itself (src/repo/poll.ts → `sap_*` gauges). One
-// block per environment; inside it the groups sit in a responsive grid of
-// compact label / sparkline / value rows. Every row keeps the SAME three
-// fixed columns whatever it holds — a missing sparkline leaves its cell in
-// place, and "no recent reading" takes the sparkline's and the value's cells
-// together (a stale figure's old trend is not drawn: the line would read as
-// current) — so the sparklines line up down a group and switching range (which
-// only swaps `counts` figures; `totals` ignore it) never shifts the layout.
-// In a phone-width panel the sparkline column is dropped (canopy.css,
-// `.repo-prow` / `.repo-pspark`) so the label keeps room to be read. Labels and keys
-// originate in ANOTHER service: everything interpolated goes through `esc()`.
-const PRODUCT_ROW = `display:grid;grid-template-columns:minmax(0,1fr) 52px 72px;gap:10px;align-items:center;padding:7px 0;${TOP}`;
+// ── Usage › Product ──────────────────────────────────────────────────────────
+// What the app reports about itself (src/repo/poll.ts → `sap_*` gauges), as ONE
+// section with an environment switch and three levels, so the eye has an order
+// to read in instead of twelve identical tables:
+//   1. a "Right now" stat strip (`totals` — point-in-time, they ignore the range)
+//      and up to four headline tiles in the Overview's KPI style;
+//   2. one block per group, each in the shape its data has — Learning a ranked
+//      bar list, AI spend one feature figure, Reliability a status list whose
+//      zeros fold into a line, Growth / Community stat pairs;
+//   3. footnotes, and any key this file has never heard of as quiet rows under
+//      "Other" — nothing here depends on a key existing.
+// Nothing is derived: every figure is the DTO's own string; a `null` reads "no
+// recent reading" (and draws no stale trend); an absent key is absent. Labels,
+// notes, titles and environment names originate in ANOTHER service — every one
+// goes through `esc()` / `attr()`.
+const NUM = "font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap";
+const QUIET = "font-size:11.5px;color:var(--fg-40)";
+const HEADLINE_KEYS = ["signups", "tutor_sessions", "llm_cost_cents", "errors_5xx", "chat_messages", "logins", "quizzes_completed"];
+const AI_LEAD = "llm_cost_cents";
+type Count = RepoProductEnv["groups"][number]["metrics"][number];
 
-/** `spark()` for a table cell: a span (a row holds no block child), fixed width. */
-const miniSpark = (trend: number[], stroke: string): string =>
-  trend.length < 2 ? `<span class="repo-pspark"></span>` :
-  `<span class="repo-spark repo-pspark" style="width:52px"><svg viewBox="0 0 100 26" preserveAspectRatio="none" style="width:100%;height:18px;display:block"><polyline points="${sparkPoints(trend)}" fill="none" stroke="${stroke}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline></svg></span>`;
-
-function productRow(label: string, value: string | null, raw: number | null, trend: number[]): string {
-  // The exact integer behind a compacted figure ("1.2K") — not behind a dollar amount.
-  const exact = value !== null && raw !== null && value !== String(raw) && !value.startsWith("$") ? ` title="${attr(raw.toLocaleString("en-US"))}"` : "";
-  return `<div class="repo-prow" style="${PRODUCT_ROW}"><span title="${attr(label)}" style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>${
-    value === null
-      ? `<span style="grid-column:2 / -1;font-size:11.5px;color:var(--fg-40);text-align:right;white-space:nowrap">${absentLabel(true)}</span>`
-      : `${miniSpark(trend, "var(--fg-40)")}<span${exact} style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap">${esc(value)}</span>`
-  }</div>`;
+/** A figure as `countUp` (main.ts) writes it mid-animation — it mirrors the
+ *  Worker's `compact` / `productValue` for the frames in between only: the last
+ *  frame restores the DTO's own string, so the two can never disagree on screen. */
+export function formatCount(n: number, fmt: string | undefined): string {
+  const compact = (v: number): string =>
+    v >= 999_995_000_000 ? `${(v / 1e12).toFixed(2)}T` : v >= 999_995_000 ? `${(v / 1e9).toFixed(2)}B`
+    : v >= 999_950 ? `${(v / 1e6).toFixed(2)}M` : v >= 1_000 ? `${(v / 1e3).toFixed(1)}K` : String(Math.round(v));
+  if (fmt === "usd") return n >= 1_000_000 ? `$${compact(n / 100)}` : (n / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+  return fmt === "compact" ? compact(n) : String(Math.round(n));
 }
 
-/** `notes` are the group's caveats, already `"<label>: <note>"` — a group may
- *  hold several (Reliability's 4xx note beside another): ONE footnote block, a
- *  line each, so two notes read as a list rather than as two spaced-out boxes. */
-function productGroup(title: string, rows: string[], notes: string[]): string {
-  return `<div style="min-width:0;padding:6px 0 8px">
-    <div style="${LABEL_SM};margin-bottom:6px;overflow:hidden;text-overflow:ellipsis">${esc(title)}</div>
-    ${rows.join("")}
-    ${notes.length ? `<div class="repo-pnotes" style="font-size:11px;line-height:1.5;color:var(--fg-40);margin-top:6px">${notes.map((n) => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
+/** The exact integer behind a compacted figure ("1.2K") — not behind a dollar amount. */
+const exactTitle = (value: string | null, raw: number | null): string =>
+  value !== null && raw !== null && value !== String(raw) && !value.startsWith("$") ? ` title="${attr(raw.toLocaleString("en-US"))}"` : "";
+/** The count-up hook for a figure: only where there is an integer to count to. */
+const countAttrs = (value: string, raw: number | null): string =>
+  raw === null || !Number.isFinite(raw) ? "" : `data-count="${raw}"${value === String(raw) ? "" : ` data-count-fmt="${value.startsWith("$") ? "usd" : "compact"}"`}`;
+
+const blockTitle = (title: string, aside = ""): string =>
+  `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px"><span style="${LABEL_SM};min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(title)}</span>${aside}</div>`;
+
+/** A block's caveats, already `"<label>: <note>"` — ONE footnote block, a line each. */
+const noteLines = (rows: { label: string; note?: string }[]): string => {
+  const notes = rows.filter((m) => m.note).map((m) => `${m.label}: ${m.note}`);
+  return notes.length ? `<div class="repo-pnotes" style="font-size:11px;line-height:1.5;color:var(--fg-40);margin-top:12px">${notes.map((n) => `<div>${esc(n)}</div>`).join("")}</div>` : "";
+};
+
+/** Failure counts read `bad` the moment they are non-zero; 4xx is mostly bots
+ *  and refused polls (its own note says so), so it never raises a colour. */
+const failTone = (key: string): RepoTone => (/^errors_4/.test(key) ? "neutral" : "bad");
+
+// Level 1 — the headline strip.
+function headlineTiles(e: RepoProductEnv, range: RepoRange): string {
+  const byKey = new Map<string, Count>();
+  for (const g of e.groups) for (const m of g.metrics) if (!byKey.has(m.key)) byKey.set(m.key, m);
+  const picks = HEADLINE_KEYS.flatMap((k) => byKey.get(k) ?? []).slice(0, 4);
+  if (picks.length < 2) return "";
+  return `<div class="repo-cells" style="${TOP}"><div class="repo-kpis" style="grid-template-columns:repeat(${picks.length},minmax(0,1fr))">${picks.map((m) => {
+    const value = m.values[range], raw = m.raw[range];
+    const alarm = m.key === "errors_5xx" && (raw ?? 0) > 0;
+    return `<div data-pkpi="${attr(m.key)}" style="padding:16px 20px 16px">
+      <div style="${LABEL};overflow:hidden;text-overflow:ellipsis">${esc(m.label)}</div>
+      <div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-top:8px;min-height:34px">${
+        value === null
+          ? `<span style="${QUIET};line-height:34px">${absentLabel(true)}</span>`
+          : `<span ${countAttrs(value, raw)}${exactTitle(value, raw)} class="repo-kpi-n" style="${NUM};font-size:27px;letter-spacing:-0.02em;${alarm ? `color:${TONE.bad}` : ""}">${esc(value)}</span><span class="repo-kpi-s" style="font-size:11px;color:var(--fg-40);white-space:nowrap">last ${esc(range)}</span>`
+      }</div>
+      ${value === null ? "" : spark(m.trend, alarm ? TONE.bad : "var(--accent)", 34, 10)}
+    </div>`;
+  }).join("")}</div></div>`;
+}
+
+// "Right now" — the totals, as one wrapping line of figures. The separators are
+// each item's left hairline; the negative margin tucks the one at a line's start
+// out of sight, however the strip wraps.
+function nowStrip(e: RepoProductEnv): string {
+  if (!e.totals.length) return "";
+  return `<div data-pblock="now" style="padding:0 20px 16px">
+    <div style="overflow:hidden"><div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 0;margin-left:-15px">
+      <span style="${LABEL_SM};padding:0 14px;border-left:1px solid var(--border)">Right now</span>
+      ${e.totals.map((t) => `<span style="display:inline-flex;align-items:baseline;gap:6px;padding:0 14px;border-left:1px solid var(--border);white-space:nowrap">${
+        t.value === null
+          ? `<span style="font-size:12.5px;color:var(--fg-55)">${esc(t.label)}</span><span style="${QUIET}">${absentLabel(true)}</span>`
+          : `<span${exactTitle(t.value, t.raw)} style="${NUM};font-size:13.5px">${esc(t.value)}</span><span style="font-size:12.5px;color:var(--fg-55)">${esc(t.label)}</span>`
+      }</span>`).join("")}
+    </div></div>
+    ${noteLines(e.totals)}
   </div>`;
 }
 
-function productEnv(e: RepoProductEnv, range: RepoRange): string {
-  const noted = (rows: { label: string; note?: string }[]) => rows.filter((m) => m.note).map((m) => `${m.label}: ${m.note}`);
-  const groups = e.groups.map((g) =>
-    productGroup(g.title, g.metrics.map((m) => productRow(m.label, m.values[range], m.raw[range], m.trend)), noted(g.metrics)));
-  if (e.totals.length) groups.push(productGroup("Right now", e.totals.map((t) => productRow(t.label, t.value, t.raw, t.trend)), noted(e.totals)));
-  return groups.length
-    ? `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:6px 32px;margin-top:8px">${groups.join("")}</div>`
-    : `<div style="margin-top:8px;padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">This environment has reported no product metrics.</div>`;
+// Level 2 — a block per group, each in its own shape.
+/** Learning activity: ranked by the range's figure, a bar per row scaled to the largest. */
+function rankedBlock(metrics: Count[], range: RepoRange): string {
+  const rows = metrics.map((m, i) => ({ m, i, raw: m.values[range] === null ? null : m.raw[range] }))
+    .sort((a, b) => (a.raw === null ? 1 : 0) - (b.raw === null ? 1 : 0) || (b.raw ?? 0) - (a.raw ?? 0) || a.i - b.i);
+  const max = Math.max(1, ...rows.map((r) => r.raw ?? 0));
+  return rows.map(({ m, raw }, i) => {
+    const value = m.values[range];
+    return `<div class="repo-rank" data-prow="${attr(m.key)}">
+      <span class="repo-rank-l" title="${attr(m.label)}" style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
+      ${value === null
+        ? `<span class="repo-rank-bar"></span><span style="${QUIET};text-align:right;white-space:nowrap">${absentLabel(true)}</span>`
+        : `<span class="repo-rank-bar" style="display:block;height:5px;border-radius:999px;background:var(--hover);overflow:hidden">${raw ? `<span class="repo-fill" style="--i:${i};display:block;height:100%;min-width:2px;border-radius:999px;background:var(--accent);width:${(Math.round(((raw ?? 0) / max) * 1000) / 10)}%"></span>` : ""}</span>
+        <span${exactTitle(value, m.raw[range])} style="${NUM};font-size:12.5px;text-align:right">${esc(value)}</span>`}
+    </div>`;
+  }).join("");
 }
 
-/** The product blocks under the Usage tab's panels, `--i` staggered from `i`. */
-function productBlocks(p: RepoProps, i: number): string {
-  // `title` is ESCAPED HERE, like every other helper in this file — an
-  // environment's name is config text; `aside` is markup the caller built.
-  const head = (title: string, aside = "") =>
-    `<div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 10px"><span style="${LABEL};min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(title)}</span>${aside}</div>`;
+/** AI spend: the cost as the one figure, the rest of the group as a quiet line under it. */
+function featureBlock(metrics: Count[], range: RepoRange): string {
+  const lead = metrics.find((m) => m.key === AI_LEAD) ?? metrics[0];
+  const rest = metrics.filter((m) => m !== lead);
+  const value = lead.values[range];
+  return `<div data-prow="${attr(lead.key)}" style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;min-height:28px">${
+      value === null
+        ? `<span style="${QUIET}">${absentLabel(true)}</span>`
+        : `<span ${countAttrs(value, lead.raw[range])}${exactTitle(value, lead.raw[range])} style="${NUM};font-size:22px;letter-spacing:-0.02em">${esc(value)}</span>`
+    }<span style="font-size:12px;color:var(--fg-55)">${esc(lead.label)} · last ${esc(range)}</span></div>
+    ${rest.length ? `<div style="overflow:hidden;margin-top:7px"><div style="display:flex;flex-wrap:wrap;gap:4px 0;margin-left:-11px;font-size:12.5px;color:var(--fg-55)">${rest.map((m) => {
+      const v = m.values[range];
+      return `<span data-prow="${attr(m.key)}" style="white-space:nowrap;padding:0 10px;border-left:1px solid var(--border)">${
+        v === null ? `${esc(m.label)} <span style="${QUIET}">${absentLabel(true)}</span>`
+          : `<span${exactTitle(v, m.raw[range])} style="${NUM};font-size:12.5px;color:var(--fg)">${esc(v)}</span> ${esc(m.label)}`}</span>`;
+    }).join("")}</div></div>` : ""}
+    ${value === null ? "" : spark(lead.trend, "var(--accent)", 72, 14)}`;
+}
+
+/** Reliability: what is non-zero leads, with a tone dot; every measured zero folds
+ *  into ONE muted line (a real reading, but not the size of a problem); a figure
+ *  with no recent reading is named apart and is never counted among the zeros. */
+function statusBlock(metrics: Count[], range: RepoRange): string {
+  const live = metrics.filter((m) => m.values[range] !== null);
+  const hot = live.filter((m) => m.raw[range] !== 0)
+    .sort((a, b) => (failTone(a.key) === "bad" ? 0 : 1) - (failTone(b.key) === "bad" ? 0 : 1) || (b.raw[range] ?? 0) - (a.raw[range] ?? 0));
+  const zero = live.filter((m) => m.raw[range] === 0);
+  const stale = metrics.filter((m) => m.values[range] === null);
+  const names = (rows: Count[]) => rows.map((m) => esc(m.label)).join(", ");
+  return `<div>${hot.map((m) => {
+      const c = TONE[failTone(m.key)];
+      return `<div class="repo-rank-h" data-prow="${attr(m.key)}" style="display:flex;align-items:center;gap:10px;padding:5px 0">
+        <span style="width:7px;height:7px;border-radius:50%;background:${c};flex:none"></span>
+        <span class="repo-rank-l" title="${attr(m.label)}" style="font-size:12.5px;color:var(--fg-70);min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
+        <span${exactTitle(m.values[range], m.raw[range])} style="${NUM};font-size:12.5px">${esc(m.values[range] ?? "")}</span>
+      </div>`;
+    }).join("")}
+    ${zero.length ? `<div data-pzero style="display:flex;gap:10px;padding:${hot.length ? 8 : 2}px 0 0;font-size:12px;line-height:1.55;color:var(--fg-40)"><span style="width:7px;height:7px;border-radius:50%;border:1px solid var(--border-strong);box-sizing:border-box;flex:none;margin-top:6px"></span><span style="min-width:0"><span style="color:var(--fg-55)">${zero.length} at zero</span> — ${names(zero)}</span></div>` : ""}
+    ${stale.length ? `<div data-pstale style="padding:6px 0 0 17px;font-size:12px;line-height:1.55;color:var(--fg-40)">${absentLabel(true)} — ${names(stale)}</div>` : ""}
+  </div>`;
+}
+/** A rough height for a status list, so a range with fewer problems does not pull the page up. */
+const statusHeight = (metrics: Count[], range: RepoRange): number => {
+  const live = metrics.filter((m) => m.values[range] !== null);
+  const hot = live.filter((m) => m.raw[range] !== 0).length;
+  return hot * 29 + (live.length > hot ? 44 : 0) + (live.length < metrics.length ? 25 : 0);
+};
+
+const noteHeight = (metrics: Count[]): number => { const n = metrics.filter((m) => m.note).length; return n ? 12 + 17 * n : 0; };
+
+/** Growth / Community: number over label, three across, no per-row trend. */
+function pairsBlock(metrics: Count[], range: RepoRange): string {
+  return `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 16px">${metrics.map((m) => {
+    const value = m.values[range];
+    return `<div data-prow="${attr(m.key)}" style="min-width:0">
+      <div style="min-height:27px;display:flex;align-items:baseline">${value === null
+        ? `<span style="${QUIET}">${absentLabel(true)}</span>`
+        : `<span${exactTitle(value, m.raw[range])} style="${NUM};font-size:21px;letter-spacing:-0.02em">${esc(value)}</span>`}</div>
+      <div title="${attr(m.label)}" style="font-size:12px;color:var(--fg-55);margin-top:2px;overflow:hidden;text-overflow:ellipsis">${esc(m.label)}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+/** Other, and any group this file has no shape for: quiet label / figure rows. */
+function plainBlock(metrics: Count[], range: RepoRange): string {
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:0 40px">${metrics.map((m) => {
+    const value = m.values[range];
+    return `<div data-prow="${attr(m.key)}" style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:5px 0;min-width:0">
+      <span title="${attr(m.label)}" style="font-size:12.5px;color:var(--fg-55);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
+      ${value === null ? `<span style="${QUIET};white-space:nowrap">${absentLabel(true)}</span>` : `<span${exactTitle(value, m.raw[range])} style="${NUM};font-size:12.5px;color:var(--fg-70)">${esc(value)}</span>`}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+const WIDE = ["learning", "reliability"], NARROW = ["ai", "growth", "community"];
+
+function productBody(e: RepoProductEnv, range: RepoRange, all: RepoProductEnv[], i: number): string {
+  const groups = e.groups.filter((g) => g.metrics.length);
+  if (!groups.length && !e.totals.length) {
+    return `<div style="padding:0 20px 18px;font-size:12.5px;color:var(--fg-40)">This environment has reported no product metrics.</div>`;
+  }
+  // The status list is held to its tallest form across every range and
+  // environment, so switching either never moves what sits under it.
+  const relHeight = Math.max(0, ...all.flatMap((env) => env.groups.filter((g) => g.id === "reliability")
+    .flatMap((g) => REPO_RANGES.map((r) => statusHeight(g.metrics, r)))));
+  const block = (g: RepoProductEnv["groups"][number]): string =>
+    `<div data-pblock="${attr(g.id)}"${g.id === "reliability" ? ` style="min-height:${relHeight + 28 + noteHeight(g.metrics)}px"` : ""}>${blockTitle(g.title)}${
+      g.id === "learning" ? rankedBlock(g.metrics, range)
+      : g.id === "ai" ? featureBlock(g.metrics, range)
+      : g.id === "reliability" ? statusBlock(g.metrics, range)
+      : g.id === "growth" || g.id === "community" ? pairsBlock(g.metrics, range)
+      : plainBlock(g.metrics, range)
+    }${noteLines(g.metrics)}</div>`;
+  const pick = (id: string) => groups.find((g) => g.id === id);
+  // Two balanced rows on a 12-column grid: a wide list beside a narrow block —
+  // Learning | AI spend, then Reliability | Growth over Community. A side with
+  // nothing to show gives its columns to the other.
+  const wide = WIDE.flatMap((id) => pick(id) ?? []).map(block);
+  const pairs = ["growth", "community"].flatMap((id) => pick(id) ?? []).map(block);
+  const narrow = [...(pick("ai") ? [block(pick("ai")!)] : []), ...(pairs.length ? [pairs.join(`<div style="height:24px"></div>`)] : [])];
+  const cells: string[] = [];
+  for (let i = 0; i < Math.max(wide.length, narrow.length); i++) {
+    const both = wide[i] !== undefined && narrow[i] !== undefined;
+    if (wide[i] !== undefined) cells.push(`<div style="grid-column:span ${both ? 7 : 12};padding:18px 20px 20px">${wide[i]}</div>`);
+    if (narrow[i] !== undefined) cells.push(`<div style="grid-column:span ${both ? 5 : 12};padding:18px 20px 20px">${narrow[i]}</div>`);
+  }
+  for (const g of groups) if (!WIDE.includes(g.id) && !NARROW.includes(g.id)) cells.push(`<div style="grid-column:1 / -1;padding:18px 20px 20px">${block(g)}</div>`);
+  const strip = nowStrip(e), tiles = headlineTiles(e, range);
+  return `${strip ? `<div ${rise(i)}>${strip}</div>` : ""}${tiles ? `<div ${rise(i + 1)}>${tiles}</div>` : ""}
+    ${cells.length ? `<div ${rise(i + 2)}><div class="repo-cells" style="${TOP}"><div class="repo-pgrid" style="grid-template-columns:repeat(12,minmax(0,1fr))">${cells.join("")}</div></div></div>` : ""}`;
+}
+
+/** Which environment the section shows: the one picked this session, else the
+ *  LAST configured one that has reported anything (production, today), else the first. */
+function productEnvOf(envs: RepoProductEnv[], picked: string | null): RepoProductEnv {
+  return envs.find((e) => e.name === picked)
+    ?? [...envs].reverse().find((e) => e.totals.length || e.groups.some((g) => g.metrics.length))
+    ?? envs[0];
+}
+
+/** The Product section of the Usage tab, entering at stagger index `i`. */
+function productSection(p: RepoProps, i: number): string {
+  const head = (aside = "") =>
+    `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;padding:16px 20px 14px;min-height:30px"><span style="${LABEL}">Product</span>${aside}</div>`;
   const envs = okData(p, (d) => d.product);
   // No environment to draw — not connected, empty, loading, an error, OR an `ok`
   // that carries none (the Worker never sends that; the fallback is total anyway,
@@ -535,13 +714,21 @@ function productBlocks(p: RepoProps, i: number): string {
   if (!envs?.length) {
     const copy = { nc: "No product metrics reported yet. They appear once the app's metrics endpoint serves `counts` / `totals` and `SAPLING_METRICS_TOKEN` is set.", empty: "No current product reading — the hourly poll of the app's metrics endpoint has gone quiet.", lines: 3 };
     const state = sec(p, (d) => d.product ?? { status: "not_connected" }, copy, () => emptyBlock(copy.empty));
-    return `<div ${rise(i, `${TOP};padding:18px 20px`)}>${head("Product")}${state}</div>`;
+    return `<div ${rise(i, `${TOP}`)}>${head()}<div style="padding:0 20px 14px">${state}</div></div>`;
   }
-  const aside = `<span style="font-size:11px;color:var(--fg-40)">reported by the app · counts over ${esc(p.range)}</span>`;
-  return envs.map((e, n) => `<div ${rise(i + n, `${TOP};padding:18px 20px 12px;min-width:0`)}>
-      ${head(`Product — ${e.name}`, aside)}
-      ${productEnv(e, p.range)}
-    </div>`).join("");
+  const shown = productEnvOf(envs, p.productEnv);
+  const seg = envs.length > 1
+    ? `<div class="repo-seg" role="group" aria-label="Environment" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px;min-width:0;max-width:100%;overflow-x:auto">${envs.map((e) => {
+        const on = e === shown;
+        // The one already showing takes no action: pressing it again must not replay the cross-fade.
+        return `<button ${on ? "" : `data-act="repoProductEnv" `}data-arg="${attr(e.name)}" aria-pressed="${on}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"}">${esc(e.name)}</button>`;
+      }).join("")}</div>`
+    : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(shown.name)}</span>`;
+  const aside = `<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px 14px;min-width:0"><span style="font-size:11px;color:var(--fg-40)">reported by the app · counts over ${esc(p.range)}</span>${seg}</div>`;
+  return `<div style="${TOP};min-width:0">
+      <div ${rise(i)}>${head(aside)}</div>
+      <div class="repo-swap repo-pswap" data-penv="${attr(shown.name)}">${productBody(shown, p.range, envs, i)}</div>
+    </div>`;
 }
 
 // ── "Poll now" — the admin's on-demand run of the three hourly usage pollers ──
@@ -581,6 +768,19 @@ function pollStrip(poll: RepoPollState | null): string {
     </div>`;
 }
 
+const CF_REQUESTS = "Workers requests", CF_ERRORS = "Workers errors";
+/** A figure as the Worker compacts it ("302", "12.4K", "1.24M") back to a number; null for anything else. */
+export function parseCompact(s: string | undefined): number | null {
+  const m = /^(\d+(?:\.\d+)?)([KMBT])?$/.exec((s ?? "").trim());
+  return m ? Number(m[1]) * ({ K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[m[2] ?? ""] ?? 1) : null;
+}
+/** errors ÷ requests as a bar width in percent — null (no bar) unless both are readable and requests > 0. */
+export function errorShare(requests: string | undefined, errors: string | undefined): number | null {
+  const req = parseCompact(requests), err = parseCompact(errors);
+  if (req === null || err === null || req <= 0) return null;
+  return Math.min(100, Math.round((err / req) * 1000) / 10);
+}
+
 function usageTab(p: RepoProps): string {
   const usageLive = okData(p, (d) => d.usage) !== null;
   // Admins only, and never in sample mode (which never touches the Worker). A
@@ -593,43 +793,66 @@ function usageTab(p: RepoProps): string {
     `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
   const usage = sec(p, (d) => d.usage, { nc: "No usage captured yet. Requests and error rate come from the hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID); active users come from the app's own metrics endpoint (SAPLING_METRICS_TOKEN). Both need an environment in REPO_ENVIRONMENTS.", empty: "No current usage reading — the hourly polls have gone quiet.", lines: 4 }, (u) =>
-    `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
+    `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
+  // Infrastructure — two blocks, a column per environment in each, in the same
+  // stat shape as the Product blocks above (figure over label), not two tables.
   // `ok` is gated on the WIDEST range (30d), so a narrower one can legitimately
   // hold no rows — say so, rather than render a titled panel with nothing in it.
   // "Nothing RECORDED", not "no requests": an empty range may be one no poll
   // ever covered, and zero traffic is a claim the capture cannot support.
-  const cf = sec(p, (d) => d.cloudflare, { nc: "No Cloudflare analytics captured yet. The hourly poll runs once the CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID secrets are set and REPO_ENVIRONMENTS names each environment's Worker; it also feeds the requests and error rate above.", empty: "No Cloudflare metrics in the last 30 days." }, (c) =>
-    `<div class="repo-swap">${!c[p.range].length ? `<div style="padding:10px 0;${TOP};font-size:12.5px;color:var(--fg-40)">Nothing recorded in this range.</div>` : ""}${c[p.range].map((w) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 90px;gap:12px;align-items:center;padding:10px 0;${TOP}">
-      <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(w.env)}</span>
-      <span style="font-size:12.5px;color:var(--fg-55)">${esc(w.label)}</span>
-      <span style="font-family:var(--mono);font-size:13px;font-weight:600;text-align:right">${esc(w.value)}</span>
-    </div>`).join("")}</div>`);
+  const envCols = (cols: string[]): string =>
+    `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:18px 28px;margin-top:4px">${cols.join("")}</div>`;
+  const envName = (name: string): string =>
+    `<div style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>`;
+  // "0.48 vCPU" → the figure at size, its unit quiet beside it (the same string, split at the space).
+  const stat = (value: string, label: string, size = 21): string => {
+    const [, fig, unit] = /^(\S+)\s+(.+)$/.exec(value) ?? [null, value, ""];
+    return `<div style="min-width:0"><div style="${NUM};font-size:${size}px;letter-spacing:-0.02em;${value === "—" ? "color:var(--fg-40)" : ""}">${esc(fig ?? value)}${unit ? `<span style="font-size:11.5px;font-weight:500;letter-spacing:0;color:var(--fg-55);margin-left:5px">${esc(unit)}</span>` : ""}</div><div style="font-size:12px;color:var(--fg-55);margin-top:2px;overflow:hidden;text-overflow:ellipsis">${esc(label)}</div></div>`;
+  };
+  const usageNow = okData(p, (d) => d.usage)?.[p.range] ?? [];
+  const cf = sec(p, (d) => d.cloudflare, { nc: "No Cloudflare analytics captured yet. The hourly poll runs once the CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID secrets are set and REPO_ENVIRONMENTS names each environment's Worker; it also feeds the requests and error rate above.", empty: "No Cloudflare metrics in the last 30 days." }, (c) => {
+    const rows = c[p.range];
+    if (!rows.length) return `<div class="repo-swap" style="padding:6px 0;font-size:12.5px;color:var(--fg-40)">Nothing recorded in this range.</div>`;
+    const names = [...new Set(rows.map((r) => r.env))];
+    return `<div class="repo-swap">${envCols(names.map((name, n) => {
+      const mine = rows.filter((r) => r.env === name);
+      const req = mine.find((r) => r.label === CF_REQUESTS), err = mine.find((r) => r.label === CF_ERRORS);
+      // The share is the two figures this block itself shows, errors ÷ requests —
+      // drawn only when both are there and there is a request to take a share of.
+      const share = errorShare(req?.value, err?.value);
+      const tone = usageNow.find((u) => u.name === name)?.errorRate?.tone;
+      const fill = tone === "warn" || tone === "bad" ? TONE[tone] : "var(--fg-40)";
+      return `<div data-cfenv="${attr(name)}" style="min-width:0">${envName(name)}
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;align-items:end">${mine.map((r) => stat(r.value, r.label, r === req ? 21 : 17)).join("")}</div>
+        ${share === null ? "" : `<div title="${attr(`${CF_ERRORS} as a share of ${CF_REQUESTS}`)}" style="height:4px;border-radius:999px;background:var(--hover);overflow:hidden;margin-top:12px"><div class="repo-fill" style="--i:${n};height:100%;min-width:${share > 0 ? 2 : 0}px;border-radius:999px;background:${fill};width:${share}%"></div></div>
+        <div style="font-size:11px;color:var(--fg-40);margin-top:6px">errors as a share of requests</div>`}
+      </div>`;
+    }))}</div>`;
+  });
   const hosting = sec(p, (d) => d.hosting, { nc: "No Railway reading captured yet. The hourly poll runs once an environment's RAILWAY_TOKEN_<ENVIRONMENT> secret is set and REPO_ENVIRONMENTS carries its railwayEnvironmentId and railwayServiceId.", empty: "No fresh hosting reading — the last Railway sample is over 3 hours old." }, (rows) =>
-    rows.map((h) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:10px 0;${TOP}">
-      <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(h.env)}</span>
-      <span style="font-size:12.5px;color:var(--fg-55)">CPU <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${esc(h.cpu)}</span></span>
-      <span style="font-size:12.5px;color:var(--fg-55)">Memory <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${esc(h.memory)}</span></span>
-    </div>`).join(""));
+    envCols(rows.map((h) => `<div data-hostenv="${attr(h.env)}" style="min-width:0">${envName(h.env)}
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px">${stat(h.cpu, "CPU")}${stat(h.memory, "Memory")}</div>
+    </div>`)));
 
   const pollBtn = `<button data-act="repoPollNow" title="Run the hourly usage polls now" class="cnpy-outlinebtn"${polling ? " disabled" : ""} style="padding:7px 12px;border-radius:9px;border:1px solid var(--border);font-size:12px;font-weight:500;white-space:nowrap;color:var(--fg-55);${polling ? "opacity:.6;cursor:default;pointer-events:none" : ""}">${polling ? "Polling…" : "Poll now"}</button>`;
   const controls = canPoll ? `<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0">${pollBtn}${ranges}</div>` : ranges;
 
-  return `<div ${rise(0, `display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border)`)}>
+  return `<div ${rise(0, `display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;padding:14px 20px;border-bottom:1px solid var(--border)`)}>
       <span style="${LABEL}">App usage</span>${controls}
     </div>
     ${canPoll ? pollStrip(p.poll) : ""}
     <div ${rise(1)}>${usageLive ? usage : `<div style="padding:6px 20px">${usage}</div>`}</div>
-    <div ${rise(2, `display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));${TOP};flex:1`)}>
-      <div style="padding:18px 20px;min-width:0;display:flex;flex-direction:column">
-        <div style="${LABEL};margin-bottom:8px">Cloudflare — frontend Workers</div>
+    ${productSection(p, 2)}
+    <div ${rise(5, `${TOP};flex:1`, "repo-cells")}><div style="grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))">
+      <div style="padding:18px 20px 20px;display:flex;flex-direction:column">
+        <div style="${LABEL};white-space:normal;line-height:1.5;margin-bottom:12px">Cloudflare — frontend Workers</div>
         ${cf}
       </div>
-      <div style="padding:18px 20px;${LEFT};min-width:0;display:flex;flex-direction:column">
-        <div style="${LABEL}">Hosting — Railway backend</div>
+      <div style="padding:18px 20px 20px;display:flex;flex-direction:column">
+        <div style="${LABEL};white-space:normal;line-height:1.5;margin-bottom:12px">Hosting — Railway backend</div>
         ${hosting}
       </div>
-    </div>
-    ${productBlocks(p, 3)}`;
+    </div></div>`;
 }
 
 // ── Team & Planning ──────────────────────────────────────────────────────────
@@ -744,7 +967,7 @@ export function repoView(p: RepoProps): string {
       </div>`
     : "";
 
-  return `<div style="${FRAME}" data-screen-label="${SCREEN_LABEL[p.tab]}">
+  return `<div class="repo-frame" style="${FRAME}" data-screen-label="${SCREEN_LABEL[p.tab]}">
     ${banner}
     <div class="repo-panel" style="${PANEL}">${body}</div>
     ${footer}

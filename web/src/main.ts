@@ -4,7 +4,7 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
+import { render, initialState, firstDocForSpace, docReaderHtml, isCorners, type AppState, type Screen } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint,
@@ -36,7 +36,7 @@ import { PERSON_COLORS, type PersonColor } from "@shared/rows";
 import { captureScroll, restoreScroll } from "./scroll";
 import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
-import { repoUpdatedLabel } from "./repo";
+import { formatCount, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
 
 const root = document.getElementById("app");
@@ -45,10 +45,12 @@ const mount = root;
 
 const state: AppState = initialState();
 
-// ── persisted client prefs (theme + sidebar only; not backend state) ─────────
+// ── persisted client prefs (theme, corners + sidebar only; not backend state) ─
 try {
   const t = localStorage.getItem("canopy.theme");
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
+  const k = localStorage.getItem("canopy.corners");
+  if (isCorners(k)) state.corners = k;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
   const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
@@ -128,12 +130,16 @@ function countUp(root: HTMLElement): void {
   const key = enterKey;
   const els = Array.from(root.querySelectorAll<HTMLElement>("[data-count]"));
   if (!els.length) return;
+  // A compacted or dollar figure ("1.4K", "$29.61") counts up in its own format
+  // (`data-count-fmt`) and LANDS on the text it was rendered with — the Worker's
+  // string, never a re-derivation of it.
+  const finals = els.map((el) => el.textContent ?? "");
   const start = performance.now();
   const step = (t: number) => {
     const k = Math.min(1, (t - start) / 600);
     const eased = 1 - Math.pow(1 - k, 3);
     // A rerender replaces these nodes; the new ones already carry the final value.
-    for (const el of els) if (el.isConnected) el.textContent = String(Math.round(Number(el.dataset.count) * eased));
+    els.forEach((el, i) => { if (el.isConnected) el.textContent = k >= 1 ? finals[i] : formatCount(Number(el.dataset.count) * eased, el.dataset.countFmt); });
     if (k < 1 && key === enterKey) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -1142,6 +1148,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.repoRange = arg as RepoRange;
       pendingFlash = ".repo-swap";
       break;
+    case "repoProductEnv":
+      // Session-only, like the range. Only the Product body cross-fades — never the whole screen.
+      if (!arg || arg === state.repoProductEnv) return;
+      state.repoProductEnv = arg;
+      pendingFlash = ".repo-pswap";
+      break;
     case "repoToggleDrift":
       state.repoDriftOpen = !state.repoDriftOpen;
       if (state.repoDriftOpen) pendingFlash = ".repo-drift";
@@ -1512,7 +1524,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
-    // chrome: theme + sidebar
+    // chrome: theme, corners + sidebar
     case "toggleCollapse":
       state.collapsed = !state.collapsed;
       persist("canopy.collapsed", state.collapsed ? "1" : "0");
@@ -1530,6 +1542,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (arg === "dark" || arg === "light" || arg === "midnight" || arg === "system") {
         state.theme = arg;
         persist("canopy.theme", arg);
+      }
+      break;
+    case "setCorners":
+      if (isCorners(arg)) {
+        state.corners = arg;
+        persist("canopy.corners", arg);
       }
       break;
 

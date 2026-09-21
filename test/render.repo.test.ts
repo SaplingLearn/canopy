@@ -6,11 +6,11 @@
  * forms, nothing captured is trusted as markup, and the sample set is labelled.
  */
 import { describe, it, expect } from "vitest";
-import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, type RepoProps } from "../web/src/repo";
+import { repoView, repoControls, repoCrumb, repoUpdatedLabel, sparkPoints, ago, errorShare, formatCount, parseCompact, type RepoProps } from "../web/src/repo";
 import { repoSample } from "../web/src/repo-sample";
 import { productKeyInfo } from "../src/repo/product";
 import { render, initialState } from "../web/src/render";
-import { REPO_TABS, type RepoDashboard, type RepoPerson, type RepoProductEnv, type UsagePollResult } from "@shared/repo";
+import { REPO_TABS, type RepoDashboard, type RepoPerson, type RepoProductCount, type RepoProductEnv, type UsagePollResult } from "@shared/repo";
 
 const NC = { status: "not_connected" } as const;
 const EMPTY = { status: "empty" } as const;
@@ -27,7 +27,7 @@ function live(over: Partial<RepoDashboard> = {}): RepoDashboard {
 }
 
 function props(over: Partial<RepoProps> = {}): RepoProps {
-  return { tab: "overview", range: "7d", driftOpen: false, repo: { status: "ok", data: live() }, fetchedAt: Date.now(), sample: false, admin: false, poll: null, ...over };
+  return { tab: "overview", range: "7d", driftOpen: false, repo: { status: "ok", data: live() }, fetchedAt: Date.now(), sample: false, admin: false, poll: null, productEnv: null, ...over };
 }
 
 describe("repoView — section states", () => {
@@ -305,8 +305,13 @@ describe("repoView — live content", () => {
     const rows = [{ env: "staging", cpu: "0.12 vCPU", memory: "410 MB" }, { env: "production", cpu: "—", memory: "2048 MB" }];
     const okHtml = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ hosting: { status: "ok", data: rows } }) } }));
     expect(okHtml).toContain("Hosting — Railway backend");
-    expect(okHtml).toContain("0.12 vCPU");
-    expect(okHtml).toContain("2048 MB");
+    // Figure over label per environment; the unit is the same string, split at the space.
+    const prod = okHtml.slice(okHtml.indexOf('data-hostenv="production"'));
+    expect(okHtml.slice(okHtml.indexOf('data-hostenv="staging"'), okHtml.indexOf('data-hostenv="production"'))).toMatch(/>0\.12<span[^>]*>vCPU<\/span>[\s\S]*>CPU<[\s\S]*>410<span[^>]*>MB<\/span>[\s\S]*>Memory</);
+    expect(prod).toMatch(/>2048<span[^>]*>MB<\/span>/);
+    // A stale cell stays an em dash — muted, never a guessed figure.
+    expect(prod).toMatch(/color:var\(--fg-40\)">—</);
+    expect(okHtml).not.toContain("<table");
     const stale = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ hosting: EMPTY }) } }));
     expect(stale).toContain("No fresh hosting reading — the last Railway sample is over 3 hours old.");
     const never = repoView(props({ tab: "usage", repo: { status: "ok", data: live() } }));
@@ -473,16 +478,19 @@ describe("repo header chrome", () => {
 // ── "Poll now" (admin-only, Usage tab) ───────────────────────────────────────
 // ── product metrics (Sapling contract v2) ────────────────────────────────────
 describe("repoView — product metrics", () => {
-  const all3 = (v: string | null) => ({ "24h": v, "7d": v, "30d": v });
+  const all3 = <T>(v: T) => ({ "24h": v, "7d": v, "30d": v });
+  /** A count reading the same in every range (`null` = no recent reading). */
+  const count = (key: string, label: string, n: number | null, over: Partial<RepoProductCount> = {}): RepoProductCount =>
+    ({ key, label, values: all3(n === null ? null : String(n)), raw: all3(n), trend: [], ...over });
   const staging: RepoProductEnv = {
     name: "staging",
     groups: [
       { id: "growth", title: "Growth", metrics: [
         { key: "signups", label: "Signups", values: { "24h": "3", "7d": "21", "30d": "96" }, raw: { "24h": 3, "7d": 21, "30d": 96 }, trend: [2, 4, 3, 5] },
-        { key: "approvals", label: "Approvals", values: all3(null), raw: { "24h": null, "7d": null, "30d": null }, trend: [1] },
+        count("approvals", "Approvals", null, { trend: [1, 2, 3] }),
       ] },
       { id: "ai", title: "AI spend", metrics: [
-        { key: "llm_tokens", label: "LLM tokens", values: { "24h": "41.0K", "7d": "1.23M", "30d": "4.80M" }, raw: { "24h": 41_000, "7d": 1_234_567, "30d": 4_800_000 }, trend: [] },
+        { key: "llm_tokens", label: "LLM tokens", values: { "24h": "41.0K", "7d": "1.23M", "30d": "4.80M" }, raw: { "24h": 41_000, "7d": 1_234_567, "30d": 4_800_000 }, trend: [1, 2, 3] },
         { key: "llm_cost_cents", label: "LLM cost", values: { "24h": "$4.12", "7d": "$29.61", "30d": "$118.30" }, raw: { "24h": 412, "7d": 2961, "30d": 11830 }, trend: [300, 412], note: "lower bound — unpriced models are not counted" },
       ] },
     ],
@@ -494,98 +502,369 @@ describe("repoView — product metrics", () => {
   const production: RepoProductEnv = { name: "production", groups: [], totals: [] };
   const view = (over: Partial<RepoProps> = {}, data: RepoProductEnv[] = [staging, production]) =>
     repoView(props({ tab: "usage", repo: { status: "ok", data: live({ product: { status: "ok", data } }) }, ...over }));
-  /** The markup of one labelled row: from its label to the end of its grid row. */
-  const rowOf = (html: string, label: string) => { const i = html.indexOf(`>${label}<`); expect(i, label).toBeGreaterThan(-1); return html.slice(i, html.indexOf("</div>", i)); };
+  const one = (groups: RepoProductEnv["groups"], totals: RepoProductEnv["totals"] = [], over: Partial<RepoProps> = {}) =>
+    view(over, [{ name: "staging", groups, totals }]);
+  /** From a marker attribute to the next marker of any of the given kinds (or the end). */
+  const cut = (html: string, marker: string, stops: string[]): string => {
+    const i = html.indexOf(marker);
+    expect(i, marker).toBeGreaterThan(-1);
+    const ends = stops.map((s) => html.indexOf(s, i + marker.length)).filter((n) => n > -1);
+    return html.slice(i, ends.length ? Math.min(...ends) : undefined);
+  };
+  const blockOf = (html: string, id: string) => cut(html, `data-pblock="${id}"`, ['data-pblock="', 'data-pkpi="', "Cloudflare — frontend"]);
+  const rowOf = (html: string, key: string, block?: string) =>
+    cut(block ? blockOf(html, block) : html.slice(html.indexOf("repo-pgrid")), `data-prow="${key}"`, ['data-prow="', 'data-pblock="', "data-pzero", "data-pstale", "repo-pnotes", 'class="cnpy-rise']);
+  const tileOf = (html: string, key: string) => cut(html, `data-pkpi="${key}"`, ['data-pkpi="', "repo-pgrid"]);
+  const tileKeys = (html: string) => [...html.matchAll(/data-pkpi="([^"]*)"/g)].map((m) => m[1]);
 
-  it("one titled block per environment, groups as labelled blocks, totals under Right now", () => {
+  // ── one section, an environment switch ─────────────────────────────────────
+  it("is ONE Product section: it shows one environment, and a segmented control names them all", () => {
     const html = view();
-    expect(html).toContain("Product — staging");
-    expect(html).toContain("Product — production");
+    expect(html.split(">Product<").length - 1).toBe(1);
+    expect(html).not.toContain("Product — ");
+    expect((html.match(/data-penv="/g) ?? []).length).toBe(1);
+    // Default: the LAST configured environment that has reported anything — production reported nothing.
+    expect(html).toContain('data-penv="staging"');
+    expect(html).toMatch(/<button data-arg="staging" aria-pressed="true"[^>]*>staging<\/button>/); // the one showing takes no action
+    expect(html).toMatch(/<button data-act="repoProductEnv" data-arg="production" aria-pressed="false"[^>]*>production<\/button>/);
+    expect(html).toContain("reported by the app · counts over 7d");
     for (const title of ["Growth", "AI spend", "Right now"]) expect(html).toContain(`>${title}<`);
-    expect(html).not.toMatch(/undefined|NaN|\[object/);
     // Groups the environment did not report are not drawn as empty boxes.
     expect(html).not.toContain(">Community<");
+    expect(html).not.toMatch(/undefined|NaN|\[object/);
+    expect(html.slice(html.indexOf(">Product<"))).not.toContain("<table");
   });
 
+  it("the picked environment is the only one rendered; a name nobody configured falls back to the default", () => {
+    const prod = view({ productEnv: "production" });
+    expect(prod).toContain('data-penv="production"');
+    expect(prod).toContain("This environment has reported no product metrics.");
+    expect(prod).not.toContain(">Signups<");
+    expect(prod).not.toContain("data-pblock=");
+    expect(view()).not.toContain("has reported no product metrics");
+    expect(view({ productEnv: "nope" })).toContain('data-penv="staging"');
+    // Both have data → the last configured one is the default.
+    expect(view({}, [staging, { ...staging, name: "production" }])).toContain('data-penv="production"');
+    // Nothing anywhere → the first.
+    expect(view({}, [production, { ...production, name: "later" }])).toContain('data-penv="production"');
+  });
+
+  it("a single environment gets its name, not a one-button switch", () => {
+    const html = one(staging.groups);
+    expect(html).not.toContain("repoProductEnv");
+    expect(html).toMatch(/>staging<\/span>/);
+  });
+
+  // ── never-guess rules ──────────────────────────────────────────────────────
   it("the range selector drives counts — and never totals", () => {
     const at = (range: "24h" | "7d" | "30d") => view({ range });
-    expect(rowOf(at("24h"), "Signups")).toContain(">3<");
-    expect(rowOf(at("7d"), "Signups")).toContain(">21<");
-    expect(rowOf(at("30d"), "Signups")).toContain(">96<");
-    expect(rowOf(at("30d"), "LLM cost")).toContain("$118.30");
-    for (const range of ["24h", "7d", "30d"] as const) expect(rowOf(at(range), "Users")).toContain(">1.2K<");
+    expect(rowOf(at("24h"), "signups")).toContain(">3<");
+    expect(rowOf(at("7d"), "signups")).toContain(">21<");
+    expect(rowOf(at("30d"), "signups")).toContain(">96<");
+    expect(rowOf(at("30d"), "llm_cost_cents")).toContain("$118.30");
+    expect(tileOf(at("24h"), "signups")).toContain("last 24h");
+    expect(tileOf(at("30d"), "llm_cost_cents")).toContain(">$118.30<");
+    for (const range of ["24h", "7d", "30d"] as const) expect(blockOf(at(range), "now")).toMatch(/>1\.2K<\/span><span[^>]*>Users</);
   });
 
-  it("the exact integer behind a compacted figure is its title", () => {
-    expect(rowOf(view({ range: "7d" }), "LLM tokens")).toContain('title="1,234,567"');
+  it("the exact integer behind a compacted figure is its title — never behind a dollar amount", () => {
+    expect(rowOf(view({ range: "7d" }), "llm_tokens")).toContain('title="1,234,567"');
+    expect(blockOf(view(), "now")).toContain('title="1,204"');
+    expect(rowOf(view(), "llm_cost_cents")).not.toContain("title=");
   });
 
-  it("a null figure reads a quiet 'no recent reading' in place — the row and its neighbours stay", () => {
+  it("a null figure reads a quiet 'no recent reading' in place — its neighbours stay, and no stale trend is drawn", () => {
     const html = view();
-    expect(rowOf(html, "Approvals")).toContain("no recent reading");
-    expect(rowOf(html, "Rooms")).toContain("no recent reading");
-    expect(rowOf(html, "Signups")).not.toContain("no recent reading");
-    // A stale figure's old trend is not drawn beside "no recent reading": the line would read as current.
-    expect(rowOf(html, "Rooms")).not.toContain("<polyline");
+    expect(rowOf(html, "approvals")).toContain("no recent reading");
+    expect(rowOf(html, "signups")).not.toContain("no recent reading");
+    const now = blockOf(html, "now");
+    expect(now).toMatch(/>Rooms<\/span><span[^>]*>no recent reading</);
+    expect(now).toContain(">1.2K<");
+    // An absent key is absent — nothing is zero-filled.
+    expect(html).not.toContain(">Logins<");
+    expect(html).not.toContain(">0<");
   });
 
-  it("draws a sparkline only from two trend points up", () => {
+  // ── level 1: the stat strip and the headline tiles ─────────────────────────
+  it("'Right now' is an inline stat strip — figures and labels, no sparklines, no rows", () => {
+    const now = blockOf(view(), "now");
+    expect(now).toContain(">Right now<");
+    expect(now).toContain("flex-wrap:wrap");
+    expect(now).not.toContain("<polyline");
+    expect(now.indexOf(">1.2K<")).toBeLessThan(now.indexOf(">Users<")); // the figure leads, its label follows
+    // …and with no totals there is no strip at all.
+    expect(one(staging.groups)).not.toContain(">Right now<");
+  });
+
+  it("a total's note is a footnote under the strip", () => {
+    const html = one([], [{ key: "users", label: "Users", value: "5", raw: 5, trend: [], note: "excludes test accounts" }]);
+    expect(blockOf(html, "now")).toContain("Users: excludes test accounts");
+  });
+
+  it("headline tiles: signups, tutor sessions, LLM cost, 5xx — in that order, whatever the group order", () => {
+    const html = one([
+      { id: "reliability", title: "Reliability", metrics: [count("errors_5xx", "5xx errors", 0)] },
+      { id: "ai", title: "AI spend", metrics: [count("llm_cost_cents", "LLM cost", 412, { values: all3("$4.12") })] },
+      { id: "learning", title: "Learning activity", metrics: [count("chat_messages", "Chat messages", 9), count("tutor_sessions", "Tutor sessions", 4)] },
+      { id: "growth", title: "Growth", metrics: [count("logins", "Logins", 7), count("signups", "Signups", 2, { trend: [1, 2] })] },
+    ]);
+    expect(tileKeys(html)).toEqual(["signups", "tutor_sessions", "llm_cost_cents", "errors_5xx"]);
+    const tile = tileOf(html, "signups");
+    expect(tile).toContain(">Signups<");
+    expect(tile).toContain("last 7d");
+    expect(tile).toContain("<polyline");
+    expect(tile).toMatch(/data-count="2"[^>]*font-size:27px/);
+    expect(tileOf(html, "errors_5xx")).not.toContain("<polyline"); // no trend points → no line
+  });
+
+  it("missing headline keys are filled from chat messages, logins, quizzes completed — up to four", () => {
+    const fill = one([
+      { id: "learning", title: "Learning activity", metrics: [count("quizzes_completed", "Quizzes completed", 1), count("chat_messages", "Chat messages", 9), count("notes_created", "Notes created", 3)] },
+      { id: "growth", title: "Growth", metrics: [count("logins", "Logins", 7), count("signups", "Signups", 2)] },
+    ]);
+    expect(tileKeys(fill)).toEqual(["signups", "chat_messages", "logins", "quizzes_completed"]);
+    // Five candidates → still four, in order.
+    const five = one([{ id: "x", title: "X", metrics: ["quizzes_completed", "logins", "errors_5xx", "tutor_sessions", "signups"].map((k) => count(k, k, 1)) }]);
+    expect(tileKeys(five)).toEqual(["signups", "tutor_sessions", "errors_5xx", "logins"]);
+  });
+
+  it("fewer than two headline keys → no strip; an unknown key never becomes a headline", () => {
+    const html = one([{ id: "growth", title: "Growth", metrics: [count("signups", "Signups", 2), count("approvals", "Approvals", 1)] },
+      { id: "other", title: "Other", metrics: [count("mystery", "Mystery", 5)] }]);
+    expect(tileKeys(html)).toEqual([]);
+    expect(html).not.toContain("repo-kpis");
+    expect(tileKeys(view())).toEqual(["signups", "llm_cost_cents"]); // two is enough
+  });
+
+  it("a headline tile with no recent reading keeps its label and says so — no figure, no line, no count-up", () => {
+    const html = one([{ id: "growth", title: "Growth", metrics: [count("signups", "Signups", null, { trend: [1, 2, 3] }), count("logins", "Logins", 4)] }]);
+    const tile = tileOf(html, "signups");
+    expect(tile).toContain(">Signups<");
+    expect(tile).toContain("no recent reading");
+    expect(tile).not.toContain("<polyline");
+    expect(tile).not.toContain("data-count");
+    expect(tile).not.toContain("last 7d");
+  });
+
+  it("5xx errors above zero take the bad tone on their tile; a measured zero does not", () => {
+    const at = (n: number) => tileOf(one([{ id: "reliability", title: "Reliability", metrics: [count("errors_5xx", "5xx errors", n, { trend: [1, 2] })] },
+      { id: "growth", title: "Growth", metrics: [count("signups", "Signups", 1)] }]), "errors_5xx");
+    expect(at(3)).toContain("color:var(--red)");
+    expect(at(3)).toContain('stroke="var(--red)"');
+    expect(at(0)).not.toContain("var(--red)");
+    expect(at(0)).toContain(">0<");
+  });
+
+  it("count-up lands on the Worker's own string: a compacted or dollar figure carries its format", () => {
     const html = view();
-    expect(rowOf(html, "Signups")).toContain("<polyline");
-    expect(rowOf(html, "Users")).toContain("<polyline");
-    expect(rowOf(html, "Approvals")).not.toContain("<polyline");   // one point
-    expect(rowOf(html, "LLM tokens")).not.toContain("<polyline");  // none
+    expect(tileOf(html, "signups")).toMatch(/data-count="21" class=/); // a plain integer needs no format
+    expect(tileOf(html, "llm_cost_cents")).toMatch(/data-count="2961" data-count-fmt="usd"[^>]*>\$29\.61</);
+    const big = one([{ id: "learning", title: "Learning activity", metrics: [count("tutor_sessions", "Tutor sessions", 1380, { values: all3("1.4K") }), count("chat_messages", "Chat messages", 2)] }]);
+    expect(tileOf(big, "tutor_sessions")).toMatch(/data-count="1380" data-count-fmt="compact" title="1,380"[^>]*>1\.4K</);
+    // The in-between frames mirror the Worker's formatting.
+    expect(formatCount(1380, "compact")).toBe("1.4K");
+    expect(formatCount(999_950, "compact")).toBe("1.00M");
+    expect(formatCount(2961, "usd")).toBe("$29.61");
+    expect(formatCount(123_456_789, "usd")).toBe("$1.23M");
+    expect(formatCount(20.6, undefined)).toBe("21");
   });
 
-  it("a metric's note is a footnote under its group, once", () => {
+  // ── level 2: a shape per group ─────────────────────────────────────────────
+  it("Learning activity is a ranked bar list: sorted by the range's figure, widths proportional, null last", () => {
+    const m = (key: string, a: number | null, b: number | null): RepoProductCount => ({ key, label: key, trend: [1, 2, 3],
+      values: { "24h": a === null ? null : String(a), "7d": b === null ? null : String(b), "30d": null }, raw: { "24h": a, "7d": b, "30d": null } });
+    const groups = [{ id: "learning", title: "Learning activity", metrics: [m("small", 50, 1), m("stale", null, null), m("big", 200, 3), m("zero", 0, 12), m("mid", 100, 6)] }];
+    const order = (html: string) => [...blockOf(html, "learning").matchAll(/data-prow="([^"]*)"/g)].map((x) => x[1]);
+    const day = one(groups, [], { range: "24h" });
+    expect(order(day)).toEqual(["big", "mid", "small", "zero", "stale"]);
+    expect(order(one(groups, [], { range: "7d" }))).toEqual(["zero", "mid", "big", "small", "stale"]); // re-ranked per range
+    const width = (key: string) => /width:([\d.]+)%/.exec(rowOf(day, key))?.[1];
+    expect([width("big"), width("mid"), width("small")]).toEqual(["100", "50", "25"]);
+    expect(rowOf(day, "big")).toContain('class="repo-fill"');
+    // A measured zero keeps its track and draws no fill; a null draws no bar at all and says why.
+    expect(rowOf(day, "zero")).not.toContain("repo-fill");
+    expect(rowOf(day, "zero")).toContain(">0<");
+    expect(rowOf(day, "stale")).toContain("no recent reading");
+    expect(rowOf(day, "stale")).not.toMatch(/[^-]width:/);
+    expect(blockOf(day, "learning")).not.toContain("<polyline"); // the bar is the picture
+  });
+
+  it("AI spend is one feature block: the cost leads, the rest is one quiet line, and nothing is derived", () => {
+    const html = one([{ id: "ai", title: "AI spend", metrics: [
+      count("llm_calls", "LLM calls", 21_400, { values: all3("21.4K") }),
+      count("llm_tokens", "LLM tokens", 33_100_000, { values: all3("33.10M") }),
+      count("llm_cost_cents", "LLM cost", 2961, { values: all3("$29.61"), trend: [1, 2, 3], note: "lower bound — unpriced models are not counted" }),
+    ] }]);
+    const ai = blockOf(html, "ai");
+    expect(ai).toMatch(/font-size:22px[^>]*>\$29\.61</);
+    expect(ai.indexOf("$29.61")).toBeLessThan(ai.indexOf("21.4K"));
+    expect(ai).toMatch(/>21\.4K<\/span> LLM calls/);
+    expect(ai).toMatch(/>33\.10M<\/span> LLM tokens/);
+    expect((ai.match(/<polyline/g) ?? []).length).toBe(1); // the cost's line only
+    expect(ai.indexOf("lower bound")).toBeGreaterThan(ai.indexOf("<polyline"));
+    // Only reported numbers: no cost per call, no per-token figure.
+    expect(ai).not.toMatch(/per |\/ ?call|÷/i);
+    expect((ai.match(/\$/g) ?? []).length).toBe(1);
+  });
+
+  it("AI spend without a cost key leads with its first metric; a null lead says so and draws no line", () => {
+    const html = one([{ id: "ai", title: "AI spend", metrics: [count("llm_calls", "LLM calls", null, { trend: [1, 2, 3] }), count("llm_tokens", "LLM tokens", null)] }]);
+    const ai = blockOf(html, "ai");
+    expect(ai).toContain("LLM calls · last 7d");
+    expect(ai.split("no recent reading").length - 1).toBe(2);
+    expect(ai).not.toContain("<polyline");
+    expect(ai).not.toContain("data-count");
+  });
+
+  it("Reliability is a status list: non-zero first with a tone dot, zeros folded into ONE line, nulls named apart", () => {
+    const html = one([{ id: "reliability", title: "Reliability", metrics: [
+      count("rag_retrieval_failed", "RAG retrieval failed", 0),
+      count("errors_4xx", "4xx errors", 980, { note: "includes bot traffic and refused polls" }),
+      count("quiz_context_write_failed", "Quiz context write failed", 0),
+      count("quiz_generation_failed", "Quiz generation failed", 9),
+      count("rag_chunks_dropped", "RAG runs that dropped chunks", null),
+      count("errors_5xx", "5xx errors", 17),
+    ] }]);
+    const rel = blockOf(html, "reliability");
+    const rows = [...rel.matchAll(/data-prow="([^"]*)"/g)].map((x) => x[1]);
+    // Failures lead (largest first); 4xx — mostly bots — follows, whatever its size. Zeros and nulls are not rows.
+    expect(rows).toEqual(["errors_5xx", "quiz_generation_failed", "errors_4xx"]);
+    expect(rowOf(html, "errors_5xx")).toContain("background:var(--red)");
+    expect(rowOf(html, "quiz_generation_failed")).toContain("background:var(--red)");
+    expect(rowOf(html, "errors_4xx")).toContain("background:var(--fg-55)");
+    expect(rowOf(html, "errors_4xx")).not.toContain("var(--red)");
+    expect(rowOf(html, "errors_5xx")).toContain(">17<");
+    const zero = cut(rel, "data-pzero", ["data-pstale", "repo-pnotes"]);
+    expect(zero).toContain("2 at zero");
+    expect(zero).toContain("RAG retrieval failed, Quiz context write failed");
+    expect((rel.match(/data-pzero/g) ?? []).length).toBe(1);
+    // A figure with no recent reading is NOT a zero: named on its own line, never in the fold.
+    expect(zero).not.toContain("RAG runs that dropped chunks");
+    const stale = cut(rel, "data-pstale", ["repo-pnotes"]);
+    expect(stale).toContain("no recent reading — RAG runs that dropped chunks");
+    expect(rel.indexOf("data-pzero")).toBeGreaterThan(rel.lastIndexOf('data-prow="'));
+    expect(rel.indexOf("4xx errors: includes bot traffic")).toBeGreaterThan(rel.indexOf("data-pstale"));
+    expect(rel).not.toContain("<polyline");
+  });
+
+  it("an all-zero Reliability group is just the one line; an all-live one has no zero line", () => {
+    const zeros = blockOf(one([{ id: "reliability", title: "Reliability", metrics: [count("errors_5xx", "5xx errors", 0), count("errors_4xx", "4xx errors", 0)] }]), "reliability");
+    expect(zeros).toContain("2 at zero");
+    expect(zeros).not.toContain('data-prow="');
+    expect(zeros).not.toContain("data-pstale");
+    const hot = blockOf(one([{ id: "reliability", title: "Reliability", metrics: [count("errors_5xx", "5xx errors", 2)] }]), "reliability");
+    expect(hot).not.toContain("data-pzero");
+    expect(hot).not.toContain("at zero");
+  });
+
+  it("Growth and Community are stat pairs — number over label, no per-row sparkline", () => {
+    const html = one([
+      { id: "growth", title: "Growth", metrics: [count("signups", "Signups", 21, { trend: [1, 2, 3] }), count("logins", "Logins", 182, { trend: [1, 2, 3] })] },
+      { id: "community", title: "Community", metrics: [count("feedback", "Feedback", 0, { trend: [1, 2, 3] })] },
+    ]);
+    for (const id of ["growth", "community"]) {
+      expect(blockOf(html, id)).toContain("grid-template-columns:repeat(3,");
+      expect(blockOf(html, id)).not.toContain("<polyline");
+    }
+    const row = rowOf(html, "signups", "growth");
+    expect(row.indexOf(">21<")).toBeLessThan(row.indexOf(">Signups<"));
+    expect(row).toMatch(/font-size:21px[^>]*>21</);
+    expect(rowOf(html, "feedback", "community")).toContain(">0<"); // a measured zero is a reading
+  });
+
+  it("an unknown key still renders — as a quiet row under Other, after every known block; so does an unknown group", () => {
+    const html = one([
+      { id: "other", title: "Other", metrics: [count("brand_new_thing", "Brand new thing", 1500, { values: all3("1.5K"), note: "new this week" }), count("constructor", "Constructor", null)] },
+      { id: "growth", title: "Growth", metrics: [count("signups", "Signups", 2)] },
+      { id: "somewhere_new", title: "Somewhere new", metrics: [count("k", "A key", 4)] },
+    ]);
+    const other = blockOf(html, "other");
+    expect(other).toContain(">Other<");
+    expect(other).toMatch(/>Brand new thing<[\s\S]*title="1,500"[^>]*>1\.5K</);
+    expect(rowOf(html, "constructor", "other")).toContain("no recent reading");
+    expect(other).toContain("Brand new thing: new this week");
+    expect(html.indexOf('data-pblock="other"')).toBeGreaterThan(html.indexOf('data-pblock="growth"'));
+    expect(blockOf(html, "somewhere_new")).toMatch(/>Somewhere new<[\s\S]*>A key<[\s\S]*>4</);
+  });
+
+  it("the blocks sit on a 12-column grid: a wide list beside a narrow block, and a lone block takes the row", () => {
+    const g = (id: string, key: string) => ({ id, title: id, metrics: [count(key, key, 1)] });
+    const full = one([g("growth", "signups"), g("learning", "notes_created"), g("community", "rooms_x"), g("ai", "llm_calls"), g("reliability", "errors_5xx")]);
+    expect(full).toContain("grid-template-columns:repeat(12,");
+    const spans = (html: string) => [...html.matchAll(/grid-column:span (\d+);[^"]*"><div data-pblock="([^"]*)"/g)].map((m) => `${m[2]}:${m[1]}`);
+    // Growth and Community share ONE narrow cell (growth opens it).
+    expect(spans(full)).toEqual(["learning:7", "ai:5", "reliability:7", "growth:5"]);
+    expect(full.indexOf('data-pblock="community"')).toBeGreaterThan(full.indexOf('data-pblock="growth"'));
+    expect(spans(one([g("learning", "notes_created")]))).toEqual(["learning:12"]);
+    expect(spans(one([g("growth", "signups"), g("reliability", "errors_5xx")]))).toEqual(["reliability:7", "growth:5"]);
+  });
+
+  it("a metric's note is a footnote under its group, once; two notes are two lines of ONE block, in row order", () => {
     const html = view();
     expect(html.split("lower bound — unpriced models are not counted").length - 1).toBe(1);
-    expect(html.indexOf("lower bound")).toBeGreaterThan(html.indexOf(">LLM cost<"));
-  });
-
-  it("two notes in one group are two labelled footnotes, in row order, each once", () => {
-    const html = view({}, [{ name: "staging", totals: [], groups: [{ id: "reliability", title: "Reliability", metrics: [
-      { key: "errors_5xx", label: "5xx errors", values: all3("3"), raw: { "24h": 3, "7d": 3, "30d": 3 }, trend: [] },
-      { key: "errors_4xx", label: "4xx errors", values: all3("9"), raw: { "24h": 9, "7d": 9, "30d": 9 }, trend: [], note: "includes bot traffic and refused polls" },
-      { key: "x", label: "Other thing", values: all3("1"), raw: { "24h": 1, "7d": 1, "30d": 1 }, trend: [], note: "lower bound — a second note" },
-    ] }] }]);
-    const a = html.indexOf("4xx errors: includes bot traffic and refused polls");
-    const b = html.indexOf("Other thing: lower bound — a second note");
-    expect(a).toBeGreaterThan(html.indexOf(">Other thing<")); // under the rows
+    expect(blockOf(html, "ai").indexOf("lower bound")).toBeGreaterThan(blockOf(html, "ai").indexOf("LLM cost"));
+    const two = one([{ id: "reliability", title: "Reliability", metrics: [
+      count("errors_5xx", "5xx errors", 3),
+      count("errors_4xx", "4xx errors", 9, { note: "includes bot traffic and refused polls" }),
+      count("x", "Other thing", 1, { note: "lower bound — a second note" }),
+    ] }]);
+    const a = two.indexOf("4xx errors: includes bot traffic and refused polls");
+    const b = two.indexOf("Other thing: lower bound — a second note");
+    expect(a).toBeGreaterThan(two.indexOf(">Other thing<")); // under the rows
     expect(b).toBeGreaterThan(a);
-    expect(html.split("includes bot traffic and refused polls").length - 1).toBe(1);
-    // ONE footnote block per group, a line per note — not a stack of separately-spaced boxes.
-    expect((html.match(/class="repo-pnotes"/g) ?? []).length).toBe(1);
-    expect(html).not.toMatch(/undefined|NaN/);
+    expect(two.split("includes bot traffic and refused polls").length - 1).toBe(1);
+    expect((two.match(/class="repo-pnotes"/g) ?? []).length).toBe(1);
+    expect(two).not.toMatch(/undefined|NaN/);
   });
 
+  // ── another service's text ─────────────────────────────────────────────────
+  it("labels, keys, notes, titles, values and environment names are another service's text — escaped at EVERY site", () => {
+    const hostile = `<img src=x onerror=1>`;
+    const quote = `"><script>alert(1)</script>`;
+    const evil = (key: string, n: number | null = 5): RepoProductCount => count(key, hostile, n, { values: all3(n === null ? null : hostile), trend: [1, 2], note: quote });
+    // Every shape, every headline slot, a zero fold, a null line, the strip, the switch.
+    const groups = [
+      { id: "growth", title: hostile, metrics: [evil("signups"), evil("logins", null)] },
+      { id: "learning", title: hostile, metrics: [evil("tutor_sessions"), evil("chat_messages", null)] },
+      { id: "community", title: hostile, metrics: [evil(hostile)] },
+      { id: "ai", title: hostile, metrics: [evil("llm_cost_cents"), evil("llm_calls"), evil("llm_tokens", null)] },
+      { id: "reliability", title: hostile, metrics: [evil("errors_5xx"), evil("errors_4xx", 0), evil(quote, null)] },
+      { id: "other", title: hostile, metrics: [evil(hostile)] },
+      { id: quote, title: quote, metrics: [evil(quote)] },
+    ];
+    const totals = [{ key: hostile, label: hostile, value: hostile, raw: 1, trend: [], note: quote }, { key: quote, label: quote, value: null, raw: null, trend: [] }];
+    for (const productEnv of [null, quote]) {
+      const html = view({ productEnv }, [{ name: quote, groups: [], totals: [] }, { name: hostile, groups, totals }]);
+      expect(html).not.toContain("<img src=x");
+      expect(html).not.toContain("<script>");
+      expect(html).not.toMatch(/"><(script|img)/); // an attribute value never closes its tag
+      expect(html).not.toContain("&amp;lt;"); // …and escaped exactly ONCE
+      expect(html).not.toContain("&amp;quot;");
+    }
+    const html = view({}, [{ name: hostile, groups, totals }]);
+    expect(html).toContain("&lt;img src=x onerror=1&gt;");
+    for (const id of ["now", "growth", "learning", "community", "ai", "reliability", "other"]) expect(blockOf(html, id), id).toContain("&lt;img src=x");
+    expect(tileOf(html, "signups")).toContain("&lt;img src=x");
+  });
+
+  it("the infrastructure blocks escape their environment names, labels and values too", () => {
+    const hostile = `"><img src=x onerror=1>`;
+    const rows = [{ env: hostile, label: "Workers requests", value: hostile }, { env: hostile, label: hostile, value: hostile }];
+    const html = repoView(props({ tab: "usage", repo: { status: "ok", data: live({
+      cloudflare: { status: "ok", data: { "24h": rows, "7d": rows, "30d": rows } },
+      hosting: { status: "ok", data: [{ env: hostile, cpu: hostile, memory: `1 ${hostile}` }] },
+    }) } }));
+    expect(html).not.toContain("<img src=x");
+    expect(html).not.toMatch(/"><(script|img)/);
+    expect(html).toContain("&lt;img src=x");
+  });
+
+  // ── section states ─────────────────────────────────────────────────────────
   it("an ok section carrying NO environment renders the section's empty state, never nothing", () => {
     const html = view({}, []);
     expect(html).toContain(">Product<");
     expect(html).toContain("No current product reading — the hourly poll of the app&#39;s metrics endpoint has gone quiet.");
-    expect(html).not.toContain("Product — ");
-  });
-
-  it("an environment that reported nothing says so, inside its own block", () => {
-    const html = view();
-    const prod = html.slice(html.indexOf("Product — production"));
-    expect(prod).toContain("This environment has reported no product metrics.");
-    expect(html.slice(0, html.indexOf("Product — production"))).not.toContain("has reported no product metrics");
-  });
-
-  it("labels, keys, notes and environment names are another service's text — all escaped", () => {
-    const hostile = `<img src=x onerror=1>`;
-    const html = view({}, [{
-      name: hostile,
-      groups: [{ id: "other", title: hostile, metrics: [{ key: hostile, label: hostile, values: all3(hostile), raw: { "24h": 1, "7d": 1, "30d": 1 }, trend: [], note: hostile }] }],
-      totals: [{ key: hostile, label: hostile, value: hostile, raw: 1, trend: [], note: `"><script>alert(1)</script>` }],
-    }]);
-    expect(html).not.toContain("<img src=x");
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;img src=x onerror=1&gt;");
-    // …escaped exactly ONCE: the block title escapes inside `head()`, not at the call site as well.
-    expect(html).toContain("Product — &lt;img src=x onerror=1&gt;");
-    expect(html).not.toContain("&amp;lt;");
+    expect(html).not.toContain("data-penv");
   });
 
   it("not_connected and empty each say what they are waiting on; loading and error have their forms", () => {
@@ -594,7 +873,7 @@ describe("repoView — product metrics", () => {
     const quiet = repoView(props({ tab: "usage", repo: { status: "ok", data: live({ product: EMPTY }) } }));
     expect(quiet).toContain("No current product reading — the hourly poll of the app&#39;s metrics endpoint has gone quiet.");
     expect(quiet).not.toContain("No product metrics reported yet");
-    for (const html of [nc, quiet]) expect(html).toContain(">Product<");
+    for (const html of [nc, quiet]) { expect(html).toContain(">Product<"); expect(html).not.toContain("repoProductEnv"); }
     expect(repoView(props({ tab: "usage", repo: { status: "loading", data: null } }))).toContain("repo-shimmer");
     expect(repoView(props({ tab: "usage", repo: { status: "error", data: null } }))).toContain("Couldn't load this section");
   });
@@ -607,7 +886,8 @@ describe("repoView — product metrics", () => {
     expect(repoView(props({ tab: "code", repo: { status: "ok", data: { ...others, product: NC } } }))).not.toContain("repoSampleOn");
   });
 
-  it("the sample set carries placeholder product metrics for both environments", () => {
+  // ── sample mode ────────────────────────────────────────────────────────────
+  it("the sample set carries placeholder product metrics for both environments, and shows every shape", () => {
     const data = repoSample();
     expect(data.product.status).toBe("ok");
     const envs = (data.product as { data: RepoProductEnv[] }).data;
@@ -619,9 +899,19 @@ describe("repoView — product metrics", () => {
         expect(m.raw["24h"]! <= m.raw["7d"]! && m.raw["7d"]! <= m.raw["30d"]!, `${e.name} ${m.key}`).toBe(true); // the windows nest, as the contract guarantees
       }
     }
-    const html = repoView(props({ tab: "usage", repo: { status: "ok", data }, sample: true }));
-    expect(html).toContain("Product — production");
+    const sample = (over: Partial<RepoProps> = {}) => repoView(props({ tab: "usage", repo: { status: "ok", data }, sample: true, ...over }));
+    const html = sample();
+    expect(html).toContain('data-penv="production"');
     expect(html).toContain("lower bound — unpriced models are not counted");
+    expect(tileKeys(html)).toEqual(["signups", "tutor_sessions", "llm_cost_cents", "errors_5xx"]);
+    // Reliability shows BOTH shapes at the default range: real failures, and a fold of measured zeros.
+    for (const h of [html, sample({ productEnv: "staging" })]) {
+      const rel = blockOf(h, "reliability");
+      expect(rel).toContain("background:var(--red)");
+      expect(rel).toMatch(/\d at zero/);
+    }
+    expect(sample({ productEnv: "staging" })).toContain('data-penv="staging"');
+    expect(html.slice(html.indexOf(">Product<"))).not.toContain("<table");
     // The placeholder set is labelled by hand (the sample chunk cannot import the
     // Worker's registry), so it is held to it here: same label, group and note.
     const keys = envs[0].groups.flatMap((g) => g.metrics.map((m) => m.key));
@@ -636,14 +926,68 @@ describe("repoView — product metrics", () => {
     }
     expect(html).toContain("Flashcards created: lower bound — deleted cards are not counted");
     expect(html).toContain("4xx errors: includes bot traffic and refused polls");
-    expect(html).toContain(">RAG runs that dropped chunks<");
+    expect(sample({ range: "30d" })).toContain(">RAG runs that dropped chunks<");
   });
 
-  it("entrances use the existing hooks only", () => {
+  // ── motion ─────────────────────────────────────────────────────────────────
+  it("entrances use the existing hooks only, and the body is what a range or environment switch cross-fades", () => {
     const html = view();
-    const blocks = html.split("Product — ").slice(1);
-    expect(blocks).toHaveLength(2);
-    expect(html).toMatch(/class="cnpy-rise" style="--i:3;[^"]*"[^>]*>\s*<div[^>]*>\s*<span[^>]*>Product — staging/);
+    const product = html.slice(html.indexOf(">Product<"), html.indexOf("Cloudflare — frontend"));
+    expect(product).toMatch(/class="repo-swap repo-pswap" data-penv="staging"/);
+    expect([...product.matchAll(/class="cnpy-rise" style="--i:(\d+);/g)].map((m) => m[1])).toEqual(["2", "3", "4"]); // strip, tiles, blocks
+    expect(html).toMatch(/class="cnpy-rise" style="--i:2;"><div[^>]*><span[^>]*>Product</); // the header enters with the strip
+    expect(product).toContain("data-count=");
+    expect(product).toContain('class="repo-spark"');
+    expect(product).not.toMatch(/animation|transition|@keyframes/);
+  });
+});
+
+// ── Usage › infrastructure (Cloudflare + Railway) ────────────────────────────
+describe("repoView — usage infrastructure", () => {
+  const cfView = (rows: { env: string; label: string; value: string }[], over: Partial<RepoDashboard> = {}) =>
+    repoView(props({ tab: "usage", repo: { status: "ok", data: live({ cloudflare: { status: "ok", data: { "24h": rows, "7d": rows, "30d": rows } }, ...over }) } }));
+  const envOf = (html: string, env: string) => { const i = html.indexOf(`data-cfenv="${env}"`); const j = html.indexOf("data-cfenv=", i + 1); return html.slice(i, j > -1 ? j : html.indexOf("Hosting — Railway")); };
+  const pair = (env: string, req: string, err: string) => [{ env, label: "Workers requests", value: req }, { env, label: "Workers errors", value: err }];
+
+  it("Cloudflare is a block per environment — requests as the figure, errors beside it, an error-share bar under them", () => {
+    const html = cfView([...pair("staging", "12.4K", "310"), ...pair("production", "1.24M", "2.6K")]);
+    expect(html).toContain("Cloudflare — frontend Workers");
+    const staging = envOf(html, "staging");
+    expect(staging).toMatch(/font-size:21px[^>]*>12\.4K</);
+    expect(staging).toMatch(/font-size:17px[^>]*>310</);
+    expect(staging).toContain(">Workers requests<");
+    expect(staging).toMatch(/class="repo-fill"[^>]*width:2\.5%/); // 310 ÷ 12,400
+    expect(envOf(html, "production")).toMatch(/class="repo-fill"[^>]*width:0\.2%/);
+    expect(html.slice(html.indexOf("Cloudflare — frontend"))).not.toContain("<table");
+  });
+
+  it("the share bar is drawn only from the two figures shown: hidden when requests is 0, or either is missing or unreadable", () => {
+    expect(envOf(cfView(pair("staging", "0", "0")), "staging")).not.toContain("repo-fill");
+    expect(envOf(cfView([{ env: "staging", label: "Workers requests", value: "2.50M" }]), "staging")).not.toContain("repo-fill");
+    expect(envOf(cfView([{ env: "staging", label: "Workers errors", value: "12" }]), "staging")).not.toContain("repo-fill");
+    expect(envOf(cfView(pair("staging", "lots", "12")), "staging")).not.toContain("repo-fill");
+    expect(envOf(cfView(pair("staging", "12", "—")), "staging")).not.toContain("repo-fill");
+    // …and the figures themselves are still there.
+    expect(envOf(cfView(pair("staging", "0", "0")), "staging")).toContain(">Workers errors<");
+    // Zero errors of real traffic IS a bar — an empty one.
+    expect(envOf(cfView(pair("staging", "500", "0")), "staging")).toMatch(/class="repo-fill"[^>]*min-width:0px[^>]*width:0%/);
+  });
+
+  it("the bar takes the error rate's own tone from the usage block, and stays neutral without one", () => {
+    const usageEnv = (tone: "good" | "warn") => ({ name: "staging", host: "h", requests: { value: "12.4K", trend: [], tone: "neutral" as const }, errorRate: { value: "2.50%", trend: [], tone }, users: null, seen: { requests: true, users: false } });
+    const usage = (tone: "good" | "warn") => ({ usage: { status: "ok" as const, data: { "24h": [usageEnv(tone)], "7d": [usageEnv(tone)], "30d": [usageEnv(tone)] } } });
+    expect(envOf(cfView(pair("staging", "12.4K", "310"), usage("warn")), "staging")).toMatch(/class="repo-fill"[^>]*background:var\(--amber\)/);
+    expect(envOf(cfView(pair("staging", "12.4K", "310"), usage("good")), "staging")).toMatch(/class="repo-fill"[^>]*background:var\(--fg-40\)/);
+    expect(envOf(cfView(pair("staging", "12.4K", "310")), "staging")).toMatch(/class="repo-fill"[^>]*background:var\(--fg-40\)/);
+  });
+
+  it("parseCompact reads the Worker's compact figures and nothing else", () => {
+    expect([parseCompact("302"), parseCompact("12.4K"), parseCompact("1.24M"), parseCompact("2.50B"), parseCompact("1.00T")]).toEqual([302, 12_400, 1_240_000, 2_500_000_000, 1e12]);
+    for (const bad of ["", "—", "1e3", "-5", "12 K", "1.2.3K", "K", undefined]) expect(parseCompact(bad), String(bad)).toBeNull();
+    expect(errorShare("1000", "25")).toBe(2.5);
+    expect(errorShare("10", "50")).toBe(100); // never wider than its track
+    expect(errorShare("0", "0")).toBeNull();
+    expect(errorShare(undefined, "3")).toBeNull();
   });
 });
 
