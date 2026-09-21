@@ -88,9 +88,10 @@ function person(persons: PersonSummary[], handle: string): PersonSummary | null 
 const nameOf = (persons: PersonSummary[], handle: string): string => person(persons, handle)?.name || handle;
 const firstNameOf = (persons: PersonSummary[], handle: string): string => nameOf(persons, handle).split(" ")[0];
 
-/** Overlapping avatar row (-7px, ring in the page background) — the design's `asgAvs`. */
+/** Avatar row — the design's `asgAvs` (-7px overlap, ring in the page background). The
+ *  corners layer in canopy.css lays them side by side instead (`.cnpy-avstack`). */
 export function avatarStack(handles: string[], persons: PersonSummary[], size = 20): string {
-  return `<div style="display:flex;flex:none">${handles.map((h, i) =>
+  return `<div class="cnpy-avstack" style="display:flex;flex:none">${handles.map((h, i) =>
     `<span style="display:flex;flex:none;border-radius:50%;box-shadow:0 0 0 2px var(--bg);${i > 0 ? "margin-left:-7px;" : ""}z-index:${9 - i}">${personChip(person(persons, h), size, h)}</span>`
   ).join("")}</div>`;
 }
@@ -720,7 +721,7 @@ function assigneeRail(p: TicketDetailProps): string {
         <button data-act="ticketAsgRemove" data-arg="${attr(h)}" title="Remove" class="cnpy-iconbtn" style="flex:none;${ICON_BTN};opacity:.45"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
       </div>`).join("")
     : `<div style="display:flex;align-items:center;gap:10px;height:34px">
-        <div style="width:24px;height:24px;border-radius:50%;border:1px dashed var(--border-strong);flex:none"></div>
+        <div style="width:24px;height:24px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;font-size:9px;font-weight:600;color:var(--fg-40);flex:none">–</div>
         <span style="font-size:12.5px;color:var(--fg-40);font-style:italic">Unassigned</span>
       </div>`;
   return `<div>
@@ -784,7 +785,7 @@ function relationsRail(p: TicketDetailProps): string {
     </button>`).join("");
   const empty = !t.parent && t.children.length === 0
     ? `<div style="display:flex;align-items:center;gap:10px;height:34px">
-        <div style="width:24px;height:24px;border-radius:6px;border:1px dashed var(--border-strong);flex:none"></div>
+        <div style="width:24px;height:24px;border-radius:6px;border:1px dashed var(--border-strong);display:grid;place-items:center;font-size:11px;color:var(--fg-40);flex:none">↳</div>
         <span style="font-size:12.5px;color:var(--fg-40);font-style:italic">No linked tickets</span>
       </div>`
     : "";
