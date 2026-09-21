@@ -74,18 +74,31 @@ export async function metricSeries(db: DB, metric: string, env: string, part: st
     metric, env, part, since);
 }
 
-/** Several series in ONE statement — every (env, part) of every named metric
- *  from `sinceIso` on, ascending by `at`. The Usage tab's read: the caller asks
- *  once for its widest window and slices the narrower ranges in memory, instead
- *  of a `metricSeries` per range × environment × metric. The bound is normalised
- *  exactly as `metricSeries` normalises its own (see above); an unparseable one,
- *  or no metric names, returns []. */
-export async function metricsSince(db: DB, metrics: string[], sinceIso: string): Promise<{ metric: string; env: string; part: string; at: string; value: number }[]> {
-  const since = normaliseAt(sinceIso);
-  if (since === null || !metrics.length) return [];
+/** One bound for a set of metric names — see `metricsSince`. */
+export interface MetricGroup { metrics: string[]; since: string }
+
+/** Several series in ONE statement — every (env, part) of every named metric,
+ *  ascending by `at`. The Usage tab's read: the caller asks ONCE and slices the
+ *  ranges in memory, instead of a `metricSeries` per range × environment ×
+ *  metric. Each GROUP carries its own bound (`WHERE (metric IN (…) AND at >= ?)
+ *  OR (…)`), so a gauge that is only ever read for its last 3 hours does not
+ *  drag 30 days of rows through the render beside a series that needs them.
+ *  Each bound is normalised exactly as `metricSeries` normalises its own (see
+ *  above); a group with an unparseable bound, or no metric names, is DROPPED —
+ *  never widened — and with no usable group the answer is []. */
+export async function metricsSince(db: DB, groups: MetricGroup[]): Promise<{ metric: string; env: string; part: string; at: string; value: number }[]> {
+  const clauses: string[] = [];
+  const binds: string[] = [];
+  for (const g of groups) {
+    const since = normaliseAt(g.since);
+    if (since === null || !g.metrics.length) continue;
+    clauses.push(`(metric IN (${ph(g.metrics.length)}) AND at >= ?)`);
+    binds.push(...g.metrics, since);
+  }
+  if (!clauses.length) return [];
   return all<{ metric: string; env: string; part: string; at: string; value: number }>(db,
-    `SELECT metric, env, part, at, value FROM repo_metrics WHERE metric IN (${ph(metrics.length)}) AND at >= ? ORDER BY at ASC, id ASC`,
-    ...metrics, since);
+    `SELECT metric, env, part, at, value FROM repo_metrics WHERE ${clauses.join(" OR ")} ORDER BY at ASC, id ASC`,
+    ...binds);
 }
 
 /** Which of `metrics` have EVER landed — any env, any part, any age. ONE

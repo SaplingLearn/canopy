@@ -612,8 +612,12 @@ with no invocations, so a quiet hour and a dead poll look identical in `repo_met
 poll SUCCEEDED (even with zero rows) is recorded as polled through `to` in ONE snapshot row, `cf_polled`
 (`CF_POLLED` in `src/repo/types.ts`), `{ [envKey]: "<to ISO>" }` — an EXCLUSIVE bound. One read + at most
 one write per poll; a failed environment keeps its bound, and a bound never moves BACKWARDS.
-The projection (`projectUsage`) costs the render **ONE statement** — `metricsSince` (`src/repo/store.ts`,
-`metric IN (…)`) over 30 days for every range, environment and series, sliced in memory — beside ONE
+The projection (`projectUsage`) costs the render **ONE statement** — `metricsSince` (`src/repo/store.ts`)
+for every range, environment and series, sliced in memory. It takes GROUPS, each with its OWN bound
+(`(metric IN (…) AND at >= ?) OR (…)`, `usageReadGroups` in `src/tools/repo.ts`): `cf_*` and
+`active_users_30d` over 30 days, `active_users_7d` over 7, `active_users_24h` over 24 hours, and `rw_*` over
+the 3-hour staleness window — every row left out is one the projection already discarded (over half of the
+~10,000 a flat 30-day read returned). It sits beside ONE
 `getSnapshot('cf_polled')`, plus ONE `metricsEver` only on the not-`ok` path. A range is its last N COMPLETE
 hours (24 / 168 / 720) in equal buckets (1h / 24h / 24h) ending at the last complete hour, never at UTC
 midnight. The trend is DENSE but zero only where a zero is entitled: the fill STARTS at the first captured

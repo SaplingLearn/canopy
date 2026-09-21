@@ -13,7 +13,7 @@ import {
   hasCaptured, latestChecks, prStatesAsOf, pushRowsSince, recentPrRows, recordingSince, reviewRowsSince,
 } from "../repo/reads";
 import type { RepoEnvConfig } from "../repo/config";
-import { getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince } from "../repo/store";
+import { type MetricGroup, getSnapshot, latestHealth, latestMetric, metricSeries, metricsEver, metricsSince } from "../repo/store";
 import { CF_POLLED, type RepoEventRow, type RepoPrRow } from "../repo/types";
 
 // The Repo dashboard: a D1-ONLY read projection, in the same class as My Work —
@@ -219,6 +219,24 @@ const HOSTING_METRICS = ["rw_cpu", "rw_mem_mb"];
 const USAGE_RANGES: Record<RepoRange, { hours: number; step: number }> = {
   "24h": { hours: 24, step: HOUR }, "7d": { hours: 168, step: DAY }, "30d": { hours: 720, step: DAY },
 };
+
+/** The ONE Usage read's groups — each series bounded by what the projection
+ *  below actually consumes, not by the widest range: Cloudflare's counts need
+ *  all 30 days (every range is sliced from them, and "capture predates the
+ *  range" is read off their first point), each `active_users_<range>` gauge
+ *  only its own trailing range, and the hosting gauges only the staleness
+ *  window a figure may be shown in. Every row this leaves out is one the
+ *  projection already filtered away — at steady state more than half of them. */
+function usageReadGroups(usageEnd: number, now: number): MetricGroup[] {
+  const since = (ms: number) => new Date(ms).toISOString();
+  const rangeStart = (range: RepoRange) => since(usageEnd - USAGE_RANGES[range].hours * HOUR);
+  return [
+    { metrics: ["cf_requests", "cf_errors", "active_users_30d"], since: rangeStart("30d") },
+    { metrics: ["active_users_7d"], since: rangeStart("7d") },
+    { metrics: ["active_users_24h"], since: rangeStart("24h") },
+    { metrics: HOSTING_METRICS, since: since(now - HOSTING_STALE_MS) },
+  ];
+}
 
 /** 1_234 → "1.2K", 2_500_000 → "2.50M". (999_950 up rounds to "1000.0K", so it is already an M.) */
 function compact(n: number): string {
@@ -791,7 +809,7 @@ export async function getRepoDashboard(
   const usageEnd = Math.floor(now / HOUR) * HOUR;
   const [usageRows, polledSnap] = envs.length
     ? await Promise.all([
-        metricsSince(db, [...USAGE_METRICS, ...HOSTING_METRICS], new Date(usageEnd - USAGE_RANGES["30d"].hours * HOUR).toISOString()),
+        metricsSince(db, usageReadGroups(usageEnd, now)),
         getSnapshot<unknown>(db, CF_POLLED),
       ])
     : [[], null];

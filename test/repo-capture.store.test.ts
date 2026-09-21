@@ -71,7 +71,8 @@ describe("snapshots and metrics", () => {
   });
 
   // Task 16: the Usage tab reads every usage series of every environment in ONE
-  // statement and slices the ranges in memory.
+  // statement and slices the ranges in memory. P5-4: the read takes GROUPS, each
+  // with its own bound, so a gauge that only needs 3 hours does not drag 30 days.
   it("metricsSince returns several metrics across envs in one ordered read, bound normalised like metricSeries", async () => {
     await putMetric(env.DB, { metric: "cf_requests", env: "production", part: "frontend", value: 9, at: "2026-09-20T11:00:00Z" });
     await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 5, at: "2026-09-20T09:00:00Z" });
@@ -79,13 +80,38 @@ describe("snapshots and metrics", () => {
     await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 4, at: "2026-09-20T08:00:00Z" }); // before the bound
     await putMetric(env.DB, { metric: "coverage", env: "", part: "", value: 78.4, at: "2026-09-20T10:30:00Z" });                  // not asked for
     // Bound WITHOUT milliseconds, equal to a stored instant — a raw compare would drop it.
-    expect(await metricsSince(env.DB, ["cf_requests", "cf_errors"], "2026-09-20T09:00:00Z")).toEqual([
+    expect(await metricsSince(env.DB, [{ metrics: ["cf_requests", "cf_errors"], since: "2026-09-20T09:00:00Z" }])).toEqual([
       { metric: "cf_requests", env: "staging", part: "frontend", at: "2026-09-20T09:00:00.000Z", value: 5 },
       { metric: "cf_errors", env: "staging", part: "frontend", at: "2026-09-20T10:00:00.000Z", value: 1 },
       { metric: "cf_requests", env: "production", part: "frontend", at: "2026-09-20T11:00:00.000Z", value: 9 },
     ]);
-    expect(await metricsSince(env.DB, ["cf_requests"], "not a date")).toEqual([]);
-    expect(await metricsSince(env.DB, [], "2026-09-20T09:00:00Z")).toEqual([]);
+    expect(await metricsSince(env.DB, [{ metrics: ["cf_requests"], since: "not a date" }])).toEqual([]);
+    expect(await metricsSince(env.DB, [{ metrics: [], since: "2026-09-20T09:00:00Z" }])).toEqual([]);
+    expect(await metricsSince(env.DB, [])).toEqual([]);
+  });
+
+  it("metricsSince applies EACH group's bound independently, in one ordered result", async () => {
+    // Two days old: inside cf_requests' 30-day bound, outside rw_cpu's 3-hour one.
+    await putMetric(env.DB, { metric: "cf_requests", env: "staging", part: "frontend", value: 7, at: "2026-09-18T10:00:00Z" });
+    await putMetric(env.DB, { metric: "rw_cpu", env: "staging", part: "backend", value: 0.4, at: "2026-09-18T10:00:00Z" });
+    await putMetric(env.DB, { metric: "rw_cpu", env: "staging", part: "backend", value: 0.5, at: "2026-09-20T09:00:00Z" });
+    await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 3, at: "2026-09-18T10:00:00Z" }); // outside its 24h
+    await putMetric(env.DB, { metric: "active_users_24h", env: "staging", part: "", value: 4, at: "2026-09-20T10:00:00Z" });
+    const rows = await metricsSince(env.DB, [
+      { metrics: ["cf_requests"], since: "2026-08-21T10:00:00Z" },
+      { metrics: ["active_users_24h"], since: "2026-09-19T10:00:00Z" },
+      { metrics: ["rw_cpu"], since: "2026-09-20T07:00:00Z" },
+    ]);
+    expect(rows.map((r) => [r.metric, r.at, r.value])).toEqual([
+      ["cf_requests", "2026-09-18T10:00:00.000Z", 7],
+      ["rw_cpu", "2026-09-20T09:00:00.000Z", 0.5],
+      ["active_users_24h", "2026-09-20T10:00:00.000Z", 4],
+    ]);
+    // An unparseable bound drops ITS group only — never widens it to "everything".
+    expect((await metricsSince(env.DB, [
+      { metrics: ["cf_requests"], since: "2026-08-21T10:00:00Z" },
+      { metrics: ["rw_cpu"], since: "not a date" },
+    ])).map((r) => r.metric)).toEqual(["cf_requests"]);
   });
 
   it("metricsEver names which of the asked metrics have EVER landed, whatever their age or env", async () => {
