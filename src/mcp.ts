@@ -11,7 +11,7 @@ import {
 } from "@shared/tickets";
 import { TicketError } from "./tools/tickets";
 import {
-  SprintError, create_sprint, set_sprint_active, complete_sprint, add_sprint_resource,
+  SprintError, create_sprint, set_sprint_active, complete_sprint, add_sprint_resource, delete_sprint,
 } from "./tools/sprints";
 import { SprintCreate } from "@shared/sprints";
 import {
@@ -176,14 +176,14 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "list_sprints",
-    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its `progress` is its TICKETS only (closed/total/pct, where closed = done + declined). The GitHub issues behind a sprint are a separate `issues` field, the cached closed/total from its github_ref (null when it has no cache row); no live GitHub at read time. Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint WRITES are ADMIN-ONLY over MCP (create_sprint / set_sprint_active / complete_sprint / add_sprint_resource, plus the bulk plan write update_plan); a non-admin principal does not see those tools at all.",
+    "Read-only: every sprint in roadmap order. Sprints are the roadmap's containers — a sprint holds tickets, and its `progress` is its TICKETS only (closed/total/pct, where closed = done + declined). The GitHub issues behind a sprint are a separate `issues` field, the cached closed/total from its github_ref (null when it has no cache row); no live GitHub at read time. Each carries label, summary, phase, dates, due, status/active, urgency, lead, domain and members (the handles assigned to its tickets). Sprint writes (create_sprint / set_sprint_active / complete_sprint / add_sprint_resource / delete_sprint) are open to every principal; only the bulk plan write update_plan is admin-only.",
     {},
     async () => runTool(() => list_sprints(env.DB)),
   );
 
   server.tool(
     "get_sprint",
-    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the tickets-only `progress` and the separate cached `issues` counts. Sprint WRITES are ADMIN-ONLY over MCP; a sprint is completed by a person (complete_sprint), never inferred from its tickets resolving.",
+    "Read-only: one sprint by id, with its tickets ordered roots-then-sub-tickets and its resources (the sprint's own links merged with its tickets', deduped by url), on top of everything list_sprints returns including the tickets-only `progress` and the separate cached `issues` counts. A sprint is completed by a person (complete_sprint), never inferred from its tickets resolving.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {
@@ -324,53 +324,57 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
   );
 
+  // ── Sprints: WRITES, open to every principal ─────────────────────────────
+  //
+  // Thin adapters over the same writers the Roadmap's cookie routes call —
+  // direct promote-class writes, never the ingestion gate, nothing staged.
+  // Registered for EVERY principal, matching the web, where every sprint route
+  // sits under the blanket sessionGate with no adminGate. Only the whole-plan
+  // rewrite (update_plan, below) stays admin-only.
+  //
+  // Inputs speak the DTO vocabulary (`label` / `due` / `active`), never the column
+  // names (`title` / `target_date` / `status`) — only src/tools/ speaks columns.
+
+  server.tool(
+    "create_sprint",
+    "Create a sprint. It lands INACTIVE and unscheduled — status 'upcoming', phase 'Unscheduled' unless you pass one, and no `due` stores an empty target date that reads back as due: null (those sort last on the Roadmap). `label` is the sprint name; `lead` is a person handle. Which TICKETS are in the sprint is not set here — that is set_ticket_sprint. Direct promote-class write, not staged.",
+    SprintCreate.shape,
+    async (input) => runTool(() => create_sprint(env.DB, SprintCreate.parse(input), principal.handle)),
+  );
+
+  server.tool(
+    "set_sprint_active",
+    "Move a sprint between the Roadmap's In Progress and Upcoming groups. `active` is DERIVED from status, never stored: true → 'in_progress' (from ANY status, including 'done' — that is re-opening a sprint that turned out not to be finished); false → 'upcoming', EXCEPT on a done sprint where it is a NO-OP, because clearing 'active' must never un-finish a sprint.",
+    { id: z.number(), active: z.boolean() },
+    async ({ id, active }) => runTool(() => set_sprint_active(env.DB, id, active)),
+  );
+
+  server.tool(
+    "complete_sprint",
+    "Flip a sprint to 'done'. A sprint is completed by a PERSON — 'done' is NEVER inferred from its tickets resolving or its GitHub issues closing, not by the cron, not by the webhook, not by this tool being available. Confirm with the person before calling: it is how the Roadmap reports the sprint finished. Already-done is an error, not a silent no-op.",
+    { id: z.number() },
+    async ({ id }) => runTool(() => complete_sprint(env.DB, id)),
+  );
+
+  server.tool(
+    "delete_sprint",
+    "Delete a sprint for good (hard delete). Its tickets are NOT deleted — they move to the backlog (no sprint) and keep all their history; the sprint's own resources go with it. Answers with the label and how many tickets moved. Confirm with the person before calling: the Roadmap loses the sprint and it cannot be undone.",
+    { id: z.number() },
+    async ({ id }) => runTool(() => delete_sprint(env.DB, id)),
+  );
+
+  server.tool(
+    "add_sprint_resource",
+    "Attach a resource link to the sprint itself (as opposed to one of its tickets). `raw` goes through the SAME parser as ticket links, so '#214' means the same thing wherever it is typed. Idempotent on url. The sprint's read model merges these with its tickets' links, deduped by url.",
+    { id: z.number(), raw: z.string().min(1) },
+    async ({ id, raw }) => runTool(() => add_sprint_resource(env.DB, id, raw)),
+  );
+
   // ADMIN-only: the plan write surface — non-admin principals don't even see the tool
   // (conditional registration means it's absent from tools/list and calling it by
   // name errors tool-not-found, since a fresh server is built per request with the
   // principal already in scope).
   if (isAdmin(env, principal.handle)) {
-    // ── Sprints: WRITES, admin-only ──────────────────────────────────────────
-    //
-    // Thin adapters over the same writers the Roadmap's cookie routes call —
-    // direct promote-class writes, never the ingestion gate, nothing staged.
-    //
-    // ONE deliberate delta from the web: POST /sprints/:id/complete sits under the
-    // blanket sessionGate with no adminGate, so any signed-in member can complete a
-    // sprint from the UI — over MCP, complete_sprint is admin-only like its three
-    // neighbours. The surfaces disagree on purpose: a person clicking Confirm done
-    // has seen the sprint; an agent holding a token has not.
-    //
-    // Inputs speak the DTO vocabulary (`label` / `due` / `active`), never the column
-    // names (`title` / `target_date` / `status`) — only src/tools/ speaks columns.
-
-    server.tool(
-      "create_sprint",
-      "ADMIN: create a sprint. It lands INACTIVE and unscheduled — status 'upcoming', phase 'Unscheduled' unless you pass one, and no `due` stores an empty target date that reads back as due: null (those sort last on the Roadmap). `label` is the sprint name; `lead` is a person handle. Which TICKETS are in the sprint is not set here — that is set_ticket_sprint. Direct promote-class write, not staged.",
-      SprintCreate.shape,
-      async (input) => runTool(() => create_sprint(env.DB, SprintCreate.parse(input), principal.handle)),
-    );
-
-    server.tool(
-      "set_sprint_active",
-      "ADMIN: move a sprint between the Roadmap's In Progress and Upcoming groups. `active` is DERIVED from status, never stored: true → 'in_progress' (from ANY status, including 'done' — that is re-opening a sprint that turned out not to be finished); false → 'upcoming', EXCEPT on a done sprint where it is a NO-OP, because clearing 'active' must never un-finish a sprint.",
-      { id: z.number(), active: z.boolean() },
-      async ({ id, active }) => runTool(() => set_sprint_active(env.DB, id, active)),
-    );
-
-    server.tool(
-      "complete_sprint",
-      "ADMIN: flip a sprint to 'done'. A sprint is completed by a PERSON — 'done' is NEVER inferred from its tickets resolving or its GitHub issues closing, not by the cron, not by the webhook, not by this tool being available. Confirm with the admin before calling: it is how the Roadmap reports the sprint finished. Already-done is an error, not a silent no-op.",
-      { id: z.number() },
-      async ({ id }) => runTool(() => complete_sprint(env.DB, id)),
-    );
-
-    server.tool(
-      "add_sprint_resource",
-      "ADMIN: attach a resource link to the sprint itself (as opposed to one of its tickets). `raw` goes through the SAME parser as ticket links, so '#214' means the same thing wherever it is typed. Idempotent on url. The sprint's read model merges these with its tickets' links, deduped by url.",
-      { id: z.number(), raw: z.string().min(1) },
-      async ({ id, raw }) => runTool(() => add_sprint_resource(env.DB, id, raw)),
-    );
-
     server.tool(
       "update_plan",
       "ADMIN plan write: replace the roadmap narrative and create/update sprints (including status 'done') in one direct, non-destructively versioned write — same authored-write class as promote, NOT the ingestion gate. Sprints not listed are untouched. `label` is the sprint name and `due` its target date. Which tickets are IN a sprint is set from the Tickets UI, not here. Use via the update-plan skill.",

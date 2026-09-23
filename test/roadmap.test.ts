@@ -247,7 +247,7 @@ describe("registered MCP get_roadmap tool", () => {
     }
   });
 
-  it("MCP registers NO sprint write tool — sprint writes are cookie routes only", async () => {
+  it("MCP registers no agent-PROPOSED sprint tool — sprints are authored, never staged", async () => {
     const server = buildCanopyMcpServer(env as unknown as Env, { handle: "andres" });
     const client = new Client({ name: "test", version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -255,7 +255,7 @@ describe("registered MCP get_roadmap tool", () => {
     await client.connect(clientTransport);
     try {
       const names = (await client.listTools()).tools.map((t) => t.name);
-      for (const banned of ["complete_sprint", "create_sprint", "set_sprint_active", "promote_sprint", "propose_sprint"]) {
+      for (const banned of ["promote_sprint", "propose_sprint"]) {
         expect(names).not.toContain(banned);
       }
       expect(await all(env.DB, `SELECT * FROM sprints`)).toHaveLength(0);

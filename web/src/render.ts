@@ -192,6 +192,8 @@ export interface AppState {
   /** The sprint screen's payload. */
   sprintDetail: Loadable<SprintDetail | null>;
   sprintId: number | null;
+  /** The sprint screen's inline delete confirm is showing. */
+  sprintDeleteArmed: boolean;
   // The Roadmap Timeline's New sprint panel (the design's ns* state). `label` is
   // the only required field, so `nsName` is what arms "Create sprint".
   nsOpen: boolean;
@@ -288,6 +290,7 @@ export function initialState(): AppState {
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
+    sprintDeleteArmed: false,
     nsOpen: false, nsName: "", nsDates: "", nsDesc: "", nsUrg: "normal", nsDue: "", nsLead: null, nsDom: null,
     toast: null,
     backfillSync: null,
@@ -1698,7 +1701,7 @@ function sprintScreenBody(s: AppState): string {
   if ((slice.status === "loading" || slice.status === "idle") && !slice.data) return notice("Loading the sprint&hellip;");
   if (slice.status === "error") return notice("Couldn't load this sprint.");
   if (!slice.data) return notice("That sprint doesn't exist.");
-  return sprintScreen({ detail: slice.data, persons: s.persons.data, resourceDraft: s.linkDraft });
+  return sprintScreen({ detail: slice.data, persons: s.persons.data, resourceDraft: s.linkDraft, deleteArmed: s.sprintDeleteArmed });
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 ---
 name: tickets
-description: Use when a person explicitly asks to work the Canopy ticket queue — file a ticket, start or resolve one, comment on it, link work to it, move it into a sprint, nest it under another, or (for admins) create and manage sprints (triggers — "file a ticket for…", "start that ticket", "mark it done", "comment on ticket 12", "move this to sprint 13", "create a sprint"). Reading the queue needs no skill. Explicit invocation only for writes — must never auto-fire.
+description: Use when a person explicitly asks to work the Canopy ticket queue — file a ticket, start or resolve one, comment on it, link work to it, move it into a sprint, nest it under another, or create and manage sprints (triggers — "file a ticket for…", "start that ticket", "mark it done", "comment on ticket 12", "move this to sprint 13", "create a sprint"). Reading the queue needs no skill. Explicit invocation only for writes — must never auto-fire.
 disable-model-invocation: true
 allowed-tools: mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__create_ticket, mcp__canopy__transition_ticket, mcp__canopy__add_ticket_comment, mcp__canopy__add_ticket_link, mcp__canopy__set_ticket_sprint, mcp__canopy__set_ticket_parent, mcp__canopy__create_sprint, mcp__canopy__set_sprint_active, mcp__canopy__complete_sprint, mcp__canopy__add_sprint_resource
 ---
@@ -120,14 +120,17 @@ Nesting is exactly **one level**: `set_ticket_parent` fails as a `conflict` if t
 a parent, the child already has a parent, the child is resolved, or the child has sub-tickets of its
 own. You need the lane on **both** tickets.
 
-## Sprints (admin only)
+## Sprints
 
-`create_sprint`, `set_sprint_active`, `complete_sprint` and `add_sprint_resource` exist **only** for an
-admin principal — if you are not an admin, they are not in your tool list at all, and that is the
-answer to give. Which *tickets* are in a sprint is `set_ticket_sprint`, not a sprint tool.
+`create_sprint`, `set_sprint_active`, `complete_sprint`, `add_sprint_resource` and `delete_sprint` are
+open to every principal, like the web's sprint routes. Which *tickets* are in a sprint is
+`set_ticket_sprint`, not a sprint tool.
+
+`delete_sprint` is permanent: the sprint is gone and its tickets move to the backlog. **Always confirm
+with the person first**, naming the sprint and how many tickets it holds.
 
 `complete_sprint` reports to the whole org that a body of work finished. **Always confirm with the
-admin first**, and never infer it from the sprint's tickets all being resolved — the Roadmap computes
+person first**, and never infer it from the sprint's tickets all being resolved — the Roadmap computes
 progress from tickets, but `done` is a person's statement.
 
 ## Hard rules
