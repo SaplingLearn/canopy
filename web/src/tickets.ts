@@ -20,7 +20,7 @@ import {
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "./api";
-import { esc, attr, relTime, primaryBtn, WORK_SHELL } from "./ui";
+import { esc, attr, relTime, primaryBtn, WORK_SHELL, DETAIL_SHELL } from "./ui";
 import { personChip } from "./people";
 import { renderMarkdown } from "./markdown";
 import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
@@ -589,7 +589,7 @@ function linkedWorkBlock(p: TicketDetailProps): string {
     : "";
   const field = !hasLinks || p.linkOpen
     ? `<div style="display:flex;gap:8px;margin-top:10px">
-        <input data-act="ticketLinkDraft" data-field="ticketLinkDraft" value="${attr(p.linkDraft)}" placeholder="Paste a GitHub or Figma URL, or #issue" style="flex:1;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--mono);outline:none" />
+        <input data-act="ticketLinkDraft" data-field="ticketLinkDraft" value="${attr(p.linkDraft)}" placeholder="Paste a GitHub or Figma URL, or #issue — it links on paste or Enter" style="flex:1;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--mono);outline:none" />
         <button data-act="ticketLinkAdd" class="cnpy-outlinebtn" style="padding:0 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Link</button>
       </div>`
     : "";
@@ -799,7 +799,7 @@ function relationsRail(p: TicketDetailProps): string {
 
 export function ticketDetailView(p: TicketDetailProps): string {
   const t = p.ticket;
-  return `<div style="${WORK_SHELL}">
+  return `<div style="${DETAIL_SHELL}">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
       <div style="flex:1;min-width:0">
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
