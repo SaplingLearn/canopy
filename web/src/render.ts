@@ -1399,18 +1399,28 @@ export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "co
   } else {
     const tabs = CONNECT_CLIENTS.map(({ id, label }) => {
       const on = s.connectClient === id;
-      return `<button ${on ? "" : `data-act="connectClient" data-arg="${id}"`} aria-pressed="${on}" style="padding:5px 11px;border-radius:7px;font-size:12.5px;font-weight:${on ? 600 : 500};color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};border:1px solid ${on ? "var(--border-strong)" : "transparent"}">${label}</button>`;
+      return `<button ${on ? "" : `data-act="connectClient" data-arg="${id}"`} aria-pressed="${on}" style="padding:5px 11px;border-radius:7px;font-size:12.5px;font-weight:500;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};border:1px solid ${on ? "var(--border-strong)" : "transparent"}">${label}</button>`;
     }).join("");
+    const token = m.token;
+    // EVERY client's snippet (and note) is rendered, stacked in one grid cell, and
+    // only the chosen one is visible: the box is always as tall as the tallest, so a
+    // tab switch changes the text and nothing else moves.
+    const stack = (cell: (id: ConnectClient) => string): string =>
+      CONNECT_CLIENTS.map(({ id }) => {
+        const on = s.connectClient === id;
+        return `<div data-client="${id}" ${on ? "" : `aria-hidden="true"`} style="grid-area:1/1;min-width:0;visibility:${on ? "visible" : "hidden"}">${cell(id)}</div>`;
+      }).join("");
     const btnBase = "flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600";
     const copy = s.connectCopied
       ? `<button data-act="connectCopy" class="cnpy-copybtn is-copied" style="${btnBase};background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
       : `<button data-act="connectCopy" class="cnpy-copybtn" style="${btnBase};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
     body = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
       <div style="display:flex;align-items:stretch;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:10px 10px 10px 14px">
-        <pre style="flex:1;min-width:0;margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(s.connectClient, m.token))}</pre>
+        <div style="flex:1;min-width:0;display:grid">${stack((id) =>
+          `<pre style="margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(id, token))}</pre>`)}</div>
         ${copy}
       </div>
-      <div style="font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${CONNECT_NOTE[s.connectClient]}</div>
+      <div style="display:grid;font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${stack((id) => `<div>${CONNECT_NOTE[id]}</div>`)}</div>
       <div style="display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:9px;border:1px solid var(--border);font-size:12px;line-height:1.55;color:var(--fg-70)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
         <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--mono);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">MCP access tokens</strong> in Settings. Revoke it there to disconnect the agent.</div>
@@ -1418,7 +1428,7 @@ export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "co
       <div style="display:flex;justify-content:flex-end;margin-top:18px"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:600;color:var(--fg)">Done</button></div>`;
   }
 
-  return `<div data-act="connectClose" style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);animation:cnpy-fade .14s ease"></div>
+  return `<div data-overlay="connect"><div data-act="connectClose" style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);animation:cnpy-fade .14s ease"></div>
   <div style="position:fixed;inset:0;z-index:61;display:grid;place-items:center;padding:16px;pointer-events:none">
     <div role="dialog" aria-modal="true" aria-labelledby="connect-title" style="pointer-events:auto;position:relative;width:min(580px, 100%);max-height:calc(100vh - 32px);overflow-y:auto;border:1px solid var(--border-strong);border-radius:14px;padding:26px 26px 22px;background:var(--bg);box-shadow:var(--shadow);animation:cnpy-pop .16s ease">
       ${close}
@@ -1426,7 +1436,7 @@ export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "co
       <div style="font-size:12.5px;color:var(--fg-55);margin-bottom:18px">Pick your agent, copy the setup, paste it. Your agent acts as you.</div>
       ${body}
     </div>
-  </div>`;
+  </div></div>`;
 }
 
 function settingsView(s: AppState): string {
@@ -1451,8 +1461,8 @@ function settingsView(s: AppState): string {
   const tokenList = tokenListBody(s);
 
   // Bento on three columns: Profile / Account / tokens across the top — the three tiles
-  // whose natural heights match, so none is stretched hollow — then Email and the
-  // Appearance strip at full width. Nothing sits BESIDE the tall tile: whatever does
+  // whose natural heights match, so none is stretched hollow — then the Appearance
+  // strip and Email at full width. Nothing sits BESIDE the tall tile: whatever does
   // gets stretched to its height (canopy.css has the folds).
   return `<div class="cnpy-set-wrap"><div class="cnpy-set">
     ${profileSection(s)}
@@ -1468,6 +1478,12 @@ function settingsView(s: AppState): string {
       <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">Each connection command creates its own token. Revoking one disconnects that agent immediately.</div>
     </section>
 
+    <section class="cnpy-tile cnpy-set-appear">
+      <div style="${SECTION_LABEL}">Appearance</div>
+      <div class="cnpy-set-themes">${themeCards}</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
+    </section>
+
     ${emailNotificationsSection({
       prefs: s.notifPrefs.data,
       loading: s.notifPrefs.status === "idle" || s.notifPrefs.status === "loading",
@@ -1476,11 +1492,6 @@ function settingsView(s: AppState): string {
       emailDraft: s.emailDraft,
     })}
 
-    <section class="cnpy-tile cnpy-set-appear">
-      <div style="${SECTION_LABEL}">Appearance</div>
-      <div class="cnpy-set-themes">${themeCards}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
-    </section>
   </div></div>`;
 }
 
