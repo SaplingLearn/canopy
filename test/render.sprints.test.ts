@@ -9,7 +9,7 @@
  *  • the Roadmap Timeline's grouping: active → In Progress, upcoming →
  *    Upcoming, done → Done
  *  • newSprintPanel — closed by default, opens off state, Create inert until a name
- *  • sprintScreen — the markdown description, depth-1 rows indented with ↳,
+ *  • sprintScreen — the markdown description, tickets as grid boxes (a sub-ticket names its parent),
  *    the resources list, the members list, the ACTIVE chip
  *  • parseHash("#sprints/7")
  *
@@ -381,7 +381,7 @@ describe("sprintScreen", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("indents a depth-1 ticket with the ↳ chevron and leaves roots flush", () => {
+  it("renders tickets as boxes in a grid; a sub-ticket names its parent, a root does not", () => {
     const html = sprintScreen({
       detail: detail({
         id: 3, label: "S",
@@ -392,18 +392,18 @@ describe("sprintScreen", () => {
       }),
       persons: PERSONS, resourceDraft: "",
     });
+    expect(html).toContain("grid-template-columns:repeat(auto-fill,minmax(240px,1fr))");
     const root = html.slice(html.indexOf('data-arg="10"'), html.indexOf('data-arg="11"'));
     const child = html.slice(html.indexOf('data-arg="11"'));
-    expect(root).not.toContain("padding-left:34px");
+    expect(root).toContain('class="cnpy-tcard"');
     expect(root).not.toContain("↳");
-    expect(child).toContain("padding-left:34px");
-    expect(child).toContain("↳");
-    // children render UNDER their root, and each row opens its ticket
+    expect(child).toContain("↳ sub-ticket of #10");
+    // children render AFTER their root, and each box opens its ticket
     expect(html.indexOf('data-arg="10"')).toBeLessThan(html.indexOf('data-arg="11"'));
     expect(html.match(/data-act="openTicket"/g)).toHaveLength(2);
   });
 
-  it("stacks the assignee avatars on a ticket row, and shows none when nobody is on it (design 514)", () => {
+  it("stacks the assignee avatars on a ticket box, and says Unassigned when nobody is on it (design 514)", () => {
     const html = sprintScreen({
       detail: detail({
         id: 3, label: "S",
@@ -417,9 +417,10 @@ describe("sprintScreen", () => {
     const withAvs = html.slice(html.indexOf('data-arg="10"'), html.indexOf('data-arg="11"'));
     const without = html.slice(html.indexOf('data-arg="11"'));
     // the same overlapping stack the queue and the sprint card use
-    expect(withAvs).toContain(avatarStack(["meilin", "sanaok"], PERSONS, 18));
+    expect(withAvs).toContain(avatarStack(["meilin", "sanaok"], PERSONS, 20));
     expect(withAvs).toContain("margin-left:-7px");
     expect(without).not.toContain("margin-left:-7px");
+    expect(without).toContain("Unassigned");
   });
 
   it("shows the design's empty state when the sprint has no tickets", () => {
