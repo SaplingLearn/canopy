@@ -4,7 +4,10 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
+import {
+  render, initialState, firstDocForSpace, docReaderHtml, connectSnippet, CONNECT_CLIENTS,
+  type AppState, type Screen, type ConnectClient,
+} from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint,
@@ -1828,7 +1831,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     // ── Settings ─────────────────────────────────────────────────────────────
     case "mintToken":
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; loadTokens(); rerender(); })
+        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; state.connectCopied = false; loadTokens(); rerender(); })
         .catch((e) => {
           if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
           flash(e instanceof ApiError ? e.message : "Could not mint token");
@@ -1843,6 +1846,21 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         rerender();
         flash("Token copied to clipboard");
         setTimeout(() => { state.tokenCopied = false; rerender(); }, 1800);
+      });
+      return;
+    }
+    case "connectClient":
+      if (CONNECT_CLIENTS.some((c) => c.id === arg)) { state.connectClient = arg as ConnectClient; state.connectCopied = false; }
+      break;
+    case "copyConnect": {
+      const tk = state.revealedToken;
+      if (!tk) return;
+      copyToClipboard(connectSnippet(state.connectClient, tk)).then((ok) => {
+        if (!ok) { flash("Couldn't copy — select the text and copy it manually"); return; }
+        state.connectCopied = true;
+        rerender();
+        flash("Setup copied — paste it into your terminal");
+        setTimeout(() => { state.connectCopied = false; rerender(); }, 1800);
       });
       return;
     }

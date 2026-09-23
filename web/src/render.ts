@@ -124,6 +124,9 @@ export interface AppState {
   displayName: string;
   revealedToken: string | null;
   tokenCopied: boolean;
+  /** Settings › Connect an agent: which client's setup is showing, and its Copy state. */
+  connectClient: ConnectClient;
+  connectCopied: boolean;
   /** Settings › MCP access tokens: the caller's live tokens (hint only, never the value). */
   tokens: Loadable<McpTokenSummary[]>;
   /** The token whose Revoke was clicked once — the second click is the one that revokes. */
@@ -258,6 +261,8 @@ export function initialState(): AppState {
     displayName: "",
     revealedToken: null,
     tokenCopied: false,
+    connectClient: "claude",
+    connectCopied: false,
     tokens: { status: "idle", data: [] },
     tokenRevokeArm: null,
     handleEdit: false,
@@ -1181,6 +1186,7 @@ function guideView(s: AppState): string {
     <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
       <li>You're already signed in, so that's step one done.</li>
       <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Mint new token")}. Copy it right away, since it's shown only once.</li>
+      <li>${gStrong("Fastest path:")} the ${gStrong("Connect an agent")} card right below it fills your new token into the exact setup for Claude Code, Codex or a plain <code style="font-family:var(--mono);font-size:13px">.mcp.json</code>. Copy, paste into a terminal, restart your agent.</li>
     </ol>
     ${gFig("settings", `${gEm("Settings")}: mint an MCP access token, pick a theme, and see your org membership.`)}
     <p style="${gP};margin-top:14px">${gStrong("Easiest: install the Canopy plugin.")} It bundles the three skills below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand. In Claude Code:</p>
@@ -1326,6 +1332,80 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
   return `<div class="cnpy-scroll cnpy-set-tokens">${rows}</div>`;
 }
 
+// ── Settings › Connect an agent ──────────────────────────────────────────────
+
+export type ConnectClient = "claude" | "codex" | "json";
+export const CONNECT_CLIENTS: readonly { id: ConnectClient; label: string }[] = [
+  { id: "claude", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
+  { id: "json", label: ".mcp.json" },
+];
+/** Stands in for the token until one is minted this visit (the server keeps only a hash). */
+export const TOKEN_PLACEHOLDER = "canopy_mcp_…";
+
+/** This Canopy's own MCP endpoint — the origin the SPA is served from, so a local
+ *  `wrangler dev` hands out a local URL and prod hands out prod's. */
+const mcpEndpoint = (): string =>
+  `${typeof location !== "undefined" && location.origin ? location.origin : "https://canopy.saplinglearn.com"}/mcp`;
+
+/**
+ * The setup text for one client, with `token` filled in. Pure, so a test pins each
+ * shape. Claude Code takes the header on the command line; Codex reads a bearer
+ * token from an environment variable (its `--bearer-token-env-var`), which is the
+ * SAME `CANOPY_MCP_TOKEN` the Canopy plugin reads.
+ */
+export function connectSnippet(client: ConnectClient, token: string, url: string = mcpEndpoint()): string {
+  switch (client) {
+    case "claude":
+      return `claude mcp add --transport http --scope user canopy ${url} \\\n  --header "Authorization: Bearer ${token}"`;
+    case "codex":
+      return `export CANOPY_MCP_TOKEN=${token}\ncodex mcp add canopy --url ${url} --bearer-token-env-var CANOPY_MCP_TOKEN`;
+    case "json":
+      return `{\n  "mcpServers": {\n    "canopy": {\n      "type": "http",\n      "url": "${url}",\n      "headers": { "Authorization": "Bearer ${token}" }\n    }\n  }\n}`;
+  }
+}
+
+const CONNECT_NOTE: Record<ConnectClient, string> = {
+  claude: `Run it in a terminal, then restart Claude Code. <code style="font-family:var(--mono);font-size:11px">--scope user</code> makes Canopy available in every project. Using the Canopy plugin instead? It reads <code style="font-family:var(--mono);font-size:11px">$CANOPY_MCP_TOKEN</code>, so export that and skip this.`,
+  codex: `Codex reads the token from <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--mono);font-size:11px">export</code> line to your shell profile to make it stick.`,
+  json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--mono);font-size:11px">.mcp.json</code>), then restart the client.`,
+};
+
+/**
+ * One tile, one job: the exact setup for the agent you use, with your token already
+ * in it. The token is only known right after a mint (`revealedToken`), so until then
+ * the snippet shows a placeholder and the button MINTS instead of copying — one click
+ * either way, and never a copied command that cannot work.
+ */
+export function connectAgentSection(s: Pick<AppState, "connectClient" | "connectCopied" | "revealedToken">): string {
+  const token = s.revealedToken;
+  const tabs = CONNECT_CLIENTS.map(({ id, label }) => {
+    const on = s.connectClient === id;
+    return `<button ${on ? "" : `data-act="connectClient" data-arg="${id}"`} aria-pressed="${on}" style="padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:${on ? 600 : 500};color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};border:1px solid ${on ? "var(--border-strong)" : "transparent"}">${label}</button>`;
+  }).join("");
+  const btnBase = "flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600";
+  const action = !token
+    ? `<button data-act="mintToken" class="cnpy-mintbtn" style="${btnBase};border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft)">Mint token &amp; fill in</button>`
+    : s.connectCopied
+      ? `<button data-act="copyConnect" class="cnpy-copybtn is-copied" style="${btnBase};background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
+      : `<button data-act="copyConnect" class="cnpy-copybtn" style="${btnBase};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
+  const status = token
+    ? `<span style="color:var(--accent);font-weight:600">Your new token is filled in.</span> It holds a secret, so it lands in your shell history too.`
+    : `Mint a token and it's filled in here, ready to paste.`;
+  return `<section class="cnpy-tile cnpy-set-full">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div style="${SECTION_LABEL};margin-bottom:0">Connect an agent</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">${tabs}</div>
+    </div>
+    <div style="display:flex;align-items:stretch;gap:8px;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;padding:10px 10px 10px 14px">
+      <pre style="flex:1;min-width:0;margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(s.connectClient, token ?? TOKEN_PLACEHOLDER))}</pre>
+      ${action}
+    </div>
+    <div style="font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${status}</div>
+    <div style="font-size:11.5px;color:var(--fg-40);margin-top:4px;line-height:1.55">${CONNECT_NOTE[s.connectClient]}</div>
+  </section>`;
+}
+
 function settingsView(s: AppState): string {
   const themeCards = [
     ["light", "Light"],
@@ -1381,6 +1461,8 @@ function settingsView(s: AppState): string {
       ${tokenList}
       <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">A token's value is shown once, when minted. Revoking takes effect immediately.</div>
     </section>
+
+    ${connectAgentSection(s)}
 
     ${emailNotificationsSection({
       prefs: s.notifPrefs.data,
