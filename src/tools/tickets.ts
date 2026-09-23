@@ -189,6 +189,19 @@ export async function add_ticket_link(db: DB, id: number, raw: string, by: strin
   return res.meta.last_row_id as number;
 }
 
+/**
+ * Detach one linked-work reference. A hard delete: a link is a pointer, not a
+ * record, and `ticket_events` audits status moves only (adding one writes no
+ * event either). The link must belong to THIS ticket — a link id from another
+ * ticket is the same 404 as an unknown one, so the route cannot reach across.
+ */
+export async function remove_ticket_link(db: DB, id: number, linkId: number): Promise<void> {
+  await getTicketRow(db, id);
+  const res = await run(db, `DELETE FROM ticket_links WHERE id = ? AND ticket_id = ?`, linkId, id);
+  if (!res.meta.changes) throw new TicketError("not_found", `no such link on ticket ${id}: ${linkId}`);
+  await touch(db, id, nowIso());
+}
+
 /** Move a ticket into a sprint, or back to the backlog (`null`). */
 export async function set_ticket_sprint(db: DB, id: number, sprintId: number | null): Promise<void> {
   await getTicketRow(db, id);

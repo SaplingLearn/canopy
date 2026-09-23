@@ -249,6 +249,15 @@ input, select { font-family: inherit; }
 .cnpy-iconbtn { transition:background .12s ease, color .12s ease; }
 .cnpy-iconbtn:hover { background:var(--hover); color:var(--fg-70); }
 .cnpy-link:hover { text-decoration:underline; }
+.cnpy-lkmore, .cnpy-lkarr { transition:opacity .12s ease, color .12s ease, background .12s ease; }
+.cnpy-lkmore { opacity:0; pointer-events:none; }
+.cnpy-lk:hover .cnpy-lkmore, .cnpy-lk:focus-within .cnpy-lkmore, .cnpy-lk.is-open .cnpy-lkmore { opacity:1; pointer-events:auto; }
+.cnpy-lk:hover .cnpy-lkarr, .cnpy-lk:focus-within .cnpy-lkarr, .cnpy-lk.is-open .cnpy-lkarr { opacity:0; }
+.cnpy-lkmore:hover, .cnpy-lk.is-open .cnpy-lkmore { color:var(--fg); background:var(--hover); }
+.cnpy-lkmenu { transform-origin:top left; animation:cnpy-lkpop .14s cubic-bezier(.2,.9,.3,1.2); }
+@keyframes cnpy-lkpop { from { opacity:0; transform:scale(.9); } }
+@media (prefers-reduced-motion: reduce) { .cnpy-lkmenu { animation:none; } }
+@media (hover:none) { .cnpy-lkmore { opacity:1; pointer-events:auto; } .cnpy-lkarr { opacity:0; } }
 .cnpy-rejectbtn:hover { border-color:var(--red); color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent); }
 .cnpy-rejectbtn:active { transform:translateY(1px); }
 .cnpy-issuechip { transition:border-color .12s ease, color .12s ease; }

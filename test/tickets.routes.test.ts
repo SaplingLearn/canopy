@@ -482,6 +482,38 @@ describe("POST /tickets/:id/links", () => {
   });
 });
 
+// ── POST /tickets/:id/links/:linkId/remove ───────────────────────────────────
+
+describe("POST /tickets/:id/links/:linkId/remove", () => {
+  it("deletes that one link, keeps the others, and bumps updated_at", async () => {
+    const cookie = await cookieFor("andres");
+    const t = await createTicket(cookie, { title: "Linked work" });
+    await post(`/tickets/${t.id}/links`, cookie, { raw: "#214" });
+    const both = (await json<WriteEnvelope>(await post(`/tickets/${t.id}/links`, cookie, { raw: "#215" }))).ticket;
+    const [first, second] = both.links;
+
+    const res = await post(`/tickets/${t.id}/links/${first.id}/remove`, cookie, {});
+    expect(res.status).toBe(200);
+    const after = (await json<WriteEnvelope>(res)).ticket;
+    expect(after.links.map((l) => l.id)).toEqual([second.id]);
+    expect(after.updated_at >= both.updated_at).toBe(true);
+    expect((await all(env.DB, `SELECT id FROM ticket_links`)).length).toBe(1);
+  });
+
+  it("404s an unknown link, another ticket's link and an unknown ticket; 400s a non-integer id — nothing deleted", async () => {
+    const cookie = await cookieFor("andres");
+    const a = await createTicket(cookie, { title: "A" });
+    const b = await createTicket(cookie, { title: "B" });
+    const onB = (await json<WriteEnvelope>(await post(`/tickets/${b.id}/links`, cookie, { raw: "#214" }))).ticket.links[0];
+
+    expect((await post(`/tickets/${a.id}/links/${onB.id}/remove`, cookie, {})).status).toBe(404);
+    expect((await post(`/tickets/${a.id}/links/9999/remove`, cookie, {})).status).toBe(404);
+    expect((await post(`/tickets/9999/links/${onB.id}/remove`, cookie, {})).status).toBe(404);
+    expect((await post(`/tickets/${a.id}/links/x/remove`, cookie, {})).status).toBe(400);
+    expect((await all(env.DB, `SELECT id FROM ticket_links`)).length).toBe(1);
+  });
+});
+
 // ── POST /tickets/:id/sprint ─────────────────────────────────────────────────
 
 describe("POST /tickets/:id/sprint", () => {
@@ -675,7 +707,7 @@ describe("tickets never write to the feed", () => {
 // ── the gate: every ticket route is session-cookie only ──────────────────────
 
 describe("tickets: 401 without a session cookie", () => {
-  it("every one of the ten routes fails closed", async () => {
+  it("every one of the eleven routes fails closed", async () => {
     const cookie = await cookieFor("andres");
     const t = await createTicket(cookie, { title: "Exists" });
 
@@ -687,11 +719,12 @@ describe("tickets: 401 without a session cookie", () => {
       [`/tickets/${t.id}/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to: "in_progress" }) }],
       [`/tickets/${t.id}/assignees`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ login: "andres", on: true }) }],
       [`/tickets/${t.id}/links`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ raw: "#1" }) }],
+      [`/tickets/${t.id}/links/1/remove`, { method: "POST" }],
       [`/tickets/${t.id}/sprint`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sprint_id: null }) }],
       [`/tickets/${t.id}/parent`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ child_id: 1 }) }],
       [`/tickets/${t.id}/comment`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "hi" }) }],
     ];
-    expect(unauthed.length).toBe(10);
+    expect(unauthed.length).toBe(11);
 
     for (const [path, init] of unauthed) {
       const res = await app.request(path, init, env);
