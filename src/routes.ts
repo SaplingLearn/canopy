@@ -10,7 +10,7 @@ import { consume } from "./consumer";
 import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
-  create_ticket, transition_ticket, toggle_assignee, add_ticket_link,
+  create_ticket, transition_ticket, toggle_assignee, add_ticket_link, remove_ticket_link,
   set_ticket_sprint, set_ticket_parent, add_ticket_comment,
   TicketError, TICKET_ERROR_STATUS,
 } from "./tools/tickets";
@@ -495,6 +495,19 @@ app.post("/tickets/:id/links", async (c) => {
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   try {
     await add_ticket_link(c.env.DB, id, parsed.data.raw, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// Detach one link. The link must be on :id — another ticket's link id is a 404.
+app.post("/tickets/:id/links/:linkId/remove", async (c) => {
+  const id = ticketId(c);
+  const linkId = Number(c.req.param("linkId"));
+  if (id === null || !Number.isInteger(linkId)) return c.json({ error: "invalid id" }, 400);
+  try {
+    await remove_ticket_link(c.env.DB, id, linkId);
     return ticketDetailResponse(c, id);
   } catch (e) {
     return ticketFail(c, e);

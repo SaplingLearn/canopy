@@ -20,7 +20,7 @@ import {
   listMcpTokens, revokeMcpToken,
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
-  addTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
+  addTicketLink, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
   getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
   Unauthorized, NotFound, ApiError,
@@ -1234,7 +1234,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.screen = "ticketdetail";
       state.ticketId = id;
       state.commentDraft = ""; state.mention = null; state.commentHeight = null; state.linkDraft = "";
-      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null;
+      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null;
       loadSprintsIfNeeded();
       loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
       loadTicketDetail(id);
@@ -1408,7 +1408,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     // either closes the other — and closes the assignee/sprint/relation menus.
     case "ticketStatusMenu":
       state.stMenu = state.stMenu === arg ? null : (arg === "rail" ? "rail" : "header");
-      state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
+      state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null;
       break;
     case "ticketStatus": {
       const id = state.ticketId;
@@ -1420,10 +1420,10 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       transitionTicket(id, to).then((t) => applyTicketWrite(t, `Status: ${label}`, seq)).catch(ticketErr);
       return;
     }
-    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; state.stMenu = null; break;
-    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; state.stMenu = null; break;
-    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; state.stMenu = null; break;
-    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null; break;
+    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
     // Assignment is immediate and reversible — no confirm step (design call #7).
     case "ticketAsgAdd": {
       const id = state.ticketId;
@@ -1483,6 +1483,32 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
           applyTicketWrite(t, raws.length > 1 ? `Linked ${raws.length} items` : added ? `Linked: ${added.label}` : "Linked", seq);
         })
         .catch(ticketErr);
+      return;
+    }
+    // A linked-work chip's ⋯ menu (Linear's pattern): the ⋯ toggles it, a
+    // right-click on the chip opens it; it holds Copy link and Remove link.
+    case "ticketLinkMenu":
+    case "ticketLinkMenuOpen": {
+      const linkId = Number(arg);
+      if (!Number.isInteger(linkId)) return;
+      state.lkMenu = act === "ticketLinkMenu" && state.lkMenu === linkId ? null : linkId;
+      state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null;
+      break;
+    }
+    case "ticketLinkCopy": {
+      const url = state.ticketDetail.data?.links.find((l) => l.id === Number(arg))?.url;
+      state.lkMenu = null;
+      if (url) copyToClipboard(url).then((ok) => flash(ok ? "Link copied" : "Couldn't copy the link"));
+      break;
+    }
+    case "ticketLinkRemove": {
+      const id = state.ticketId;
+      const linkId = Number(arg);
+      state.lkMenu = null;
+      if (id === null || !Number.isInteger(linkId)) break;
+      const label = state.ticketDetail.data?.links.find((l) => l.id === linkId)?.label;
+      const seq = claimTicketDetail();
+      removeTicketLink(id, linkId).then((t) => applyTicketWrite(t, label ? `Removed link: ${label}` : "Link removed", seq)).catch(ticketErr);
       return;
     }
     case "ticketComment": {
@@ -1981,6 +2007,15 @@ mount.addEventListener("click", (e) => {
   const el = target.closest<HTMLElement>("[data-act]");
   if (!el) return;
   dispatch(el.dataset.act ?? "", el.dataset.arg ?? null, null);
+});
+
+// Right-click on an element that carries `data-ctx` opens ITS menu instead of
+// the browser's (a linked-work chip → its Copy / Remove menu).
+mount.addEventListener("contextmenu", (e) => {
+  const el = (e.target as Element).closest<HTMLElement>("[data-ctx]");
+  if (!el) return;
+  e.preventDefault();
+  dispatch(el.dataset.ctx ?? "", el.dataset.arg ?? null, null);
 });
 
 mount.addEventListener("change", (e) => {

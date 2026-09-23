@@ -182,9 +182,9 @@ like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan
 (agent-proposed content), add it to the gate — never a second ingestion surface; authored/computed writes
 stay direct in the promote class.
 
-**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, ten session-cookie routes in
+**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, eleven session-cookie routes in
 `routes.ts`): `create_ticket` (opening `ticket_events` row) / `transition_ticket` / `toggle_assignee` /
-`add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`. There is no vocab
+`add_ticket_link` / `remove_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`. There is no vocab
 gate, no confidence, no staged state. Every write bumps `tickets.updated_at` (the queue's sort key); the
 status machine is `canTransition` in `shared/tickets-core.ts` (re-exported by `shared/tickets.ts`) and is
 never re-declared server-side; an illegal move or a nesting-rule break is a 409 that writes nothing;

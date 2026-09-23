@@ -368,6 +368,9 @@ export function toggleTicketAssignee(id: number, login: string, on: boolean): Ti
 export function addTicketLink(id: number, raw: string): TicketWrite {
   return ticketWrite(`/tickets/${id}/links`, { raw });
 }
+export function removeTicketLink(id: number, linkId: number): TicketWrite {
+  return ticketWrite(`/tickets/${id}/links/${linkId}/remove`);
+}
 export function setTicketSprint(id: number, sprintId: number | null): TicketWrite {
   return ticketWrite(`/tickets/${id}/sprint`, { sprint_id: sprintId });
 }

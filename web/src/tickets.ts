@@ -421,6 +421,8 @@ export interface TicketDetailProps {
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /** The linked-work chip whose ⋯ menu is open (a link id; null = none). */
+  lkMenu: number | null;
   /** Which status control has its menu open (null = neither). */
   stMenu: StatusMenuAnchor | null;
   /**
@@ -565,6 +567,18 @@ function ticketBody(body: string): string {
   return `<div class="cnpy-md cnpy-td-body" style="font-size:13.5px;line-height:1.65;color:var(--fg-70);max-width:640px">${renderMarkdown(body)}</div>`;
 }
 
+/** A linked-work chip's menu: copy the url, or remove the link (the one
+ *  destructive row, in red). It pops straight out of the ⋯: top-left corner
+ *  4px right of the button (which sits 8px in from the chip's right, 22px
+ *  square, vertically centred) and level with its top, growing from there. */
+function linkMenuBox(linkId: number): string {
+  const row = "display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap";
+  return `${MENU_BACKDROP}<div role="menu" class="cnpy-lkmenu" style="${MENU_BOX};top:calc(50% - 11px);right:auto;left:calc(100% - 4px);width:170px">
+    <button role="menuitem" data-act="ticketLinkCopy" data-arg="${linkId}" class="${MENU_ROW_CLASS}" style="${row};color:var(--fg-70)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy link</button>
+    <button role="menuitem" data-act="ticketLinkRemove" data-arg="${linkId}" class="${MENU_ROW_CLASS}" style="${row};color:var(--red)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg>Remove link</button>
+  </div>`;
+}
+
 function linkedWorkBlock(p: TicketDetailProps): string {
   const links = p.ticket.links;
   const hasLinks = links.length > 0;
@@ -576,13 +590,22 @@ function linkedWorkBlock(p: TicketDetailProps): string {
     : "";
   const chips = hasLinks
     ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${links.map((lk) =>
-        `<a href="${attr(safeHref(lk.url))}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:9px;padding:7px 13px 7px 10px;border:1px solid var(--border);border-radius:9px;text-decoration:none;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+        // Linear's pattern: the <a> is the whole chip and opens the link. On hover
+        // its arrow gives way to a ⋯ (a SIBLING laid over the arrow's slot — a
+        // button may not sit inside a link) that opens Copy link / Remove link;
+        // right-clicking the chip opens the same menu. Removing is two deliberate
+        // clicks, never one stray one at the spot you reach for to open the link.
+        `<span class="cnpy-lk${p.lkMenu === lk.id ? " is-open" : ""}" data-ctx="ticketLinkMenuOpen" data-arg="${lk.id}" style="position:relative;display:inline-flex">
+          <a href="${attr(safeHref(lk.url))}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:9px;padding:7px 13px 7px 10px;border:1px solid var(--border);border-radius:9px;text-decoration:none;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
           <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)">${LINK_ICON[lk.kind] ?? LINK_ICON.plain}</span>
           <span style="min-width:0">
             <span style="display:block;font-size:12.5px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">${esc(lk.label)}</span>
             <span style="display:block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${esc(lk.meta)}</span>
-          </span>${EXTERNAL_ARROW}
-        </a>`).join("")}</div>`
+          </span><span class="cnpy-lkarr" style="display:flex">${EXTERNAL_ARROW}</span>
+          </a>
+          <button data-act="ticketLinkMenu" data-arg="${lk.id}" class="cnpy-lkmore" title="Link actions" aria-label="Actions for ${attr(lk.label)}" aria-haspopup="menu" aria-expanded="${p.lkMenu === lk.id ? "true" : "false"}" style="position:absolute;padding:0;top:50%;right:8px;margin-top:-11px;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-55)"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>
+          ${p.lkMenu === lk.id ? linkMenuBox(lk.id) : ""}
+        </span>`).join("")}</div>`
     : "";
   const linkedLine = hasLinks
     ? `<div style="font-size:12px;color:var(--fg-40);margin-top:10px">Linked to engineering work</div>`

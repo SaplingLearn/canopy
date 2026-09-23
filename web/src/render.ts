@@ -190,6 +190,8 @@ export interface AppState {
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /** The linked-work chip whose ⋯ menu is open (a link id; null = none). */
+  lkMenu: number | null;
   /** Which of the ticket's two status controls has its menu open (null = neither). */
   stMenu: StatusMenuAnchor | null;
   /** Sprints back the queue's group headers and the ticket form's/rail's menus. */
@@ -290,7 +292,7 @@ export function initialState(): AppState {
     qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "",
-    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
+    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
@@ -1785,6 +1787,7 @@ function ticketDetailScreen(s: AppState): string {
     asgMenu: s.asgMenu,
     sprMenu: s.sprMenu,
     relMenu: s.relMenu,
+    lkMenu: s.lkMenu,
     stMenu: s.stMenu,
   });
 }

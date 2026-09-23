@@ -114,7 +114,7 @@ function detailProps(t: TicketDetail, o: Partial<TicketDetailProps> = {}): Ticke
   return {
     ticket: t, allTickets: [], sprints: [], persons: PERSONS,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "", linkOpen: false,
-    asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
+    asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
     ...o,
   };
 }
@@ -745,6 +745,25 @@ describe("ticketDetailView — linked work (design call #8)", () => {
     expect(html).toContain("sapling #214");
     expect(html).toContain("GITHUB · ISSUE");
     expect(html).toContain('href="https://github.com/SaplingLearn/sapling/issues/214"');
+  });
+
+  it("gives each link a ⋯ menu trigger outside the <a>, and a right-click hook on the chip", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", links: [link({ id: 42 })] })));
+    expect(html).toMatch(/<\/a>\s*<button data-act="ticketLinkMenu" data-arg="42"/);
+    expect(html).toContain('data-ctx="ticketLinkMenuOpen" data-arg="42"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-act="ticketLinkRemove"');        // closed: no remove anywhere
+  });
+
+  it("opens that chip's menu with Copy link and Remove link", () => {
+    const html = ticketDetailView(detailProps(
+      detail({ id: 1, title: "T", links: [link({ id: 42 }), link({ id: 43, label: "other" })] }),
+      { lkMenu: 42 },
+    ));
+    expect(html).toContain('data-act="ticketLinkCopy" data-arg="42"');
+    expect(html).toContain('data-act="ticketLinkRemove" data-arg="42"');
+    expect(html).not.toContain('data-act="ticketLinkRemove" data-arg="43"');
+    expect(html).toContain('data-act="closeTicketMenus"');
   });
 
   it("re-opens the field through the toggle", () => {
