@@ -1829,42 +1829,39 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────
-    case "mintToken":
+    // "Get connection command": the click mints, the modal shows the setup with the
+    // token in it, and closing the modal drops the token from the page for good.
+    case "connectOpen":
+      if (state.connect) return;                       // a mint is already in flight / open
+      state.connect = { token: null, error: null };
+      state.connectCopied = false;
+      rerender();
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; state.connectCopied = false; loadTokens(); rerender(); })
+        .then(({ token }) => { if (state.connect) state.connect = { token, error: null }; loadTokens(); rerender(); })
         .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Could not mint token");
+          if (e instanceof Unauthorized) { state.connect = null; state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          if (state.connect) state.connect = { token: null, error: e instanceof ApiError ? e.message : "please try again" };
+          rerender();
         });
       return;
-    case "copyToken": {
-      const tk = state.revealedToken;
-      if (!tk) return;
-      copyToClipboard(tk).then((ok) => {
-        if (!ok) { flash("Couldn't copy — select the token and copy it manually"); return; }
-        state.tokenCopied = true;
-        rerender();
-        flash("Token copied to clipboard");
-        setTimeout(() => { state.tokenCopied = false; rerender(); }, 1800);
-      });
-      return;
-    }
     case "connectClient":
       if (CONNECT_CLIENTS.some((c) => c.id === arg)) { state.connectClient = arg as ConnectClient; state.connectCopied = false; }
       break;
-    case "copyConnect": {
-      const tk = state.revealedToken;
+    case "connectCopy": {
+      const tk = state.connect?.token;
       if (!tk) return;
       copyToClipboard(connectSnippet(state.connectClient, tk)).then((ok) => {
         if (!ok) { flash("Couldn't copy — select the text and copy it manually"); return; }
         state.connectCopied = true;
         rerender();
-        flash("Setup copied — paste it into your terminal");
         setTimeout(() => { state.connectCopied = false; rerender(); }, 1800);
       });
       return;
     }
-    case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
+    case "connectClose":
+      if (state.connect && !state.connect.token && !state.connect.error) return;   // mid-mint: let it land
+      state.connect = null; state.connectCopied = false;
+      break;
     // Revoke is two clicks: the first arms the row, the second revokes.
     case "revokeTokenArm": state.tokenRevokeArm = Number(arg); break;
     case "revokeTokenCancel": state.tokenRevokeArm = null; break;
@@ -2122,8 +2119,12 @@ mount.addEventListener("focusin", (e) => railTip((e.target as Element | null)?.c
 mount.addEventListener("focusout", () => railTip(null));
 mount.addEventListener("mouseleave", () => railTip(null));
 
-// Escape closes the landing page's sign-in dialog, wherever focus is.
+// Escape closes the landing page's sign-in dialog, wherever focus is — and the
+// Settings connection modal, once its mint has landed.
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.connect && (state.connect.token || state.connect.error)) {
+    state.connect = null; state.connectCopied = false; rerender(); return;
+  }
   if (e.key !== "Escape" || !state.signInOpen || state.view !== "auth") return;
   state.signInOpen = false;
   rerender();

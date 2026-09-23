@@ -122,9 +122,11 @@ export interface AppState {
   searchType: "all" | "doc" | "feed" | "decision";
   searchResults: Loadable<QueryResult>;
   displayName: string;
-  revealedToken: string | null;
-  tokenCopied: boolean;
-  /** Settings › Connect an agent: which client's setup is showing, and its Copy state. */
+  /** Settings › "Get connection command": the modal, open while non-null. `token` is
+   *  null while the mint is in flight; `error` is set when it failed. The token lives
+   *  ONLY here — closing the modal drops it, and the server keeps just a hash. */
+  connect: { token: string | null; error: string | null } | null;
+  /** Which client's setup the modal shows, and its Copy button's state. */
   connectClient: ConnectClient;
   connectCopied: boolean;
   /** Settings › MCP access tokens: the caller's live tokens (hint only, never the value). */
@@ -259,8 +261,7 @@ export function initialState(): AppState {
     searchQuery: "token", searchType: "all",
     searchResults: { status: "idle", data: { primary: [], pointers: [], meta: { engine: "fts5", total: 0 } } },
     displayName: "",
-    revealedToken: null,
-    tokenCopied: false,
+    connect: null,
     connectClient: "claude",
     connectCopied: false,
     tokens: { status: "idle", data: [] },
@@ -1185,8 +1186,7 @@ function guideView(s: AppState): string {
     <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")}. First, get a token:</p>
     <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
       <li>You're already signed in, so that's step one done.</li>
-      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Mint new token")}. Copy it right away, since it's shown only once.</li>
-      <li>${gStrong("Fastest path:")} the ${gStrong("Connect an agent")} card right below it fills your new token into the exact setup for Claude Code, Codex or a plain <code style="font-family:var(--mono);font-size:13px">.mcp.json</code>. Copy, paste into a terminal, restart your agent.</li>
+      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Get connection command")}. It creates a token and hands you the exact setup for Claude Code, Codex or a plain <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> with it filled in. Copy it before closing, since it's shown only once.</li>
     </ol>
     ${gFig("settings", `${gEm("Settings")}: mint an MCP access token, pick a theme, and see your org membership.`)}
     <p style="${gP};margin-top:14px">${gStrong("Easiest: install the Canopy plugin.")} It bundles the three skills below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand. In Claude Code:</p>
@@ -1313,7 +1313,7 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
   const t = s.tokens;
   if (t.status === "error") return note(`Couldn't load your tokens${t.error ? ` &mdash; ${esc(t.error)}` : ""}.`);
   if (t.status !== "ok" && !t.data.length) return note("Loading tokens&hellip;");
-  if (!t.data.length) return note("No tokens yet. Mint one to connect an agent.");
+  if (!t.data.length) return note("No tokens yet. Get a connection command to connect an agent.");
   const rows = t.data.map((tk) => {
     const armed = s.tokenRevokeArm === tk.id;
     const btn = "flex:none;padding:4px 10px;border-radius:6px;font-size:12px";
@@ -1334,14 +1334,13 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
 
 // ── Settings › Connect an agent ──────────────────────────────────────────────
 
-export type ConnectClient = "claude" | "codex" | "json";
+export type ConnectClient = "claude" | "codex" | "json" | "token";
 export const CONNECT_CLIENTS: readonly { id: ConnectClient; label: string }[] = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
   { id: "json", label: ".mcp.json" },
+  { id: "token", label: "Token only" },
 ];
-/** Stands in for the token until one is minted this visit (the server keeps only a hash). */
-export const TOKEN_PLACEHOLDER = "canopy_mcp_…";
 
 /** This Canopy's own MCP endpoint — the origin the SPA is served from, so a local
  *  `wrangler dev` hands out a local URL and prod hands out prod's. */
@@ -1362,48 +1361,72 @@ export function connectSnippet(client: ConnectClient, token: string, url: string
       return `export CANOPY_MCP_TOKEN=${token}\ncodex mcp add canopy --url ${url} --bearer-token-env-var CANOPY_MCP_TOKEN`;
     case "json":
       return `{\n  "mcpServers": {\n    "canopy": {\n      "type": "http",\n      "url": "${url}",\n      "headers": { "Authorization": "Bearer ${token}" }\n    }\n  }\n}`;
+    case "token":
+      return token;
   }
 }
 
 const CONNECT_NOTE: Record<ConnectClient, string> = {
-  claude: `Run it in a terminal, then restart Claude Code. <code style="font-family:var(--mono);font-size:11px">--scope user</code> makes Canopy available in every project. Using the Canopy plugin instead? It reads <code style="font-family:var(--mono);font-size:11px">$CANOPY_MCP_TOKEN</code>, so export that and skip this.`,
-  codex: `Codex reads the token from <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--mono);font-size:11px">export</code> line to your shell profile to make it stick.`,
-  json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--mono);font-size:11px">.mcp.json</code>), then restart the client.`,
+  claude: `Paste it into a terminal, then restart Claude Code. <code style="font-family:var(--mono);font-size:11px">--scope user</code> makes Canopy available in every project.`,
+  codex: `Paste both lines into a terminal, then restart Codex. Codex reads the token from <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--mono);font-size:11px">export</code> line to your shell profile too.`,
+  json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--mono);font-size:11px">.mcp.json</code>), then restart it.`,
+  token: `For anything else, send it as a bearer header: <code style="font-family:var(--mono);font-size:11px">Authorization: Bearer &lt;token&gt;</code> to <code style="font-family:var(--mono);font-size:11px">${esc(mcpEndpoint())}</code>. Using the Canopy plugin? Export it as <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code>.`,
 };
 
+/** The Settings row a minted token shows up as: `canopy_mcp_` + the first 4 characters. */
+export const tokenLabel = (token: string): string =>
+  `canopy_mcp_${token.startsWith("canopy_mcp_") ? token.slice(11, 15) : ""}`;
+
 /**
- * One tile, one job: the exact setup for the agent you use, with your token already
- * in it. The token is only known right after a mint (`revealedToken`), so until then
- * the snippet shows a placeholder and the button MINTS instead of copying — one click
- * either way, and never a copied command that cannot work.
+ * "Get connection command": ONE modal that is the whole flow. The click mints a
+ * token; the modal shows the exact setup for the chosen client with that token
+ * already in it, says where the token now lives in Settings, and on Done/close the
+ * token is gone from the page for good — there is no second place it is shown.
+ * Built on the sign-in dialog's pattern: a sibling backdrop that closes it, and a
+ * pointer-events:none wrapper so clicks inside the panel never reach the backdrop.
  */
-export function connectAgentSection(s: Pick<AppState, "connectClient" | "connectCopied" | "revealedToken">): string {
-  const token = s.revealedToken;
-  const tabs = CONNECT_CLIENTS.map(({ id, label }) => {
-    const on = s.connectClient === id;
-    return `<button ${on ? "" : `data-act="connectClient" data-arg="${id}"`} aria-pressed="${on}" style="padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:${on ? 600 : 500};color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};border:1px solid ${on ? "var(--border-strong)" : "transparent"}">${label}</button>`;
-  }).join("");
-  const btnBase = "flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600";
-  const action = !token
-    ? `<button data-act="mintToken" class="cnpy-mintbtn" style="${btnBase};border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft)">Mint token &amp; fill in</button>`
-    : s.connectCopied
-      ? `<button data-act="copyConnect" class="cnpy-copybtn is-copied" style="${btnBase};background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
-      : `<button data-act="copyConnect" class="cnpy-copybtn" style="${btnBase};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
-  const status = token
-    ? `<span style="color:var(--accent);font-weight:600">Your new token is filled in.</span> It holds a secret, so it lands in your shell history too.`
-    : `Mint a token and it's filled in here, ready to paste.`;
-  return `<section class="cnpy-tile cnpy-set-full">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-      <div style="${SECTION_LABEL};margin-bottom:0">Connect an agent</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap">${tabs}</div>
+export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "connectCopied">): string {
+  const m = s.connect;
+  if (!m) return "";
+  const close = `<button data-act="connectClose" title="Close" aria-label="Close" class="cnpy-iconbtn" style="position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--fg-40)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>`;
+
+  let body: string;
+  if (m.error) {
+    body = `<div style="font-size:13px;color:var(--red);line-height:1.6;margin-bottom:18px">Couldn't create a token — ${esc(m.error)}</div>
+      <div style="display:flex;justify-content:flex-end"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Close</button></div>`;
+  } else if (!m.token) {
+    body = `<div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--fg-55);padding:18px 0 8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="animation:cnpy-spin .8s linear infinite"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>Creating a token for this connection&hellip;</div>`;
+  } else {
+    const tabs = CONNECT_CLIENTS.map(({ id, label }) => {
+      const on = s.connectClient === id;
+      return `<button ${on ? "" : `data-act="connectClient" data-arg="${id}"`} aria-pressed="${on}" style="padding:5px 11px;border-radius:7px;font-size:12.5px;font-weight:${on ? 600 : 500};color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};border:1px solid ${on ? "var(--border-strong)" : "transparent"}">${label}</button>`;
+    }).join("");
+    const btnBase = "flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600";
+    const copy = s.connectCopied
+      ? `<button data-act="connectCopy" class="cnpy-copybtn is-copied" style="${btnBase};background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
+      : `<button data-act="connectCopy" class="cnpy-copybtn" style="${btnBase};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
+    body = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+      <div style="display:flex;align-items:stretch;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:10px 10px 10px 14px">
+        <pre style="flex:1;min-width:0;margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(s.connectClient, m.token))}</pre>
+        ${copy}
+      </div>
+      <div style="font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${CONNECT_NOTE[s.connectClient]}</div>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:9px;border:1px solid var(--border);font-size:12px;line-height:1.55;color:var(--fg-70)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+        <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--mono);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">MCP access tokens</strong> in Settings. Revoke it there to disconnect the agent.</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:18px"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:600;color:var(--fg)">Done</button></div>`;
+  }
+
+  return `<div data-act="connectClose" style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);animation:cnpy-fade .14s ease"></div>
+  <div style="position:fixed;inset:0;z-index:61;display:grid;place-items:center;padding:16px;pointer-events:none">
+    <div role="dialog" aria-modal="true" aria-labelledby="connect-title" style="pointer-events:auto;position:relative;width:min(580px, 100%);max-height:calc(100vh - 32px);overflow-y:auto;border:1px solid var(--border-strong);border-radius:14px;padding:26px 26px 22px;background:var(--bg);box-shadow:var(--shadow);animation:cnpy-pop .16s ease">
+      ${close}
+      <div id="connect-title" style="font-size:16px;font-weight:600;letter-spacing:-0.01em;margin-bottom:4px">Connect an agent</div>
+      <div style="font-size:12.5px;color:var(--fg-55);margin-bottom:18px">Pick your agent, copy the setup, paste it. Your agent acts as you.</div>
+      ${body}
     </div>
-    <div style="display:flex;align-items:stretch;gap:8px;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;padding:10px 10px 10px 14px">
-      <pre style="flex:1;min-width:0;margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(s.connectClient, token ?? TOKEN_PLACEHOLDER))}</pre>
-      ${action}
-    </div>
-    <div style="font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${status}</div>
-    <div style="font-size:11.5px;color:var(--fg-40);margin-top:4px;line-height:1.55">${CONNECT_NOTE[s.connectClient]}</div>
-  </section>`;
+  </div>`;
 }
 
 function settingsView(s: AppState): string {
@@ -1425,22 +1448,6 @@ function settingsView(s: AppState): string {
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
 
-  const copied = s.tokenCopied;
-  const copyBtn = copied
-    ? `<button data-act="copyToken" class="cnpy-copybtn is-copied" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
-    : `<button data-act="copyToken" class="cnpy-copybtn" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
-  const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:12px;padding:15px 16px;margin-bottom:14px;background:var(--accent-soft);animation:cnpy-pop .22s ease">
-      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this token now — it won't be shown again</div>
-      <div style="display:flex;align-items:stretch;gap:8px;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;padding:6px 6px 6px 13px">
-        <code style="flex:1;min-width:0;display:flex;align-items:center;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
-        ${copyBtn}
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px">
-        <div style="font-size:11.5px;color:var(--fg-55);min-width:0">Use it as a <code style="font-family:var(--mono);font-size:11px">Bearer</code> header in your agent's MCP config.</div>
-        <button data-act="dismissReveal" class="cnpy-mutelink" style="flex:none;font-size:12px;font-weight:500;color:var(--fg-40)">Done</button>
-      </div>
-    </div>` : "";
-
   const tokenList = tokenListBody(s);
 
   // Bento on three columns: Profile / Account / tokens across the top — the three tiles
@@ -1455,14 +1462,11 @@ function settingsView(s: AppState): string {
     <section class="cnpy-tile" style="display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
         <div style="${SECTION_LABEL};margin-bottom:0">MCP access tokens</div>
-        <button data-act="mintToken" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Mint new token</button>
+        <button data-act="connectOpen" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Get connection command</button>
       </div>
-      ${reveal}
       ${tokenList}
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">A token's value is shown once, when minted. Revoking takes effect immediately.</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">Each connection command creates its own token. Revoking one disconnects that agent immediately.</div>
     </section>
-
-    ${connectAgentSection(s)}
 
     ${emailNotificationsSection({
       prefs: s.notifPrefs.data,
@@ -1863,5 +1867,6 @@ export function render(s: AppState): string {
     ${s.view === "auth" ? authView(s) : s.screen === "site" ? landingView({ dark: resolved(s) !== "light", signInOpen: false, signedIn: true, seen: s.landingSeen }) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
+    ${s.view === "app" ? connectModal(s) : ""}
   </div>`;
 }

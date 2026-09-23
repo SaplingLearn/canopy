@@ -1,12 +1,13 @@
 /**
- * Settings › Connect an agent — the pure snippet builder and the tile.
+ * Settings › "Get connection command" — the pure snippet builder and the modal.
  *
  *  • connectSnippet — each client's exact setup, with the token filled in
- *  • connectAgentSection — a placeholder + "Mint" until a token is revealed,
- *    then the real token + Copy; the pressed tab is inert (no data-act)
+ *  • connectModal — closed → nothing; minting → a spinner and no token;
+ *    ready → the setup + Copy + where the token now lives; failed → the error;
+ *    the pressed tab is inert (no data-act)
  */
 import { describe, it, expect } from "vitest";
-import { connectSnippet, connectAgentSection, TOKEN_PLACEHOLDER } from "../web/src/render";
+import { connectSnippet, connectModal, tokenLabel } from "../web/src/render";
 
 const URL = "https://canopy.example.com/mcp";
 const TOKEN = "canopy_mcp_abcd1234";
@@ -26,31 +27,56 @@ describe("connectSnippet", () => {
     ]);
   });
 
+  it("Token only: the bare token", () => {
+    expect(connectSnippet("token", TOKEN, URL)).toBe(TOKEN);
+  });
+
   it(".mcp.json: valid JSON carrying the url and the bearer header", () => {
     const cfg = JSON.parse(connectSnippet("json", TOKEN, URL));
     expect(cfg.mcpServers.canopy).toEqual({ type: "http", url: URL, headers: { Authorization: `Bearer ${TOKEN}` } });
   });
 });
 
-describe("connectAgentSection", () => {
-  it("before a mint: the placeholder, and the button mints instead of copying", () => {
-    const html = connectAgentSection({ connectClient: "claude", connectCopied: false, revealedToken: null });
-    expect(html).toContain(TOKEN_PLACEHOLDER);
-    expect(html).toContain('data-act="mintToken"');
-    expect(html).not.toContain('data-act="copyConnect"');
+describe("connectModal", () => {
+  const base = { connectClient: "claude" as const, connectCopied: false };
+
+  it("renders nothing while closed", () => {
+    expect(connectModal({ ...base, connect: null })).toBe("");
   });
 
-  it("after a mint: the real token is filled in and Copy is offered", () => {
-    const html = connectAgentSection({ connectClient: "codex", connectCopied: false, revealedToken: TOKEN });
+  it("while minting: a dialog with no token, no Copy and no Done", () => {
+    const html = connectModal({ ...base, connect: { token: null, error: null } });
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("Creating a token");
+    expect(html).not.toContain('data-act="connectCopy"');
+    expect(html).not.toContain(">Done<");
+  });
+
+  it("once minted: the setup with the token, Copy, Done, and where the token lives in Settings", () => {
+    const html = connectModal({ ...base, connectClient: "codex", connect: { token: TOKEN, error: null } });
     expect(html).toContain(`export CANOPY_MCP_TOKEN=${TOKEN}`);
-    expect(html).toContain('data-act="copyConnect"');
-    expect(html).not.toContain(TOKEN_PLACEHOLDER);
+    expect(html).toContain('data-act="connectCopy"');
+    expect(html).toContain(">Done<");
+    expect(html).toContain("MCP access tokens");
+    expect(html).toContain(tokenLabel(TOKEN));
+    expect(html).toContain("only time the token is shown");
+  });
+
+  it("a failed mint says so and offers only Close", () => {
+    const html = connectModal({ ...base, connect: { token: null, error: "boom" } });
+    expect(html).toContain("boom");
+    expect(html).not.toContain('data-act="connectCopy"');
   });
 
   it("the pressed tab carries no data-act; the others switch client", () => {
-    const html = connectAgentSection({ connectClient: "json", connectCopied: false, revealedToken: null });
+    const html = connectModal({ ...base, connectClient: "json", connect: { token: TOKEN, error: null } });
     expect(html).not.toContain('data-arg="json"');
-    expect(html).toContain('data-act="connectClient" data-arg="claude"');
-    expect(html).toContain('data-act="connectClient" data-arg="codex"');
+    for (const id of ["claude", "codex", "token"]) expect(html).toContain(`data-act="connectClient" data-arg="${id}"`);
+  });
+});
+
+describe("tokenLabel", () => {
+  it("is the row Settings lists: canopy_mcp_ + the first 4 characters", () => {
+    expect(tokenLabel(TOKEN)).toBe("canopy_mcp_abcd");
   });
 });
