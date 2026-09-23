@@ -4,7 +4,10 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
+import {
+  render, initialState, firstDocForSpace, docReaderHtml, connectSnippet, CONNECT_CLIENTS,
+  type AppState, type Screen, type ConnectClient,
+} from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint,
@@ -23,6 +26,7 @@ import {
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
+import type { SprintDetail } from "@shared/sprints";
 import { parseHash, hashForRoute, type Route } from "./hash";
 import { mountLandingMotion, unmountLandingMotion } from "./landing-motion";
 import {
@@ -1312,15 +1316,17 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "sprintResourceDraft": state.linkDraft = value ?? ""; return;   // echoes live
     case "sprintResourceAdd": {
       const id = state.sprintId;
-      const raw = state.linkDraft.trim();
-      if (id === null || !raw) return;
-      addSprintResource(id, raw)
+      const raws = splitLinks(state.linkDraft);
+      if (id === null || !raws.length) return;
+      raws.reduce<Promise<SprintDetail | null>>((prev, raw) => prev.then(() => addSprintResource(id, raw)), Promise.resolve(null))
         .then((sp) => {
+          if (!sp) return;
           state.linkDraft = "";
           state.sprintDetail = { status: "ok", data: sp };
           // The server parses the raw input, so the toast names the STORED label.
-          const added = sp.resources.find((r) => r.url === raw) ?? sp.resources[sp.resources.length - 1];
-          flash(added ? `Resource added: ${added.label}` : "Resource added");
+          const last = raws[raws.length - 1];
+          const added = sp.resources.find((r) => r.url === last) ?? sp.resources[sp.resources.length - 1];
+          flash(raws.length > 1 ? `${raws.length} resources added` : added ? `Resource added: ${added.label}` : "Resource added");
         })
         .catch(sprintErr);
       return;
@@ -1462,16 +1468,19 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "ticketLinkDraft": state.linkDraft = value ?? ""; return;   // echoes live
     case "ticketLinkAdd": {
       const id = state.ticketId;
-      const raw = state.linkDraft.trim();
-      if (id === null || !raw) return;
+      const raws = splitLinks(state.linkDraft);
+      if (id === null || !raws.length) return;
       const seq = claimTicketDetail();
-      addTicketLink(id, raw)
+      // Several links pasted at once go in one after another; the field stays open
+      // (and focused) so the next paste links too.
+      raws.reduce<Promise<TicketDetail | null>>((prev, raw) => prev.then(() => addTicketLink(id, raw)), Promise.resolve(null))
         .then((t) => {
+          if (!t) return;
           state.linkDraft = "";
-          state.lkOpen = false;
+          state.lkOpen = true;
           // The server parses the raw input, so the toast names the STORED label.
           const added = t.links[t.links.length - 1];
-          applyTicketWrite(t, added ? `Linked: ${added.label}` : "Linked", seq);
+          applyTicketWrite(t, raws.length > 1 ? `Linked ${raws.length} items` : added ? `Linked: ${added.label}` : "Linked", seq);
         })
         .catch(ticketErr);
       return;
@@ -1826,27 +1835,39 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────
-    case "mintToken":
+    // "Get connection command": the click mints, the modal shows the setup with the
+    // token in it, and closing the modal drops the token from the page for good.
+    case "connectOpen":
+      if (state.connect) return;                       // a mint is already in flight / open
+      state.connect = { token: null, error: null };
+      state.connectCopied = false;
+      rerender();
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; loadTokens(); rerender(); })
+        .then(({ token }) => { if (state.connect) state.connect = { token, error: null }; loadTokens(); rerender(); })
         .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Could not mint token");
+          if (e instanceof Unauthorized) { state.connect = null; state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          if (state.connect) state.connect = { token: null, error: e instanceof ApiError ? e.message : "please try again" };
+          rerender();
         });
       return;
-    case "copyToken": {
-      const tk = state.revealedToken;
+    case "connectClient":
+      if (CONNECT_CLIENTS.some((c) => c.id === arg)) { state.connectClient = arg as ConnectClient; state.connectCopied = false; }
+      break;
+    case "connectCopy": {
+      const tk = state.connect?.token;
       if (!tk) return;
-      copyToClipboard(tk).then((ok) => {
-        if (!ok) { flash("Couldn't copy — select the token and copy it manually"); return; }
-        state.tokenCopied = true;
+      copyToClipboard(connectSnippet(state.connectClient, tk)).then((ok) => {
+        if (!ok) { flash("Couldn't copy — select the text and copy it manually"); return; }
+        state.connectCopied = true;
         rerender();
-        flash("Token copied to clipboard");
-        setTimeout(() => { state.tokenCopied = false; rerender(); }, 1800);
+        setTimeout(() => { state.connectCopied = false; rerender(); }, 1800);
       });
       return;
     }
-    case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
+    case "connectClose":
+      if (state.connect && !state.connect.token && !state.connect.error) return;   // mid-mint: let it land
+      state.connect = null; state.connectCopied = false;
+      break;
     // Revoke is two clicks: the first arms the row, the second revokes.
     case "revokeTokenArm": state.tokenRevokeArm = Number(arg); break;
     case "revokeTokenCancel": state.tokenRevokeArm = null; break;
@@ -2066,6 +2087,38 @@ mount.addEventListener("keydown", (e) => {
   }
 });
 
+// ── link fields: Enter adds, and a paste that is a link adds on its own ───────
+// The ticket's Linked work field and the sprint's Resources field. The server
+// parses (and refuses) the raw text; this only decides whether a paste LOOKS like
+// links, so pasting a half-typed note never fires a write.
+const LINK_FIELDS: Record<string, string> = { ticketLinkDraft: "ticketLinkAdd", "sprint-resource": "sprintResourceAdd" };
+/** Whitespace-separated pieces of a link field's text. */
+function splitLinks(text: string): string[] {
+  return text.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+}
+const looksLikeLinks = (text: string): boolean => {
+  const parts = splitLinks(text);
+  return parts.length > 0 && parts.every((x) => /^https?:\/\/\S+$/i.test(x) || /^#?\d+$/.test(x));
+};
+const linkFieldAct = (el: EventTarget | null): { input: HTMLInputElement; act: string } | null => {
+  const input = (el as Element | null)?.closest?.<HTMLInputElement>("input[data-field]");
+  const act = input ? LINK_FIELDS[input.dataset.field ?? ""] : undefined;
+  return input && act ? { input, act } : null;
+};
+mount.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing) return;
+  const f = linkFieldAct(e.target);
+  if (!f || !f.input.value.trim()) return;
+  e.preventDefault();
+  dispatch(f.act, null, null);
+});
+mount.addEventListener("paste", (e) => {
+  const f = linkFieldAct(e.target);
+  if (!f) return;
+  // Let the paste land in the field (and its input event update the draft) first.
+  setTimeout(() => { if (looksLikeLinks(f.input.value)) dispatch(f.act, null, null); }, 0);
+});
+
 // ── sidebar: ⌘K / Ctrl+K, the search box, and the collapsed-rail tooltip ──────
 document.addEventListener("keydown", (e) => {
   if (state.view !== "app" || e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
@@ -2104,8 +2157,12 @@ mount.addEventListener("focusin", (e) => railTip((e.target as Element | null)?.c
 mount.addEventListener("focusout", () => railTip(null));
 mount.addEventListener("mouseleave", () => railTip(null));
 
-// Escape closes the landing page's sign-in dialog, wherever focus is.
+// Escape closes the landing page's sign-in dialog, wherever focus is — and the
+// Settings connection modal, once its mint has landed.
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.connect && (state.connect.token || state.connect.error)) {
+    state.connect = null; state.connectCopied = false; rerender(); return;
+  }
   if (e.key !== "Escape" || !state.signInOpen || state.view !== "auth") return;
   state.signInOpen = false;
   rerender();

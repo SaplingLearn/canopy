@@ -38,7 +38,7 @@ import type { TicketListItem, TicketDetail, TicketLinkRow, TicketCommentRow, Tic
 import { TICKET_STATUS_LABEL, type TicketStatus } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "../web/src/api";
-import { WORK_SHELL } from "../web/src/ui";
+import { WORK_SHELL, DETAIL_SHELL } from "../web/src/ui";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -511,19 +511,20 @@ describe("queueView — the row", () => {
 // ── new ticket ───────────────────────────────────────────────────────────────
 
 describe("the ticket screens' frame", () => {
-  it("gives the queue, the form and the detail the SAME full-width work shell", () => {
-    const shells = [
-      queueView(queueProps()),
-      newTicketView(formProps()),
-      ticketDetailView(detailProps(detail({ id: 1, title: "T" }))),
-    ];
-    for (const html of shells) {
+  it("gives the queue and the form the full-width work shell", () => {
+    for (const html of [queueView(queueProps()), newTicketView(formProps())]) {
       expect(html).toContain(WORK_SHELL);
-      // None of them is capped at the old narrow measures.
+      // Neither is capped at the old narrow measures.
       expect(html).not.toContain("max-width:960px");
       expect(html).not.toContain("max-width:1000px");
       expect(html).not.toContain("max-width:1080px");
     }
+  });
+
+  it("centres a single ticket in the narrower detail shell", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T" })));
+    expect(html).toContain(DETAIL_SHELL);
+    expect(html).not.toContain(WORK_SHELL);
   });
 
   it("keeps the form's rail a rail — fixed, so a wide window grows the fields", () => {

@@ -1,5 +1,5 @@
-// In-place DOM patching for the ONE region that must outlive a rerender: the
-// sidebar. rerender() swaps the rest of the app wholesale, which is fine for a
+// In-place DOM patching for the regions that must outlive a rerender: the
+// sidebar, and any overlay marked `data-overlay` (the connection modal). rerender() swaps the rest of the app wholesale, which is fine for a
 // screen but fatal for a transition — a width, a rotated chevron or an opening
 // sub-page list can only animate on an element that SURVIVES the state change.
 // So the <aside> is patched, never replaced.
@@ -53,9 +53,25 @@ export function paint(mount: HTMLElement, html: string): void {
       syncAttrs(liveRoot, nextRoot);
       morph(liveAside, nextAside);
       liveMain.replaceWith(nextMain);
-      // Overlays (toast, sync modal) sit beside the shell — swap them as before.
-      for (const n of Array.from(liveRoot.childNodes)) if (n !== liveShell) n.remove();
-      for (const n of Array.from(nextRoot.childNodes)) if (n !== nextShell) liveRoot.appendChild(n);
+      // Overlays (toast, sync modal) sit beside the shell and are swapped — EXCEPT a
+      // `data-overlay` one present on both sides, which is morphed in place like the
+      // aside, so an open dialog does not replay its entrance on every state change.
+      const keyOf = (n: Node): string | null => (n instanceof Element ? n.getAttribute("data-overlay") : null);
+      const nextKeys = new Set(Array.from(nextRoot.childNodes).map(keyOf).filter((k): k is string => k !== null));
+      const kept = new Map<string, Element>();
+      for (const n of Array.from(liveRoot.childNodes)) {
+        if (n === liveShell) continue;
+        const k = keyOf(n);
+        if (k !== null && nextKeys.has(k) && !kept.has(k)) kept.set(k, n as Element);
+        else n.remove();
+      }
+      for (const n of Array.from(nextRoot.childNodes)) {
+        if (n === nextShell) continue;
+        const k = keyOf(n);
+        const live = k !== null ? kept.get(k) : undefined;
+        if (live) morph(live, n as Element);
+        else liveRoot.appendChild(n);
+      }
       return;
     }
   }

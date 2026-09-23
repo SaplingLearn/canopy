@@ -215,6 +215,10 @@ input, select { font-family: inherit; }
 /* Tickets: the queue's table rows, and the two-column form/detail layouts that
    collapse to one column on a narrow viewport. */
 .cnpy-trow { transition:background .12s ease; cursor:pointer; }
+.cnpy-tcard { transition:border-color .12s ease, background .12s ease, transform .12s ease; cursor:pointer; }
+.cnpy-tcard:hover { border-color:var(--border-strong) !important; background:var(--hover) !important; }
+.cnpy-tcard:active { transform:translateY(1px); }
+@media (prefers-reduced-motion: reduce) { .cnpy-tcard:active { transform:none; } }
 .cnpy-trow:hover { background:var(--hover); }
 /* Design call #6 — "needs attention" (unassigned + Submitted). The faint accent
    fill lives HERE rather than inline so that :hover (class + pseudo-class, higher
