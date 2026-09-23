@@ -540,21 +540,26 @@ describe("render() — the Get Started guide", () => {
 
   it("describes My Work as THREE lists, with the issue's sprint (never its milestone)", () => {
     const html = render(guideState());
-    expect(html).toContain("Three lists");
-    expect(html).not.toContain("Two lists");
+    expect(html).toContain("three lists");
+    expect(html).not.toContain("two lists");
     expect(html).toContain("To-Do");
     expect(html).toContain("Previous activity");
     expect(html).toContain("Tickets assigned to me");
     expect(html).toContain("its sprint");
   });
 
-  it("says sprint progress comes from its TICKETS, and the Narrative tab still links the GitHub issues", () => {
+  it("says sprint progress counts its TICKETS closed (done or declined), plus the GitHub issues it tracks", () => {
     const html = render(guideState());
-    expect(html).toMatch(/progress comes from its[\s\S]{0,60}tickets/);
-    expect(html).toContain("done plus declined, over the total in that sprint");
-    expect(html).toMatch(/Narrative[\s\S]{0,80}links the GitHub issues behind a sprint/);
+    expect(html).toMatch(/progress bar that counts that sprint's tickets closed \(done or declined\) out of its total, plus any GitHub issues it tracks/);
     // The old cache-only wording is gone.
     expect(html).not.toContain("closed/total issue counts recomputed from GitHub events");
+  });
+
+  it("shows a figure for every screen in the sidebar, the ticket and sprint pages, and the connect modal", () => {
+    const html = render(guideState());
+    for (const name of ["mywork", "tickets", "board", "ticket", "roadmap", "sprint", "repo", "repo-usage", "feed", "docs", "search", "review", "maintenance", "settings", "connect"]) {
+      expect(html).toContain(`/guide/${name}-`);
+    }
   });
 
   it("carries no user-facing 'milestone' string anywhere in the guide", () => {

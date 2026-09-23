@@ -1126,98 +1126,134 @@ function searchView(s: AppState): string {
 
 // ── get started / guide ──────────────────────────────────────────────────────
 function guideView(s: AppState): string {
-  // Screenshots are captured per theme (dark/light/midnight); pick the variant that matches
-  // the viewer's active theme so the figures never clash with the surrounding page.
+  // Screenshots are captured per theme (dark/light/midnight) by scripts/capture-guide.mjs;
+  // pick the variant that matches the viewer's active theme so the figures never clash
+  // with the surrounding page.
   const th = resolved(s);
   const gP = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:0 0 4px";
   const gH2 = "font-size:22px;font-weight:600;letter-spacing:-0.02em;margin:8px 0 10px";
   const gH3 = "font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:34px 0 10px";
   const gEyebrow = "font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin:52px 0 2px";
+  const gList = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px";
   const gStrong = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
   const gEm = (t: string) => `<strong style="color:var(--fg-55)">${t}</strong>`;
+  const gCode = (t: string) => `<code style="font-family:var(--mono);font-size:13px">${t}</code>`;
   const gFig = (name: string, cap: string) => `<figure style="margin:18px 0 4px">
-      <img src="/guide/${name}-${th}.png" alt="" style="display:block;width:100%;border:1px solid var(--border);border-radius:12px" />
+      <img src="/guide/${name}-${th}.png" alt="" loading="lazy" style="display:block;width:100%;border:1px solid var(--border);border-radius:12px" />
       <figcaption style="font-size:12px;color:var(--fg-40);margin-top:8px">${cap}</figcaption>
     </figure>`;
   const gPre = (body: string) => `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">${body}</code></pre>`;
   return `<div class="cnpy-scroll" style="max-width:860px;margin:0 auto;padding:52px 40px 120px">
     <h1 style="font-size:30px;font-weight:650;letter-spacing:-0.025em;margin:0 0 14px">Get Started</h1>
-    <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 14px">Welcome to Canopy, your team's shared memory. It holds the team's docs, decisions, roadmap, and a running feed of everything people and their coding agents have done, and it keeps that memory trustworthy with one golden rule: ${gStrong("agents only ever stage changes; a human confirms the ones that matter")}. Nothing an agent writes goes live until someone approves it, so the store stays reliable no matter how many agents are writing to it.</p>
-    <p style="${gP}">This is a tour of the app, following the sidebar top to bottom (${gStrong("Workspace")}, ${gStrong("Knowledge")}, and ${gStrong("Triage")}), then how to connect your own coding agent.</p>
+    <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 14px">Welcome to Canopy, your team's shared memory. It holds the team's docs, decisions, roadmap, ticket queue, a picture of the repo, and a running feed of everything people and their coding agents have done, and it keeps that memory trustworthy with one golden rule: ${gStrong("agents only ever stage changes; a human confirms the ones that matter")}. Nothing an agent proposes goes live until someone approves it, so the store stays reliable no matter how many agents are writing to it.</p>
+    <p style="${gP}">This is a tour of the app, following the sidebar top to bottom (${gStrong("Workspace")}, ${gStrong("Monitor")}, ${gStrong("Knowledge")}, and ${gStrong("Triage")}), then your settings, and finally how to connect your own coding agent. A few things work everywhere:</p>
+    <ul style="${gList}">
+      <li>${gStrong("Search")} is the box at the top of the sidebar. Press ${gCode("⌘K")} (${gCode("Ctrl K")} on Windows and Linux) from any screen to jump into it.</li>
+      <li>A chevron next to ${gStrong("Tickets")}, ${gStrong("Roadmap")}, ${gStrong("Repo")}, and ${gStrong("Docs")} opens their sub-pages right in the sidebar. ${gStrong("Collapse")} folds the rail down to icons, and hovering an icon names it.</li>
+      <li>Every screen has its own address (${gCode("#tickets/7")}, ${gCode("#sprints/3")}, ${gCode("#repo/usage")}), so you can link a teammate straight to it.</li>
+      <li>The Canopy logo opens the about page; its ${gStrong("Back to the app")} button returns you to where you were.</li>
+    </ul>
 
     <div style="${gEyebrow}">Workspace</div>
     <h2 style="${gH2}">Your day-to-day</h2>
 
     <h3 style="${gH3}">My Work</h3>
-    <p style="${gP}">Canopy opens on ${gStrong("My Work")}, your personal dashboard. It's a read-only projection over captured GitHub events and the ticket queue (no live API calls), so it loads instantly. Three lists: ${gStrong("To-Do")}, your open assigned issues (each with a one-line summary, its sprint, and a suggested next step); ${gStrong("Previous activity")}, your recently merged and closed PRs, each summarized once at capture time; and ${gStrong("Tickets assigned to me")}, the open tickets from the queue that are yours. ${gStrong("Sync GitHub")} pulls the latest events.</p>
-    ${gFig("mywork", `${gEm("My Work")}: your open issues with a summary, sprint, and next step, your recent PRs, and the tickets assigned to you.`)}
+    <p style="${gP}">Canopy opens on ${gStrong("My Work")}, your personal dashboard. It reads only what Canopy has already captured (no live GitHub calls), so it loads instantly. It has three lists: ${gStrong("To-Do")}, your open assigned GitHub issues, each with a short summary, its sprint, and a suggested next step; ${gStrong("Previous activity")}, your recently merged and closed PRs, each summarized once when it was captured; and ${gStrong("Tickets assigned to me")}, your open tickets from the queue. ${gStrong("Sync GitHub")} pulls in the latest issues and PRs.</p>
+    ${gFig("mywork", `${gEm("My Work")}: your open issues with a summary, sprint, and next step, followed by your recent PRs and your tickets.`)}
 
-    <h3 style="${gH3}">Roadmap</h3>
-    <p style="${gP}">${gStrong("Roadmap")} is the admin-authored plan: a narrative of what's happening plus sprints in target-date order. Each sprint's progress comes from its ${gStrong("tickets")} — done plus declined, over the total in that sprint — with overdue flags; the ${gStrong("Narrative")} tab still links the GitHub issues behind a sprint. Toggle between the ${gStrong("Narrative")} digest and the ${gStrong("Timeline")} of sprints.</p>
-    ${gFig("roadmap", `${gEm("Roadmap")}: sprints in target-date order with their ticket progress bars, overdue flags, and the GitHub issues behind each one in the Narrative tab.`)}
+    <h3 style="${gH3}">Tickets</h3>
+    <p style="${gP}">${gStrong("Tickets")} is the team's request queue. Anyone can file one: a bug, a request, a question, or an access ask. Engineers pick them up from there. The badge in the sidebar counts the tickets waiting on you. The ${gStrong("Queue")} is a table grouped by sprint (tickets with no sprint sit in ${gStrong("Backlog")}), and you can filter it by open or closed, by assignee, and by category. ${gStrong("Board")} shows the same tickets as columns, one per status.</p>
+    ${gFig("tickets", `${gEm("Tickets")}: the queue grouped by sprint, with category, priority, status, assignee, and age on every row.`)}
+    ${gFig("board", `${gEm("Board")}: the same queue laid out as status columns.`)}
+    <p style="${gP};margin-top:14px">A ticket moves through ${gStrong("Triage → In progress → Done")}, or it ends as ${gStrong("Declined")}. The status menu only offers moves that are legal from where the ticket is now. Open a ticket to see its ${gStrong("thread")}, where comments sit alongside every status change and ${gCode("@mention")} loops someone in. The side panel holds its assignees, its sprint, and its relations: a ticket can have sub-tickets, one level deep. Under ${gStrong("Linked work")}, paste a GitHub or Figma URL (or a bare ${gCode("#123")}) and it links as soon as you paste. Nothing closes a ticket on its own. A merged PR or a closed issue never marks one done; a person does.</p>
+    ${gFig("ticket", `${gEm("A ticket")}: the description, linked GitHub and Figma work, and the thread, with status, assignees, sprint, and sub-tickets alongside.`)}
+    <p style="${gP};margin-top:14px">${gStrong("New ticket")} (or ${gStrong("Submit a ticket")} in the queue's top bar) opens a short form: a title, a description, a category, and a priority. You can also pick assignees and a sprint when you file it.</p>
+
+    <h3 style="${gH3}">Roadmap &amp; sprints</h3>
+    <p style="${gP}">${gStrong("Roadmap")} is the team's plan: a narrative of where things stand, followed by the sprints in date order. ${gStrong("Narrative")} reads it as a document; ${gStrong("Timeline")} lays the sprints out by date. Every sprint card shows its urgency, due date, domain, lead, and a progress bar that counts that sprint's tickets closed (done or declined) out of its total, plus any GitHub issues it tracks. A sprint past its due date is flagged ${gStrong("Overdue")}.</p>
+    ${gFig("roadmap", `${gEm("Roadmap")}: sprints grouped as in progress and upcoming, each with its urgency, due date, domain, lead, and progress.`)}
+    <p style="${gP};margin-top:14px">${gStrong("Open sprint")} takes you to that sprint's own page: its tickets as cards, its properties, everyone assigned to work in it, and its ${gStrong("resources")}. Resources are the sprint's own links plus every link from its tickets. From there you can mark the sprint active or inactive. Once every ticket and issue in it is closed, the page says it's ${gStrong("ready to complete")} and offers a button to confirm it done. That confirmation is always a person's call; Canopy never completes a sprint on its own. ${gStrong("New sprint")} on the Roadmap creates one.</p>
+    ${gFig("sprint", `${gEm("A sprint")}: its tickets, progress, properties, assignees, and resources on one page.`)}
+
+    <div style="${gEyebrow}">Monitor</div>
+    <h2 style="${gH2}">What's actually happening</h2>
+
+    <h3 style="${gH3}">Repo</h3>
+    <p style="${gP}">${gStrong("Repo")} is a dashboard over the product repository, split into five tabs. ${gStrong("Overview")} shows each environment (staging, production) with its backend and frontend deploys, the CI checks on its branch head, a health verdict, how far staging has drifted ahead of production, and the headline counts. ${gStrong("Code")} covers pull requests, commit activity, and branches. ${gStrong("CI &amp; Deploys")} covers deploy history, CI failures, test coverage, and bundle size. ${gStrong("Usage")} holds traffic, error rates, active users, and the product metrics the app reports. ${gStrong("Team &amp; Planning")} shows the active sprint, open issues by label, and who's been contributing.</p>
+    ${gFig("repo", `${gEm("Repo › Overview")}: both environments with their deploys, checks, and health, plus the drift between them and the headline counts.`)}
+    <p style="${gP};margin-top:14px">Like My Work, the dashboard only reads what Canopy has already captured, from the GitHub webhook and from scheduled polls that run every ten minutes or hourly. So it never waits on GitHub. The screen never guesses, either: a section with nothing captured yet reads ${gStrong("not connected")} and says what it's waiting on, never a made-up zero. ${gStrong("Preview with sample data")} fills every section with placeholder numbers so you can see the full layout (it's labelled on screen and never saved). Admins also get ${gStrong("Poll now")} in the top bar, which refreshes health, usage, and GitHub on demand.</p>
+    ${gFig("repo-usage", `${gEm("Repo › Usage")} (sample data): requests, error rate, and active users per environment, then the app's own product metrics.`)}
 
     <h3 style="${gH3}">Feed</h3>
-    <p style="${gP}">${gStrong("Feed")} is the running timeline of everything that's shipped, from people and their agents alike, newest first. Each entry links to its PR, commit, or issue, and you can filter by author, tag, or time window.</p>
-    ${gFig("feed", `${gEm("Feed")}: one timeline of every change, with PR / commit / issue chips and author, tag, and time filters.`)}
+    <p style="${gP}">${gStrong("Feed")} is the running timeline of everything that's shipped, from people and their agents alike, newest first. Each entry links to its PR, commit, or issue and marks whether an agent wrote it. You can filter by author, tag, or time window.</p>
+    ${gFig("feed", `${gEm("Feed")}: one timeline of every change, with PR, commit, and issue chips and author, tag, and time filters.`)}
 
     <div style="${gEyebrow}">Knowledge</div>
     <h2 style="${gH2}">The living reference</h2>
 
     <h3 style="${gH3}">Docs</h3>
-    <p style="${gP}">The ${gStrong("Docs")} library is the team's living reference, split into two spaces (${gStrong("Technical")} and ${gStrong("Product")}), each grouped into sections like ${gStrong("Architecture")}, ${gStrong("Engineering Guide")}, and ${gStrong("Decisions")}. Open a doc and its ${gStrong("heading outline")} expands in the tree so you can jump to any section, and it tracks your scroll position as you read. Every doc is versioned: an agent's proposed update lands as a ${gStrong("staged")} new version while the current one stays live and untouched, with a banner up top pointing you to the proposal. Promote it in Review and the new version goes live; prior versions are never overwritten, just superseded.</p>
-    ${gFig("docs", `${gEm("Docs")}: the Technical / Product library. Opening a doc expands its heading outline in the tree; the STAGED banner flags a proposal awaiting review.`)}
+    <p style="${gP}">The ${gStrong("Docs")} library is the team's living reference. It's split into two spaces, ${gStrong("Technical")} and ${gStrong("Product")}, and each is grouped into sections like ${gStrong("Architecture")}, ${gStrong("Engineering Guide")}, and ${gStrong("Decisions")}. When you open a doc, its ${gStrong("heading outline")} expands in the tree so you can jump to any section, and the outline follows along as you scroll. Every doc is versioned. When an agent proposes an update, it lands as a ${gStrong("staged")} new version while the current one stays live and untouched, and a banner at the top points you to the proposal. Promote it in Review and the new version goes live. ${gStrong("Version history")} keeps every earlier version; nothing is overwritten.</p>
+    ${gFig("docs", `${gEm("Docs")}: the Technical and Product library. The open doc's heading outline expands in the tree, and the STAGED banner flags a proposal awaiting review.`)}
 
     <h3 style="${gH3}">Search</h3>
-    <p style="${gP}">${gStrong("Search")} runs full-text across everything (docs, decisions, the feed, and the roadmap), ranked by relevance. It returns whole entries plus pointers to related ones, and every result is tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from a proposal that hasn't been promoted yet.</p>
+    <p style="${gP}">${gStrong("Search")} runs a full-text search across docs, decisions, the feed, the roadmap, sprints, and tickets, ranked by relevance. Every result is tagged ${gStrong("live")} or ${gStrong("staged")}, so you can tell settled context from a proposal that hasn't been promoted yet. Start typing in the sidebar box and it opens here.</p>
     ${gFig("search", `${gEm("Search")}: ranked full-text results across every type, each flagged LIVE or STAGED, with your query highlighted.`)}
 
     <div style="${gEyebrow}">Triage</div>
     <h2 style="${gH2}">Where humans confirm</h2>
-    <p style="${gP}">The ${gStrong("Triage")} section is the human's desk, where agent-produced changes get a verdict. It's split into two surfaces.</p>
+    <p style="${gP}">The ${gStrong("Triage")} section is the human's desk, where agent-produced changes get a verdict. The counts in the sidebar show what's waiting in each of its two screens.</p>
 
     <h3 style="${gH3}">Review</h3>
-    <p style="${gP}">${gStrong("Review")} is one queue for everything awaiting a decision: staged doc ${gStrong("proposals")}, shown as a diff against the live version (unified, side-by-side, or rendered), and drafted ${gStrong("decisions")} (ADRs), shown as the proposed record. On each item you ${gStrong("Promote")} the doc (or ${gStrong("Ratify")} the decision) or ${gStrong("Reject")} it; edits made against a stale version are flagged.</p>
-    ${gFig("review", `${gEm("Review")}: the queue on the left, the selected proposal's diff on the right, ready to Promote or Reject.`)}
+    <p style="${gP}">${gStrong("Review")} is one queue for everything awaiting a decision. Staged doc ${gStrong("proposals")} appear as a diff against the live version, which you can view unified, side by side, or rendered. Drafted ${gStrong("decisions")} (ADRs) appear as the proposed record. On each item you can ${gStrong("Promote")} the doc (or ${gStrong("Ratify")} the decision), or ${gStrong("Reject")} it. An edit written against an out-of-date version is flagged.</p>
+    ${gFig("review", `${gEm("Review")}: the queue on the left and the selected proposal's diff on the right, ready to Promote or Reject.`)}
 
     <h3 style="${gH3}">Maintenance</h3>
-    <p style="${gP}">${gStrong("Maintenance")} is occasional housekeeping; empty is the normal state. ${gStrong("Unplaced")} holds anything an agent couldn't confidently place: read it, then route it where it belongs or ${gStrong("Discard")} it. ${gStrong("Identity")} matches unrecognized activity logins to people. Nothing here is ever hard-deleted.</p>
+    <p style="${gP}">${gStrong("Maintenance")} is occasional housekeeping, and empty is its normal state. ${gStrong("Unplaced")} holds anything an agent couldn't confidently place: read it, then route it where it belongs or ${gStrong("Discard")} it. ${gStrong("Identity")} matches unrecognized GitHub logins to people. Admins also see ${gStrong("People")}, where they invite a teammate by Google address, and the ${gStrong("Notifications")} controls: which email digests exist, when they send, and a log of recent sends. Nothing here is ever hard-deleted.</p>
     ${gFig("maintenance", `${gEm("Maintenance")}: the Unplaced queue, where anything an agent couldn't place waits to be routed or discarded.`)}
+
+    <div style="${gEyebrow}">You</div>
+    <h2 style="${gH2}">Settings</h2>
+    <p style="${gP}">Click your name at the bottom of the sidebar to open ${gStrong("Settings")}. ${gStrong("Profile")} sets your display name, your handle, and the color that marks you across the app. ${gStrong("Account")} shows how you're signed in. You can link both ${gStrong("GitHub")} and ${gStrong("Google")} and sign in with either (one always stays linked). ${gStrong("Appearance")} switches between Light, Dark, Midnight, and System. ${gStrong("Email notifications")} is where you set each digest (your work, the review queue, roadmap changes, the ticket queue) to daily, weekly, or off, or unsubscribe from everything at once.</p>
+    ${gFig("settings", `${gEm("Settings")}: profile, sign-in methods, MCP access tokens, appearance, and email digests.`)}
 
     <div style="${gEyebrow}">Connect your agent</div>
     <h2 style="${gH2}">Plug in your coding agent</h2>
-    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")}. First, get a token:</p>
-    <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
-      <li>You're already signed in, so that's step one done.</li>
-      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Get connection command")}. It creates a token and hands you the exact setup for Claude Code, Codex or a plain <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> with it filled in. Copy it before closing, since it's shown only once.</li>
+    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")} (MCP). Your agent acts as you, so it sees what you see and its writes are recorded as yours. Connecting takes one click:</p>
+    <ol style="${gList}">
+      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Get connection command")}.</li>
+      <li>Pick your agent (${gStrong("Claude Code")}, ${gStrong("Codex")}, a ${gCode(".mcp.json")} file, or just the token) and copy the setup. It already has a fresh token and this Canopy's address filled in.</li>
+      <li>Paste it and restart your agent. The token is shown only this once, so copy it before you close the window. It stays listed under MCP access tokens, where ${gStrong("Revoke")} disconnects that agent immediately.</li>
     </ol>
-    ${gFig("settings", `${gEm("Settings")}: mint an MCP access token, pick a theme, and see your org membership.`)}
-    <p style="${gP};margin-top:14px">${gStrong("Easiest: install the Canopy plugin.")} It bundles the three skills below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand. In Claude Code:</p>
+    ${gFig("connect", `${gEm("Get connection command")}: pick your client, copy the ready-made setup. (The token is hidden in this screenshot.)`)}
+    <p style="${gP};margin-top:14px">${gStrong("Using Claude Code? Install the Canopy plugin as well.")} It bundles the skills described below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand:</p>
     ${gPre(`/plugin marketplace add SaplingLearn/canopy
 /plugin install canopy@canopy`)}
     <p style="${gP};margin-top:12px">The plugin reads your token from an environment variable, so export it in the shell that launches your agent (add it to your shell profile to make it stick), then restart:</p>
     ${gPre(`export CANOPY_MCP_TOKEN=canopy_mcp_…`)}
-    <p style="${gP};margin-top:14px">${gStrong("Prefer to wire it by hand")}, or running your own Canopy? Skip the plugin and drop a <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> in your project with the token as a bearer header, then restart your agent:</p>
-    ${gPre(`{
-  "mcpServers": {
-    "canopy": {
-      "type": "streamable-http",
-      "url": "https://&lt;your-canopy-host&gt;/mcp",
-      "headers": { "Authorization": "Bearer canopy_mcp_…" }
-    }
-  }
-}`)}
-    <p style="${gP};margin-top:14px">Once connected, your agent can read everything with ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")}, and add new context with ${gStrong("append_feed")} and ${gStrong("propose_doc_update")}. Exactly like the UI, those writes are ${gStrong("staged")}: they land in Review for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
+    <p style="${gP};margin-top:14px">Once your agent is connected, this is what it can do:</p>
+    <ul style="${gList}">
+      <li>${gStrong("Read everything.")} ${gCode("query")} is a ranked search that tags every result with its authority (live or staged), and ${gCode("get_doc")} fetches a single doc. Your agent can also read the roadmap and sprints, the ticket queue, your My Work, and the Repo dashboard (${gCode("get_repo_dashboard")}).</li>
+      <li>${gStrong("Propose context.")} ${gCode("append_feed")}, ${gCode("propose_doc_update")}, and ${gCode("record_session")} are ${gStrong("staged")}, just like in the app. They land in Review for a person to confirm and never go straight into the live store. Writing the same thing twice changes nothing, and each doc change is labelled new, edit, or rewrite, so re-running a session never piles up noise.</li>
+      <li>${gStrong("Work your tickets.")} Your agent can file a ticket, and on tickets ${gStrong("you're assigned to")} it can move the status, comment, add links, set the sprint, or nest it under another ticket. It can't touch anyone else's tickets, and it can't change who a ticket is assigned to.</li>
+      <li>${gStrong("Admins")} also get ${gCode("update_plan")} to reshape the roadmap, plus the sprint tools.</li>
+    </ul>
 
     <div style="${gEyebrow}">The living loop</div>
     <h2 style="${gH2}">How Canopy stays current</h2>
-    <p style="${gP}">The thing that keeps Canopy alive isn't any one screen; it's a loop your agent runs every session: ${gStrong("orient → work → record")}. Three Claude Code skills (under <code style="font-family:var(--mono);font-size:13px">.claude/skills/</code>) drive it, and they're the real heart of the system.</p>
-    <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
-      <li>${gStrong("Orient: load-context.")} Fires on its own before your agent works an area it has touched before, and always before it proposes a doc change. It calls the read-only ${gStrong("query")} tool, reads the assembled authoritative bodies, and respects each result's authority flag, so the agent builds on what the team already knows instead of re-deriving it. It never writes.</li>
-      <li>${gStrong("Work.")} The agent does the task, now grounded in real context rather than guesses.</li>
-      <li>${gStrong("Record: record-session.")} You ask for it explicitly at the end ("record this session"; it never fires on its own). It observes what actually shipped from <code style="font-family:var(--mono);font-size:13px">git</code>/<code style="font-family:var(--mono);font-size:13px">gh</code>, reads the docs it touched back from Canopy so it writes a true delta from a known base, and stages one reconciled batch through the ${gStrong("record_session")} MCP tool, over the same bearer connection you set up above, with no extra auth. The gate drops no-ops, tags each doc change new/edit/rewrite, and routes anything low-confidence or out-of-vocab to Maintenance.</li>
+    <p style="${gP}">What keeps Canopy alive isn't any one screen. It's a loop your agent runs every session: ${gStrong("orient → work → record")}. Claude Code skills drive it, and they're the real heart of the system.</p>
+    <ol style="${gList}">
+      <li>${gStrong("Orient: load-context.")} This skill runs on its own before your agent works on an area the team already has context for, and always before it proposes a doc change. It calls the read-only ${gStrong("query")} tool, reads what comes back, and checks each result's authority, so the agent builds on what the team already knows instead of working it out from scratch. It never writes. At the start of a session it also pulls your My Work.</li>
+      <li>${gStrong("Work.")} The agent does the task, grounded in real context instead of guesses.</li>
+      <li>${gStrong("Record: record-session.")} You ask for it at the end ("record this session"); it never runs on its own. It checks what actually shipped using ${gCode("git")} and ${gCode("gh")}, reads the docs it touched back from Canopy so its changes build on the latest version, and stages everything as one batch through the ${gStrong("record_session")} tool. Changes that repeat what's already there are dropped, and anything low-confidence goes to Maintenance.</li>
     </ol>
-    <p style="${gP};margin-top:12px">Then you ${gStrong("confirm")} in Review. That's the whole point: agents feed the store continuously, a human curates what matters, and because nothing goes live unreviewed, and every session writes back what it learned, the context stays trustworthy and current instead of going stale. This loop is the difference between a wiki that rots and a memory that grows.</p>
-    <p style="${gP}">${gStrong("canopy")} is the umbrella skill that maps all of this and carries the full ${gStrong("query")} reference; ${gStrong("load-context")} and ${gStrong("record-session")} are the two halves it composes, kept separate because one must fire on its own and the other must never. The Canopy plugin (above) ships all three, so installing it is all it takes to get them in any project, with no copying by hand.</p>
+    <p style="${gP};margin-top:12px">Then you ${gStrong("confirm")} in Review. That's the whole point: agents feed the store continuously and a human curates what matters. Nothing goes live unreviewed, and every session writes back what it learned, so the context stays trustworthy and current instead of going stale. This loop is the difference between a wiki that rots and a memory that grows.</p>
+    <p style="${gP}">The plugin ships these skills alongside the loop:</p>
+    <ul style="${gList}">
+      <li>${gStrong("canopy")}: the overview that maps the whole system, including the full ${gStrong("query")} reference. Start here if you're unsure.</li>
+      <li>${gStrong("tickets")}: works the ticket queue from your terminal. It checks the ticket is yours to change, shows a one-line diff, makes one change, and reports the new state. Admins can manage sprints with it too.</li>
+      <li>${gStrong("my-work")}: "what's on my plate?" answered from your My Work.</li>
+      <li>${gStrong("read-plan")} and ${gStrong("update-plan")} (admins): read the roadmap against what actually shipped, and push a reshaped plan back.</li>
+    </ul>
   </div>`;
 }
 

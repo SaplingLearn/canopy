@@ -1,31 +1,26 @@
 // Capture the Get Started guide screenshots against the real (cookie-gated) app over
-// `wrangler dev`, in ONE headless Chrome session, at 2× device scale for crisp images.
+// `wrangler dev`, with Playwright's Chromium at 2× device scale for crisp images.
 // Verification/authoring-only; no app code depends on it. Companion to dev-shot.mjs —
-// this one knows the guide's surface list and the framing each shot needs (nav click,
-// doc to open, query to type, section to scroll to).
+// this one knows the guide's surface list and the framing each shot needs (a hash route,
+// a sub-page to open, a query to type, a section to scroll to).
 //
 //   1. seed + run the app:   npm run seed && npm run dev   (DEV_LOGIN=AndresL230 in .dev.vars)
 //   2. capture every figure:  node scripts/capture-guide.mjs
 //
 // Writes web/public/guide/<name>-<theme>.png for each surface × theme (dark/light/midnight),
 // so the guide can show the variant matching the viewer's active theme. Override the target
-// dir with CANOPY_SHOT_DIR, the base URL with CANOPY_URL, the Chrome binary with CHROME_BIN,
-// or the theme list with CANOPY_THEMES (comma-separated).
-import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+// dir with CANOPY_SHOT_DIR, the base URL with CANOPY_URL, or the theme list with
+// CANOPY_THEMES (comma-separated). `node scripts/capture-guide.mjs docs search` captures
+// only those figures.
+import { mkdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { chromium } from "playwright";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CHROME = process.env.CHROME_BIN ?? "/home/andresl/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
-const PORT = Number(process.env.CDP_PORT ?? 9334);
 const BASE = process.env.CANOPY_URL ?? "http://localhost:8787";
 const OUT_DIR = process.env.CANOPY_SHOT_DIR ?? join(HERE, "..", "web", "public", "guide");
-const VIEW = { width: 1280, height: 800, deviceScaleFactor: 2 };
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const THEMES = (process.env.CANOPY_THEMES ?? "dark,light,midnight").split(",").map((t) => t.trim()).filter(Boolean);
 
 // Forge the dev session cookie the same way scripts/dev-cookie.mjs does, so the SPA's
 // same-origin fetches are authed even if DEV_LOGIN weren't set.
@@ -42,97 +37,89 @@ async function forgeCookie() {
   return `devsession.${b64url}`;
 }
 
-// Each figure: a name, the in-page JS to set it up (click a nav item, open a doc, type a
-// query, scroll a section into view), and how long to let async fetches + layout settle.
+const click = (page, sel) => page.locator(sel).first().click();
+
+// Each figure: a name, the hash route to open, an optional step once it has loaded, and
+// how long to let async fetches + the entrance animation settle.
 const SHOTS = [
-  { name: "mywork", settle: 1600,
-    // Explicit nav — a per-theme reload may restore a different screen from the URL hash.
-    setup: `document.querySelector('[data-act=goMyWork]').click(); window.scrollTo(0,0)` },
-  { name: "roadmap", settle: 1500,
-    setup: `document.querySelector('[data-act=goRoadmap]').click()` },
-  { name: "feed", settle: 1500,
-    setup: `document.querySelector('[data-act=goFeed]').click()` },
-  { name: "docs", settle: 1900,
-    // Docs opens on the Technical space and auto-selects the first doc (sapling-architecture)
-    // with its heading outline expanded in the tree. That doc also has a staged version, so
-    // one frame shows the new per-page outline tree AND the "proposal awaiting review" banner.
-    setup: `document.querySelector('[data-act=goDocs]').click()` },
-  { name: "search", settle: 1700,
-    setup: `document.querySelector('[data-act=goSearch]').click();
-            setTimeout(()=>{const i=document.querySelector('input[data-act=setSearch]'); if(i){i.value='gate'; i.dispatchEvent(new Event('input',{bubbles:true}));}}, 500)` },
-  { name: "review", settle: 1600,
-    setup: `document.querySelector('[data-act=goReview]').click()` },
-  { name: "maintenance", settle: 1600,
-    setup: `document.querySelector('[data-act=goMaintenance]').click()` },
-  { name: "settings", settle: 1400,
-    // Focus the MCP access tokens section (the "mint a token" step the guide points to).
-    setup: `document.querySelector('[data-act=goSettings]').click();
-            setTimeout(()=>{const b=document.querySelector('[data-act=mintToken]'); if(b) b.closest('section').scrollIntoView({block:'start'}); window.scrollBy(0,-24);}, 600)` },
+  { name: "mywork", hash: "#mywork" },
+  { name: "tickets", hash: "#tickets" },
+  { name: "board", hash: "#tickets",
+    step: (p) => click(p, '[data-act=navSub][data-arg="tickets:board"]') },
+  { name: "ticket", hash: "#tickets/3" },
+  { name: "roadmap", hash: "#roadmap" },
+  { name: "sprint", hash: "#sprints/3" },
+  // The local seed has no repo capture, so every section reads "not connected"; the
+  // screen's own "Preview with sample data" fills it client-side (labelled on screen).
+  { name: "repo", hash: "#repo", step: (p) => click(p, "[data-act=repoSampleOn]") },
+  { name: "repo-usage", hash: "#repo/usage", step: (p) => click(p, "[data-act=repoSampleOn]") },
+  { name: "feed", hash: "#feed" },
+  // Docs opens on the Technical space and auto-selects the first doc (sapling-architecture)
+  // with its heading outline expanded and the "proposal awaiting review" banner.
+  { name: "docs", hash: "#docs", settle: 1900 },
+  { name: "search", hash: "#search",
+    step: async (p) => { await p.locator("input[data-act=setSearch]").first().fill("gate"); } },
+  { name: "review", hash: "#review" },
+  { name: "maintenance", hash: "#maintenance" },
+  { name: "settings", hash: "#settings" },
+  // Mints a (local) token and opens the one-time setup modal. The figure shows the
+  // production origin and no token value; `after` revokes the token so the next theme's
+  // Settings figure is unchanged.
+  { name: "connect", hash: "#settings",
+    step: async (p) => {
+      await click(p, "[data-act=connectOpen]");
+      await p.waitForFunction(() => /canopy_mcp_\w{12,}/.test(document.querySelector("[data-overlay=connect]")?.textContent ?? ""));
+    },
+    // Run just before the shot: a later rerender would put the real text back.
+    dress: (p) => p.evaluate(() => {
+      const walk = document.createTreeWalker(document.querySelector("[data-overlay=connect]"), NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        n.nodeValue = n.nodeValue
+          .replace(/http:\/\/localhost:\d+/g, "https://canopy.saplinglearn.com")
+          .replace(/canopy_mcp_[A-Za-z0-9_-]{12,}/g, "canopy_mcp_••••••••");
+      }
+    }),
+    after: (p) => p.evaluate(async () => {
+      const { tokens } = await (await fetch("/auth/mcp-tokens")).json();
+      for (const t of tokens) await fetch(`/auth/mcp-tokens/${t.id}/revoke`, { method: "POST" });
+    }) },
 ];
 
-// Optional argv filter: `node scripts/capture-guide.mjs docs search` captures only those.
 const only = process.argv.slice(2);
 const shots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
 
-const COOKIE = await forgeCookie();
 mkdirSync(OUT_DIR, { recursive: true });
-
-const chrome = spawn(CHROME, [
-  "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
-  `--remote-debugging-port=${PORT}`, "--remote-allow-origins=*",
-  `--user-data-dir=${mkdtempSync(join(tmpdir(), "canopy-guide-"))}`,
-  `--window-size=${VIEW.width},${VIEW.height}`, "about:blank",
-], { stdio: "ignore" });
-
-async function targetWs() {
-  for (let i = 0; i < 50; i++) {
-    try {
-      const list = await (await fetch(`http://localhost:${PORT}/json`)).json();
-      const page = list.find((t) => t.type === "page");
-      if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
-    } catch { /* not up yet */ }
-    await sleep(100);
-  }
-  throw new Error("CDP page target not found");
-}
-
-const ws = new WebSocket(await targetWs());
-await new Promise((res) => (ws.onopen = res));
-let id = 0;
-const pending = new Map();
-ws.onmessage = (e) => {
-  const m = JSON.parse(e.data);
-  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-};
-const cmd = (method, params = {}) =>
-  new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
-
-await cmd("Page.enable");
-await cmd("Runtime.enable");
-await cmd("Emulation.setDeviceMetricsOverride", { ...VIEW, mobile: false });
-const host = new URL(BASE).hostname;
-await cmd("Network.setCookie", { name: "session", value: COOKIE, domain: host, path: "/" });
-await cmd("Page.navigate", { url: BASE });
-await sleep(2600); // SPA boot (getMe) + first data fetch — establishes the origin for localStorage
-
-// Capture every surface in each theme, so the guide can pick the variant matching the
-// viewer's active theme. The SPA reads localStorage 'canopy.theme' on boot, so we set it
-// then reload; filenames get a -<theme> suffix.
-const THEMES = (process.env.CANOPY_THEMES ?? "dark,light,midnight").split(",").map((t) => t.trim()).filter(Boolean);
+const browser = await chromium.launch();
+const cookie = await forgeCookie();
 
 for (const theme of THEMES) {
-  await cmd("Runtime.evaluate", { expression: `localStorage.setItem('canopy.theme', ${JSON.stringify(theme)})` });
-  await cmd("Page.reload", {});
-  await sleep(2600); // re-boot in the new theme
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+  await context.addCookies([{ name: "session", value: cookie, url: BASE }]);
+  // The SPA reads its theme and sidebar state from localStorage on boot; pin them so every
+  // figure shows the expanded rail in the requested theme.
+  await context.addInitScript((t) => {
+    localStorage.setItem("canopy.theme", t);
+    localStorage.setItem("canopy.collapsed", "0");
+    localStorage.removeItem("canopy.navOpen");
+  }, theme);
   for (const shot of shots) {
-    await cmd("Runtime.evaluate", { expression: shot.setup });
-    await sleep(shot.settle);
-    const png = await cmd("Page.captureScreenshot", { format: "png" });
+    const page = await context.newPage();
+    await page.goto(`${BASE}/${shot.hash}`);
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(600);
+    if (shot.step) {
+      await shot.step(page);
+      await page.waitForLoadState("networkidle");
+    }
+    await page.waitForTimeout(shot.settle ?? 1400);
+    if (shot.dress) await shot.dress(page);
     const path = join(OUT_DIR, `${shot.name}-${theme}.png`);
-    writeFileSync(path, Buffer.from(png.result.data, "base64"));
+    await page.screenshot({ path });
     process.stdout.write(`${path}\n`);
+    if (shot.after) await shot.after(page);
+    await page.close();
   }
+  await context.close();
 }
 
-chrome.kill();
-process.exit(0);
+await browser.close();
