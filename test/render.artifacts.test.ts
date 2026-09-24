@@ -113,12 +113,33 @@ describe("artifacts — library", () => {
 
   it("the filter popover counts each option and offers every kind and the known sprints", () => {
     const p = props("artifacts");
-    artifactsAct(p.ui, ctx(p), "artFilterToggle", null, null);
-    artifactsAct(p.ui, ctx(p), "artFilterCat", "kind", null);
+    p.ui.filterOpen = true;
+    // Every category's panel is rendered (only the current one shown), so switching
+    // category never needs a rerender.
     const html = artifactsView(p);
     for (const k of ["html", "markdown", "svg", "mermaid", "image", "pdf", "file"]) expect(html).toContain(`data-arg="kind:${k}"`);
-    artifactsAct(p.ui, ctx(p), "artFilterCat", "sprint", null);
-    expect(artifactsView(p)).toContain("Sprint 14");
+    expect(html).toContain("Sprint 14");
+    expect(html).toContain('data-fm-panel="area" class="fm-panel">');
+    expect(html).toContain('data-fm-panel="kind" class="fm-panel" hidden>');
+  });
+
+  it("the filter menu opens on hover and its categories switch on hover", () => {
+    const p = props("artifacts");
+    expect(artifactsView(p)).toContain('data-hover-menu="art"');
+    p.ui.filterOpen = true;
+    const html = artifactsView(p);
+    for (const k of ["area", "kind", "author", "status", "sprint"]) {
+      expect(html).toContain(`data-act="fmCat" data-hover="fmCat" data-arg="art:${k}"`);
+    }
+    // The click-outside backdrop sits OUTSIDE the hover wrapper, or leaving could never close it.
+    expect(html.indexOf('data-act="fmClose" data-arg="art" style="position:fixed')).toBeLessThan(html.indexOf('data-hover-menu="art"'));
+  });
+
+  it("plays the menu's entrance only on the render that opens it", () => {
+    const p = props("artifacts");
+    p.ui.filterOpen = true;
+    expect(artifactsView({ ...p, fmOpening: "art" })).toContain("fm-pop is-opening");
+    expect(artifactsView({ ...p, fmOpening: null })).not.toContain("is-opening");
   });
 
   it("loading, error and empty states", () => {

@@ -22,6 +22,7 @@
 // toast, download, open a tab, copy) it returns as an effect for main.ts.
 
 import { esc, attr, relTime } from "./ui";
+import { filterMenu, filterMenuBackdrop, type FilterMenuProps } from "./filter-menu";
 import { renderMarkdown, sanitizeSvg } from "./markdown";
 import { collapsedLineDiff } from "./diff";
 import type { PersonColor } from "@shared/rows";
@@ -128,6 +129,8 @@ export interface ArtProps {
   persons: ArtPerson[];
   /** `location.host` in the browser; the address strips print it. */
   host: string;
+  /** The filter menu (web/src/filter-menu.ts) that this render opens, if any — plays its entrance once. */
+  fmOpening?: string | null;
   /** The resolved theme — the mermaid cache is keyed by it (the diagram is drawn in its colours). */
   theme: string;
   tickets: ArtTicketRef[];
@@ -386,37 +389,23 @@ function libraryView(p: ArtProps): string {
   const rows = libraryRows(p);
   const groups = libraryGroups(p, all);
   const active = ART_FILTER_KEYS.filter((k) => ui.f[k] !== "all").length;
-  const anyFilter = ui.q.trim() !== "" || active > 0;
-  const rowBase = "display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;";
-  const cat = groups.find((g) => g.key === ui.filterCat) ?? groups[0];
+  const menu: FilterMenuProps = {
+    id: "art", open: ui.filterOpen, opening: p.fmOpening === "art", cat: ui.filterCat, activeCount: active,
+    showLabel: `Show ${rows.length} ${rows.length === 1 ? "artifact" : "artifacts"}`, clearAct: "artFilterClear",
+    align: "stretch", ariaLabel: "Filter artifacts",
+    groups: groups.map((g) => ({
+      key: g.key, label: g.label, value: ui.f[g.key], none: "all",
+      options: g.options.map((o) => {
+        const person = g.key === "author" && o.v !== "all" ? who(p, o.v) : null;
+        return {
+          v: o.v, l: o.l, act: "artFilterPick", arg: `${g.key}:${o.v}`,
+          n: o.v === "all" ? all.length : all.filter((a) => matchesFilter(a, g.key, o.v)).length,
+          lead: person ? av(person, 18) : undefined,
+        };
+      }),
+    })),
+  };
 
-  const popover = ui.filterOpen ? `<div data-act="artFilterClose" style="position:fixed;inset:0;z-index:29"></div>
-    <div role="dialog" aria-label="Filter artifacts" style="position:absolute;top:calc(100% + 6px);left:0;right:0;min-width:300px;z-index:30;${MENU};transform-origin:top left;animation:cnpy-drop .18s cubic-bezier(.2,.8,.2,1) both;display:flex;flex-direction:column;overflow:hidden">
-      <div style="display:grid;grid-template-columns:136px minmax(0,1fr);height:188px">
-        <div style="border-right:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:1px">
-          ${groups.map((g) => `<button data-act="artFilterCat" data-arg="${g.key}" class="cnpy-menurow" style="${rowBase}${g.key === cat.key ? "color:var(--fg);background:var(--hover)" : "color:var(--fg-55)"}">
-            <span style="flex:1;min-width:0">${esc(g.label)}</span>${ui.f[g.key] !== "all" ? `<span style="width:6px;height:6px;border-radius:4px;background:var(--accent);flex:none"></span>` : ""}
-          </button>`).join("")}
-        </div>
-        <div class="cnpy-scroll" style="overflow-y:auto;padding:6px;min-width:0">
-          ${cat.options.map((o) => {
-            const on = ui.f[cat.key] === o.v;
-            const n = o.v === "all" ? all.length : all.filter((a) => matchesFilter(a, cat.key, o.v)).length;
-            const person = cat.key === "author" && o.v !== "all" ? who(p, o.v) : null;
-            return `<button data-act="artFilterPick" data-arg="${attr(`${cat.key}:${o.v}`)}" class="cnpy-menurow art-fopt" style="${rowBase}${on ? "color:var(--fg)" : "color:var(--fg-70)"}">
-              <span style="width:14px;flex:none;display:grid;place-items:center">${on ? I.check() : ""}</span>
-              ${person ? av(person, 18) : ""}
-              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.l)}</span>
-              <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);flex:none">${n}</span>
-            </button>`;
-          }).join("")}
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-top:1px solid var(--border)">
-        <button data-act="artFilterClear" class="cnpy-mutelink" style="font-size:12px;font-weight:500;padding:2px 0;color:${anyFilter ? "var(--fg-55)" : "var(--fg-40);opacity:.5"}">Clear all</button>
-        <button data-act="artFilterClose" class="cnpy-accentbtn" style="${ACCENT_BTN};padding:6px 14px">Show ${rows.length} ${rows.length === 1 ? "artifact" : "artifacts"}</button>
-      </div>
-    </div>` : "";
 
   const toolbar = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 4px">
     <div style="position:relative;display:flex;align-items:stretch;flex:1 1 260px;max-width:480px;min-width:0;height:34px">
@@ -425,15 +414,8 @@ function libraryView(p: ArtProps): string {
         <input data-act="artQ" data-field="artQ" class="cnpy-search-in" style="font-size:12.5px" placeholder="Search by title, area, kind or ticket" value="${attr(ui.q)}" autocomplete="off" spellcheck="false">
         ${ui.q ? `<button data-act="artClearQ" aria-label="Clear search" class="cnpy-xbtn" style="width:16px;height:16px;display:grid;place-items:center;color:var(--fg-40);flex:none">${I.x()}</button>` : ""}
       </div>
-      <div style="display:flex">
-        <button data-act="artFilterToggle" aria-haspopup="dialog" aria-expanded="${ui.filterOpen}" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;border-radius:0 7px 7px 0;margin-left:-1px;height:100%;padding:0 11px 0 12px;white-space:nowrap;border:1px solid var(--border-strong);${ui.filterOpen ? "color:var(--fg);background:var(--hover)" : "color:var(--fg-70)"}">
-          ${svg(14, 1.8, `<path d="M4 6h16"></path><path d="M7 12h10"></path><path d="M10 18h4"></path>`)}
-          Filter
-          ${active ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;min-width:18px;height:18px;line-height:18px;padding:0 5px;border-radius:6px;text-align:center;color:var(--accent-fg);background:var(--accent)">${active}</span>` : ""}
-          ${I.caret()}
-        </button>
-        ${popover}
-      </div>
+      ${filterMenuBackdrop(menu)}
+      ${filterMenu(menu)}
     </div>
     <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;margin-left:auto;flex:none">${rows.length} shown · ${all.length} total</span>
   </div>`;
@@ -1107,9 +1089,8 @@ export function artifactsAct(
     // library
     case "artQ": ui.q = value ?? ""; return null;
     case "artClearQ": ui.q = ""; return null;
-    case "artFilterToggle": ui.filterOpen = !ui.filterOpen; return null;
-    case "artFilterClose": ui.filterOpen = false; return null;
-    case "artFilterCat": if ((ART_FILTER_KEYS as readonly string[]).includes(arg ?? "")) ui.filterCat = arg as ArtFilterKey; return null;
+    // Opening / closing the filter menu and switching its category are main.ts's
+    // filter-menu registry (they animate in place, without a rerender).
     case "artFilterPick": {
       const i = (arg ?? "").indexOf(":");
       const k = (arg ?? "").slice(0, i) as ArtFilterKey;

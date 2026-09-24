@@ -52,8 +52,8 @@ import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
 import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
 import {
-  artifactsAct, artAcceptFile, renderPendingMermaid, setArtFrameHeight, detailKey, diffKey, initialArtCreate, ART_ROUTE_NONE,
-  type ArtScreen, type ArtEffect, type ArtWrite, type ArtRoute,
+  artifactsAct, artAcceptFile, renderPendingMermaid, setArtFrameHeight, detailKey, diffKey, initialArtCreate, ART_ROUTE_NONE, ART_FILTER_KEYS,
+  type ArtScreen, type ArtEffect, type ArtWrite, type ArtRoute, type ArtFilterKey,
 } from "./artifacts";
 import { kindForFilename, isBinaryKind } from "@shared/artifacts-core";
 
@@ -138,8 +138,18 @@ function screenSettled(): boolean {
 function markEnter(): void {
   const root = mount.firstElementChild as HTMLElement | null;
   if (!root || state.view !== "app") return;
-  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${screenSettled() ? 1 : 0}`;
+  const settled = screenSettled();
+  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${settled ? 1 : 0}`;
   const now = performance.now();
+  // A still-loading paint does not enter: the entrance plays ONCE, when the screen's
+  // read lands. Playing it for the loading paint too made every first visit (and every
+  // visit to an empty list) enter twice — the "double click" flash.
+  if (!settled) {
+    enterKey = key;
+    enterAt = now - ENTER_MS;
+    root.removeAttribute("data-enter");
+    return;
+  }
   if (key !== enterKey) { enterKey = key; enterAt = now; }
   const elapsed = now - enterAt;
   if (elapsed >= ENTER_MS) return;
@@ -1545,6 +1555,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     // primary navigation
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
     case "goArtifacts": goArt("artifacts"); return;
+    case "fmToggle": case "fmClose": case "fmCat": filterMenuAct(act, arg); return;
 
     // ── Repo dashboard ───────────────────────────────────────────────────────
     case "goRepo": state.screen = "repo"; state.repoTab = "overview"; loadRepoIfNeeded(); return;
@@ -2177,16 +2188,14 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Prompt Library ───────────────────────────────────────────────────────
-    case "goPrompts": state.screen = "prompts"; state.promptMenu = null; loadPrompts(); return;
+    case "goPrompts": state.screen = "prompts"; state.promptFilterOpen = false; loadPrompts(); return;
     case "newPrompt": state.screen = "promptedit"; openEditor("new", null); return;
     case "openPrompt": if (!arg) return; state.screen = "prompt"; openPrompt(arg); return;
     case "promptQuery": state.promptQ = value ?? ""; break;
-    case "promptMenuToggle": state.promptMenu = state.promptMenu ? null : "root"; break;
-    case "promptMenuClose": state.promptMenu = null; break;
-    case "promptMenu": if (arg === "root" || arg === "tag" || arg === "sort") state.promptMenu = arg; break;
-    case "promptTag": state.promptTag = arg || null; state.promptMenu = "root"; break;
-    case "promptSort": state.promptSort = arg === "updated_asc" ? "updated_asc" : "updated_desc"; state.promptMenu = "root"; break;
-    case "promptResetFilters": state.promptTag = null; state.promptSort = "updated_desc"; state.promptMenu = null; break;
+    // The filter menu itself (open / close / category) is the shared filter-menu registry.
+    case "promptTag": state.promptTag = arg || null; break;
+    case "promptSort": state.promptSort = arg === "updated_asc" ? "updated_asc" : "updated_desc"; break;
+    case "promptResetFilters": state.promptTag = null; state.promptSort = "updated_desc"; break;
     case "promptClearFilters": state.promptQ = ""; state.promptTag = null; break;
     case "promptDiff": {
       const v = Number(arg);
@@ -2614,6 +2623,147 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 // Clicks drive buttons; selects/inputs are handled by change/input so their
 // native interaction (dropdown open, typing) is preserved. Anchors keep their
 // default behavior (open the GitHub link in a new tab).
+// ── filter menus (web/src/filter-menu.ts): hover, animated open/close, in-place category switch ──
+//
+// Each menu is a registry entry over its screen's own state. Open plays the entrance
+// once (`state.fmOpening` is read by the ONE paint that opens it). Close plays a short
+// exit on the live popover, THEN flips the state and rerenders. Switching category
+// never rerenders: every category's options are already in the DOM, so the switch
+// flips `hidden`, slides the highlight and plays the new panel's options in — the
+// popover survives, which is what lets any of that animate.
+interface FilterMenuSpec { isOpen: () => boolean; setOpen: (v: boolean) => void; cat: () => string; setCat: (k: string) => boolean }
+const FILTER_MENUS: Record<string, FilterMenuSpec> = {
+  art: {
+    isOpen: () => state.art.filterOpen, setOpen: (v) => { state.art.filterOpen = v; }, cat: () => state.art.filterCat,
+    setCat: (k) => { if (!(ART_FILTER_KEYS as readonly string[]).includes(k)) return false; state.art.filterCat = k as ArtFilterKey; return true; },
+  },
+  prompt: {
+    isOpen: () => state.promptFilterOpen, setOpen: (v) => { state.promptFilterOpen = v; }, cat: () => state.promptFilterCat,
+    setCat: (k) => { if (k !== "tag" && k !== "sort") return false; state.promptFilterCat = k; return true; },
+  },
+};
+const FM_CLOSE_MS = 130;
+let fmClosing: string | null = null;
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+const HOVER_INTENT_MS = 60;
+let hoverIntentTimer: ReturnType<typeof setTimeout> | null = null;
+/** When a hover last opened a menu — a click on its trigger right after is the same
+ *  intent ("open"), not a toggle that would shut what the hover just opened. */
+let hoverOpenedAt = 0;
+const cancelHoverClose = () => { if (hoverCloseTimer !== null) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; } };
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+const livePopover = (id: string) => mount.querySelector<HTMLElement>(`[data-fm-pop="${id}"]`);
+
+function openFilterMenu(id: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec) return;
+  cancelHoverClose();
+  if (fmClosing === id) {           // re-entered while it was fading out: keep it
+    fmClosing = null;
+    livePopover(id)?.classList.remove("is-closing");
+    return;
+  }
+  if (spec.isOpen()) return;
+  spec.setOpen(true);
+  state.fmOpening = id;
+  rerender();
+  state.fmOpening = null;
+}
+function closeFilterMenu(id: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec || !spec.isOpen() || fmClosing === id) return;
+  cancelHoverClose();
+  const finish = () => { fmClosing = null; spec.setOpen(false); rerender(); };
+  const pop = livePopover(id);
+  if (!pop || reducedMotion()) { finish(); return; }
+  fmClosing = id;
+  pop.classList.remove("is-opening");
+  pop.classList.add("is-closing");
+  setTimeout(() => { if (fmClosing === id) finish(); }, FM_CLOSE_MS);
+}
+function switchFilterCat(id: string, key: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec) return;
+  const prev = spec.cat();
+  if (key === prev || !spec.setCat(key)) return;
+  const pop = livePopover(id);
+  if (!pop) { rerender(); return; }
+  const rows = Array.from(pop.querySelectorAll<HTMLElement>("[data-fm-cat]"));
+  const from = rows.findIndex((r) => r.dataset.fmCat === prev);
+  const to = rows.findIndex((r) => r.dataset.fmCat === key);
+  for (const r of rows) r.classList.toggle("is-on", r.dataset.fmCat === key);
+  pop.querySelector<HTMLElement>(".fm-ind")?.style.setProperty("--ci", String(Math.max(0, to)));
+  pop.classList.remove("is-opening");
+  for (const panel of Array.from(pop.querySelectorAll<HTMLElement>("[data-fm-panel]"))) {
+    const on = panel.dataset.fmPanel === key;
+    panel.hidden = !on;
+    panel.classList.remove("is-switching");
+    if (on) {
+      panel.dataset.dir = to < from ? "up" : "down";
+      void panel.offsetWidth;        // restart the options' entrance
+      panel.classList.add("is-switching");
+      if (panel.parentElement) panel.parentElement.scrollTop = 0;
+    }
+  }
+}
+/** The filter menu's acts (clicks, and `data-hover="fmCat"` rows). */
+function filterMenuAct(act: string, arg: string | null): void {
+  if (!arg) return;
+  if (act === "fmToggle") {
+    const spec = FILTER_MENUS[arg];
+    if (!spec) return;
+    if (spec.isOpen() && fmClosing !== arg) {
+      if (performance.now() - hoverOpenedAt < 1000) return;
+      closeFilterMenu(arg);
+    } else openFilterMenu(arg);
+    return;
+  }
+  if (act === "fmClose") { closeFilterMenu(arg); return; }
+  if (act === "fmCat") {
+    const i = arg.indexOf(":");
+    if (i > 0) switchFilterCat(arg.slice(0, i), arg.slice(i + 1));
+  }
+}
+
+// Hover (a MOUSE pointer only — a touch tap must not open, then toggle shut).
+// `data-hover-menu="<id>"` wraps the trigger and its popover: entering opens it,
+// leaving closes it 200 ms later (re-entering cancels) — the design's
+// onMouseEnter / onMouseLeave. `data-hover="<act>"` rows dispatch on hover.
+mount.addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const target = e.target as Element;
+  const menu = target.closest<HTMLElement>("[data-hover-menu]");
+  const id = menu?.dataset.hoverMenu ?? "";
+  if (FILTER_MENUS[id]) {
+    cancelHoverClose();
+    if (!FILTER_MENUS[id].isOpen() || fmClosing === id) { hoverOpenedAt = performance.now(); openFilterMenu(id); }
+  }
+  // Hover intent: a row acts only once the pointer RESTS on it (~60 ms), so sweeping
+  // across the categories toward the options doesn't flip through every one on the way.
+  const row = target.closest<HTMLElement>("[data-hover]");
+  if (hoverIntentTimer !== null) { clearTimeout(hoverIntentTimer); hoverIntentTimer = null; }
+  if (row) {
+    const act = row.dataset.hover ?? "";
+    const arg = row.dataset.arg ?? null;
+    hoverIntentTimer = setTimeout(() => { hoverIntentTimer = null; dispatch(act, arg, null); }, HOVER_INTENT_MS);
+  }
+});
+mount.addEventListener("pointerout", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const menu = (e.target as Element).closest<HTMLElement>("[data-hover-menu]");
+  const id = menu?.dataset.hoverMenu ?? "";
+  if (!FILTER_MENUS[id]) return;
+  const to = e.relatedTarget as Element | null;
+  if (to && to.closest?.(`[data-hover-menu="${id}"]`)) return;   // moving between its own children
+  cancelHoverClose();
+  hoverCloseTimer = setTimeout(() => { hoverCloseTimer = null; closeFilterMenu(id); }, 200);
+});
+// Escape closes an open filter menu.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  for (const [id, spec] of Object.entries(FILTER_MENUS)) if (spec.isOpen()) closeFilterMenu(id);
+});
+
 mount.addEventListener("click", (e) => {
   const target = e.target as Element;
   // Textareas carry data-act too (the description / comment drafts); clicking
@@ -2817,12 +2967,11 @@ mount.addEventListener("keydown", (e) => {
     if (first) dispatch("promptTagAdd", first.tag, null);
   }
 });
-// Escape closes the expanded handoff prompt and the library's filter menu.
+// Escape closes the expanded handoff prompt (the filter menus close in their own listener).
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || state.view !== "app") return;
   if (state.handoffPromptOpen) { state.handoffPromptOpen = false; rerender(); }
   else if (state.promptExpanded) { state.promptExpanded = false; rerender(); }
-  else if (state.promptMenu) { state.promptMenu = null; rerender(); }
 });
 
 // ── sidebar: ⌘K / Ctrl+K, the search box, and the collapsed-rail tooltip ──────

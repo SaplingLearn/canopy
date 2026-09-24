@@ -23,7 +23,7 @@ import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } fr
 import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind, type MaintTab } from "./maintenance";
 import { handoffsView, handoffDetailView, newHandoffView, handoffPromptModal, blankHandoff, type NewHandoffDraft } from "./handoffs";
 import type { PromptView } from "./prompt-box";
-import { promptLibraryView, promptDetailView, promptEditorView, promptPageModal, type PromptMenu, type PromptDraft } from "./prompts";
+import { promptLibraryView, promptDetailView, promptEditorView, promptPageModal, type PromptFilterCat, type PromptDraft } from "./prompts";
 import { newDocView, blankDoc, type NewDocDraft } from "./newdoc";
 import type { HandoffView, PromptSummary, PromptDetail, PromptVersion, PromptSort } from "@shared/handoffs";
 import { firstLine } from "@shared/handoffs";
@@ -248,7 +248,8 @@ export interface AppState {
   promptQ: string;
   promptTag: string | null;
   promptSort: PromptSort;
-  promptMenu: PromptMenu;
+  promptFilterOpen: boolean;
+  promptFilterCat: PromptFilterCat;
   promptSlug: string | null;
   promptDetail: Loadable<{ prompt: PromptDetail; versions: PromptVersion[] } | null>;
   /** The version whose diff replaces the body (null = the body). */
@@ -265,6 +266,8 @@ export interface AppState {
   nd: NewDocDraft;
   maintTab: MaintTab;
   maintDiscardArm: boolean;
+  /** The filter menu (web/src/filter-menu.ts) the NEXT paint opens — its entrance plays once, then main.ts clears this. */
+  fmOpening: string | null;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -360,13 +363,14 @@ export function initialState(): AppState {
     handoffId: null, handoffExpireArm: false, handoffPromptOpen: false,
     nh: blankHandoff(),
     promptList: { status: "idle", data: [] },
-    promptQ: "", promptTag: null, promptSort: "updated_desc", promptMenu: null,
+    promptQ: "", promptTag: null, promptSort: "updated_desc", promptFilterOpen: false, promptFilterCat: "tag",
     promptSlug: null,
     promptDetail: { status: "idle", data: null },
     promptDiffV: null, promptTagMenu: false, promptTagDraft: "", promptExpanded: false, promptView: "raw",
     promptMode: "new", promptEd: null,
     nd: blankDoc("technical", ""),
     maintTab: "unplaced", maintDiscardArm: false,
+    fmOpening: null,
     toast: null,
     backfillSync: null,
   };
@@ -647,11 +651,10 @@ function header(s: AppState): string {
       </select>
     </div>` : "";
 
-  const spaceTab = (k: DocSpace) =>
-    `<button data-act="setDocSpace" data-arg="${attr(k)}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${esc(spaceLabel(k))}</button>`;
+  // The Technical / Product space is picked from the sidebar's Docs sub-pages, so the
+  // header carries only New doc (it had a second copy of the same switcher).
   const docsControls = s.screen === "docs"
-    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${DOC_SPACES.map(spaceTab).join("")}</div>
-      <button data-act="newDoc" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap">${PLUS_ICON}New doc</button>`
+    ? `<button data-act="newDoc" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap">${PLUS_ICON}New doc</button>`
     : "";
   const accentNew = (act: string, label: string) =>
     `<button data-act="${act}" class="cnpy-accentbtn" style="display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap;transition:filter .12s ease">${PLUS_ICON}${label}</button>`;
@@ -1972,7 +1975,7 @@ function screenBody(s: AppState): string {
     case "handoffs": return handoffsView({ status: s.handoffs.status, handoffs: s.handoffs.data, me: s.me?.handle ?? "", persons: s.persons.data });
     case "handoff": return handoffDetailView({ status: s.handoffDetail.status, handoff: s.handoffDetail.data, me: s.me?.handle ?? "", persons: s.persons.data, expireArm: s.handoffExpireArm, promptView: s.promptView });
     case "newhandoff": return newHandoffView({ draft: s.nh, me: s.me?.handle ?? "", persons: s.persons.data });
-    case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, menu: s.promptMenu, persons: s.persons.data });
+    case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, filterOpen: s.promptFilterOpen, filterCat: s.promptFilterCat, fmOpening: s.fmOpening, persons: s.persons.data });
     case "prompt": return promptDetailView({
       status: s.promptDetail.status, prompt: s.promptDetail.data?.prompt ?? null, versions: s.promptDetail.data?.versions ?? [],
       persons: s.persons.data, knownTags: [...new Set(s.promptList.data.flatMap((p) => p.tags))],
@@ -1995,7 +1998,7 @@ function repoProps(s: AppState): RepoProps {
 /** Project the app state onto the Artifacts screens' props. */
 function artProps(s: AppState, screen: ArtScreen): ArtProps {
   return {
-    screen, route: s.artRoute, ui: s.art, me: s.me?.handle ?? "",
+    screen, route: s.artRoute, ui: s.art, me: s.me?.handle ?? "", fmOpening: s.fmOpening,
     persons: s.persons.data, host: typeof location !== "undefined" ? location.host : "canopy",
     theme: resolved(s),
     // Every ticket (the attach dialog's own read); the queue's filtered list until it lands.
@@ -2006,11 +2009,14 @@ function artProps(s: AppState, screen: ArtScreen): ArtProps {
 const isArtScreen = (screen: Screen): screen is ArtScreen => screen === "artifacts" || screen === "artifactnew" || screen === "artifact";
 
 // `.cnpy-shell` is the seam web/src/morph.ts looks for: inside it the <aside> is
-// patched in place (so its transitions run) and <main> is swapped.
+// patched in place (so its transitions run) and <main> is swapped — or, on the
+// Artifacts screens, patched too while the SAME view stays up (`data-morph` = the
+// screen + its route): their previews are iframes, and a swapped iframe reloads.
 function appView(s: AppState): string {
+  const morphKey = isArtScreen(s.screen) ? `${s.screen}:${JSON.stringify(s.screen === "artifact" ? s.artRoute : null)}` : "";
   return `<div class="cnpy-shell" style="display:flex;height:100vh;overflow:hidden">
     ${sidebar(s)}
-    <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
+    <main${morphKey ? ` data-morph="${attr(morphKey)}"` : ""} style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
       ${header(s)}
       <div id="cnpy-main" class="cnpy-scroll" style="flex:1;overflow-y:auto;min-height:0">${screenBody(s)}</div>
     </main>
