@@ -21,6 +21,8 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;back
 .title{font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.25}
 .lede{margin:12px 0 0;font-size:14px;color:var(--fg-70);text-align:center;line-height:1.55}
 .lede strong{color:var(--fg);font-weight:600}
+.lede.sm{margin-top:8px;font-size:12.5px;color:var(--fg-55)}
+.lede.sm strong{font-weight:500;color:var(--fg-70)}
 .stack{margin-top:24px;display:flex;flex-direction:column;gap:18px}
 .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 16px;border-radius:3.6px;font:inherit;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer;border:1px solid var(--border-strong);background:transparent;color:var(--fg);transition:background .12s,filter .12s}
 .btn:hover{background:var(--hover)}
@@ -78,7 +80,7 @@ export function consentPage(p: { clientName: string; redirectHost: string; handl
   const inputs = Object.entries({ ...p.hidden, csrf: p.csrf })
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join("");
   return shell("Connect an app", head("Connect an app")
-    + `<p class="lede">It will act as <strong>@${esc(p.handle)}</strong></p>`
+    + `<p class="lede sm">It will act as <strong>@${esc(p.handle)}</strong></p>`
     + `<div class="app"><div class="app-ic">${APP}</div><div style="min-width:0">`
     + `<div class="app-name">${esc(p.clientName)}</div>`
     + `<div class="app-sub">Returns you to <span class="host">${esc(p.redirectHost)}</span></div>`
