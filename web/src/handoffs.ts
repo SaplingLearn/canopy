@@ -9,7 +9,7 @@ import type { PersonSummary } from "./api";
 import { esc, attr, relTime, WORK_SHELL } from "./ui";
 import { personChip } from "./people";
 import { renderMarkdown } from "./markdown";
-import { promptBox, promptModal } from "./prompt-box";
+import { promptBox, promptModal, type PromptView } from "./prompt-box";
 
 // ── atoms ────────────────────────────────────────────────────────────────────
 const CHIP_BASE = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none";
@@ -121,6 +121,8 @@ export interface HandoffDetailProps {
   me: string;
   persons: PersonSummary[];
   expireArm: boolean;
+  /** The prompt box's Raw / Rendered setting. */
+  promptView: PromptView;
 }
 
 /** Inline `code` → a mono span; everything else escaped. The checklist's one bit of markup. */
@@ -148,7 +150,7 @@ export function handoffDetailView(p: HandoffDetailProps): string {
       : `<button data-act="handoffCopy" data-arg="${h.id}" class="cnpy-outlinebtn" style="${outline}">Copy as prompt</button>`);
 
   const promptSection = h.prompt
-    ? promptBox({ title: h.prompt.title, body: h.prompt.body, copyAct: "handoffPromptCopy", copyArg: String(h.id), expandAct: "handoffPromptOpen", marginTop: rest ? 28 : 0 })
+    ? promptBox({ title: h.prompt.title, body: h.prompt.body, copyAct: "handoffPromptCopy", copyArg: String(h.id), expandAct: "handoffPromptOpen", marginTop: rest ? 28 : 0, view: p.promptView })
     : "";
 
   const total = c.done.length + c.next.length;

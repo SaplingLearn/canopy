@@ -27,11 +27,11 @@ describe("handoffs — numeric ids", () => {
 
   // A one-line body: the rest would go through marked + DOMPurify, which needs a DOM.
   it("a pending handoff offers Claim, Promote to doc and Expire; a claimed one offers Copy instead", () => {
-    const pending = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails." }), me: "AndresL230", persons, expireArm: false });
+    const pending = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails." }), me: "AndresL230", persons, expireArm: false, promptView: "raw" });
     expect(pending).toContain('data-act="handoffClaim" data-arg="12"');
     expect(pending).toContain('data-act="handoffPromote" data-arg="12"');
     expect(pending).toContain('data-act="handoffExpire" data-arg="12"');
-    const claimed = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails.", status: "claimed", claimed_by: "AndresL230", claimed_at: "2026-09-23T11:00:00Z" }), me: "AndresL230", persons, expireArm: false });
+    const claimed = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails.", status: "claimed", claimed_by: "AndresL230", claimed_at: "2026-09-23T11:00:00Z" }), me: "AndresL230", persons, expireArm: false, promptView: "raw" });
     expect(claimed).toContain('data-act="handoffCopy" data-arg="12"');
     expect(claimed).not.toContain('data-act="handoffClaim"');
     expect(claimed).not.toContain('data-act="handoffExpire"');
@@ -64,7 +64,7 @@ describe("new doc — the FROM HANDOFF banner", () => {
 describe("prompts", () => {
   const detail: PromptDetail = { slug: "lint", title: "Lint", description: "", tags: ["ui"], author: "Darkest-Teddy", version: 3, status: "staged", updated_at: "2026-09-23T10:00:00Z", body: "Lint {{path}}." };
   const v = (version: number, status: PromptVersion["status"]): PromptVersion => ({ version, status, author: "Darkest-Teddy", created_at: "2026-09-20T10:00:00Z", summary: "s", body: "b" });
-  const props = { status: "ok" as const, prompt: detail, persons, knownTags: [], diffVersion: null, tagMenu: false, tagDraft: "" };
+  const props = { status: "ok" as const, prompt: detail, persons, knownTags: [], diffVersion: null, tagMenu: false, tagDraft: "", promptView: "raw" as const };
 
   it("offers Publish vN only while a staged version exists", () => {
     expect(promptDetailView({ ...props, versions: [v(3, "staged"), v(2, "published")] })).toContain('data-act="promptPublish" data-arg="3"');
@@ -73,7 +73,7 @@ describe("prompts", () => {
 
   it("shows its body in the SAME prompt box a handoff's prompt uses", () => {
     const page = promptDetailView({ ...props, versions: [v(3, "staged")] });
-    const handoff = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails.", prompt: { title: "Fix it", body: "Step 1." } }), me: "AndresL230", persons, expireArm: false });
+    const handoff = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails.", prompt: { title: "Fix it", body: "Step 1." } }), me: "AndresL230", persons, expireArm: false, promptView: "raw" });
     // One component: same class, same copy + expand icon buttons, same raw mono body.
     for (const html of [page, handoff]) {
       expect(html).toContain('class="cnpy-promptbox"');
@@ -84,6 +84,18 @@ describe("prompts", () => {
     expect(page).toContain('data-act="promptExpand"');
     expect(page).toContain("Lint {{path}}."); // the raw body — the old accent-highlighted variables are gone
     expect(page).not.toContain("background:var(--accent-soft);border-radius:4px;padding:0 3px");
+  });
+
+  it("the prompt box carries a Raw / Rendered switch; Raw shows the markdown source", () => {
+    // (The Rendered branch runs DOMPurify, which needs a DOM this suite lacks — it is
+    // exercised in the browser instead.)
+    const body = "## Steps\n\n- read `src/mcp.ts`";
+    const raw = promptDetailView({ ...props, prompt: { ...detail, body }, versions: [v(3, "staged")] });
+    expect(raw).toContain('data-act="promptBoxView" data-arg="raw" class="cnpy-segbtn is-on" aria-pressed="true"');
+    expect(raw).toContain('data-act="promptBoxView" data-arg="rendered" class="cnpy-segbtn" aria-pressed="false"');
+    expect(raw).toContain("## Steps"); // the source, escaped, in the mono block
+    expect(handoffDetailView({ status: "ok", handoff: h({ body: "x", prompt: { title: "t", body } }), me: "AndresL230", persons, expireArm: false, promptView: "raw" }))
+      .toContain('data-act="promptBoxView" data-arg="rendered"');
   });
 
   it("filters the library by text and tag without a description field", () => {

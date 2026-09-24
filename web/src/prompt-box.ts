@@ -1,7 +1,8 @@
 // The prompt box — ONE component for a prompt wherever it shows: a handoff's
 // inline prompt and a Prompt Library prompt. A bordered panel (PROMPT eyebrow,
-// the title, copy + expand icons) over the raw body in a scrolling mono block,
-// and the expand modal that renders the same body as markdown. Purely
+// the title, a Raw / Rendered switch, copy + expand icons) over the body — the
+// markdown source in a scrolling mono block, or rendered — and the expand modal
+// that renders the same body as markdown. Purely
 // presentational: the caller names the acts its buttons dispatch.
 
 import { esc, attr } from "./ui";
@@ -22,23 +23,41 @@ export interface PromptBoxProps {
   expandAct: string;
   /** Space above the box (the handoff drops it when the box is the first thing). */
   marginTop?: number;
+  /** Raw markdown (the mono source) or rendered markdown. One setting app-wide. */
+  view: PromptView;
+}
+
+export type PromptView = "raw" | "rendered";
+/** The act the Raw / Rendered switch dispatches (arg: the view). */
+export const PROMPT_VIEW_ACT = "promptBoxView";
+
+const segStyle = (on: boolean) =>
+  `padding:2px 9px;border-radius:5px;font-size:11px;font-weight:500;white-space:nowrap;transition:all .12s ease;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"}`;
+function viewSwitch(view: PromptView): string {
+  const btn = (k: PromptView, label: string) =>
+    `<button data-act="${PROMPT_VIEW_ACT}" data-arg="${k}" class="cnpy-segbtn${view === k ? " is-on" : ""}" aria-pressed="${view === k}" style="${segStyle(view === k)}">${label}</button>`;
+  return `<div role="group" aria-label="Prompt view" style="display:inline-flex;align-items:center;gap:1px;border:1px solid var(--border);border-radius:7px;padding:1px;flex:none">${btn("raw", "Raw")}${btn("rendered", "Rendered")}</div>`;
 }
 
 const argAttr = (arg?: string) => (arg === undefined ? "" : ` data-arg="${attr(arg)}"`);
 
-/** The box. It grows to fill a flex column (`flex:1`) and never drops below 180px of body. */
+/** The box. It grows to fill a flex column (`flex:1`) and never drops below 180px of body.
+ *  Raw shows the markdown source (scrolls sideways, nothing wraps); Rendered shows it formatted. */
 export function promptBox(p: PromptBoxProps): string {
   return `<div class="cnpy-promptbox" style="position:relative;flex:1;display:flex;flex-direction:column;margin-top:${p.marginTop ?? 0}px;border:1px solid var(--border);border-radius:11px;overflow:hidden">
     <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)">
       <div style="${MONO_EYEBROW}">Prompt</div>
       <div style="flex:1;min-width:0;font-size:12.5px;font-weight:500;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.title)}</div>
+      ${viewSwitch(p.view)}
       <div style="display:flex;align-items:center;gap:2px;flex:none;margin-right:-6px">
         <button data-act="${attr(p.copyAct)}"${argAttr(p.copyArg)} class="cnpy-iconbtn" title="Copy prompt" aria-label="Copy prompt" style="${ICON_BTN}">${COPY_ICON}</button>
         <button data-act="${attr(p.expandAct)}" class="cnpy-iconbtn" title="Expand" aria-label="Expand" style="${ICON_BTN}">${EXPAND_ICON}</button>
       </div>
     </div>
     <div class="cnpy-scroll" style="flex:1 1 0;min-height:180px;min-width:0;overflow:auto;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
-      <pre style="margin:0;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--fg-70);white-space:pre;width:max-content;min-width:100%;box-sizing:border-box">${esc(p.body)}</pre>
+      ${p.view === "rendered"
+        ? `<div class="cnpy-md" style="padding:14px 18px;font-size:13.5px;line-height:1.65;color:var(--fg-70)">${renderMarkdown(p.body)}</div>`
+        : `<pre style="margin:0;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--fg-70);white-space:pre;width:max-content;min-width:100%;box-sizing:border-box">${esc(p.body)}</pre>`}
     </div>
   </div>`;
 }

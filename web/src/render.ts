@@ -22,6 +22,7 @@ import { landingView } from "./landing";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
 import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind, type MaintTab } from "./maintenance";
 import { handoffsView, handoffDetailView, newHandoffView, handoffPromptModal, blankHandoff, type NewHandoffDraft } from "./handoffs";
+import type { PromptView } from "./prompt-box";
 import { promptLibraryView, promptDetailView, promptEditorView, promptPageModal, type PromptMenu, type PromptDraft } from "./prompts";
 import { newDocView, blankDoc, type NewDocDraft } from "./newdoc";
 import type { HandoffView, PromptSummary, PromptDetail, PromptVersion, PromptSort } from "@shared/handoffs";
@@ -244,6 +245,8 @@ export interface AppState {
   promptTagDraft: string;
   /** The prompt page's body, expanded over the page (the shared prompt modal). */
   promptExpanded: boolean;
+  /** Raw markdown or rendered, for every prompt box (a handoff's and a library prompt's). */
+  promptView: PromptView;
   promptMode: "new" | "edit" | "version";
   promptEd: PromptDraft | null;
   // ── Docs › New doc / Maintenance tabs ──────────────────────────────────────
@@ -346,7 +349,7 @@ export function initialState(): AppState {
     promptQ: "", promptTag: null, promptSort: "updated_desc", promptMenu: null,
     promptSlug: null,
     promptDetail: { status: "idle", data: null },
-    promptDiffV: null, promptTagMenu: false, promptTagDraft: "", promptExpanded: false,
+    promptDiffV: null, promptTagMenu: false, promptTagDraft: "", promptExpanded: false, promptView: "raw",
     promptMode: "new", promptEd: null,
     nd: blankDoc("technical", ""),
     maintTab: "unplaced", maintDiscardArm: false,
@@ -1943,13 +1946,13 @@ function screenBody(s: AppState): string {
     case "sprint": return sprintScreenBody(s);
     case "repo": return repoView(repoProps(s));
     case "handoffs": return handoffsView({ status: s.handoffs.status, handoffs: s.handoffs.data, me: s.me?.handle ?? "", persons: s.persons.data });
-    case "handoff": return handoffDetailView({ status: s.handoffDetail.status, handoff: s.handoffDetail.data, me: s.me?.handle ?? "", persons: s.persons.data, expireArm: s.handoffExpireArm });
+    case "handoff": return handoffDetailView({ status: s.handoffDetail.status, handoff: s.handoffDetail.data, me: s.me?.handle ?? "", persons: s.persons.data, expireArm: s.handoffExpireArm, promptView: s.promptView });
     case "newhandoff": return newHandoffView({ draft: s.nh, me: s.me?.handle ?? "", persons: s.persons.data });
     case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, menu: s.promptMenu, persons: s.persons.data });
     case "prompt": return promptDetailView({
       status: s.promptDetail.status, prompt: s.promptDetail.data?.prompt ?? null, versions: s.promptDetail.data?.versions ?? [],
       persons: s.persons.data, knownTags: [...new Set(s.promptList.data.flatMap((p) => p.tags))],
-      diffVersion: s.promptDiffV, tagMenu: s.promptTagMenu, tagDraft: s.promptTagDraft,
+      diffVersion: s.promptDiffV, tagMenu: s.promptTagMenu, tagDraft: s.promptTagDraft, promptView: s.promptView,
     });
     case "promptedit": return promptEditorView({ draft: s.promptEd, takenSlugs: s.promptList.data.map((p) => p.slug) });
     case "newdoc": return newDocView({ draft: s.nd, spaces: DOC_SPACES.map((k) => ({ key: k, label: spaceLabel(k) })), sections: ASSIGN_OPTIONS.sections });

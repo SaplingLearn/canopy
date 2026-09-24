@@ -61,6 +61,8 @@ const state: AppState = initialState();
 try {
   const t = localStorage.getItem("canopy.theme");
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
+  const pv = localStorage.getItem("canopy.promptView");
+  if (pv === "raw" || pv === "rendered") state.promptView = pv;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
   const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
@@ -1943,6 +1945,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       return;
     }
     case "promptExpand": state.promptExpanded = true; break;
+    case "promptBoxView":
+      if (arg !== "raw" && arg !== "rendered") return;
+      state.promptView = arg;
+      persist("canopy.promptView", arg);
+      break;
     case "promptExpandClose": state.promptExpanded = false; break;
     case "promptTagMenu": state.promptTagMenu = !state.promptTagMenu; state.promptTagDraft = ""; break;
     case "promptTagDraft": state.promptTagDraft = value ?? ""; break;

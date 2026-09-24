@@ -13,7 +13,7 @@ import { personChip, handleTag } from "./people";
 import { collapsedLineDiff } from "./diff";
 import { unifiedDiff } from "./review";
 import { primaryStyle } from "./handoffs";
-import { promptBox, promptModal } from "./prompt-box";
+import { promptBox, promptModal, type PromptView } from "./prompt-box";
 
 const personOf = (persons: PersonSummary[], h: string): PersonSummary | null =>
   persons.find((p) => p.handle.toLowerCase() === h.toLowerCase()) ?? null;
@@ -149,6 +149,8 @@ export interface PromptDetailProps {
   diffVersion: number | null;
   tagMenu: boolean;
   tagDraft: string;
+  /** The prompt box's Raw / Rendered setting. */
+  promptView: PromptView;
 }
 
 const PROP_ROW = "display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px";
@@ -190,7 +192,7 @@ export function promptDetailView(p: PromptDetailProps): string {
       ${unifiedDiff(rows)}
     </div>`;
   } else {
-    main = promptBox({ title: x.title, body: x.body, copyAct: "promptCopy", expandAct: "promptExpand" });
+    main = promptBox({ title: x.title, body: x.body, copyAct: "promptCopy", expandAct: "promptExpand", view: p.promptView });
   }
 
   const opts = p.tagMenu ? tagOptions(x.tags, p.knownTags, p.tagDraft) : [];
