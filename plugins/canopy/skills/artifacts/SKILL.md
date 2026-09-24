@@ -1,7 +1,7 @@
 ---
 name: artifacts
 description: Use when work involves a Canopy artifact — someone names or links one ("the checkout design", "the threat-model PDF", a #artifacts/<slug> link), a ticket you are working has artifacts linked, the person wants a design page / spec / diagram / image from Canopy in the repo or running locally, or asks to publish or update one (triggers — "pull the design", "open that artifact", "spin up the mockup", "put this in Canopy as an artifact", "upload the diagram"). Finding, pulling and linking are safe; creating or versioning one happens only when the person asks.
-allowed-tools: mcp__canopy__artifact_list, mcp__canopy__artifact_get, mcp__canopy__artifact_create, mcp__canopy__artifact_update, mcp__canopy__query, mcp__canopy__get_ticket, Bash(curl -fsSL:*), Bash(curl -X PUT:*), Bash(shasum -a 256:*), Bash(sha256sum:*), Bash(wc -c:*), Bash(mkdir -p .canopy/:*), Bash(git check-ignore:*), Bash(python3 -m http.server:*)
+allowed-tools: mcp__canopy__artifact_list, mcp__canopy__artifact_get, mcp__canopy__upload_asset, mcp__canopy__artifact_update, mcp__canopy__query, mcp__canopy__get_ticket, Bash(curl -fsSL:*), Bash(curl -X PUT:*), Bash(shasum -a 256:*), Bash(sha256sum:*), Bash(wc -c:*), Bash(mkdir -p .canopy/:*), Bash(git check-ignore:*), Bash(python3 -m http.server:*)
 ---
 
 # Artifacts ↔ Canopy
@@ -104,7 +104,7 @@ When the person wants to share or look at it — not code against it — give th
 Artifact writes are **direct** (not staged): they take effect now, recorded as the person whose token
 you hold. Whoever can see a page can version it; `private` pages are their author's alone.
 
-- **Text kinds** (`html` · `markdown` · `svg` · `mermaid`): `mcp__canopy__artifact_create { title, kind,
+- **Text kinds** (`html` · `markdown` · `svg` · `mermaid`): `mcp__canopy__upload_asset { title, kind,
   area, repo, visibility, content, summary?, links? }` → `{ slug, url, version }`. A new version:
   `mcp__canopy__artifact_update { slug, summary, content }` — or `{ slug, summary, old_str, new_str }`
   for an exact edit (`old_str` must occur exactly once). `unchanged: true` = identical, nothing written.
@@ -113,7 +113,7 @@ you hold. Whoever can see a page can version it; `private` pages are their autho
   ```bash
   shasum -a 256 diagram.png        # → sha256
   wc -c < diagram.png              # → size_bytes
-  # artifact_create { title, kind: "image", area, repo, visibility, size_bytes, sha256, filename: "diagram.png" }
+  # upload_asset { title, kind: "image", area, repo, visibility, size_bytes, sha256, filename: "diagram.png" }
   #   (or artifact_update { slug, summary, size_bytes, sha256, filename } for a new version)
   #   → { slug, url, upload_url, expires_at }
   curl -X PUT --data-binary @diagram.png -H "Content-Type: image/png" "$upload_url"

@@ -45,6 +45,7 @@ import { createInvite, revokeInvite, listInvites } from "./auth/invites";
 import { listPersons } from "./auth/persons";
 import { sendInvite } from "./notifications/invite";
 import type { InviteRow } from "@shared/rows";
+import { readDocImage } from "./tools/doc-images";
 
 export const app = new Hono<AppEnv>();
 
@@ -60,6 +61,25 @@ app.use("*", sessionGate);
 // token-authenticated upload PUT is dispatched in src/index.ts, before this app.
 app.route("/api/artifacts", artifactsApp);
 app.route("/raw/a", rawApp);
+
+// Doc images: the bytes behind `![alt](/img/<sha256>)` in a doc body, session-gated like
+// the docs themselves. Content-addressed and immutable, so the cache can keep them
+// forever; `default-src 'none'` + nosniff so the bytes are only ever an image.
+app.get("/img/:sha", async (c) => {
+  const sha = c.req.param("sha");
+  const lockdown = { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" };
+  if (!/^[0-9a-f]{64}$/.test(sha)) return c.json({ error: "not_found" }, 404, lockdown);
+  const img = await readDocImage(c.env.DB, c.env.ARTIFACTS_BUCKET, sha);
+  if (!img) return c.json({ error: "not_found" }, 404, lockdown);
+  return new Response(img.body, {
+    headers: {
+      ...lockdown,
+      "content-type": img.content_type,
+      "content-length": String(img.size_bytes),
+      "cache-control": "private, max-age=31536000, immutable",
+    },
+  });
+});
 
 // Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
 app.route("/auth", authApp);
@@ -255,6 +275,7 @@ app.post("/api/docs/propose", async (c) => {
     { slug, section: d.section, space: d.space, title: d.title, body: d.body, change_summary: d.summary?.trim() || "Created in Canopy", confidence: "high" },
     c.get("principal").handle,
   );
+  if (result.outcome === "refused") return c.json({ error: result.reason }, 400);
   if (result.outcome !== "written") return c.json({ error: result.outcome === "triaged" ? result.reason : "nothing to stage" }, 409);
   const proposal = (await list_proposals(c.env.DB)).find((p) => p.slug === slug && p.version === result.version) ?? null;
   return c.json({ ok: true, proposal });

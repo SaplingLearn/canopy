@@ -12,6 +12,7 @@ import { changeKind } from "./diff";
 import type { Principal } from "./auth/principal";
 import type { RepoEvent } from "./repo/types";
 import { applyArtifactLinks, type ArtifactLinkOutcome } from "./tools/artifacts-agent";
+import { docImageProblems } from "./tools/doc-images";
 
 // Per-type, per-outcome counts surfaced on /ingest so a re-run reads, e.g.,
 // "3 docs: 1 staged, 2 unchanged".
@@ -20,6 +21,9 @@ export interface IngestResult {
   docs: { staged: number; unchanged: number; triaged: number };
   adrs: { staged: number; unchanged: number; triaged: number };
   triage: { recorded: number; unchanged: number };
+  /** Doc proposals the gate REFUSED (a dangling or external image), each with why.
+   *  Present only when non-empty, so a batch with no images reads exactly as before. */
+  refused?: { slug: string; reason: string }[];
 }
 
 // The replay key for one item. The worker assigns item_index by stable
@@ -39,7 +43,11 @@ export type FeedIngestResult =
 export type DocIngestResult =
   | { outcome: "written"; slug: string; version: number; status: "staged"; change_kind: "new" | "edit" | "rewrite"; base_version: number | null; low_confidence: boolean }
   | { outcome: "unchanged"; slug?: string }
-  | { outcome: "triaged"; reason: string };
+  | { outcome: "triaged"; reason: string }
+  // Refused outright: nothing staged, nothing triaged (a person cannot repair a missing
+  // upload), and NOT ledgered — once the image is uploaded, the same payload re-POSTed
+  // (same session id + index) stages instead of replaying as "unchanged".
+  | { outcome: "refused"; slug: string; reason: string };
 export type AdrIngestResult =
   | { outcome: "written"; id: number }
   | { outcome: "unchanged"; id?: number }
@@ -116,6 +124,11 @@ export async function ingestFeedEntry(db: DB, entry: FeedEntry, author: string, 
  *  low-confidence-existing → stage-and-flag; unchanged body → drop; else stage a typed delta. */
 export async function ingestDocProposal(db: DB, proposal: DocProposal, author: string, ledger?: LedgerRef): Promise<DocIngestResult> {
   if (ledger && (await ledgerLookup(db, ledger))) return { outcome: "unchanged" };
+
+  // Images: every one must be an uploaded doc image (/img/<sha256>) — checked first,
+  // since neither staging nor triage can fix a missing upload.
+  const imageProblem = await docImageProblems(db, proposal.body);
+  if (imageProblem) return { outcome: "refused", slug: proposal.slug, reason: imageProblem };
 
   if (!isSection(proposal.section)) {
     const reason = `out-of-vocab section: ${proposal.section}`;
@@ -293,6 +306,7 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     const r = await ingestDocProposal(db, proposal, author, { sessionId, itemIndex: idx++ });
     if (r.outcome === "written") result.docs.staged++;
     else if (r.outcome === "unchanged") result.docs.unchanged++;
+    else if (r.outcome === "refused") (result.refused ??= []).push({ slug: r.slug, reason: r.reason });
     else result.docs.triaged++;
   }
 

@@ -4,7 +4,7 @@
 // `artifacts` skill) does, over the real wire:
 //
 //   MCP over streamable HTTP at <base>/mcp with a bearer: initialize → tools/list →
-//   tools/call artifact_create (markdown, html, and a binary PNG) → PUT the PNG's bytes to
+//   tools/call upload_asset (markdown, html, and a binary PNG) → PUT the PNG's bytes to
 //   its upload_url → artifact_list shows all three → artifact_get → download_url →
 //   download each, check sha256 + size + byte equality against what was sent → save the
 //   html where the skill would (.canopy/artifacts/<slug>/v<n>.html, under a temp dir),
@@ -165,22 +165,22 @@ async function main() {
   ok(`initialize → server ${init.serverInfo?.name} ${init.serverInfo?.version}`);
 
   const names = (await rpc("tools/list", {})).tools.map((t) => t.name);
-  for (const n of ["artifact_list", "artifact_get", "artifact_create", "artifact_update"]) check(names.includes(n), `tools/list lacks ${n}`);
+  for (const n of ["artifact_list", "artifact_get", "upload_asset", "artifact_update"]) check(names.includes(n), `tools/list lacks ${n}`);
   check(!names.some((n) => /ratif/i.test(n)), "a ratify tool is registered");
   ok(`tools/list → ${names.length} tools, incl. artifact_list/get/create/update, no ratify tool`);
 
   const common = { area: "ui", repo: "", visibility: "org", summary: "e2e" };
-  const md = await tool("artifact_create", { ...common, title: `E2E notes ${RUN}`, kind: "markdown", content: MARKDOWN });
-  const html = await tool("artifact_create", { ...common, title: `E2E page ${RUN}`, kind: "html", content: HTML });
-  ok(`artifact_create markdown → ${md.slug} v${md.version}; html → ${html.slug} v${html.version}`);
+  const md = await tool("upload_asset", { ...common, title: `E2E notes ${RUN}`, kind: "markdown", content: MARKDOWN });
+  const html = await tool("upload_asset", { ...common, title: `E2E page ${RUN}`, kind: "html", content: HTML });
+  ok(`upload_asset markdown → ${md.slug} v${md.version}; html → ${html.slug} v${html.version}`);
 
-  const png = await tool("artifact_create", {
+  const png = await tool("upload_asset", {
     ...common, title: `E2E logo ${RUN}`, kind: "image", size_bytes: PNG.length, sha256: sha256(PNG), filename: "e2e-logo.png",
   });
   sameOrigin(png.upload_url, "upload_url");
   const put = await fetch(png.upload_url, { method: "PUT", body: PNG, headers: { "content-type": "image/png" } });
   check(put.status === 200, `upload PUT → HTTP ${put.status} ${await put.text()}`);
-  ok(`artifact_create image → ${png.slug}; PUT ${PNG.length} B to upload_url → 200`);
+  ok(`upload_asset image → ${png.slug}; PUT ${PNG.length} B to upload_url → 200`);
 
   const list = await tool("artifact_list", { limit: 100 });
   const listed = new Set(list.artifacts.map((a) => a.slug));

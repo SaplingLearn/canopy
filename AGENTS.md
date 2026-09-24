@@ -27,7 +27,7 @@ reference is `plugins/canopy/skills/canopy/references/querying.md`.
 
 Versioned pages — HTML, markdown, SVG, mermaid, images, PDFs, files — that you find with `artifact_list`
 (or `query`, or a ticket's `artifacts`), read with `artifact_get`, and create and update with
-`artifact_create` / `artifact_update`. **To use one in code**, `artifact_get` gives every kind a signed,
+`upload_asset` / `artifact_update`. **To use one in code**, `artifact_get` gives every kind a signed,
 five-minute `download_url`: `curl -fsSL "$download_url" -o .canopy/artifacts/<slug>/v<n>.<ext>`, then
 check `shasum -a 256` against its `sha256` (`.canopy/` is gitignored). Binary files go up through a
 single-use, five-minute upload URL. When a person only wants to see it, give them its `url`. **Ratifying

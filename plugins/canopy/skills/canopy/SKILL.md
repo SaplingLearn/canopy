@@ -21,7 +21,7 @@ one you are in:
 
 | | Staged — a human confirms | Direct — takes effect now |
 |---|---|---|
-| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`), artifacts (`artifact_create` / `artifact_update`) |
+| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`), artifacts (`upload_asset` / `artifact_update`) |
 | **Why** | an agent proposing knowledge can be wrong, and a wrong doc is believed | a request or a plan is an act, not a claim — and it is visibly somebody's |
 | **What bounds it** | the gate: vocab, confidence, content-hash dedupe, then Triage | scope: your own lane, or admin |
 
@@ -117,7 +117,11 @@ has a fixed size and one of six typed structures — `Shipped:` / `Decision:` / 
 `Finding:` / `Incident:` — see the `record-session` skill's "Feed entry format"; it applies to
 `append_feed` exactly as it does to `record_session`.) The gate reconciles
 every write — it de-duplicates no-op proposals, tags each doc change `new` / `edit` / `rewrite`, and
-routes out-of-vocab or low-confidence entries to Triage. **Confirming** (promote / ratify / reject /
+routes out-of-vocab or low-confidence entries to Triage. A doc may embed **images**, but only ones
+uploaded to Canopy: `upload_asset { destination: "doc", sha256, size_bytes, content_type }` → PUT the
+bytes to `upload_url` (skip when it says `uploaded: true`) → reference `![alt](/img/<sha256>)`. The gate
+refuses a doc whose image is not uploaded yet, or that points anywhere else (an external URL, a
+`data:` URI) — outcome `refused`, with the reason. **Confirming** (promote / ratify / reject /
 assign / discard) is done by a human in the web Triage desk over session-cookie routes — **never** MCP
 tools. The roadmap plan itself is **admin-authored**, not staged by agents: the `update-plan` skill
 wraps the `update_plan` MCP tool (direct, non-destructively versioned, promote-class) — agents cannot
@@ -168,7 +172,10 @@ Artifacts are versioned pages the team keeps next to its tickets and sprints: `h
 whole contract — kinds, caps, statuses, permissions, the upload flow with a `curl` example, the raw
 route — is **`docs/artifact-contract.md`**; read it before your first artifact write. In short:
 
-- **`artifact_create`** `{ title, kind, area, repo, visibility, content? | size_bytes + sha256, links?, summary? }`
+- **`upload_asset`** `{ destination?, title, kind, area, repo, visibility, content? | size_bytes + sha256, links?, summary? }`
+  — ONE tool for both stores. `destination: "doc"` (images for docs) takes only `sha256`, `size_bytes`,
+  `content_type` → `{ ref: "/img/<sha256>", markdown, uploaded, upload_url? }` (see Writing above). The
+  default, `"artifact"`, creates an artifact page:
   — text kinds take `content` → `{ id, slug, url, version }`; binary kinds take `size_bytes` + `sha256`
   (`shasum -a 256 <file>`) → `{ …, upload_url, expires_at }`, and you then `curl -X PUT --data-binary
   @<file>` the exact bytes to that URL (**single use, 5 minutes**). The page is invisible until the PUT lands.

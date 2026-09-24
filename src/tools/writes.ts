@@ -394,7 +394,7 @@ export async function assign_triage(
       space: target.space ?? (raw.space as "technical" | "product" | undefined),
     });
     const r = await ingestDocProposal(db, proposal, by, ledger);
-    if (r.outcome === "triaged") throw new Error(`could not place doc: ${r.reason}`);
+    if (r.outcome === "triaged" || r.outcome === "refused") throw new Error(`could not place doc: ${r.reason}`);
     assigned_ref = r.outcome === "written" ? `doc:${r.slug}@${r.version}` : `doc:${r.slug ?? proposal.slug}`;
   } else if (type === "adr") {
     const draft = AdrDraft.parse({ ...raw, confidence: "high" });

@@ -52,7 +52,10 @@ immediately and is recorded as you. Nothing marks it agent-made.
 
 Registered for every principal; the author and viewer is always your bearer's person.
 
-**`artifact_create`** `{ title, kind, area, repo, visibility, content?, links?, summary?, size_bytes?, sha256?, content_type?, filename? }`
+**`upload_asset`** `{ destination?, title, kind, area, repo, visibility, content?, links?, summary?, size_bytes?, sha256?, content_type?, filename? }`
+
+`destination` is `"artifact"` (the default — everything below) or `"doc"`, which uploads an image for a
+doc instead of creating a page; see "Doc images" at the end. (This tool was `artifact_create`.)
 
 - Text kinds: `content` is required → `{ id, slug, url, version, warnings }`.
 - Binary kinds: `size_bytes` + `sha256` are required and `content` is refused →
@@ -108,7 +111,7 @@ shasum -a 256 threat-model.pdf
 wc -c < threat-model.pdf
 #   482113
 
-# 2. artifact_create (or artifact_update for a new version) with the size and hash
+# 2. upload_asset (or artifact_update for a new version) with the size and hash
 #    { "title": "Threat model", "kind": "pdf", "area": "infra", "repo": "", "visibility": "org",
 #      "size_bytes": 482113, "sha256": "9f2c…e41a", "filename": "threat-model.pdf" }
 #    → { "slug": "threat-model", "upload_url": "https://canopy…/api/artifacts/upload/<token>", "expires_at": "…" }
@@ -161,3 +164,29 @@ locked-down headers (a sandboxing CSP, `X-Content-Type-Options: nosniff`, `X-Fra
 `Cache-Control: private`). `?download=1` forces an attachment named `<slug>-v<n>.<ext>`. It is
 **session-cookie only** — it is what the web viewer frames and what `raw_url` points a signed-in browser
 at. It does not take an MCP bearer; an agent uses `download_url` (above).
+
+## Doc images
+
+A doc (not an artifact) may embed images, and only ones uploaded to Canopy. The same tool, the same PUT:
+
+```bash
+sha=$(shasum -a 256 flow.png | cut -d' ' -f1); size=$(wc -c < flow.png)
+# upload_asset { destination: "doc", sha256: "$sha", size_bytes: $size, content_type: "image/png" }
+#   → { ref: "/img/<sha>", markdown, uploaded: false, upload_url, expires_at }
+curl -X PUT --data-binary @flow.png -H "Content-Type: image/png" "$upload_url"
+# then, in the doc body you propose:  ![The deploy flow](/img/<sha>)
+```
+
+- **Types and size**: `image/png`, `image/jpeg`, `image/gif`, `image/webp`; ≤ 10 MB. Page fields
+  (`title`, `area`, …) are refused; `kind` may be omitted (it is always `image`).
+- **Content-addressed and immutable**: the sha256 IS the image. `uploaded: true` means those exact bytes
+  are already stored — no PUT, no token. A changed picture is a new sha and a new ref, so a promoted doc
+  version renders the same forever. Nothing is deleted.
+- **The gate**: `propose_doc_update`, `record_session`, `/ingest` and the web's New doc refuse a body
+  that references a `/img/<sha>` not uploaded yet, or any other image source (an external URL, a
+  `data:` URI, another path) — outcome `refused` with the reason, nothing staged, nothing triaged. Image
+  syntax inside code blocks and inline code is not an image and is not checked. In a `record_session`
+  batch a refused doc is listed under `refused` and is NOT ledgered: upload, then resend the same batch.
+- **Reading**: `GET /img/<sha>` (session cookie — a browser, not your bearer) serves the bytes with
+  `Cache-Control: private, immutable`. In the web app a doc image opens in a lightbox; Review's
+  Rendered view shows a proposal's images outlined as added or removed.

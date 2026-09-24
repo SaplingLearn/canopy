@@ -1,6 +1,7 @@
 // The binary upload PUT (issue #52 · Track B; spec:
 // docs/superpowers/specs/2026-09-24-artifacts-implementation.md):
-// `PUT /api/artifacts/upload/:token`. NO session — the single-use token minted by
+// `PUT /api/artifacts/upload/:token` — also the PUT for a doc image (MCP upload_asset,
+// destination "doc"; src/tools/doc-images.ts), whose tokens are tried first. NO session — the single-use token minted by
 // `POST /api/artifacts/upload-url` (or the MCP tools) IS the auth, so src/index.ts
 // dispatches this BEFORE the Hono app and its `sessionGate`, like `/u/`.
 //
@@ -13,6 +14,7 @@
 
 import { ARTIFACT_BINARY_CAP } from "@shared/artifacts";
 import { consumeUploadToken } from "../tools/artifacts";
+import { consumeDocImageToken } from "../tools/doc-images";
 import type { Env } from "../env";
 import { artifactErrorResponse, jsonResponse } from "./http";
 
@@ -43,6 +45,10 @@ export async function handleArtifactUpload(request: Request, env: Env): Promise<
     return jsonResponse({ error: "too_large", message: `file exceeds ${ARTIFACT_BINARY_CAP} bytes` }, 413);
   }
   try {
+    // ONE upload route for every asset: a doc-image token (MCP upload_asset with
+    // destination "doc") is looked up first; any other token is an artifact's.
+    const image = await consumeDocImageToken(env.DB, env.ARTIFACTS_BUCKET, token, request.body);
+    if (image) return jsonResponse(image, 200);
     const result = await consumeUploadToken(env.DB, env.ARTIFACTS_BUCKET, token, request.body);
     return jsonResponse(result, 200);
   } catch (e) {

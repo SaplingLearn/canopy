@@ -65,11 +65,11 @@ describe("1 · per-kind caps", () => {
     expect(await versionCount("grow")).toBe(4);
   });
 
-  it("text over MCP: artifact_create / artifact_update at the cap succeed, +1 byte is too_large", async () => {
+  it("text over MCP: upload_asset / artifact_update at the cap succeed, +1 byte is too_large", async () => {
     const base = { kind: "markdown", area: "api", repo: "", visibility: "org" };
-    const ok = await mcpCall(ME, "artifact_create", { ...base, title: "Mcp cap", content: atCap4 });
+    const ok = await mcpCall(ME, "upload_asset", { ...base, title: "Mcp cap", content: atCap4 });
     expect(ok.isError).toBe(false);
-    const over = await mcpCall(ME, "artifact_create", { ...base, title: "Mcp over", content: overCap2 });
+    const over = await mcpCall(ME, "upload_asset", { ...base, title: "Mcp over", content: overCap2 });
     expect(over.body).toEqual({ error: expect.any(String), code: "too_large" });
     const up = await mcpCall(ME, "artifact_update", { slug: "mcp-cap", content: overCap4, summary: "x" });
     expect(up.body.code).toBe("too_large");
@@ -113,9 +113,9 @@ describe("1 · per-kind caps", () => {
 
   it("binary over MCP: a 10 MB ticket is issued, +1 byte is refused", async () => {
     const base = { title: "Mcp big", kind: "file", area: "data", repo: "", visibility: "org", sha256: "d".repeat(64) };
-    const ok = await mcpCall(ME, "artifact_create", { ...base, size_bytes: ARTIFACT_BINARY_CAP });
+    const ok = await mcpCall(ME, "upload_asset", { ...base, size_bytes: ARTIFACT_BINARY_CAP });
     expect(ok.body.upload_url).toMatch(/\/api\/artifacts\/upload\//);
-    const over = await mcpCall(ME, "artifact_create", { ...base, title: "Mcp bigger", size_bytes: ARTIFACT_BINARY_CAP + 1 });
+    const over = await mcpCall(ME, "upload_asset", { ...base, title: "Mcp bigger", size_bytes: ARTIFACT_BINARY_CAP + 1 });
     expect(over.isError).toBe(true);
     expect(over.body.code).toBe("too_large");
     expect(await all(env.DB, `SELECT slug FROM artifact_pages WHERE title = 'Mcp bigger'`)).toEqual([]);
@@ -190,7 +190,7 @@ describe("3 · slug collisions", () => {
     const me = await cookieFor(ME);
     expect((await createText(me, { title: "Deploy map" })).slug).toBe("deploy-map");
     expect((await createText(me, { title: "Deploy  Map!" })).slug).toBe("deploy-map-2");
-    const m = await mcpCall(YOU, "artifact_create", { title: "deploy map", kind: "markdown", content: "x", area: "infra", repo: "", visibility: "org" });
+    const m = await mcpCall(YOU, "upload_asset", { title: "deploy map", kind: "markdown", content: "x", area: "infra", repo: "", visibility: "org" });
     expect(m.body.slug).toBe("deploy-map-3");
   });
 
@@ -215,7 +215,7 @@ describe("3 · slug collisions", () => {
     const me = await cookieFor(ME);
     const a = await createText(me, { title: "New" });
     const b = await createText(me, { title: "  new  " });
-    const c = await mcpCall(ME, "artifact_create", { title: "NEW", kind: "markdown", content: "x", area: "ui", repo: "", visibility: "org" });
+    const c = await mcpCall(ME, "upload_asset", { title: "NEW", kind: "markdown", content: "x", area: "ui", repo: "", visibility: "org" });
     const d = await uploadUrl(me, { kind: "file", size_bytes: 3, sha256: "f".repeat(64), title: "new", area: "data" });
     const slugs = [a.slug, b.slug, c.body.slug, d.dto.slug];
     expect(slugs).not.toContain("new");
@@ -367,7 +367,7 @@ describe("5 · ratify gating — session only, latest published only, never MCP"
     // extra keys on the write tools are ignored, never a status change
     await mcpCall(ME, "artifact_update", { slug: "gate", content: "3", summary: "s", status: "ratified", ratified_version: 3 } as Record<string, unknown>);
     expect(await status()).toBe("published");
-    await mcpCall(ME, "artifact_create", { title: "Sneaky", kind: "markdown", content: "x", area: "ui", repo: "", visibility: "org", status: "ratified" });
+    await mcpCall(ME, "upload_asset", { title: "Sneaky", kind: "markdown", content: "x", area: "ui", repo: "", visibility: "org", status: "ratified" });
     expect((await first<{ status: string }>(env.DB, `SELECT status FROM artifact_pages WHERE slug = 'sneaky'`))!.status).toBe("draft");
     // record_session carries no ratification either
     const rs = await mcpRpc(ME, "tools/call", { name: "record_session", arguments: { session: { id: crypto.randomUUID(), author: ME, ended_at: "2026-09-23T00:00:00Z", skill_version: "2.0" }, artifact_ratify: [{ slug: "gate", version: 3 }] } });
