@@ -10,7 +10,8 @@
 //   #repo/<tab>       → one of its other tabs (code / ci / usage / planning)
 //   #artifacts        → the Artifacts library
 //   #artifacts/new    → the new-artifact form
-//   #artifacts/<slug>[/v<n>]           → one artifact (a version other than the latest)
+//   #artifacts/<slug>[/v<n>]           → one artifact (a version other than the latest;
+//                                        `<slug>@v<n>` is accepted, `/v<n>` written back)
 //   #artifacts/<slug>/diff/<a>..<b>    → two of its versions compared
 //   #<screen>         → every other screen, named exactly as the Screen union
 //                       (`#site` is the landing page, reopened from inside the app)
@@ -20,6 +21,7 @@
 import type { Screen } from "./render";
 import { isRepoTab, type RepoTab } from "@shared/repo";
 import type { ArtRoute } from "./artifacts";
+import { parseSlugVersion } from "@shared/artifacts-core";
 
 /** Every screen addressable by its bare name (`#feed`). The compound ticket /
  *  sprint routes are parsed separately below. */
@@ -80,8 +82,11 @@ export function parseHash(hash: string): Route {
   if (parts[0] === "artifacts") {
     if (parts.length === 1) return { screen: "artifacts", ticketId: null, sprintId: null };
     if (parts.length === 2 && parts[1] === "new") return { screen: "artifactnew", ticketId: null, sprintId: null };
+    // `<slug>@v<n>` (the raw route's spelling) is accepted too; `/v<n>` is canonical.
+    const at = parts.length === 2 && parts[1].includes("@") ? parseSlugVersion(parts[1]) : null;
+    if (at && at.version !== null && isArtSlug(at.slug)) return { screen: "artifact", ticketId: null, sprintId: null, art: { slug: at.slug, v: at.version, diff: null } };
     if (!isArtSlug(parts[1] ?? "")) return none;
-    const one = (v: number | null, diff: ArtRoute["diff"]): Route => ({ screen: "artifact", ticketId: null, sprintId: null, art: { slug: parts[1], v, diff } });
+    const one =(v: number | null, diff: ArtRoute["diff"]): Route => ({ screen: "artifact", ticketId: null, sprintId: null, art: { slug: parts[1], v, diff } });
     if (parts.length === 2) return one(null, null);
     const v = parts.length === 3 && /^v\d+$/.test(parts[2]) ? intSeg(parts[2].slice(1)) : null;
     if (v !== null) return one(v, null);
