@@ -289,7 +289,7 @@ The modal is unchanged.
 
 - codes whose `expires_at` or `used_at` is more than 1 h old;
 - access tokens more than 24 h past `expires_at`;
-- refresh tokens rotated more than 24 h ago, or past `expires_at`;
+- refresh tokens past `expires_at` (a rotated one is kept until then, so a late reuse is still detected and revokes the grant);
 - clients older than 24 h with no grant.
 
 Grants are never deleted — a revoked grant is the audit trail (soft, like every other exit in Canopy).

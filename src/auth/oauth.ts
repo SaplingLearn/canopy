@@ -322,7 +322,7 @@ export async function pruneOAuth(db: DB, nowMs: number): Promise<void> {
   await db.batch([
     db.prepare(`DELETE FROM oauth_codes WHERE expires_at < ? OR used_at < ?`).bind(hourAgo, hourAgo),
     db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'access' AND expires_at < ?`).bind(dayAgo),
-    db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'refresh' AND (rotated_at < ? OR expires_at < ?)`).bind(dayAgo, iso(nowMs)),
+    db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'refresh' AND expires_at < ?`).bind(iso(nowMs)),
     db.prepare(`DELETE FROM oauth_clients WHERE created_at < ?
       AND client_id NOT IN (SELECT client_id FROM oauth_grants) AND client_id NOT IN (SELECT client_id FROM oauth_codes)`).bind(dayAgo),
   ]);

@@ -320,10 +320,17 @@ describe("pruneOAuth", () => {
     await pruneOAuth(env.DB, NOW + 2 * 86_400_000);
     expect(await all(env.DB, `SELECT code_hash FROM oauth_codes`)).toEqual([]);
     const tokens = await all<{ kind: string }>(env.DB, `SELECT kind FROM oauth_tokens ORDER BY kind`);
-    expect(tokens.map((t) => t.kind)).toEqual(["refresh"]); // the live, unrotated refresh token
+    expect(tokens.map((t) => t.kind)).toEqual(["refresh", "refresh"]); // the original and rotated refresh tokens
     expect(await getClient(env.DB, orphan.client_id)).toBeNull();
     expect(await getClient(env.DB, a.c.client_id)).not.toBeNull();
     expect(await grantRow(a.grantId)).not.toBeNull();
+  });
+  it("keeps rotated refresh tokens until expiry so late reuse is still detected", async () => {
+    const a = await connected();
+    const rotated = await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 1000);
+    await pruneOAuth(env.DB, NOW + 2 * 86_400_000);
+    await expect(refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 2 * 86_400_000 + 1000)).rejects.toMatchObject({ code: "invalid_grant" });
+    expect((await grantRow(a.grantId))?.revoked_reason).toBe("reuse");
   });
 });
 
