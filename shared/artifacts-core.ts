@@ -39,6 +39,8 @@ export const ARTIFACT_SLUG_MAX = 60;
 export const ARTIFACT_RESERVED_SLUGS = ["new"] as const;
 /** Minutes a signed upload URL stays valid. */
 export const ARTIFACT_UPLOAD_TTL_MS = 5 * 60 * 1000;
+/** How long an agent's signed download URL (`artifact_get`'s `download_url`) stays valid. Reusable within it. */
+export const ARTIFACT_DOWNLOAD_TTL_MS = 5 * 60 * 1000;
 
 /** Warn (never reject) when text content calls into features only claude.ai has. */
 export const CLAUDE_ONLY_MARKERS = ["window.claude", "window.storage", "api.anthropic.com"] as const;

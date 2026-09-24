@@ -479,6 +479,26 @@ export async function readRaw(db: DB, bucket: R2Bucket, slug: string, version: n
   return { ...base, content_type: v.content_type, text: null, object };
 }
 
+/**
+ * `readRaw` addressed by PAGE ID — for the signed agent download (src/artifacts/download.ts),
+ * whose token names the page by id. Same visibility rule, same one not_found: the id is
+ * resolved to its slug and `readRaw` re-checks `viewer` at download time, so a page made
+ * private after the URL was minted is the one not_found. (Track F addition, 2026-09-24.)
+ */
+export async function readRawByPageId(db: DB, bucket: R2Bucket, pageId: number, version: number, viewer: string): Promise<ArtifactRaw> {
+  if (!Number.isInteger(pageId) || pageId < 1) throw notFound();
+  const row = await first<{ slug: string }>(db, `SELECT slug FROM artifact_pages WHERE id = ?`, pageId);
+  if (!row) throw notFound();
+  return readRaw(db, bucket, row.slug, version, viewer);
+}
+
+/** The stored filename of one version (binary uploads keep one; text versions store NULL). Track F, 2026-09-24. */
+export async function versionFilename(db: DB, pageId: number, version: number): Promise<string | null> {
+  return (await first<{ filename: string | null }>(
+    db, `SELECT filename FROM artifact_versions WHERE page_id = ? AND version_no = ?`, pageId, version
+  ))?.filename ?? null;
+}
+
 export interface ArtifactSearchHit {
   id: number;
   slug: string;

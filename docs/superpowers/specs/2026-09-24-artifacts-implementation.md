@@ -344,3 +344,57 @@ Track C (2026-09-23) — `shared/artifacts-core.ts` is UNCHANGED. Decisions take
   `load-context`: step 7 (a ticket's `artifacts` → `artifact_get`), `get_ticket` + `artifact_get` in allowed-tools.
   `record-session`: `artifact_links` in step 4/5 and the reported outcomes. New `docs/artifact-contract.md` and
   `AGENTS.md` (both skill and AGENTS.md point at the contract).
+
+Track F (2026-09-24) — agent access + the plugin release (and issue #70). Branch `feat/artifacts-f`.
+
+- 2026-09-24 · **`shared/artifacts-core.ts` gained ONE constant**, `ARTIFACT_DOWNLOAD_TTL_MS` (5 minutes), beside
+  `ARTIFACT_UPLOAD_TTL_MS`. Nothing else in the contract changed; the wire DTOs are untouched (the new fields
+  live on the MCP result only).
+- 2026-09-24 · **Agent download** — `GET|HEAD /api/artifacts/download/:token` (`src/artifacts/download.ts`),
+  dispatched in `src/index.ts` BEFORE the app, like the upload PUT, and only for a TOKEN-SHAPED segment
+  (`<b64u claims>.<43-char sig>`) — so a page slugged `download` still reads at `/api/artifacts/download/v1`.
+  Other methods on a token path → 405. The token is STATELESS: claims `{ h: handle, p: page id, v: version_no,
+  e: expiry ms }`, HMAC-SHA256 under a key DERIVED as `HMAC(COOKIE_SECRET, "canopy/artifact-download/v1")` — never
+  the cookie key itself (a value sealed with COOKIE_SECRET does not verify; tested). Verified with
+  `crypto.subtle.verify` (constant time), signature first. Reusable within its TTL (no ledger — a download changes
+  nothing). The claims are base64 JSON, NOT encrypted: the handle and page id are readable by whoever holds the
+  URL, which is already the credential to the page.
+- 2026-09-24 · **Answers**: bad signature / malformed / wrong key / tampered claims → `404 {"error":"not_found"}`;
+  valid signature but expired → `410 {"error":"gone"}`; then the page is RE-CHECKED for the token's principal
+  through the repository (`readRawByPageId` → `readRaw`, a new Track A export beside `versionFilename`), so a page
+  made private after minting, or a principal who could never see it, is the same byte-identical 404. Body = the
+  stored bytes untouched (text: the stored content as UTF-8, no height script; binary: the R2 object), stored
+  content type, `Content-Disposition: attachment` with the stored filename else `<slug>-v<n>.<ext>` (ASCII fallback
+  + RFC 5987 `filename*` for non-ASCII), `Content-Length`, `X-Content-Type-Options: nosniff`, `Cache-Control:
+  private, no-store`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; sandbox`, plus
+  `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer` (on errors too). Nothing in the module logs; the
+  platform's own request log (wrangler / Workers observability) does record the URL path — bounded by the
+  5-minute TTL, the same exposure the upload token already had.
+- 2026-09-24 · **`artifact_get`** now returns, for EVERY kind: `download_url` (absolute, from the same origin rule
+  as every other artifact link), `download_expires_at`, `download_filename`, and the REQUESTED version's `sha256` +
+  `size_bytes` at the top level. Deviation to note: top-level `size_bytes` on this MCP result is the requested
+  version's, where the library DTO's is the latest's — identical unless an older version was asked for. No
+  COOKIE_SECRET → `download_url: null` (fails closed). The `ArtifactAgentCtx` gained `downloadSecret`
+  (`env.COOKIE_SECRET`, passed by `src/mcp.ts`).
+- 2026-09-24 · **`artifact_list`** (MCP, every principal): `{ q?, kind?, area?, author?, status?, ticket?, sprint?,
+  limit? }` (kind / area / status are enums; ticket / sprint a number or `#n` string; limit 1–100, default 25) →
+  `{ artifacts: [{ slug, title, kind, status, version, updated_at, url, area, author, visibility }], total,
+  truncated }`, straight from `listPages` (same visibility, never a version-0 page), cut in memory.
+- 2026-09-24 · **Skills**: new `artifacts` skill (`plugins/canopy/skills/artifacts/SKILL.md` + the
+  `.claude/skills/artifacts` symlink) — model-invocable (finding / pulling / linking are reads), writes only when
+  asked; default pull path `.canopy/artifacts/<slug>/v<n>.<ext>`, hash-verified; `.canopy/` added to this repo's
+  `.gitignore`. `canopy` (tool map, allowed-tools, install list, fish token note), `load-context` (pull a linked
+  artifact via the `artifacts` skill; `get_ticket` + `artifact_list` in allowed-tools — `get_ticket` was used in
+  step 7 but missing; the duplicate step "8." renumbered 9), `record-session` (link produced artifacts to ticket /
+  PR). `docs/artifact-contract.md` (four tools, a *Downloading* section with curl + verification), `AGENTS.md`.
+- 2026-09-24 · **Plugin release (issue #70)**: `plugins/canopy/.claude-plugin/plugin.json` → `0.4.0`, description and
+  `.claude-plugin/marketplace.json` list all ten skills (canopy, load-context, record-session, my-work, tickets,
+  read-plan, update-plan, handoff, prompts, artifacts). `.mcp.json` unchanged (prod `/mcp`, `Bearer
+  ${CANOPY_MCP_TOKEN}`). `claude plugin validate` passes for both manifests.
+- 2026-09-24 · **E2E**: `scripts/e2e/artifacts-agent.mjs <baseUrl>` (bearer in `CANOPY_MCP_TOKEN`) speaks MCP over
+  streamable HTTP and exercises create (markdown / html / png) → PUT → list → get → download + sha/byte check →
+  serve the html with `python3 -m http.server` → tampered token 404. It REFUSES any upload/download URL not on
+  `baseUrl`'s origin, because `wrangler.toml`'s `PUBLIC_ORIGIN` is production: run `wrangler dev --var
+  PUBLIC_ORIGIN:<baseUrl> --var COOKIE_SECRET:<anything>` (a local token can be minted with `--var DEV_LOGIN:<handle>`
+  and `POST /auth/mcp-token`). Run green against local D1 + R2 on 2026-09-24.
+- 2026-09-24 · **Tests**: `test/artifacts.download.test.ts` (15). No SPA change — the web app shows nothing new.

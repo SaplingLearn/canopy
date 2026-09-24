@@ -82,8 +82,9 @@ Build at most one of each, only for what the session genuinely touched:
 - **ADR** — when the session settled a real decision. `{ title, context, decision, rationale,
   confidence }`. (Previously nothing emitted these — now they land typed in the decisions queue.)
 - **Artifact links** — when the session CREATED or VERSIONED artifacts (`artifact_create` /
-  `artifact_update` results earlier in the conversation carry their `slug`), link each to what it
-  belongs to: `{ slug, target_type: "ticket" | "sprint" | "pr" | "issue", target_ref }` — a ticket or
+  `artifact_update` results earlier in the conversation carry their `slug`; the `artifacts` skill
+  reports each one's `url`), link each to what it belongs to — its ticket above all, and the PR that
+  shipped the work it describes: `{ slug, target_type: "ticket" | "sprint" | "pr" | "issue", target_ref }` — a ticket or
   sprint id, or a PR / issue as `owner/repo#n` (observed via `gh`, like every other artifact fact).
   Only slugs a tool call actually returned — never a slug you guess. These are NOT staged: after the
   batch is reconciled each is linked directly, as you (idempotent; a page you cannot see is

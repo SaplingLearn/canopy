@@ -27,10 +27,10 @@ import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload, QueryType } from "@shared/contract";
 import { ArtifactError } from "./tools/artifacts";
 import {
-  agentArtifactCreate, agentArtifactUpdate, agentArtifactGet, artifactsForTicket, artifactOrigin,
+  agentArtifactCreate, agentArtifactUpdate, agentArtifactGet, agentArtifactList, artifactsForTicket, artifactOrigin,
 } from "./tools/artifacts-agent";
 import {
-  ARTIFACT_AREAS, ARTIFACT_BINARY_CAP, ARTIFACT_KINDS, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
+  ARTIFACT_AREAS, ARTIFACT_BINARY_CAP, ARTIFACT_KINDS, ARTIFACT_STATUSES, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
   ArtifactLinkInputSchema,
 } from "@shared/artifacts";
 import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
@@ -80,7 +80,10 @@ async function runTool(fn: () => Promise<unknown>) {
 export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { origin?: string } = {}): McpServer {
   const server = new McpServer({ name: "canopy", version: "1.0.0" });
   // Absolute links in artifact results: PUBLIC_ORIGIN, else the /mcp request's origin.
-  const artifactCtx = { db: env.DB, handle: principal.handle, origin: artifactOrigin(env.PUBLIC_ORIGIN, opts.origin) };
+  // COOKIE_SECRET is only the ROOT of the download-URL key (derived with a purpose label).
+  const artifactCtx = {
+    db: env.DB, handle: principal.handle, origin: artifactOrigin(env.PUBLIC_ORIGIN, opts.origin), downloadSecret: env.COOKIE_SECRET,
+  };
 
   server.tool(
     "query",
@@ -398,9 +401,25 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
 
   server.tool(
     "artifact_get",
-    "Read one artifact: metadata (title, kind, area, repo, author, status draft | published | ratified, visibility, versions, links, ratified_version) plus, for text kinds, `content` of the requested version; for binary kinds `content` is null and `raw_url` is the file (it opens in a signed-in browser — the raw route is session-only). `slug` may name a version (`slug@v3` or `slug/v3`), or pass `version`; default the latest. `url` is the page in the Canopy web app. `warnings` flags claude.ai-only calls in the content. Only `ratified` is team-confirmed; draft / published are one person's word. An unknown, private-to-someone-else or not-yet-uploaded slug is { error: \"not_found\", code: \"not_found\" }.",
+    "Read one artifact: metadata (title, kind, area, repo, author, status draft | published | ratified, visibility, versions, links, ratified_version) plus, for text kinds, `content` of the requested version (binary kinds: `content` is null). To get the FILE — any kind, binary included — use `download_url`: absolute, signed for you, reusable for 5 minutes (`download_expires_at`), no header needed: `curl -fsSL \"$download_url\" -o <path>` returns the exact stored bytes as an attachment named `download_filename`. Verify it against `sha256` / `size_bytes` (this version's; `shasum -a 256 <path>`). Expired → HTTP 410: call artifact_get again. `raw_url` is the browser view (signed-in session only — it does not take your bearer). `slug` may name a version (`slug@v3` or `slug/v3`), or pass `version`; default the latest. `url` is the page in the Canopy web app — share that when a person just wants the link. `warnings` flags claude.ai-only calls in the content. Only `ratified` is team-confirmed; draft / published are one person's word. An unknown, private-to-someone-else or not-yet-uploaded slug is { error: \"not_found\", code: \"not_found\" }.",
     { slug: z.string().min(1), version: z.number().int().min(1).optional() },
     async (input) => runTool(() => agentArtifactGet(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_list",
+    "Read-only: the artifact pages you can see (every org page, plus your own private ones), newest first — the same filters as the web library. All optional: `q` (full text over title / summary / body, or a title / slug substring), `kind` (html | markdown | svg | mermaid | image | pdf | file), `area` (auth | architecture | infra | api | ui | data), `author` (a handle), `status` (draft | published | ratified), `ticket` / `sprint` (an id — pages linked to it), `limit` (default 25, max 100). → { artifacts: [{ slug, title, kind, status, version, updated_at, url, area, author, visibility }], total, truncated }. Open one with artifact_get (its `download_url` fetches the file). Only `ratified` is team-confirmed.",
+    {
+      q: z.string().max(200).optional(),
+      kind: z.enum(ARTIFACT_KINDS).optional(),
+      area: z.enum(ARTIFACT_AREAS).optional(),
+      author: z.string().max(80).optional(),
+      status: z.enum(ARTIFACT_STATUSES).optional(),
+      ticket: z.union([z.number().int().min(1), z.string().max(20)]).optional(),
+      sprint: z.union([z.number().int().min(1), z.string().max(20)]).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    async (input) => runTool(() => agentArtifactList(artifactCtx, input)),
   );
 
   // ADMIN-only: the plan write surface — non-admin principals don't even see the tool
