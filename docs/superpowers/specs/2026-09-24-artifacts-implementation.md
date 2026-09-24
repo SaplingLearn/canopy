@@ -344,3 +344,25 @@ Track C (2026-09-23) — `shared/artifacts-core.ts` is UNCHANGED. Decisions take
   `load-context`: step 7 (a ticket's `artifacts` → `artifact_get`), `get_ticket` + `artifact_get` in allowed-tools.
   `record-session`: `artifact_links` in step 4/5 and the reported outcomes. New `docs/artifact-contract.md` and
   `AGENTS.md` (both skill and AGENTS.md point at the contract).
+
+Track E (2026-09-24) — cross-cutting suites `test/artifacts.security.test.ts` (caps, sha no-op, slugs, status,
+ratify), `test/artifacts.security-access.test.ts` (404 parity, MCP permissions) and
+`test/artifacts.security-raw.test.ts` (raw headers, R2 round trip, upload tokens, SSRF), all through `worker.fetch`
+and the real `/mcp` endpoint (bearer, JSON-RPC) — shared helpers in `test/helpers/artifacts.ts`. Bugs found and fixed:
+
+- 2026-09-24 · **`src/artifacts/raw.ts` (Track B) — raw html/svg ran at Canopy's origin when opened top-level.**
+  The iframe's `sandbox="allow-scripts"` only covers the framed viewer; "Open in new tab" (and any pasted raw URL)
+  navigated straight to `/raw/a/<slug>`, where `script-src 'unsafe-inline'` let the artifact's script run
+  same-origin with the app (`connect-src 'none'` stops its own fetch, but it can `window.open('/')` and drive the
+  SPA's window, which has no CSP). Fix: `RAW_CSP_ACTIVE` now ends `; sandbox allow-scripts`, so the document is an
+  opaque origin however it is opened. No `allow-same-origin`, `allow-popups` or `allow-top-navigation`. The passive
+  CSP is unchanged (a CSP sandbox would stop browsers drawing a PDF top-level).
+- 2026-09-24 · **`shared/artifacts.ts` (Track A) `UploadTicketSchema.size_bytes` and `src/mcp.ts` (Track C)
+  `binaryShape.size_bytes` carried `.max(ARTIFACT_BINARY_CAP)`**, so a ticket for cap + 1 bytes was a 400 zod
+  error over HTTP and an input-validation error (no `code`) over MCP instead of the spec's `too_large` / 413. The
+  `.max` is dropped in both; the repository's `checkBinarySize` answers `too_large` (HTTP 413, MCP
+  `code: "too_large"`).
+- 2026-09-24 · **Known limit, NOT fixed (a design question for the owner):** slugs are one global namespace, so
+  creating a page whose title slugifies to an existing PRIVATE (or pending) page's slug yields `<slug>-2` — a
+  teammate can learn that some hidden page with that title exists (never its content, author or anything else).
+  Every read/write surface is byte-identical (tested); only slug allocation leaks.

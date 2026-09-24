@@ -35,7 +35,11 @@ import { artifactErrorResponse } from "./http";
 export const RAW_CSP_ACTIVE =
   "default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; " +
   "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; " +
-  "img-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
+  "img-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; " +
+  // `sandbox` in the CSP itself: a raw html/svg opened TOP-LEVEL ("Open in new tab", a pasted
+  // link) runs at an opaque origin, never Canopy's — the iframe's sandbox attribute only
+  // covers the framed case (Track E, 2026-09-24).
+  "sandbox allow-scripts";
 export const RAW_CSP_PASSIVE = "default-src 'none'; frame-ancestors 'self'";
 
 /** The CSP for a kind: text kinds (html / svg / markdown / mermaid) get the active one. */

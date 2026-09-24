@@ -9,7 +9,7 @@
 import { z } from "zod";
 import {
   ARTIFACT_AREAS, ARTIFACT_BINARY_KINDS, ARTIFACT_KINDS, ARTIFACT_LINK_TYPES, ARTIFACT_STATUSES,
-  ARTIFACT_TEXT_KINDS, ARTIFACT_VISIBILITIES, ARTIFACT_BINARY_CAP,
+  ARTIFACT_TEXT_KINDS, ARTIFACT_VISIBILITIES,
 } from "./artifacts-core";
 
 export * from "./artifacts-core";
@@ -82,7 +82,8 @@ export const RatifyArtifactSchema = z.object({ version: z.number().int().min(1) 
 export const UploadTicketSchema = z.object({
   slug: z.string().optional(),
   kind: ArtifactBinaryKindSchema,
-  size_bytes: z.number().int().min(1).max(ARTIFACT_BINARY_CAP),
+  // No .max here: the repository refuses > ARTIFACT_BINARY_CAP as too_large (413), not a 400 (Track E).
+  size_bytes: z.number().int().min(1),
   sha256,
   content_type: z.string().max(255).optional(),
   filename: z.string().max(ARTIFACT_FILENAME_MAX).optional(),
