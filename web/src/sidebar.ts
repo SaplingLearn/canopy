@@ -109,13 +109,14 @@ const section = (label: string, first = false): string =>
 export function sidebarView(p: SidebarProps): string {
   const current = navKeyOf(p.screen);
 
-  /** `badge`: "accent" = the nobody-has-this pill (Tickets), "quiet" = a bare queue depth. */
-  const item = (key: NavKey, act: string, label: string, count = 0, badge: "accent" | "quiet" = "quiet"): string => {
+  /** Every count is the SAME badge (one pill style, one collapsed-rail dot): a number
+   *  beside an entry always means "this many things are waiting there". */
+  const item = (key: NavKey, act: string, label: string, count = 0): string => {
     const group = (NAV_GROUPS as readonly string[]).includes(key) ? (key as NavGroup) : null;
     const on = current === key;
     const open = group ? p.navOpen[group] : false;
     // Always emitted; `data-n="0"` hides both the count and the collapsed-rail dot.
-    const marks = `<span class="cnpy-lbl cnpy-badge is-${badge}" data-n="${count}">${count}</span><span class="cnpy-dot" data-n="${count}"></span>`;
+    const marks = `<span class="cnpy-lbl cnpy-badge" data-n="${count}">${count}</span><span class="cnpy-dot" data-n="${count}"></span>`;
     const chevron = group
       ? `<button data-act="navToggle" data-arg="${group}" class="cnpy-chev" aria-label="${open ? "Hide" : "Show"} ${attr(label)} pages" aria-expanded="${open}" tabindex="${p.collapsed ? -1 : 0}">${CHEVRON}</button>`
       : "";
@@ -147,18 +148,18 @@ export function sidebarView(p: SidebarProps): string {
       </div>
       ${section("Workspace", true)}
       ${item("mywork", "goMyWork", "My Work")}
-      ${item("tickets", "goTickets", "Tickets", c.tickets, "accent")}
+      ${item("tickets", "goTickets", "Tickets", c.tickets)}
       ${item("roadmap", "goRoadmap", "Roadmap")}
-      ${item("handoffs", "goHandoffs", "Handoffs", c.handoffs, "accent")}
+      ${item("handoffs", "goHandoffs", "Handoffs", c.handoffs)}
       ${section("Monitor")}
       ${item("repo", "goRepo", "Repo")}
       ${item("feed", "goFeed", "Feed")}
       ${section("Knowledge")}
       ${item("docs", "goDocs", "Docs")}
-      ${item("prompts", "goPrompts", "Prompt Library", c.prompts, "quiet")}
+      ${item("prompts", "goPrompts", "Prompt Library", c.prompts)}
       ${section("Triage")}
-      ${item("review", "goReview", "Review", c.review, "quiet")}
-      ${item("maintenance", "goMaintenance", "Maintenance", c.maintenance, "quiet")}
+      ${item("review", "goReview", "Review", c.review)}
+      ${item("maintenance", "goMaintenance", "Maintenance", c.maintenance)}
       ${section("Help")}
       ${item("guide", "goGuide", "Get Started")}
     </nav>

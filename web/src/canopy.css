@@ -85,8 +85,11 @@ input, select { font-family: inherit; }
 .cnpy-nav-t { white-space:nowrap; flex:1; min-width:0; text-align:left; }
 [data-collapsed="1"] .cnpy-nav-i { padding:9px 0 9px 13.5px; }
 
-.cnpy-badge { font-family:var(--mono); font-size:11px; font-weight:600; flex:none; color:var(--fg-40); }
-.cnpy-badge.is-accent { height:18px; line-height:18px; padding:0 7px; border-radius:999px; color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); background:var(--accent-soft); }
+/* ONE count badge for every sidebar entry: a quiet pill that brightens on the active row. */
+.cnpy-badge { font-family:var(--mono); font-size:11px; font-weight:600; flex:none; min-width:18px; height:18px; line-height:18px; padding:0 6px; border-radius:999px; text-align:center; color:var(--fg-55); background:var(--hover); box-shadow:inset 0 0 0 1px var(--border); }
+.cnpy-navrow.is-active .cnpy-badge { color:var(--fg); box-shadow:inset 0 0 0 1px var(--border-strong); }
+/* Rows without a chevron reserve its 30px (24 wide + 6 margin), so every count sits in one column. */
+[data-collapsed="0"] .cnpy-navrow:not(:has(> .cnpy-chev)) .cnpy-nav-i { padding-right:41px; }
 .cnpy-badge[data-n="0"], .cnpy-dot[data-n="0"] { display:none; }
 /* the collapsed rail keeps the signal as a dot on the icon's shoulder */
 .cnpy-dot { position:absolute; left:27px; top:6px; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--bg); opacity:0; transform:scale(.4); transition:opacity .16s ease, transform .2s cubic-bezier(.34,1.56,.64,1); pointer-events:none; }
@@ -663,7 +666,7 @@ input, select { font-family: inherit; }
 [data-cnpy-theme] .cnpy-code,
 [data-cnpy-theme] .cnpy-md pre { border-radius:calc(11px * var(--corner-scale)) !important; }
 [data-cnpy-theme] .cnpy-tile { border-radius:calc(16px * var(--corner-scale)) !important; }
-[data-cnpy-theme] .cnpy-badge.is-accent,
+[data-cnpy-theme] .cnpy-badge,
 [data-cnpy-theme] .cnpy-dot,
 [data-cnpy-theme] .cnpy-sw i,
 [data-cnpy-theme] .repo-gdot { border-radius:min(calc(12px * var(--corner-scale)), 25%) !important; }

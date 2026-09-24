@@ -187,10 +187,10 @@ describe("sidebar — the Tickets entry (design call #2)", () => {
 
   it("hides the badge at 0 and shows the count in an accent pill above it", () => {
     const zero = ticketsRow(render(appState({ screen: "feed", ticketBadge: 0 })));
-    expect(zero).toContain('<span class="cnpy-lbl cnpy-badge is-accent" data-n="0">0</span>');
+    expect(zero).toContain('<span class="cnpy-lbl cnpy-badge" data-n="0">0</span>');
 
     const some = ticketsRow(render(appState({ screen: "feed", ticketBadge: 4 })));
-    expect(some).toContain('<span class="cnpy-lbl cnpy-badge is-accent" data-n="4">4</span>');
+    expect(some).toContain('<span class="cnpy-lbl cnpy-badge" data-n="4">4</span>');
   });
 
   it("carries the collapsed rail's accent dot beside the count", () => {
