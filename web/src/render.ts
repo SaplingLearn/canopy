@@ -1335,15 +1335,15 @@ function guideView(s: AppState): string {
     <div style="${gEyebrow}">You</div>
     <h2 style="${gH2}">Settings</h2>
     <p style="${gP}">Click your name at the bottom of the sidebar to open ${gStrong("Settings")}. ${gStrong("Profile")} sets your display name, your handle, and the color that marks you across the app. ${gStrong("Account")} shows how you're signed in. You can link both ${gStrong("GitHub")} and ${gStrong("Google")} and sign in with either (one always stays linked). ${gStrong("Appearance")} switches between Light, Dark, Midnight, and System. ${gStrong("Email notifications")} is where you set each digest (your work, the review queue, roadmap changes, the ticket queue) to daily, weekly, or off, or unsubscribe from everything at once.</p>
-    ${gFig("settings", `${gEm("Settings")}: profile, sign-in methods, MCP access tokens, appearance, and email digests.`)}
+    ${gFig("settings", `${gEm("Settings")}: profile, sign-in methods, MCP access, appearance, and email digests.`)}
 
     <div style="${gEyebrow}">Connect your agent</div>
     <h2 style="${gH2}">Plug in your coding agent</h2>
-    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")} (MCP). Your agent acts as you, so it sees what you see and its writes are recorded as yours. Connecting takes one click:</p>
+    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")} (MCP). Your agent acts as you, so it sees what you see and its writes are recorded as yours. Connecting takes a minute:</p>
     <ol style="${gList}">
-      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Get connection command")}.</li>
-      <li>Pick your agent (${gStrong("Claude Code")}, ${gStrong("Codex")}, a ${gCode(".mcp.json")} file, or just the token) and copy the setup. It already has a fresh token and this Canopy's address filled in.</li>
-      <li>Paste it and restart your agent. The token is shown only this once, so copy it before you close the window. It stays listed under MCP access tokens, where ${gStrong("Revoke")} disconnects that agent immediately.</li>
+      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access")}, copy the ${gStrong("Sign in with browser")} command. Paste it into a terminal.</li>
+      <li>In Claude Code, run ${gCode("/mcp")}, pick ${gStrong("canopy")} and choose ${gStrong("Authenticate")}. Your browser opens Canopy: sign in if asked, then click ${gStrong("Allow")}. The connection is listed under ${gStrong("Connected apps")}, where ${gStrong("Revoke")} disconnects it immediately.</li>
+      <li>Using ${gStrong("Codex")}, CI or another client that can't open a browser? Under ${gStrong("Access tokens")}, click ${gStrong("Get connection command")} and copy the ready-made setup. The token is shown only once; it stays listed there, where ${gStrong("Revoke")} disconnects it.</li>
     </ol>
     ${gFig("connect", `${gEm("Get connection command")}: pick your client, copy the ready-made setup. (The token is hidden in this screenshot.)`)}
     <p style="${gP};margin-top:14px">${gStrong("Using Claude Code? Install the Canopy plugin as well.")} It bundles the skills described below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand:</p>

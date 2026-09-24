@@ -7,7 +7,7 @@
  *    the pressed tab is inert (no data-act)
  */
 import { describe, it, expect } from "vitest";
-import { connectSnippet, connectModal, tokenLabel, grantListBody, browserConnectCommand } from "../web/src/render";
+import { connectSnippet, connectModal, tokenLabel, grantListBody, browserConnectCommand, render, initialState } from "../web/src/render";
 
 const URL = "https://canopy.example.com/mcp";
 const TOKEN = "canopy_mcp_abcd1234";
@@ -84,6 +84,20 @@ describe("tokenLabel", () => {
 describe("browserConnectCommand", () => {
   it("adds the server with no header — Claude Code signs in through the browser", () => {
     expect(browserConnectCommand(URL)).toBe(`claude mcp add --transport http --scope user canopy ${URL}`);
+  });
+});
+
+describe("Get Started guide — Connect your agent", () => {
+  it("points at Sign in with browser, not the retired MCP access tokens heading", () => {
+    const s = {
+      ...initialState(),
+      view: "app" as const,
+      screen: "guide" as const,
+      me: { handle: "alice", name: null, avatar_url: null, color: "moss" as const, identities: [], org: "SaplingLearn", admin: false },
+    };
+    const html = render(s);
+    expect(html).toContain("Sign in with browser");
+    expect(html).not.toContain("MCP access tokens");
   });
 });
 
