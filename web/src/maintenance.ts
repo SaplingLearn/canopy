@@ -1,28 +1,37 @@
-// Maintenance surface — componentized from Canopy Triage.dc.html (the static
-// design output). Occasional housekeeping in two sections: UNPLACED (route or
-// discard the loose things agents couldn't place) and IDENTITY (match unmapped
-// activity logins to people). Empty is the normal state.
+// Maintenance — ported from the Claude Design `Canopy.dc.html` (project 2c8cfa50),
+// which split the old single column into three sub-pages under the sidebar entry:
+//   UNPLACED  — read a loose thing an agent couldn't place, then file it or discard it
+//               (a list on the left, the selected item on the right).
+//   IDENTITY  — match an unmapped activity login to a person.
+//   PEOPLE    — everyone with a handle, plus pending invites (admins can invite).
+// Empty is the normal state for the first two.
 //
 // Purely presentational: data arrives through props and renders to HTML strings;
-// interactions dispatch via data-act / data-arg handled in main.ts. No fetching,
-// no inline data.
+// interactions dispatch via data-act / data-arg handled in main.ts (the same
+// assign / discard / map / invite writes the single-column version had).
 
-import { esc, attr, pickRow, primaryBtn, MONO_LABEL, relTime } from "./ui";
+import { esc, attr, primaryBtn, relTime } from "./ui";
 import { personChip, handleTag } from "./people";
 import type { PersonColor, InviteRow } from "@shared/rows";
 import type { PersonSummary } from "./api";
 
-// ── prop shapes (loose for now — reshaped at wire time) ──────────────────────
+// ── prop shapes ──────────────────────────────────────────────────────────────
 export interface UnplacedItem {
   id: string;
   title: string;
   snippet: string;
-  reason: string; // e.g. "AGENT FLAGGED" / "LOW CONFIDENCE"
-  meta: string; // e.g. "agent · session 9b1e · 2h ago"
+  reason: string; // "AGENT FLAGGED" / "LOW CONFIDENCE"
+  meta: string; // e.g. "AndresL230 · 2h ago"
   reasonNote: string;
+  /** The handle that produced it (null when the gate recorded none). */
+  author?: string | null;
+  /** Relative time it landed, e.g. "2h ago". */
+  when?: string;
 }
 
 export type AssignKind = "doc" | "adr" | "feed";
+export type MaintTab = "unplaced" | "identity" | "people";
+export const MAINT_TABS: readonly MaintTab[] = ["unplaced", "identity", "people"];
 
 /** The assign flow's REAL vocabulary: the three gate types, and the targets each
  *  accepts (doc → section + optional space; feed → optional multi-select tags;
@@ -41,20 +50,24 @@ export interface IdentityGroup {
   id: string;          // the login — there is no numeric id; also the map route's path param
   login: string;
   meta: string;        // e.g. "first seen 3w ago"
-  countLabel: string;  // accent line; the read returns samples, not a total — no fabricated count
+  countLabel: string;
   sample: ActivitySample[];
 }
 
 export interface Person { id: string; name: string; initials: string; color?: PersonColor; avatar_url?: string | null }
 
 export interface MaintenanceProps {
+  tab: MaintTab;
   unplaced: UnplacedItem[];
   assign: AssignOptions;
+  /** The Unplaced item on screen (null = the first). */
   assignOpen: string | null;
   assignKind: AssignKind | null;
   assignSection: string | null;
   assignSpace: string | null;
   assignTags: string[];
+  /** The Discard button was clicked once — the second click discards. */
+  discardArm: boolean;
   identity: IdentityGroup[];
   people: Person[];
   mapPicks: Record<string, string>;
@@ -62,7 +75,17 @@ export interface MaintenanceProps {
   mapConfirm: string | null;
 }
 
-// ── shared section chrome ────────────────────────────────────────────────────
+// ── shared atoms ─────────────────────────────────────────────────────────────
+const EYEBROW = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+
+/** The design's pick chip (`V.pickSt`): accent when on, mono for vocabulary values. */
+function pickChip(label: string, on: boolean, act: string, arg: string, mono = false): string {
+  const st = `padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent)" : "var(--border)"};color:${on ? "var(--accent)" : "var(--fg-55)"};background:${on ? "var(--accent-soft)" : "transparent"};font-family:${mono ? "var(--mono)" : "inherit"}`;
+  return `<button data-act="${attr(act)}" data-arg="${attr(arg)}" style="${st}">${esc(label)}</button>`;
+}
+
+/** A mono section header with a hint and a count (the admin email-notification
+ *  sections under People still use it). */
 export function maintSectionHeader(label: string, hint: string, countLabel: string, first: boolean): string {
   return `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:${first ? "38px" : "44px"};padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
     <div style="display:flex;align-items:baseline;gap:10px">
@@ -73,177 +96,188 @@ export function maintSectionHeader(label: string, hint: string, countLabel: stri
   </div>`;
 }
 
-/** Centered section empty state (the normal state for both sections). */
+/** A dashed, centred empty-state card (the normal state for Unplaced and Identity). */
 export function maintEmpty(title: string, sub: string): string {
-  return `<div style="padding:30px 0;text-align:center;border-bottom:1px solid var(--border)">
-    <div style="font-size:13px;font-weight:500;color:var(--fg-55)">${esc(title)}</div>
-    <div style="font-size:12px;color:var(--fg-40);margin-top:3px">${esc(sub)}</div>
-  </div>`;
+  return `<div style="display:flex;justify-content:center;padding:56px 0"><div style="border:1px dashed var(--border-strong);border-radius:13px;padding:36px 44px;text-align:center;max-width:380px"><div style="font-size:15px;font-weight:600;color:var(--fg-70)">${esc(title)}</div><div style="font-size:12.5px;color:var(--fg-40);margin-top:6px">${esc(sub)}</div></div></div>`;
 }
+
+const person = (people: Person[], id: string | null | undefined): Person | null =>
+  id ? people.find((p) => p.id.toLowerCase() === id.toLowerCase()) ?? null : null;
+const chipOf = (p: Person | null, size: number, fallback: string) =>
+  personChip(p?.color ? { handle: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url } : null, size, fallback);
 
 // ── UNPLACED ─────────────────────────────────────────────────────────────────
-/** The expanded assign flow: pick what it is, then the real per-type target, then file it. */
+/** The "File it as" block: pick what it is, then the real per-type target. */
 export function assignPanel(itemId: string, assign: AssignOptions, kind: AssignKind | null, section: string | null, space: string | null, tags: string[]): string {
-  const kindChips = assign.kinds
-    .map((k) => pickRow(esc(k.label), kind === k.key, "maintAssignKind", k.key))
-    .join("");
-  let targetCol: string;
-  if (kind === null) {
-    targetCol = `<div style="font-size:12.5px;color:var(--fg-40);padding:7px 0">Pick what kind of thing it is first.</div>`;
-  } else if (kind === "doc") {
-    const sectionRows = assign.sections.map((t) => pickRow(esc(t), section === t, "maintAssignSection", t)).join("");
-    const spaceRows = assign.spaces.map((t) => pickRow(esc(t), space === t, "maintAssignSpace", t)).join("");
-    targetCol = `<div style="display:flex;flex-direction:column;gap:5px">${sectionRows}</div>
-      <div style="${MONO_LABEL};margin:12px 0 8px">SPACE (OPTIONAL)</div>
-      <div style="display:flex;flex-direction:column;gap:5px">${spaceRows}</div>`;
+  const kinds = assign.kinds.map((k) => pickChip(k.label, kind === k.key, "maintAssignKind", k.key)).join("");
+  let target = "";
+  if (kind === "doc") {
+    target = `<div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:18px">
+      <div><div style="${EYEBROW};margin-bottom:8px">Section</div><div style="display:flex;gap:6px;flex-wrap:wrap">${assign.sections.map((t) => pickChip(t, section === t, "maintAssignSection", t, true)).join("")}</div></div>
+      <div><div style="${EYEBROW};margin-bottom:8px">Space <span style="text-transform:none;letter-spacing:0;font-weight:500">· optional</span></div><div style="display:flex;gap:6px;flex-wrap:wrap">${assign.spaces.map((t) => pickChip(t, space === t, "maintAssignSpace", t, true)).join("")}</div></div>
+    </div>`;
   } else if (kind === "feed") {
-    const tagRows = assign.tags.map((t) => pickRow(esc(t), tags.includes(t), "maintAssignTag", t)).join("");
-    targetCol = `<div style="display:flex;flex-direction:column;gap:5px">${tagRows}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Tags are optional — pick any that apply.</div>`;
-  } else {
-    targetCol = `<div style="font-size:12.5px;color:var(--fg-40);padding:7px 0">No target needed — this files as a new decision draft.</div>`;
+    target = `<div style="${EYEBROW};margin:18px 0 8px">Tags <span style="text-transform:none;letter-spacing:0;font-weight:500">· optional</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${assign.tags.map((t) => pickChip(t, tags.includes(t), "maintAssignTag", t, true)).join("")}</div>`;
   }
-  const canFile = kind !== null && (kind !== "doc" || section !== null);
-  return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:14px">
-    <div style="display:grid;grid-template-columns:190px 1fr;gap:22px">
-      <div>
-        <div style="${MONO_LABEL};margin-bottom:8px">WHAT IS IT</div>
-        <div style="display:flex;flex-direction:column;gap:5px">${kindChips}</div>
-      </div>
-      <div>
-        <div style="${MONO_LABEL};margin-bottom:8px">WHERE IT GOES</div>
-        ${targetCol}
-      </div>
-    </div>
-    <div style="display:flex;justify-content:flex-end;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      ${primaryBtn("File it", canFile, "maintFile", itemId)}
-    </div>
+  return `<div data-item="${attr(itemId)}" style="margin-top:26px;padding-top:20px;border-top:1px solid var(--border)">
+    <div style="${EYEBROW};margin-bottom:10px">File it as</div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${kinds}</div>
+    ${target}
   </div>`;
 }
 
-/** One unplaced loose thing: reason chip + meta, title, snippet, and the route/discard affordances. */
-export function unplacedRow(u: UnplacedItem, open: boolean, assign: AssignOptions, kind: AssignKind | null, section: string | null, space: string | null, tags: string[]): string {
-  const toggleStyle = open
-    ? "background:transparent;border:1px solid var(--border-strong);color:var(--fg-70)"
-    : "background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent)";
-  return `<div style="border-bottom:1px solid var(--border);padding:18px 0">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
-      <div style="min-width:0;flex:1">
-        <div style="display:flex;align-items:center;gap:9px">
-          <div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px">${esc(u.reason)}</div>
-          <div style="font-size:11.5px;color:var(--fg-40)">${esc(u.meta)}</div>
-        </div>
-        <div style="font-size:14px;font-weight:600;letter-spacing:-0.005em;margin-top:10px">${esc(u.title)}</div>
-        <div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:8px;font-size:13px;line-height:1.6;color:var(--fg-70)">${esc(u.snippet)}</div>
-        <div style="font-size:11.5px;color:var(--fg-40);margin-top:7px">${esc(u.reasonNote)}</div>
+/** The hint beside "File it": what filing will do, or what is still missing. */
+export function fileHint(kind: AssignKind | null, section: string | null): string {
+  if (!kind) return "Pick what it is first";
+  if (kind === "doc") return section ? `Stages a proposal in ${section}` : "Pick a section";
+  return kind === "adr" ? "Creates a draft decision in Review" : "Posts it to the feed";
+}
+
+/** The Unplaced item on screen: the one `assignOpen` names, else the first. */
+export function selectedUnplacedId(items: { id: string }[], assignOpen: string | null): string | null {
+  return items.find((u) => u.id === assignOpen)?.id ?? items[0]?.id ?? null;
+}
+
+function unplacedTab(p: MaintenanceProps): string {
+  if (p.unplaced.length === 0) return maintEmpty("All clear", "Everything an agent produced found its place on its own.");
+  const idx = Math.max(0, p.unplaced.findIndex((u) => u.id === p.assignOpen));
+  const sel = p.unplaced[idx];
+  const list = p.unplaced.map((u) => {
+    const au = person(p.people, u.author);
+    const on = u.id === sel.id;
+    return `<button data-act="maintSelect" data-arg="${attr(u.id)}" class="cnpy-trow" style="display:block;width:100%;text-align:left;padding:13px 16px;border-bottom:1px solid var(--border);background:${on ? "var(--hover)" : "transparent"};transition:background .12s ease">
+      <div style="font-size:13px;line-height:1.5;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(u.title)}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11.5px;color:var(--fg-40);min-width:0;white-space:nowrap;overflow:hidden">${chipOf(au, 16, u.author ?? "?")}${handleTag(au?.color ? { handle: au.id, color: au.color } : null, u.author ?? "unknown", 11)}<span style="flex:none">&middot; ${esc(u.when ?? "")}</span></div>
+    </button>`;
+  }).join("");
+
+  // The assign picks belong to the item on screen; `assignOpen` names it, or names
+  // nothing that is still listed (first load, or the item just filed / discarded).
+  const kind = sel.id === selectedUnplacedId(p.unplaced, p.assignOpen) ? p.assignKind : null;
+  const section = kind ? p.assignSection : null;
+  const canFile = kind !== null && (kind !== "doc" || section !== null);
+  const au = person(p.people, sel.author);
+  const bigText = sel.title !== sel.snippet && !sel.snippet.startsWith(sel.title.replace(/…$/, ""))
+    ? `<div style="font-size:18px;font-weight:500;line-height:1.5;letter-spacing:-0.01em;color:var(--fg);margin-top:16px;text-wrap:pretty">${esc(sel.title)}</div><div style="font-size:13.5px;line-height:1.6;color:var(--fg-70);margin-top:8px">${esc(sel.snippet)}</div>`
+    : `<div style="font-size:18px;font-weight:500;line-height:1.5;letter-spacing:-0.01em;color:var(--fg);margin-top:16px;text-wrap:pretty">${esc(sel.snippet)}</div>`;
+
+  return `<div style="display:flex;flex-wrap:wrap;border:1px solid var(--border);border-radius:12px;overflow:hidden;min-height:440px">
+    <div class="cnpy-scroll" style="flex:1 1 260px;min-width:0;max-width:100%;box-shadow:1px 0 0 var(--border);overflow-y:auto;overflow-x:hidden;max-height:640px">${list}</div>
+    <div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;padding:24px 28px;box-shadow:0 -1px 0 var(--border)">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--fg-55)">
+        <span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px;white-space:nowrap">${esc(sel.reason)}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;min-width:0">${chipOf(au, 18, sel.author ?? "?")}<span style="overflow:hidden;text-overflow:ellipsis">${esc(au?.name ?? sel.author ?? "unknown")}</span></span>
+        <span style="color:var(--fg-40);white-space:nowrap">&middot; ${esc(sel.when ?? "")}</span>
+        <span style="flex:1"></span>
+        <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${idx + 1} of ${p.unplaced.length}</span>
       </div>
-      <div style="display:flex;gap:7px;flex:none;padding-top:1px">
-        <button data-act="maintDiscard" data-arg="${attr(u.id)}" class="cnpy-rejectbtn" style="background:transparent;border:1px solid var(--border);border-radius:7px;padding:5px 11px;font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Discard</button>
-        <button data-act="maintAssignToggle" data-arg="${attr(u.id)}" style="${toggleStyle};border-radius:8px;padding:6px 13px;font-size:12.5px;font-weight:600;transition:all .12s ease;flex:none">${open ? "Close" : "Assign…"}</button>
+      ${bigText}
+      <div style="font-size:12.5px;line-height:1.55;color:var(--fg-40);margin-top:10px"><span style="color:var(--fg-55);font-weight:500">Why it wasn't placed:</span> ${esc(sel.reasonNote)}</div>
+      ${assignPanel(sel.id, p.assign, kind, section, kind ? p.assignSpace : null, kind ? p.assignTags : [])}
+      <div style="flex:1;min-height:24px"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:16px;border-top:1px solid var(--border)">
+        <button data-act="maintDiscard" data-arg="${attr(sel.id)}" class="cnpy-mutelink" style="font-size:12.5px;font-weight:500;white-space:nowrap;color:${p.discardArm ? "var(--red)" : "var(--fg-55)"}">${p.discardArm ? "Click again to discard" : "Discard"}</button>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--fg-40)">${esc(fileHint(kind, section))}</span>
+          ${primaryBtn("File it", canFile, "maintFile", sel.id, "padding:8px 16px")}
+        </div>
       </div>
     </div>
-    ${open ? assignPanel(u.id, assign, kind, section, space, tags) : ""}
   </div>`;
 }
 
 // ── IDENTITY ─────────────────────────────────────────────────────────────────
-/** The "WHO IS THIS" column: pick a person, see the concrete effect, then confirm. */
+/** "Who is this?": pick a person, see the concrete effect, then confirm. */
 export function personPicker(groupId: string, people: Person[], pick: string | null, confirming: boolean): string {
-  const rows = people
-    .map((p) => pickRow(
-      `${personChip(p.color ? { handle: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url } : null, 20, p.id)}<div style="font-size:13px;font-weight:500">${esc(p.name)}</div>${p.color ? handleTag({ handle: p.id, color: p.color }, p.id, 11) : ""}`,
-      pick === p.id,
-      "identityPick",
-      `${groupId}:${p.id}`,
-      "padding:6px 9px",
-    ))
-    .join("");
-  const pickedName = pick !== null ? (people.find((p) => p.id === pick)?.name ?? pick) : null;
+  const chips = people.map((pp) => {
+    const on = pick === pp.id;
+    const st = `white-space:nowrap;display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${on ? "var(--accent)" : "var(--border)"};color:${on ? "var(--accent)" : "var(--fg-55)"};background:${on ? "var(--accent-soft)" : "transparent"}`;
+    return `<button data-act="identityPick" data-arg="${attr(`${groupId}:${pp.id}`)}" class="cnpy-pickchip" style="${st}">${chipOf(pp, 18, pp.id)}${esc(pp.name)}</button>`;
+  }).join("");
+  const pickedName = pick !== null ? (people.find((x) => x.id === pick)?.name ?? pick) : null;
   const confirmNote = confirming && pickedName !== null
-    ? `<div style="border:1px solid var(--amber);border-radius:8px;padding:9px 11px;margin-top:10px;font-size:12px;line-height:1.5;color:var(--fg-70)">This attributes <b style="font-family:var(--mono)">${esc(groupId)}</b>&rsquo;s activity to <b>${esc(pickedName)}</b> — past and future captured events surface as theirs.</div>`
+    ? `<div style="border:1px solid var(--amber);border-radius:8px;padding:9px 11px;margin-top:12px;font-size:12px;line-height:1.5;color:var(--fg-70)">${esc(groupId)}'s activity will show as ${esc(pickedName)}'s, past and future.</div>`
     : "";
-  return `<div style="display:flex;flex-direction:column;gap:5px">${rows}</div>
+  return `<div style="${EYEBROW};margin-bottom:8px">Who is this?</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${chips}</div>
     ${confirmNote}
-    ${primaryBtn(confirming && pick !== null ? "Confirm mapping" : "Map login", pick !== null, "identityMap", groupId, "width:100%;margin-top:10px")}
-    <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">All captured activity, past and future, flows into their view. Mapping also lets that GitHub account sign in as this person.</div>`;
+    <div style="display:flex;align-items:center;gap:14px;margin-top:12px">
+      ${primaryBtn(confirming && pick !== null ? "Confirm mapping" : "Map login", pick !== null, "identityMap", groupId, "padding:8px 16px")}
+      ${confirming && pick !== null ? `<button data-act="identityCancel" data-arg="${attr(groupId)}" class="cnpy-mutelink" style="font-size:12px;font-weight:500;color:var(--fg-55)">Cancel</button>` : ""}
+    </div>`;
 }
 
-/** One unmatched login: the activity sample that identifies the person, paired with the picker. */
+/** One unmatched login: the activity sample that identifies the person, beside the picker. */
 export function identityCard(g: IdentityGroup, people: Person[], pick: string | null, confirming: boolean): string {
-  const sample = g.sample.map((ev) => `<div style="display:flex;align-items:baseline;gap:9px">
-      <div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px;flex:none;width:52px;text-align:center">${esc(ev.kind)}</div>
-      <div style="font-size:12.5px;color:var(--fg-70);min-width:0">${esc(ev.text)}</div>
-      <div style="font-size:11px;color:var(--fg-40);flex:none">${esc(ev.when)}</div>
-    </div>`).join("");
-  return `<div style="border-bottom:1px solid var(--border);padding:20px 0">
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:24px">
-      <div style="min-width:0">
-        <div style="display:flex;align-items:baseline;gap:10px">
-          <div style="font-family:var(--mono);font-size:15px;font-weight:600;color:var(--fg)">${esc(g.login)}</div>
-          <div style="font-size:11.5px;color:var(--fg-40)">${esc(g.meta)}</div>
-        </div>
-        <div style="font-size:12px;color:var(--accent);margin-top:3px">${esc(g.countLabel)}</div>
-        <div style="display:flex;flex-direction:column;gap:7px;margin-top:13px">${sample}</div>
-      </div>
-      <div style="border-left:1px solid var(--border);padding-left:22px">
-        <div style="${MONO_LABEL};margin-bottom:8px">WHO IS THIS</div>
-        ${personPicker(g.id, people, pick, confirming)}
-      </div>
+  const sample = g.sample.map((ev) => `<div style="display:flex;align-items:baseline;gap:9px;min-width:0"><span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px;flex:none">${esc(ev.kind)}</span><span style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.text)}</span><span style="font-size:11px;color:var(--fg-40);flex:none;white-space:nowrap">${esc(ev.when)}</span></div>`).join("");
+  return `<div style="display:flex;flex-wrap:wrap;gap:20px 36px;padding:20px 22px;border-bottom:1px solid var(--border);margin-bottom:-1px">
+    <div style="flex:1 1 280px;min-width:0">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><div style="font-family:var(--mono);font-size:15px;font-weight:600;color:var(--fg);white-space:nowrap">${esc(g.login)}</div><div style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(g.meta)}</div></div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-top:12px">${sample}</div>
     </div>
+    <div style="flex:1 1 380px;min-width:0">${personPicker(g.id, people, pick, confirming)}</div>
   </div>`;
 }
 
+function identityTab(p: MaintenanceProps): string {
+  if (p.identity.length === 0) return maintEmpty("Everyone is accounted for", "Every login in the activity stream is matched to a person.");
+  return `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden">${p.identity.map((g) => identityCard(g, p.people, p.mapPicks[g.id] ?? null, p.mapConfirm === g.id)).join("")}</div>
+    <div style="font-size:11.5px;color:var(--fg-40);margin-top:12px">Mapping attributes all past and future activity from that login to the person, and lets that GitHub account sign in as them.</div>`;
+}
+
 // ── PEOPLE ───────────────────────────────────────────────────────────────────
-export interface PeopleProps { persons: PersonSummary[]; invites: InviteRow[]; inviteDraft: string; loading: boolean; error: string | null }
+export interface PeopleProps {
+  persons: PersonSummary[];
+  invites: InviteRow[];
+  inviteDraft: string;
+  loading: boolean;
+  error: string | null;
+  /** The signed-in handle (its row carries YOU). */
+  me?: string | null;
+  /** Invites are admin-only; without it the tab is the directory alone. */
+  canInvite?: boolean;
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function peopleSection(p: PeopleProps): string {
-  const pending = p.invites.filter((i) => !i.accepted_by && !i.revoked_at);
-  const count = `${p.persons.length} ${p.persons.length === 1 ? "person" : "people"}${pending.length ? ` · ${pending.length} invite${pending.length === 1 ? "" : "s"} pending` : ""}`;
+  const canInvite = p.canInvite !== false;
+  const pending = canInvite ? p.invites.filter((i) => !i.accepted_by && !i.revoked_at) : [];
   const canSend = EMAIL_RE.test(p.inviteDraft.trim());
-  const row = "display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px";
-  const idc = (t: string, tone: "normal" | "pending" = "normal") => `<span style="font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px ${tone === "pending" ? "dashed" : "solid"} var(--border-strong);color:${tone === "pending" ? "var(--amber)" : "var(--fg-55)"};white-space:nowrap">${esc(t)}</span>`;
-  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${esc(x.name ?? x.handle)}</b>${handleTag(x, x.handle, 11.5)}</div><span></span></div>`).join("");
-  const invitesHtml = pending.map((i) => {
+  const row = "display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--border);margin-bottom:-1px";
+  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="flex:1;min-width:0;line-height:1.3"><div style="font-size:13.5px;font-weight:600">${esc(x.name ?? x.handle)}</div>${handleTag(x, x.handle, 11.5)}</div>${p.me && x.handle.toLowerCase() === p.me.toLowerCase() ? `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">YOU</span>` : ""}</div>`).join("");
+  const invites = pending.map((i) => {
     const status = i.email_error ? `<span style="color:var(--red)">email failed: ${esc(i.email_error)}</span>` : i.email_sent_at ? "email sent" : "email not sent";
-    return `<div style="${row}"><div style="width:28px;height:28px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--fg-40);font-size:12px">?</div>
-      <div style="line-height:1.25"><b style="font-size:13.5px;font-weight:500;color:var(--fg-55);display:block">${esc(i.email)}</b><span style="font-size:11.5px;color:var(--fg-40)">invited ${esc(relTime(i.invited_at))} by ${esc(i.invited_by)} · ${status}</span></div>
-      <div style="display:flex;gap:6px">${idc("pending", "pending")}<button data-act="inviteResend" data-arg="${attr(i.email)}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border)">Resend</button><button data-act="inviteRevoke" data-arg="${attr(i.email)}" class="cnpy-rejectbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border)">Revoke</button></div></div>`;
+    return `<div style="${row};flex-wrap:wrap">
+      <div style="width:28px;height:28px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--fg-40);font-size:12px;flex:none">?</div>
+      <div style="flex:1;min-width:0;line-height:1.3"><div style="font-size:13.5px;font-weight:500;color:var(--fg-55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.email)}</div><div style="font-size:11.5px;color:var(--fg-40)">invited ${esc(relTime(i.invited_at))} by ${esc(i.invited_by)} · ${status}</div></div>
+      <span style="font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px dashed var(--border-strong);color:var(--amber);white-space:nowrap">pending</span>
+      <button data-act="inviteResend" data-arg="${attr(i.email)}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border);white-space:nowrap">Resend</button>
+      <button data-act="inviteRevoke" data-arg="${attr(i.email)}" class="cnpy-rejectbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border);white-space:nowrap">Revoke</button>
+    </div>`;
   }).join("");
-  return `${maintSectionHeader("PEOPLE", "invite a Google address; everyone with a handle is listed here", count, false)}
-    <div style="display:flex;gap:8px;margin:14px 0 12px">
-      <input data-act="inviteDraft" data-field="inviteDraft" value="${attr(p.inviteDraft)}" placeholder="Invite by Google email…" aria-label="Invite by Google email" class="cnpy-input" style="flex:1;height:38px;padding:0 12px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;outline:none" />
-      <button data-act="inviteSend" class="cnpy-accentbtn" ${canSend ? "" : "disabled "}style="padding:0 14px;height:38px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13px;font-weight:600;${canSend ? "" : "opacity:.45;cursor:default"}">Invite</button>
-    </div>
+  const inviteBar = canInvite ? `<div style="display:flex;gap:8px;margin:0 0 14px;max-width:560px">
+      <input data-act="inviteDraft" data-field="inviteDraft" value="${attr(p.inviteDraft)}" placeholder="Invite by Google email…" aria-label="Invite by Google email" class="cnpy-input" style="flex:1;min-width:0;height:38px;padding:0 12px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;outline:none" />
+      <button data-act="inviteSend" class="${canSend ? "cnpy-accentbtn" : ""}" ${canSend ? "" : "disabled "}style="${canSend ? "background:var(--accent);color:var(--accent-fg);border:1px solid transparent;cursor:pointer" : "background:transparent;color:var(--fg-40);border:1px solid var(--border);cursor:default"};border-radius:8px;height:38px;padding:0 16px;font-size:12.5px;font-weight:600;white-space:nowrap">Invite</button>
+    </div>` : "";
+  return `${inviteBar}
     ${p.error ? `<div style="font-size:12.5px;color:var(--red);margin-bottom:8px">${esc(p.error)}</div>` : ""}
-    ${p.loading && p.persons.length === 0 ? `<div style="font-size:12.5px;color:var(--fg-40);padding:10px 0">Loading people…</div>` : persons}
-    ${invitesHtml}`;
+    ${p.loading && p.persons.length === 0 ? `<div style="font-size:12.5px;color:var(--fg-40);padding:10px 0">Loading people…</div>` : `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden">${persons}${invites}</div>`}`;
 }
 
 // ── composed surface ─────────────────────────────────────────────────────────
-export function maintenanceView(p: MaintenanceProps): string {
-  const unplacedCount = p.unplaced.length === 0 ? ""
-    : p.unplaced.length === 1 ? "1 item" : `${p.unplaced.length} items`;
-  const identityCount = p.identity.length === 0 ? ""
-    : `${p.identity.length} login${p.identity.length === 1 ? "" : "s"} to match`;
+export const MAINT_INTRO: Record<MaintTab, string> = {
+  unplaced: "Things an agent produced but couldn't place. Read one, then file it or throw it away.",
+  identity: "Logins in the activity stream that don't belong to anyone yet.",
+  people: "Everyone with a handle, and invites that haven't been accepted.",
+};
 
-  const unplaced = p.unplaced.length > 0
-    ? p.unplaced.map((u) => {
-        const open = p.assignOpen === u.id;
-        return unplacedRow(u, open, p.assign, open ? p.assignKind : null, open ? p.assignSection : null, open ? p.assignSpace : null, open ? p.assignTags : []);
-      }).join("")
-    : maintEmpty("All clear", "Everything an agent produced found its place on its own.");
-
-  const identity = p.identity.length > 0
-    ? p.identity.map((g) => identityCard(g, p.people, p.mapPicks[g.id] ?? null, p.mapConfirm === g.id)).join("")
-    : maintEmpty("Everyone is accounted for", "Every login in the activity stream is matched to a person.");
-
-  return `<div style="max-width:860px;margin:0 auto;padding:26px 32px 100px">
-    <h1 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">Maintenance</h1>
-    <div style="font-size:12.5px;color:var(--fg-55);margin-top:3px">Occasional housekeeping. Empty is the normal state.</div>
-    ${maintSectionHeader("UNPLACED", "read a loose thing, then route it or throw it away", unplacedCount, true)}
-    ${unplaced}
-    ${maintSectionHeader("IDENTITY", "recognize a person from their work, then pick them", identityCount, false)}
-    ${identity}
+/** One tab of Maintenance. `people` is the People tab's body (it needs more than
+ *  these props — the directory, the invites, the admin flag), rendered by the caller. */
+export function maintenanceView(p: MaintenanceProps, people = ""): string {
+  const body = p.tab === "identity" ? identityTab(p) : p.tab === "people" ? people : unplacedTab(p);
+  return `<div data-screen-label="Maintenance" style="width:100%;max-width:1180px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px;box-sizing:border-box">
+    <div style="font-size:12.5px;color:var(--fg-55);margin:0 0 18px">${esc(MAINT_INTRO[p.tab])}</div>
+    ${body}
   </div>`;
 }

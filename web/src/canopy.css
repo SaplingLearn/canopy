@@ -85,8 +85,11 @@ input, select { font-family: inherit; }
 .cnpy-nav-t { white-space:nowrap; flex:1; min-width:0; text-align:left; }
 [data-collapsed="1"] .cnpy-nav-i { padding:9px 0 9px 13.5px; }
 
-.cnpy-badge { font-family:var(--mono); font-size:11px; font-weight:600; flex:none; color:var(--fg-40); }
-.cnpy-badge.is-accent { height:18px; line-height:18px; padding:0 7px; border-radius:999px; color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); background:var(--accent-soft); }
+/* ONE count badge for every sidebar entry: a quiet pill that brightens on the active row. */
+.cnpy-badge { font-family:var(--mono); font-size:11px; font-weight:600; flex:none; min-width:18px; height:18px; line-height:18px; padding:0 6px; border-radius:999px; text-align:center; color:var(--fg-55); background:var(--hover); box-shadow:inset 0 0 0 1px var(--border); }
+.cnpy-navrow.is-active .cnpy-badge { color:var(--fg); box-shadow:inset 0 0 0 1px var(--border-strong); }
+/* Rows without a chevron reserve its 30px (24 wide + 6 margin), so every count sits in one column. */
+[data-collapsed="0"] .cnpy-navrow:not(:has(> .cnpy-chev)) .cnpy-nav-i { padding-right:41px; }
 .cnpy-badge[data-n="0"], .cnpy-dot[data-n="0"] { display:none; }
 /* the collapsed rail keeps the signal as a dot on the icon's shoulder */
 .cnpy-dot { position:absolute; left:27px; top:6px; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--bg); opacity:0; transform:scale(.4); transition:opacity .16s ease, transform .2s cubic-bezier(.34,1.56,.64,1); pointer-events:none; }
@@ -185,6 +188,12 @@ input, select { font-family: inherit; }
 .cnpy-card:hover { border-color:var(--border-strong); }
 .cnpy-mw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:1fr; gap:14px; align-items:stretch; }
 @media (max-width:760px) { .cnpy-mw-grid { grid-template-columns:1fr; } }
+/* Handoffs inbox row: on a phone the who / branch columns give way, leaving the
+   title, the status pill and the age (the grid is an inline style, hence !important). */
+@media (max-width:760px) {
+  .cnpy-hrow { grid-template-columns:minmax(0,1fr) auto auto !important; }
+  .cnpy-hrow > .cnpy-hrow-who, .cnpy-hrow > .cnpy-hrow-ref, .cnpy-hrow .cnpy-hrow-chip { display:none !important; }
+}
 /* Settings: a bento of tiles on three columns — Profile / Account / tokens across the
    top (their natural heights match), then Email and the Appearance strip at full
    width. At two columns Appearance drops beside the tokens (dense flow); then one
@@ -657,7 +666,7 @@ input, select { font-family: inherit; }
 [data-cnpy-theme] .cnpy-code,
 [data-cnpy-theme] .cnpy-md pre { border-radius:calc(11px * var(--corner-scale)) !important; }
 [data-cnpy-theme] .cnpy-tile { border-radius:calc(16px * var(--corner-scale)) !important; }
-[data-cnpy-theme] .cnpy-badge.is-accent,
+[data-cnpy-theme] .cnpy-badge,
 [data-cnpy-theme] .cnpy-dot,
 [data-cnpy-theme] .cnpy-sw i,
 [data-cnpy-theme] .repo-gdot { border-radius:min(calc(12px * var(--corner-scale)), 25%) !important; }
@@ -668,6 +677,7 @@ input, select { font-family: inherit; }
 [data-cnpy-theme] .cnpy-scroll::-webkit-scrollbar-thumb { border-radius:calc(8px * var(--corner-scale)) !important; }
 /* Inline styles, by value. AFTER the classes on purpose: equal specificity, so an
    inline radius beats its element's class radius here exactly as it does unscaled. */
+[data-cnpy-theme] [style*="border-radius:2px"] { border-radius:calc(2px * var(--corner-scale)) !important; }
 [data-cnpy-theme] [style*="border-radius:3px"] { border-radius:calc(3px * var(--corner-scale)) !important; }
 [data-cnpy-theme] [style*="border-radius:4px"] { border-radius:calc(4px * var(--corner-scale)) !important; }
 [data-cnpy-theme] [style*="border-radius:5px"] { border-radius:calc(5px * var(--corner-scale)) !important; }

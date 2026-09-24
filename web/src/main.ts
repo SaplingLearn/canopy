@@ -23,11 +23,19 @@ import {
   addTicketLink, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
   getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
+  listHandoffs, getHandoff, listPrompts, getPrompt, getPromptVersions,
+  createHandoff, claimHandoff, expireHandoff, savePrompt, setPromptTags, publishPrompt, proposeDoc,
   Unauthorized, NotFound, ApiError,
 } from "./api";
+import { handoffAsPrompt, blankHandoff, docDraftFromHandoff, type NewHandoffDraft } from "./handoffs";
+import { normalizeTags, type HandoffView } from "@shared/handoffs";
+import { selectedUnplacedId } from "./maintenance";
+import { ASSIGN_OPTIONS } from "./triage-map";
+import { draftFromPrompt, blankPromptDraft, slugify, tagOptions } from "./prompts";
+import { blankDoc, defaultSection } from "./newdoc";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
 import type { SprintDetail } from "@shared/sprints";
-import { parseHash, hashForRoute, type Route } from "./hash";
+import { parseHash, hashForRoute, sameRoute, type Route } from "./hash";
 import { mountLandingMotion, unmountLandingMotion } from "./landing-motion";
 import {
   TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUS_LABEL, TICKET_STATUSES,
@@ -53,6 +61,8 @@ const state: AppState = initialState();
 try {
   const t = localStorage.getItem("canopy.theme");
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
+  const pv = localStorage.getItem("canopy.promptView");
+  if (pv === "raw" || pv === "rendered") state.promptView = pv;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
   const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
@@ -100,6 +110,13 @@ function screenSettled(): boolean {
     case "ticketdetail": return ok(state.ticketDetail);
     case "sprint": return ok(state.sprintDetail);
     case "repo": return state.repo.data !== null || state.repo.status === "error";
+    // These four refetch on every visit and paint what they already hold meanwhile,
+    // so "landed" means "has something to show" (like the Repo dashboard) — else the
+    // cached paint plays the entrance and the refresh landing plays it a second time.
+    case "handoffs": return ok(state.handoffs) || state.handoffs.data.length > 0;
+    case "handoff": return ok(state.handoffDetail) || state.handoffDetail.data !== null;
+    case "prompts": return ok(state.promptList) || state.promptList.data.length > 0;
+    case "prompt": return ok(state.promptDetail) || state.promptDetail.data !== null;
     default: return true; // search re-queries per keystroke; the rest load nothing
   }
 }
@@ -226,7 +243,7 @@ window.addEventListener("hashchange", () => {
   if (state.view !== "app") return;
   const r = parseHash(location.hash);
   const cur = currentRoute();
-  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId && r.repoTab === cur.repoTab) return;
+  if (sameRoute(r, cur)) return;
   applyRoute(r);
   loadForScreen(r.screen);
 });
@@ -294,6 +311,13 @@ function persistNavOpen(): void {
 function currentRoute(): Route {
   const r: Route = { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
   if (state.screen === "repo") r.repoTab = state.repoTab;
+  if (state.screen === "handoff" && state.handoffId) r.handoffId = state.handoffId;
+  if (state.screen === "prompt" && state.promptSlug) r.promptSlug = state.promptSlug;
+  if (state.screen === "promptedit") {
+    r.promptMode = state.promptMode;
+    if (state.promptMode !== "new" && state.promptSlug) r.promptSlug = state.promptSlug;
+  }
+  if (state.screen === "maintenance") r.maintTab = state.maintTab;
   return r;
 }
 function applyRoute(r: Route): void {
@@ -301,6 +325,10 @@ function applyRoute(r: Route): void {
   state.ticketId = r.ticketId;
   state.sprintId = r.sprintId;
   if (r.repoTab) state.repoTab = r.repoTab;
+  if (r.handoffId) state.handoffId = r.handoffId;
+  if (r.promptSlug) state.promptSlug = r.promptSlug;
+  if (r.promptMode) state.promptMode = r.promptMode;
+  if (r.maintTab) state.maintTab = r.maintTab;
 }
 
 // Kick off the data load for a screen (mirrors the go* dispatch cases).
@@ -310,7 +338,14 @@ function loadForScreen(screen: Screen): void {
     case "docs": loadDocsIfNeeded(); break;
     case "roadmap": loadRoadmapIfNeeded(); loadFeedIfNeeded(); break;
     case "review": loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); break;
-    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); break;
+    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvitesIfAdmin(); break;
+    case "handoffs": loadHandoffs(); break;
+    case "handoff": if (state.handoffId) openHandoff(state.handoffId); else rerender(); break;
+    case "newhandoff": state.nh = blankHandoff(); loadPersons(); break;
+    case "prompts": loadPrompts(); break;
+    case "prompt": if (state.promptSlug) openPrompt(state.promptSlug); else rerender(); break;
+    case "promptedit": openEditor(state.promptMode, state.promptSlug); break;
+    case "newdoc": startNewDoc(); break;
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
     case "repo": loadRepoIfNeeded(); break;
@@ -332,6 +367,108 @@ function loadForScreen(screen: Screen): void {
       break;
     default: rerender(); break; // guide — no data load
   }
+}
+
+// ── Handoffs + Prompt Library loaders (reads only; their writes are not built) ──
+function loadHandoffs(): void {
+  state.handoffs = { status: "loading", data: state.handoffs.data };
+  rerender();
+  listHandoffs("mine")
+    .then((data) => { state.handoffs = { status: "ok", data }; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } state.handoffs = { status: "error", data: state.handoffs.data, error: String(e) }; rerender(); });
+}
+function openHandoff(id: number): void {
+  state.handoffId = id;
+  state.handoffExpireArm = false;
+  state.handoffPromptOpen = false;
+  // Keep the row the inbox already holds on screen while the fresh read lands.
+  const known = state.handoffs.data.find((h) => h.id === id) ?? null;
+  state.handoffDetail = { status: "loading", data: known };
+  rerender();
+  getHandoff(id)
+    .then((h) => { if (state.handoffId !== id) return; state.handoffDetail = { status: "ok", data: h }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (state.handoffId !== id) return;
+      const missing = e instanceof ApiError && e.status === 404;
+      state.handoffDetail = { status: missing ? "ok" : "error", data: null, error: String(e) };
+      rerender();
+    });
+}
+function loadPrompts(): void {
+  state.promptList = { status: "loading", data: state.promptList.data };
+  rerender();
+  listPrompts()
+    .then((data) => { state.promptList = { status: "ok", data }; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } state.promptList = { status: "error", data: state.promptList.data, error: String(e) }; rerender(); });
+}
+function openPrompt(slug: string): void {
+  state.promptSlug = slug;
+  state.promptDiffV = null; state.promptTagMenu = false; state.promptTagDraft = ""; state.promptExpanded = false;
+  const same = state.promptDetail.data?.prompt.slug === slug;
+  state.promptDetail = { status: "loading", data: same ? state.promptDetail.data : null };
+  rerender();
+  Promise.all([getPrompt(slug), getPromptVersions(slug)])
+    .then(([prompt, versions]) => { if (state.promptSlug !== slug) return; state.promptDetail = { status: "ok", data: { prompt, versions } }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (state.promptSlug !== slug) return;
+      const missing = e instanceof ApiError && e.status === 404;
+      state.promptDetail = { status: missing ? "ok" : "error", data: null, error: String(e) };
+      rerender();
+    });
+}
+/** The editor: blank for a new prompt, else seeded from the prompt it edits (or versions). */
+function openEditor(mode: "new" | "edit" | "version", slug: string | null): void {
+  state.promptMode = mode;
+  if (state.promptList.status === "idle") loadPrompts(); // the slug-taken check reads the library
+  if (mode === "new" || !slug) { state.promptMode = "new"; state.promptEd = blankPromptDraft(); rerender(); return; }
+  state.promptSlug = slug;
+  const have = state.promptDetail.data?.prompt.slug === slug ? state.promptDetail.data.prompt : null;
+  if (have) { state.promptEd = draftFromPrompt(have, mode); rerender(); return; }
+  state.promptEd = null;
+  rerender();
+  getPrompt(slug)
+    .then((p) => { if (state.screen !== "promptedit" || state.promptSlug !== slug) return; state.promptEd = draftFromPrompt(p, mode); rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't load that prompt"); state.screen = "prompts"; loadPrompts(); });
+}
+function startNewDoc(): void {
+  state.nd = blankDoc(state.docSpace, ""); // the view defaults the section once the space's docs are known
+  if (state.docsList.status === "idle") loadDocs(); else rerender();
+}
+function loadInvitesIfAdmin(): void {
+  if (state.me?.admin) loadInvites();
+}
+/** A write's failure as a toast: the server's `{ error }` (a 409's "handoff is claimed"), else a fallback. */
+function writeErr(e: unknown, fallback: string): void {
+  if (e instanceof Unauthorized) { unauth(e); return; }
+  flash(e instanceof ApiError && e.message && !/^\d+$/.test(e.message) ? e.message : fallback);
+}
+/** A handoff write landed: show it, and refresh the inbox (the sidebar badge reads it). */
+function applyHandoff(h: HandoffView, msg: string): void {
+  state.handoffId = h.id;
+  state.handoffDetail = { status: "ok", data: h };
+  state.handoffExpireArm = false;
+  loadHandoffs();
+  flash(msg);
+}
+/** A prompt write landed: reload the detail + versions and the library (the badge reads it). */
+function afterPromptWrite(slug: string, msg: string): void {
+  loadPrompts();
+  state.screen = "prompt";
+  openPrompt(slug);
+  flash(msg);
+}
+/** Replace a prompt's tag list (the detail rail's add / remove). */
+function writePromptTags(tags: string[]): void {
+  const p = state.promptDetail.data?.prompt;
+  if (!p) return;
+  setPromptTags(p.slug, normalizeTags(tags))
+    .then((np) => {
+      if (state.promptDetail.data?.prompt.slug === np.slug) state.promptDetail = { status: "ok", data: { ...state.promptDetail.data, prompt: np } };
+      loadPrompts();
+    })
+    .catch((e) => writeErr(e, "Couldn't change the tags"));
 }
 
 // ── per-screen data loaders ──────────────────────────────────────────────────
@@ -1199,6 +1336,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (g === "roadmap") { state.roadmapTab = page === "narrative" ? "narrative" : "timeline"; dispatch("goRoadmap", null, null); return; }
       if (g === "repo") { if (!isRepoTab(page)) return; state.screen = "repo"; state.repoTab = page; loadRepoIfNeeded(); return; }
       if (g === "docs") { state.screen = "docs"; dispatch("setDocSpace", page, null); loadDocsIfNeeded(); return; }
+      if (g === "maintenance") { dispatch("goMaintenance", page, null); return; }
       return;
     }
     case "sideSearch": return; // uncontrolled: the box holds its own text until Enter
@@ -1559,7 +1697,12 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
     case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
-    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); return;
+    case "goMaintenance":
+      state.screen = "maintenance";
+      state.maintTab = arg === "identity" || arg === "people" ? arg : "unplaced";
+      state.maintDiscardArm = false;
+      loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvitesIfAdmin();
+      return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
     case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
@@ -1701,6 +1844,210 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       runAdminBackfillLoop();
       return;
     }
+    // ── Handoffs ─────────────────────────────────────────────────────────────
+    case "goHandoffs": state.screen = "handoffs"; state.handoffId = null; loadHandoffs(); return;
+    case "newHandoff": state.screen = "newhandoff"; state.nh = blankHandoff(); rerender(); return;
+    case "openHandoff": { const id = Number(arg); if (!Number.isInteger(id) || id <= 0) return; state.screen = "handoff"; openHandoff(id); return; }
+    case "handoffCopy": {
+      const h = state.handoffDetail.data;
+      if (!h || h.id !== Number(arg)) return;
+      copyToClipboard(handoffAsPrompt(h)).then((ok) => flash(ok ? "Copied as prompt" : "Couldn't reach the clipboard"));
+      return;
+    }
+    case "handoffClaim": {
+      const h = state.handoffDetail.data;
+      if (!h || h.id !== Number(arg)) return;
+      const session = "sess_web_" + Math.random().toString(36).slice(2, 10).toUpperCase();
+      claimHandoff(h.id, session)
+        .then((nh) => copyToClipboard(handoffAsPrompt(nh)).then((ok) =>
+          applyHandoff(nh, ok ? `Claimed #${nh.id} · copied as prompt` : `Claimed #${nh.id} — couldn't reach the clipboard`)))
+        .catch((e) => { writeErr(e, "Couldn't claim this handoff"); openHandoff(h.id); loadHandoffs(); });
+      return;
+    }
+    case "handoffPromote": {
+      const h = state.handoffDetail.data;
+      if (!h || h.id !== Number(arg)) return;
+      const d = docDraftFromHandoff(h);
+      state.screen = "newdoc";
+      state.nd = { ...blankDoc("technical", "reference"), ...d, from: h.id };
+      if (state.docsList.status === "idle") loadDocs(); else rerender();
+      return;
+    }
+    case "handoffPromptCopy": {
+      const h = state.handoffDetail.data;
+      if (!h?.prompt) return;
+      copyToClipboard(h.prompt.body).then((ok) => flash(ok ? "Prompt copied" : "Couldn't reach the clipboard"));
+      return;
+    }
+    case "handoffPromptOpen": state.handoffPromptOpen = true; break;
+    case "handoffPromptClose": state.handoffPromptOpen = false; break;
+    case "handoffExpire":
+      if (!state.handoffExpireArm) { state.handoffExpireArm = true; break; }
+      state.handoffExpireArm = false;
+      {
+        const id = Number(arg);
+        if (!Number.isInteger(id)) return;
+        expireHandoff(id)
+          .then((nh) => applyHandoff(nh, `Handoff #${nh.id} expired`))
+          .catch((e) => { writeErr(e, "Couldn't expire this handoff"); openHandoff(id); loadHandoffs(); });
+      }
+      return;
+    case "nhField": {
+      const k = arg as keyof NewHandoffDraft | null;
+      if (!k || !(k in state.nh) || k === "ctxOpen") return;
+      (state.nh as unknown as Record<string, string>)[k] = value ?? "";
+      // Only the body drives other markup (the "Shows in the list as" line, Send's state).
+      if (k === "body") rerender();
+      return;
+    }
+    case "nhRecipient": if (arg) state.nh.recipient = arg; break;
+    case "nhCtxToggle": state.nh.ctxOpen = !state.nh.ctxOpen; break;
+    case "nhSend": {
+      const n = state.nh;
+      if (!n.body.trim()) return;
+      const lines = (t: string) => t.split("\n").map((x) => x.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean);
+      createHandoff({
+        recipient: n.recipient,
+        body: n.body,
+        prompt: n.promptBody.trim() ? { title: n.promptTitle.trim() || "Prompt", body: n.promptBody } : null,
+        context: { repo: n.repo.trim(), branch: n.branch.trim(), task: n.task.trim(), done: lines(n.done), next: lines(n.next), files: lines(n.files) },
+      })
+        .then((h) => { state.screen = "handoff"; state.nh = blankHandoff(); applyHandoff(h, `Handoff sent · #${h.id}`); })
+        .catch((e) => writeErr(e, "Couldn't send the handoff"));
+      return;
+    }
+
+    // ── Prompt Library ───────────────────────────────────────────────────────
+    case "goPrompts": state.screen = "prompts"; state.promptMenu = null; loadPrompts(); return;
+    case "newPrompt": state.screen = "promptedit"; openEditor("new", null); return;
+    case "openPrompt": if (!arg) return; state.screen = "prompt"; openPrompt(arg); return;
+    case "promptQuery": state.promptQ = value ?? ""; break;
+    case "promptMenuToggle": state.promptMenu = state.promptMenu ? null : "root"; break;
+    case "promptMenuClose": state.promptMenu = null; break;
+    case "promptMenu": if (arg === "root" || arg === "tag" || arg === "sort") state.promptMenu = arg; break;
+    case "promptTag": state.promptTag = arg || null; state.promptMenu = "root"; break;
+    case "promptSort": state.promptSort = arg === "updated_asc" ? "updated_asc" : "updated_desc"; state.promptMenu = "root"; break;
+    case "promptResetFilters": state.promptTag = null; state.promptSort = "updated_desc"; state.promptMenu = null; break;
+    case "promptClearFilters": state.promptQ = ""; state.promptTag = null; break;
+    case "promptDiff": {
+      const v = Number(arg);
+      state.promptDiffV = arg && Number.isInteger(v) ? v : null;
+      if (state.promptDiffV !== null) {
+        const m = document.getElementById("cnpy-main");
+        if (m && m.scrollTop > 120) m.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      break;
+    }
+    case "promptCopy": {
+      const body = state.promptDetail.data?.prompt.body;
+      if (!body) return;
+      copyToClipboard(body).then((ok) => flash(ok ? "Prompt copied" : "Couldn't reach the clipboard"));
+      return;
+    }
+    case "promptExpand": state.promptExpanded = true; break;
+    case "promptBoxView":
+      if (arg !== "raw" && arg !== "rendered") return;
+      state.promptView = arg;
+      persist("canopy.promptView", arg);
+      break;
+    case "promptExpandClose": state.promptExpanded = false; break;
+    case "promptTagMenu": state.promptTagMenu = !state.promptTagMenu; state.promptTagDraft = ""; break;
+    case "promptTagDraft": state.promptTagDraft = value ?? ""; break;
+    case "promptTagAdd":
+    case "promptTagRemove": {
+      const p = state.promptDetail.data?.prompt;
+      state.promptTagMenu = false; state.promptTagDraft = "";
+      if (!p || !arg) return;
+      writePromptTags(act === "promptTagAdd" ? [...p.tags, arg] : p.tags.filter((t) => t !== arg));
+      break;
+    }
+    case "promptPublish": {
+      const p = state.promptDetail.data?.prompt;
+      const v = Number(arg);
+      if (!p || !Number.isInteger(v)) return;
+      publishPrompt(p.slug, v)
+        .then((np) => afterPromptWrite(np.slug, `Published v${v}`))
+        .catch((e) => { writeErr(e, "Couldn't publish"); openPrompt(p.slug); });
+      return;
+    }
+    case "promptEdit": if (!arg) return; state.screen = "promptedit"; openEditor("edit", arg); return;
+    case "promptNewVersion": if (!arg) return; state.screen = "promptedit"; openEditor("version", arg); return;
+    // The editor's fields. Title drives the slug until the slug is edited by hand.
+    case "edTitle": {
+      const ed = state.promptEd; if (!ed) return;
+      ed.title = value ?? "";
+      if (!ed.slugTouched) ed.slug = slugify(ed.title);
+      break;
+    }
+    case "edSlug": { const ed = state.promptEd; if (!ed) return; ed.slug = (value ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-"); ed.slugTouched = true; break; }
+    case "edResetSlug": { const ed = state.promptEd; if (!ed) return; ed.slug = slugify(ed.title); ed.slugTouched = false; break; }
+    case "edBody": { const ed = state.promptEd; if (!ed) return; ed.body = value ?? ""; break; }
+    case "edSummary": { const ed = state.promptEd; if (!ed) return; ed.summary = value ?? ""; return; }
+    case "edTagDraft": {
+      const ed = state.promptEd; if (!ed) return;
+      const v = value ?? "";
+      if (/[,\s]$/.test(v)) { addEdTag(v); break; }
+      ed.tagDraft = v;
+      return;
+    }
+    case "edTagAdd": if (arg) addEdTag(arg); break;
+    case "edTagRemove": { const ed = state.promptEd; if (!ed || !arg) return; ed.tags = ed.tags.filter((t) => t !== arg); break; }
+    case "edStatus": { const ed = state.promptEd; if (!ed) return; if (arg === "draft" || arg === "staged" || arg === "published") ed.status = arg; break; }
+    case "edCancel": {
+      const base = state.promptEd?.baseSlug;
+      if (base) { state.screen = "prompt"; openPrompt(base); return; }
+      dispatch("goPrompts", null, null);
+      return;
+    }
+    case "edSave": {
+      const ed = state.promptEd;
+      if (!ed || !ed.title.trim() || !ed.body.trim() || !ed.slug) return;
+      savePrompt({ base_slug: ed.baseSlug, slug: ed.slug, title: ed.title.trim(), tags: normalizeTags(ed.tags), body: ed.body, status: ed.status, summary: ed.summary.trim() || undefined })
+        .then((p) => { state.promptEd = null; afterPromptWrite(p.slug, `Saved v${p.version}`); })
+        .catch((e) => writeErr(e, "Couldn't save the prompt"));
+      return;
+    }
+
+    // ── Docs › New doc — stages a version-1 proposal through the gate ─────────
+    case "newDoc": state.screen = "newdoc"; startNewDoc(); return;
+    case "ndField": {
+      if (arg !== "title" && arg !== "body" && arg !== "summary") return;
+      state.nd[arg] = value ?? "";
+      if (arg !== "summary") rerender(); // title / body arm "Stage for review"
+      return;
+    }
+    case "ndSpace": {
+      if (!arg) return;
+      if (arg === state.nd.space) return;
+      state.nd.space = arg;
+      state.nd.section = ""; // back to the new space's default
+      break;
+    }
+    case "ndSection": if (arg) state.nd.section = arg; break;
+    case "ndSubmit": {
+      const d = state.nd;
+      if (!d.title.trim() || !d.body.trim()) return;
+      const section = d.section || defaultSection(ASSIGN_OPTIONS.sections);
+      proposeDoc({ title: d.title.trim(), section, space: d.space, body: d.body, summary: d.summary.trim() || undefined })
+        .then(() => {
+          state.nd = blankDoc(state.docSpace, "");
+          state.screen = "review";
+          loadProposals();
+          loadDraftAdrsIfNeeded();
+          flash(`Staged for review in ${section}`);
+        })
+        .catch((e) => writeErr(e, "Couldn't stage the doc"));
+      return;
+    }
+
+    // ── Maintenance › Unplaced: the list selects; the picks belong to the item on screen ──
+    case "maintSelect":
+      if (!arg) return;
+      state.assignOpen = arg; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = [];
+      state.maintDiscardArm = false;
+      break;
+    case "identityCancel": state.mapConfirm = null; break;
+
     // ── Maintenance (mock-driven until the backend reads land — no writes) ───
     case "maintAssignToggle": {
       if (!arg) return;
@@ -1713,6 +2060,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
     case "maintAssignKind":
       if (arg === "doc" || arg === "adr" || arg === "feed") {
+        state.assignOpen = selectedUnplacedId(state.needsTriage.data.map((r) => ({ id: String(r.id) })), state.assignOpen);
+        state.maintDiscardArm = false;
         state.assignKind = arg;
         state.assignSection = null;
         state.assignSpace = null;
@@ -1756,6 +2105,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (!arg) return;
       const id = Number(arg);
       if (!Number.isInteger(id)) return;
+      if (!state.maintDiscardArm) { state.maintDiscardArm = true; break; } // step 1: arm; the second click discards
+      state.maintDiscardArm = false;
       if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = []; }
       discardTriage(id)
         .then(() => { flash("Discarded — parked, nothing changed"); loadNeedsTriage(); })
@@ -2154,6 +2505,40 @@ mount.addEventListener("paste", (e) => {
   setTimeout(() => { if (looksLikeLinks(f.input.value)) dispatch(f.act, null, null); }, 0);
 });
 
+/** Add a typed tag to the prompt editor's draft (lowercase, a–z 0–9 and "-"). */
+function addEdTag(raw: string): void {
+  const ed = state.promptEd;
+  if (!ed) return;
+  const t = raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+  if (t && !ed.tags.includes(t)) ed.tags = [...ed.tags, t];
+  ed.tagDraft = "";
+}
+
+// ── prompt tag fields: Enter adds, Backspace on an empty draft drops the last, Escape closes ──
+mount.addEventListener("keydown", (e) => {
+  const field = (e.target as HTMLElement | null)?.dataset?.field;
+  if (field === "edTagDraft" && state.promptEd) {
+    if (e.key === "Enter") { e.preventDefault(); addEdTag(state.promptEd.tagDraft); rerender(); }
+    else if (e.key === "Backspace" && !state.promptEd.tagDraft && state.promptEd.tags.length) { state.promptEd.tags = state.promptEd.tags.slice(0, -1); rerender(); }
+    return;
+  }
+  if (field === "promptTagDraft") {
+    if (e.key === "Escape") { state.promptTagMenu = false; state.promptTagDraft = ""; rerender(); return; }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const p = state.promptDetail.data?.prompt;
+    const first = p ? tagOptions(p.tags, state.promptList.data.flatMap((x) => x.tags), state.promptTagDraft)[0] : undefined;
+    if (first) dispatch("promptTagAdd", first.tag, null);
+  }
+});
+// Escape closes the expanded handoff prompt and the library's filter menu.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || state.view !== "app") return;
+  if (state.handoffPromptOpen) { state.handoffPromptOpen = false; rerender(); }
+  else if (state.promptExpanded) { state.promptExpanded = false; rerender(); }
+  else if (state.promptMenu) { state.promptMenu = null; rerender(); }
+});
+
 // ── sidebar: ⌘K / Ctrl+K, the search box, and the collapsed-rail tooltip ──────
 document.addEventListener("keydown", (e) => {
   if (state.view !== "app" || e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
@@ -2266,6 +2651,9 @@ if (params.get("denied") === "1") {
       loadIdentityTasks();
       // The Tickets badge shows on every screen too — unassigned + open, org-wide.
       loadTicketBadge();
+      // Handoffs (pending for me) and the Prompt Library (staged) badges.
+      if (state.handoffs.status === "idle") loadHandoffs();
+      if (state.promptList.status === "idle") loadPrompts();
       // The persons directory backs every colored chip (sidebar, feed, docs,
       // Settings › Profile, Maintenance › People) — load it on every screen too.
       loadPersons();
