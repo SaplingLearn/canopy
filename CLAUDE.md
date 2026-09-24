@@ -317,10 +317,15 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
   `docs/superpowers/specs/2026-09-24-mcp-oauth-design.md`; migration `0029_oauth`): RFC 9728/8414 metadata,
   RFC 7591 registration (public clients, loopback redirects match on any port), authorization code + S256
   PKCE, a server-rendered consent page shown on EVERY authorization (CSRF = HMAC over session + request),
-  access 1 h, refresh rotating with a 60 s reuse interval then grant revocation, 90 days idle. Sign-in from
+  access 1 h; refresh tokens rotate with a 60 s reuse interval — a reuse past that window revokes the
+  whole grant — and a rotated refresh token is kept until its OWN expiry (90 days idle), so a late reuse
+  is still caught. Sign-in from
   an authorize link survives GitHub/Google and onboarding via the sealed `oauth_pending` cookie. Settings ›
   MCP access lists connections (`GET /auth/oauth-grants`, `POST /auth/oauth-grants/:id/revoke` —
-  cookie-only, never MCP). `pruneOAuth` rides the repo cron's `:30` tick; grants are never deleted.
+  cookie-only, never MCP). `pruneOAuth` rides the repo cron's `:30` tick and deletes spent or expired
+  codes, access tokens a day past expiry, refresh tokens past expiry, and client registrations that never
+  got a grant — grants themselves are never deleted. Every OAuth endpoint answers an unexpected error
+  with `503 { error: "temporarily_unavailable" }` (the authorize pages with a 503 error page), never a 500.
 - **GitHub webhook** (`/webhook/github`, `src/webhook.ts`): a delivery authenticates by an HMAC-SHA256
   `X-Hub-Signature-256` over the raw body against `GITHUB_WEBHOOK_SECRET` (NOT `COOKIE_SECRET`). HMAC is
   verified in the branch BEFORE the gate; a bad/absent signature (or unset secret) is a bare `401`. The
