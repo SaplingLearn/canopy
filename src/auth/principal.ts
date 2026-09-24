@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../env";
 import { readSessionCookie, getSessionUser } from "./session";
 import { resolveToken } from "./tokens";
+import { ACCESS_PREFIX, resolveOAuthAccessToken } from "./oauth";
 
 export interface Principal {
   handle: string;
@@ -33,11 +34,16 @@ export async function resolveSessionPrincipal(c: Context<AppEnv>): Promise<Princ
   return handle ? { handle } : null;
 }
 
+/** The /mcp principal. Dispatches on the token prefix: an OAuth access token
+ *  (`canopy_oat_`, obtained through /oauth/*) or a pasted `canopy_mcp_` token — both
+ *  resolve to the same `{ handle }`, so nothing downstream of /mcp can tell them apart. */
 export async function resolveBearerPrincipal(request: Request, env: Env): Promise<Principal | null> {
   const header = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
   if (!match) return null;
-  return resolveToken(env.DB, match[1]);
+  const raw = match[1].trim();
+  if (raw.startsWith(ACCESS_PREFIX)) return resolveOAuthAccessToken(env.DB, raw, Date.now());
+  return resolveToken(env.DB, raw);
 }
 
 /**

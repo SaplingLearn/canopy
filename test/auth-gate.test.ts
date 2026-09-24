@@ -18,7 +18,7 @@ describe("auth gate (fails closed)", () => {
     expect(feed.length).toBe(0); // nothing written
   });
 
-  it("rejects /mcp with a bad bearer using a bare 401 (no WWW-Authenticate, no OAuth advertisement)", async () => {
+  it("rejects /mcp with a bad bearer: 401 pointing at the OAuth metadata, flagged invalid_token", async () => {
     const res = await SELF.fetch("https://example.com/mcp", {
       method: "POST",
       headers: {
@@ -29,6 +29,13 @@ describe("auth gate (fails closed)", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
     });
     expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toBeNull();
+    expect(res.headers.get("WWW-Authenticate")).toBe(
+      `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource", error="invalid_token"`);
+  });
+
+  it("/mcp with no credentials: 401 pointing at the OAuth metadata, not flagged", async () => {
+    const res = await SELF.fetch("https://example.com/mcp", { method: "POST", body: "{}" });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe(`Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"`);
   });
 });
