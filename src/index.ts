@@ -8,6 +8,7 @@ import { REPO_CRON, handleRepoCron } from "./repo/cron";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe";
 import { run } from "./db";
 import { handleArtifactUpload, isUploadRequest } from "./artifacts/upload";
+import { handleArtifactDownload, isDownloadRequest } from "./artifacts/download";
 import type { Env } from "./env";
 
 export default {
@@ -50,6 +51,11 @@ export default {
     // POST /api/artifacts/upload-url IS the auth — no session, so it is dispatched
     // here, before the app and its sessionGate (src/artifacts/upload.ts).
     if (isUploadRequest(request.method, url.pathname)) return handleArtifactUpload(request, env);
+    // Artifact agent download (issue #52 · Track F): the signed, 5-minute URL that
+    // artifact_get mints IS the auth — no session, dispatched here before the app. The
+    // page is re-checked for the token's principal at download time
+    // (src/artifacts/download.ts).
+    if (isDownloadRequest(url.pathname)) return handleArtifactDownload(request, env);
     return app.fetch(request, env, ctx);
   },
 

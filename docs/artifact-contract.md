@@ -48,7 +48,7 @@ starts `Status: <status> · v<n>` so you can tell which.
 An artifact write is a **direct authored write** (like a ticket), not staged knowledge: it takes effect
 immediately and is recorded as you. Nothing marks it agent-made.
 
-## The three MCP tools
+## The four MCP tools
 
 Registered for every principal; the author and viewer is always your bearer's person.
 
@@ -70,10 +70,23 @@ Registered for every principal; the author and viewer is always your bearer's pe
 
 **`artifact_get`** `{ slug, version? }` — `slug` may carry a version (`slug@v3` or `slug/v3`); default
 the latest. Returns the page's metadata, versions and links; for text kinds `content` is that version's
-text, for binary kinds `content` is `null` and `raw_url` is the file.
+text, for binary kinds `content` is `null`. For **every** kind it also returns, for the requested version:
 
-`url` is the page in the Canopy web app (`<origin>/#artifacts/<slug>`); `upload_url` and `raw_url` are
-absolute too. **Every result carries `warnings: string[]`** — non-empty when text content calls into
+- `download_url` — absolute and signed for you: a plain `GET` returns the file (see *Downloading*).
+  `download_expires_at` says when it stops working (5 minutes).
+- `download_filename` — the name the download carries: the uploaded filename, else `<slug>-v<n>.<ext>`.
+- `sha256` (hex) and `size_bytes` — what the downloaded bytes must match. (Top-level `size_bytes` is the
+  REQUESTED version's here; `version.sha256` / `version.size_bytes` say the same.)
+
+**`artifact_list`** `{ q?, kind?, area?, author?, status?, ticket?, sprint?, limit? }` — the pages you can
+see (every `org` page and your own `private` ones; never a not-yet-uploaded page), newest first, with
+the web library's filters: `q` is full text over title / summary / body or a title / slug substring,
+`ticket` / `sprint` an id. `limit` defaults to 25, at most 100 →
+`{ artifacts: [{ slug, title, kind, status, version, updated_at, url, area, author, visibility }], total,
+truncated }`.
+
+`url` is the page in the Canopy web app (`<origin>/#artifacts/<slug>`) — the link to hand a person;
+`upload_url`, `download_url` and `raw_url` are absolute too. **Every result carries `warnings: string[]`** — non-empty when text content calls into
 something only claude.ai provides (`window.claude`, `window.storage`, `api.anthropic.com`). That is a
 warning, never a rejection: the write has already happened, and the page will not work in Canopy's
 viewer until you remove the call.
@@ -112,10 +125,39 @@ curl -X PUT --data-binary @threat-model.pdf -H "Content-Type: application/pdf" "
 - Until the PUT lands, a new page does not exist to anyone — not even in your own `artifact_get`.
 - Re-uploading bytes identical to the latest version writes nothing.
 
+## Downloading (agents)
+
+`artifact_get` hands you a `download_url` for the version you asked for — text and binary alike. Fetch
+it with no header, then check the hash:
+
+```bash
+# artifact_get { "slug": "checkout-mockup" }
+#   → { "download_url": "https://canopy…/api/artifacts/download/<token>", "download_filename": "checkout-mockup-v3.html",
+#       "sha256": "5d8f…", "size_bytes": 4821, "version": { "version_no": 3, … }, … }
+mkdir -p .canopy/artifacts/checkout-mockup
+curl -fsSL "<download_url>" -o .canopy/artifacts/checkout-mockup/v3.html
+shasum -a 256 .canopy/artifacts/checkout-mockup/v3.html      # must equal "sha256"
+# spin an html page up locally:
+python3 -m http.server 8000 --bind 127.0.0.1 --directory .canopy/artifacts/checkout-mockup
+```
+
+- The URL is the credential: **signed for your person, that page and that version, valid 5 minutes, and
+  reusable** within them (a download changes nothing). No cookie or bearer. Treat it like a password
+  while it lives: don't paste it into a commit, a ticket or a chat — share `url` instead.
+- It is **re-checked when you use it**: a page made private (by its author) after the URL was minted is
+  `404 {"error":"not_found"}`, the same answer as a forged or malformed token. An expired one is
+  `410 {"error":"gone"}` — call `artifact_get` again.
+- The body is the **exact stored bytes** (no viewer script injected), served as an attachment with the
+  stored content type, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` and
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; sandbox` — nothing it serves can
+  run in Canopy's origin. `HEAD` works too.
+- The default place for a pulled artifact is `.canopy/artifacts/<slug>/v<n>.<ext>` (the `artifacts`
+  skill); keep `.canopy/` in `.gitignore`.
+
 ## The raw route
 
 `GET /raw/a/<slug>` (latest), `/raw/a/<slug>@v<n>` or `/raw/a/<slug>/v<n>` serves the bytes with
 locked-down headers (a sandboxing CSP, `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`,
 `Cache-Control: private`). `?download=1` forces an attachment named `<slug>-v<n>.<ext>`. It is
-**session-cookie only**: it opens in a signed-in browser, not with an MCP bearer — an agent reads text
-content through `artifact_get` instead.
+**session-cookie only** — it is what the web viewer frames and what `raw_url` points a signed-in browser
+at. It does not take an MCP bearer; an agent uses `download_url` (above).

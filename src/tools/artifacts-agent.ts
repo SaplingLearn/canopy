@@ -23,8 +23,9 @@
 
 import type { DB } from "../db";
 import {
-  ArtifactError, addLink, addTextVersion, createPage, getPage, listPages, mintUploadToken, writablePageKind,
+  ArtifactError, addLink, addTextVersion, createPage, getPage, listPages, mintUploadToken, versionFilename, writablePageKind,
 } from "./artifacts";
+import { downloadFilename, mintDownloadToken } from "../artifacts/download";
 import {
   claudeOnlyHits, isBinaryKind, isTextKind, parseSlugVersion,
   type ArtifactArea, type ArtifactDetailDTO, type ArtifactKind, type ArtifactLinkInput, type ArtifactLinkType,
@@ -37,6 +38,8 @@ export interface ArtifactAgentCtx {
   handle: string;
   /** Absolute origin for links (`env.PUBLIC_ORIGIN`, else the request's), no trailing slash. "" → relative. */
   origin: string;
+  /** COOKIE_SECRET — the root the download-URL key is DERIVED from (src/artifacts/download.ts). Absent → no download_url. */
+  downloadSecret?: string;
 }
 
 /** `PUBLIC_ORIGIN` wins; else the request's own origin; else "" (relative links). */
@@ -155,9 +158,25 @@ export async function agentArtifactUpdate(ctx: ArtifactAgentCtx, input: AgentUpd
 
 // ── artifact_get ─────────────────────────────────────────────────────────────
 
-export type AgentGetResult = ArtifactDetailDTO & { url: string; warnings: string[] };
+export type AgentGetResult = ArtifactDetailDTO & {
+  url: string;
+  warnings: string[];
+  /** Absolute, signed, reusable for 5 minutes: a plain GET (no header) returns the exact stored bytes of THIS version. */
+  download_url: string | null;
+  download_expires_at: string | null;
+  /** The name the download's Content-Disposition carries: the stored filename, else `<slug>-v<n>.<ext>`. */
+  download_filename: string;
+  /** SHA-256 (hex) of THIS version's bytes — what the download must hash to. */
+  sha256: string;
+};
 
-/** `slug`, `slug@v3` or `slug/v3`; an explicit `version` must agree with an embedded one. */
+/**
+ * `slug`, `slug@v3` or `slug/v3`; an explicit `version` must agree with an embedded one.
+ * Adds (Track F) a signed `download_url` for EVERY kind, and the requested version's
+ * `sha256` + `size_bytes` at the top level so the agent can verify what it downloaded.
+ * NOTE: top-level `size_bytes` is the REQUESTED version's here (the library DTO's is the
+ * latest's) — identical unless an older version was asked for.
+ */
 export async function agentArtifactGet(ctx: ArtifactAgentCtx, input: { slug: string; version?: number }): Promise<AgentGetResult> {
   const parsed = parseSlugVersion(String(input.slug ?? "").trim());
   if (!parsed) throw new ArtifactError("not_found", "not_found");
@@ -165,7 +184,72 @@ export async function agentArtifactGet(ctx: ArtifactAgentCtx, input: { slug: str
     throw bad(`the slug names v${parsed.version} but version is ${input.version}`);
   }
   const d = await getPage(ctx.db, parsed.slug, input.version ?? parsed.version, ctx.handle);
-  return { ...d, raw_url: absolute(ctx, d.raw_url), url: pageUrl(ctx, d.slug), warnings: artifactWarnings(d.content) };
+  const v = d.version;
+  const filename = await versionFilename(ctx.db, d.id, v.version_no);
+  const dl = ctx.downloadSecret
+    ? await mintDownloadToken(ctx.downloadSecret, { handle: ctx.handle, page_id: d.id, version_no: v.version_no })
+    : null;
+  return {
+    ...d,
+    size_bytes: v.size_bytes,
+    sha256: v.sha256,
+    raw_url: absolute(ctx, d.raw_url),
+    url: pageUrl(ctx, d.slug),
+    download_url: dl ? absolute(ctx, `/api/artifacts/download/${dl.token}`) : null,
+    download_expires_at: dl ? dl.expires_at : null,
+    download_filename: downloadFilename({ slug: d.slug, version_no: v.version_no, kind: d.kind, content_type: v.content_type, filename }),
+    warnings: artifactWarnings(d.content),
+  };
+}
+
+// ── artifact_list ────────────────────────────────────────────────────────────
+
+export interface AgentListInput {
+  q?: string;
+  kind?: string;
+  area?: string;
+  author?: string;
+  status?: string;
+  ticket?: string | number;
+  sprint?: string | number;
+  limit?: number;
+}
+
+export interface AgentListItem {
+  slug: string;
+  title: string;
+  kind: ArtifactKind;
+  status: ArtifactStatus;
+  version: number;
+  updated_at: string;
+  url: string;
+  area: string;
+  author: string;
+  visibility: ArtifactVisibility;
+}
+
+export const ARTIFACT_LIST_DEFAULT = 25;
+export const ARTIFACT_LIST_MAX = 100;
+
+/**
+ * The pages `ctx.handle` can see, newest first — the repository's `listPages` (the SAME
+ * filters and visibility rule as the web library), cut to `limit`. `total` is the full
+ * count, `truncated` whether anything was cut. (Track F, 2026-09-24.)
+ */
+export async function agentArtifactList(
+  ctx: ArtifactAgentCtx, input: AgentListInput = {}
+): Promise<{ artifacts: AgentListItem[]; total: number; truncated: boolean }> {
+  const str = (x: string | number | undefined): string | undefined => (x === undefined ? undefined : String(x));
+  const pages = await listPages(ctx.db, {
+    q: input.q, kind: input.kind, area: input.area, author: input.author, status: input.status,
+    ticket: str(input.ticket), sprint: str(input.sprint),
+  }, ctx.handle);
+  const limit = Math.min(Math.max(1, Math.trunc(input.limit ?? ARTIFACT_LIST_DEFAULT)), ARTIFACT_LIST_MAX);
+  const artifacts = pages.slice(0, limit).map((p) => ({
+    slug: p.slug, title: p.title, kind: p.kind, status: p.status, version: p.current_version, updated_at: p.updated_at,
+    url: pageUrl(ctx, p.slug), area: p.area, author: p.author_id, visibility: p.visibility,
+  }));
+  return { artifacts, total: pages.length, truncated: pages.length > limit };
 }
 
 // ── reads other tools borrow ─────────────────────────────────────────────────
