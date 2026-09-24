@@ -1513,6 +1513,21 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       mount.querySelector<HTMLElement>('[role="dialog"] [data-act="signIn"]')?.focus();
       return;
     case "closeSignIn": state.signInOpen = false; break;
+    // The landing's "Get started": signed in, straight to the guide; signed out, the
+    // guide becomes the sign-in return-to (replaceState: no hashchange, no route) and
+    // the Sign in dialog opens.
+    case "siteGuide":
+      if (state.me) {
+        state.siteReturn = null;
+        const guide = parseHash("#guide");
+        applyRoute(guide);
+        loadForScreen(guide.screen);
+        window.scrollTo(0, 0);
+        return;
+      }
+      history.replaceState(null, "", "/#guide");
+      dispatch("openSignIn", null, null);
+      return;
     case "siteJump": {
       const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
       if (arg === "top") window.scrollTo({ top: 0, behavior });
