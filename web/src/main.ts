@@ -1801,11 +1801,10 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Tickets: the detail screen ───────────────────────────────────────────
-    // The status control: the pill opens its menu, a row sets the status. Two
-    // anchors (the header and the rail's STATUS row) share one flag, so opening
-    // either closes the other — and closes the assignee/sprint/relation menus.
+    // The status control (the rail's STATUS row): the pill opens its menu, a row
+    // sets the status. Opening it closes the assignee/sprint/relation menus.
     case "ticketStatusMenu":
-      state.stMenu = state.stMenu === arg ? null : (arg === "rail" ? "rail" : "header");
+      state.stMenu = state.stMenu ? null : "rail";
       state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null;
       break;
     case "ticketStatus": {
