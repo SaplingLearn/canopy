@@ -30,7 +30,7 @@ import {
   agentArtifactCreate, agentArtifactUpdate, agentArtifactGet, artifactsForTicket, artifactOrigin,
 } from "./tools/artifacts-agent";
 import {
-  ARTIFACT_AREAS, ARTIFACT_BINARY_CAP, ARTIFACT_KINDS, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
+  ARTIFACT_AREAS, ARTIFACT_KINDS, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
   ArtifactLinkInputSchema,
 } from "@shared/artifacts";
 import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
@@ -358,7 +358,8 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
     visibility: z.enum(ARTIFACT_VISIBILITIES),
   };
   const binaryShape = {
-    size_bytes: z.number().int().min(1).max(ARTIFACT_BINARY_CAP).optional(),
+    // No .max: over the cap is the repository's too_large, not an input-validation error (Track E).
+    size_bytes: z.number().int().min(1).optional(),
     sha256: z.string().optional(),
     content_type: z.string().max(255).optional(),
     filename: z.string().max(255).optional(),
