@@ -4,6 +4,7 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
+import { openLightbox, closeLightbox } from "./lightbox";
 import {
   render, initialState, firstDocForSpace, docReaderHtml, connectSnippet, CONNECT_CLIENTS,
   type AppState, type Screen, type ConnectClient,
@@ -266,6 +267,7 @@ function rerender(): void {
 
 // Back/forward or a manually edited hash → switch screens.
 window.addEventListener("hashchange", () => {
+  closeLightbox(); // Back/Forward under an open figure: it belongs to the old route
   if (state.view !== "app") return;
   const r = parseHash(location.hash);
   const cur = currentRoute();
@@ -2129,6 +2131,18 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       const top = target.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop - 24;
       const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
       pane.scrollTo({ top: Math.max(0, top), behavior });
+      return;
+    }
+
+    // A guide figure, expanded: title = its caption's bold lead, caption = the rest.
+    case "guideZoom": {
+      const btn = arg ? mount.querySelector<HTMLElement>(`[data-act="guideZoom"][data-arg="${cssEscape(arg)}"]`) : null;
+      const img = btn?.querySelector("img");
+      if (!btn || !img) return;
+      const cap = btn.closest("figure")?.querySelector("figcaption");
+      const title = cap?.querySelector("strong")?.textContent?.trim() || "Screenshot";
+      const rest = cap ? cap.innerHTML.replace(/^\s*<strong[^>]*>[\s\S]*?<\/strong>\s*:?\s*/, "") : "";
+      openLightbox({ src: img.getAttribute("src") ?? "", alt: cap?.textContent?.trim() ?? title, title, captionHtml: rest });
       return;
     }
 

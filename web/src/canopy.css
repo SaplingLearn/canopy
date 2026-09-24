@@ -192,6 +192,42 @@ input, select { font-family: inherit; }
 .cnpy-guide-toc-subs { display:flex; flex-direction:column; gap:1px; margin:1px 0 4px; }
 .cnpy-guide-anchor { scroll-margin-top:24px; }
 @media (max-width: 1180px) { .cnpy-guide-toc { display:none; } }
+/* Guide figures open in the lightbox (web/src/lightbox.ts). The thumbnail lifts on
+   hover like Sapling's .cp-shot. */
+.cnpy-guide-shot { display:block; width:100%; padding:0; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--bg); cursor:zoom-in; transition:border-color .22s, box-shadow .22s, transform .22s; }
+.cnpy-guide-shot img { display:block; width:100%; height:auto; }
+.cnpy-guide-shot:hover { border-color:var(--border-strong); box-shadow:var(--shadow); transform:translateY(-2px); }
+.cnpy-guide-shot:active { transform:translateY(-1px); transition-duration:90ms; }
+.cnpy-guide-shot:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+
+/* Lightbox (ported from Sapling's companion Lightbox). Mounted on <body> with the
+   app's data-cnpy-theme, so the tokens and the corners layer below apply to it.
+   Keyframes, not a transition: the node is inserted at its final state, so only an
+   animation that runs on insertion can play the entrance. */
+@keyframes cnpy-lb-in { from { opacity:0; } to { opacity:1; } }
+@keyframes cnpy-lb-panel-in { from { opacity:0; transform:scale(.965) translateY(8px); } to { opacity:1; transform:none; } }
+@keyframes cnpy-lb-out { from { opacity:1; } to { opacity:0; } }
+@keyframes cnpy-lb-panel-out { from { opacity:1; transform:none; } to { opacity:0; transform:scale(.975) translateY(6px); } }
+.cnpy-lightbox { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:clamp(16px, 4vw, 48px); background:rgba(12,11,9,.66); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); font-family:'Geist',system-ui,-apple-system,sans-serif; -webkit-font-smoothing:antialiased; animation:cnpy-lb-in .2s ease both; }
+/* The panel is as wide as the SMALLER of the width and height budgets allow, so the
+   frame is always exactly 16:10 (every capture is 2560×1600): a max-height on the
+   frame alone clamps its height while its width stays 100%, stretching the box. */
+.cnpy-lightbox-panel { position:relative; width:min(1400px, 100%, calc((100vh - 170px) * 1.6)); max-height:100%; display:flex; flex-direction:column; gap:14px; outline:none; animation:cnpy-lb-panel-in .28s cubic-bezier(.22,1,.36,1) both; }
+.cnpy-lightbox-frame { position:relative; width:100%; aspect-ratio:16 / 10; border-radius:14px; overflow:hidden; background:var(--bg); border:1px solid var(--border-strong); box-shadow:0 30px 80px -30px rgba(0,0,0,.7); }
+.cnpy-lightbox-frame img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+.cnpy-lightbox-cap { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+.cnpy-lightbox-eyebrow { font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(250,248,243,.62); }
+.cnpy-lightbox-title { font-size:15px; font-weight:600; letter-spacing:-.01em; color:#faf8f3; }
+.cnpy-lightbox-text { flex-basis:100%; font-size:13.5px; line-height:1.6; color:rgba(250,248,243,.72); }
+.cnpy-lightbox-text strong { color:#faf8f3 !important; }
+.cnpy-lightbox-close { position:absolute; top:12px; right:12px; width:32px; height:32px; display:grid; place-items:center; padding:0; border-radius:50%; border:1px solid rgba(250,248,243,.22); background:rgba(12,11,9,.55); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); color:#faf8f3; cursor:pointer; transition:background .18s, border-color .18s; }
+.cnpy-lightbox-close:hover { background:rgba(12,11,9,.8); border-color:rgba(250,248,243,.45); }
+.cnpy-lightbox-close:focus-visible { outline:2px solid #faf8f3; outline-offset:2px; }
+/* AFTER the entrance rules: mid-exit the element carries both classes at equal
+   specificity, so source order decides which animation wins. */
+.cnpy-lightbox--closing { animation:cnpy-lb-out .17s ease both; }
+.cnpy-lightbox--closing .cnpy-lightbox-panel { animation:cnpy-lb-panel-out .17s ease both; }
+@media (prefers-reduced-motion: reduce) { .cnpy-lightbox, .cnpy-lightbox-panel, .cnpy-guide-shot { animation:none !important; transition:none !important; transform:none !important; } }
 
 /* ── hover / focus utility layer (reproduces dc-runtime style-* pseudo-props) ─ */
 .cnpy-select { appearance:none; -webkit-appearance:none; padding:5px 28px 5px 11px; border-radius:7px; font-size:12.5px; font-weight:500; border:1px solid var(--border); color:var(--fg-70); cursor:pointer; background:var(--bg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23888' stroke-width='2'><path d='M2 4l4 4 4-4'/></svg>") no-repeat right 9px center; }
@@ -711,6 +747,9 @@ input, select { font-family: inherit; }
 [data-cnpy-theme] .cnpy-outline-item,
 [data-cnpy-theme] .cnpy-grouplink { border-radius:calc(6px * var(--corner-scale)) !important; }
 [data-cnpy-theme] .cnpy-guide-toc-sec { border-radius:calc(7px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-guide-shot { border-radius:calc(12px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-lightbox-frame { border-radius:calc(14px * var(--corner-scale)) !important; }
+[data-cnpy-theme] .cnpy-lightbox-close { border-radius:min(calc(12px * var(--corner-scale)), 25%) !important; }
 [data-cnpy-theme] .cnpy-logo-b,
 [data-cnpy-theme] .cnpy-collapse .cnpy-navrow,
 [data-cnpy-theme] .cnpy-collapse .cnpy-nav-i,

@@ -1256,8 +1256,12 @@ function guideView(s: AppState): string {
   const gCode = (t: string) => `<code style="font-family:var(--mono);font-size:13px">${t}</code>`;
   // width/height reserve each figure's box (every capture is 2560×1600) so a lazy
   // image loading mid-jump can't push the table-of-contents target down the page.
+  // Each figure is a button that opens it in the lightbox (web/src/lightbox.ts),
+  // titled and captioned from its own figcaption.
   const gFig = (name: string, cap: string) => `<figure style="margin:18px 0 4px">
-      <img src="/guide/${name}-${th}.png" alt="" loading="lazy" width="2560" height="1600" style="display:block;width:100%;height:auto;border:1px solid var(--border);border-radius:12px" />
+      <button data-act="guideZoom" data-arg="${name}" class="cnpy-guide-shot" aria-label="Expand screenshot">
+        <img src="/guide/${name}-${th}.png" alt="" loading="lazy" width="2560" height="1600" />
+      </button>
       <figcaption style="font-size:12px;color:var(--fg-40);margin-top:8px">${cap}</figcaption>
     </figure>`;
   // The table of contents is built from the headings as they render, so it can
