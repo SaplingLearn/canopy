@@ -6,7 +6,8 @@ Status: in build (2026-09-24). Feature branch: `feat/artifacts-ui`. One PR per t
 
 1. **The prototype** — Claude Design project `94e33d41-7fba-4268-9696-d5d247bd5158`, file
    `Canopy Artifacts.dc.html` (+ `artifacts-data.js`). A decoded copy is committed at
-   `docs/superpowers/specs/artifacts-prototype/` (read it there; the sample data module is transcribed in `web/src/artifacts-sample.ts`).
+   `docs/superpowers/specs/artifacts-prototype/` (read it there; the sample data module was transcribed in `web/src/artifacts-sample.ts`,
+   deleted by Track D once the screens read the API).
    Every screen, state, label and rule in it is decided. **UI disagreement → the prototype wins.**
 2. **The issue prompt** (this doc restates it). **Security or data disagreement → this doc wins.**
    The prototype covers text kinds only; this doc adds `image`, `pdf`, `file`.
@@ -265,3 +266,18 @@ Decisions taken beyond this doc:
 - 2026-09-23 · **Tests**: `test/artifacts.http.test.ts` (62). The "fixed-length pipe ended prematurely" /
   "client disconnected" lines in the vitest output come from R2 aborting a refused short-body put (Track A's
   tests print the same); they do not fail the run.
+- **2026-09-23 · Track D → B/A: `ArtifactVersionDTO` has no `filename`.** The SPA's file card and
+  Download name use `<slug>-v<n>.<ext>` (ext from the text kind, or from `content_type` for
+  png/jpg/gif/webp/pdf, else `bin`). If B/A add an optional `filename?: string | null` to the
+  version DTO (the upload already stores one), the SPA picks it up with no change — it reads it
+  defensively (`artFileName` in `web/src/artifacts.ts`). `shared/artifacts-core.ts` is unchanged.
+- **2026-09-23 · Track D assumptions about Track B's routes** (code against these, or tell D):
+  every 404 is `NotFound` (the not-found page); `POST /api/artifacts` returns the detail DTO (the
+  SPA navigates to its `slug`); the SPA ignores the bodies of `PATCH`, `…/ratify` and `…/links`
+  and re-reads the detail after each; multipart create is `file` + `title, kind, area, repo,
+  visibility, summary` as plain fields, multipart version is `file` + `summary`; an error body's
+  `message` (else `error`) is shown in the toast. Links chosen on the create form are posted one
+  by one after the create (`sprint` refs are sprint ids resolved from the label; `pr` / `issue`
+  refs are `owner/repo#n` from a GitHub URL or a bare `#n`). Thumbnails load
+  `/raw/a/<slug>@v<current_version>` (not the bare slug) so a cached thumbnail can never be a
+  stale version.

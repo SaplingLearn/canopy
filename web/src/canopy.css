@@ -619,6 +619,11 @@ input, select { font-family: inherit; }
 @media (max-width:1150px) { .art-b-props, .art-b-links { grid-column:span 6; } }
 @media (max-width:860px) { .art-b-props, .art-b-links { grid-column:1 / -1; } }
 @media (prefers-reduced-motion: reduce) { .art-fopt { animation:none; } }
+/* An inlined (sanitized) SVG and a rendered mermaid diagram fit the viewer's width. */
+.art-svg svg, .art-mermaid svg { max-width:100%; height:auto; }
+/* A framed HTML artifact's box follows the page's reported height. */
+.art-frame { transition:height .18s ease; }
+@media (prefers-reduced-motion: reduce) { .art-frame { transition:none; } }
 
 /* ── corners: tightened ──────────────────────────────────────────────────────
    Canopy's corners are TIGHTER than the design file's: every radius is shrunk by one

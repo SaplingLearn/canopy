@@ -97,6 +97,12 @@ describe("hashForRoute", () => {
       expect(parseHash(junk).screen, junk).toBe("mywork");
     }
     expect(hashForRoute({ screen: "artifact", ...base })).toBe("#artifacts");
+    // The raw route's `slug@v<n>` spelling is accepted; `/v<n>` is what gets written back.
+    expect(parseHash("#artifacts/auth-audit@v2")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: 2, diff: null } });
+    expect(hashForRoute(parseHash("#artifacts/auth-audit@v2"))).toBe("#artifacts/auth-audit/v2");
+    for (const junk of ["#artifacts/auth-audit@v0", "#artifacts/auth-audit@2", "#artifacts/new@v1", "#artifacts/x@v2/diff/1..2"]) {
+      expect(parseHash(junk).screen, junk).toBe("mywork");
+    }
   });
 
   it("degrades to the parent screen when the id is missing", () => {

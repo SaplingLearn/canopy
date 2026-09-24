@@ -46,7 +46,7 @@ export type Screen =
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
   | "repo"
   // Artifacts (Knowledge › Artifacts): the library, the new-artifact form, and one
-  // artifact (its viewer, or its version diff). UI only — sample data (artifacts.ts).
+  // artifact (its viewer, or its version diff), over /api/artifacts (artifacts.ts).
   | "artifacts" | "artifactnew" | "artifact";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
@@ -216,10 +216,10 @@ export interface AppState {
   nsDue: string;
   nsLead: string | null;
   nsDom: SprintDomain | null;
-  // ── Artifacts (UI only; artifacts.ts) ────────────────────────────────────
+  // ── Artifacts (artifacts.ts) ─────────────────────────────────────────────
   /** The artifact the `artifact` screen shows (slug, version, diff pair). */
   artRoute: ArtRoute;
-  /** Library filters, menus, dialogs, the create form, and the session's sample copy. */
+  /** The artifact reads (list, details, diffs, per-ticket), library filters, menus, dialogs, the create form. */
   art: ArtUi;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
@@ -1843,7 +1843,7 @@ function ticketDetailScreen(s: AppState): string {
     relMenu: s.relMenu,
     lkMenu: s.lkMenu,
     stMenu: s.stMenu,
-    artifactsBlock: ticketArtifactsBlock(),
+    artifactsBlock: ticketArtifactsBlock(s.art.ticketArts[slice.data.id]),
   });
 }
 
@@ -1893,6 +1893,10 @@ function artProps(s: AppState, screen: ArtScreen): ArtProps {
   return {
     screen, route: s.artRoute, ui: s.art, me: s.me?.handle ?? "",
     persons: s.persons.data, host: typeof location !== "undefined" ? location.host : "canopy",
+    theme: resolved(s),
+    // Every ticket (the attach dialog's own read); the queue's filtered list until it lands.
+    tickets: s.art.attachTickets.data ?? s.tickets.data.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    sprints: s.sprints.data.map((x) => ({ id: x.id, label: x.label, dates: x.dates, active: x.active })),
   };
 }
 const isArtScreen = (screen: Screen): screen is ArtScreen => screen === "artifacts" || screen === "artifactnew" || screen === "artifact";

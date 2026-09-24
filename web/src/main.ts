@@ -23,6 +23,7 @@ import {
   addTicketLink, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
   getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
+  listArtifacts, getArtifact, getArtifactDiff, createArtifact, patchArtifact, ratifyArtifact, addArtifactLink, fetchArtifactUrl,
   Unauthorized, NotFound, ApiError,
 } from "./api";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
@@ -42,7 +43,11 @@ import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
 import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
-import { artifactsAct, artAcceptFile, fitArtifactFrames, ART_ROUTE_NONE, type ArtScreen, type ArtEffect } from "./artifacts";
+import {
+  artifactsAct, artAcceptFile, renderPendingMermaid, setArtFrameHeight, detailKey, diffKey, initialArtCreate, ART_ROUTE_NONE,
+  type ArtScreen, type ArtEffect, type ArtWrite, type ArtRoute,
+} from "./artifacts";
+import { kindForFilename, isBinaryKind } from "@shared/artifacts-core";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -101,7 +106,14 @@ function screenSettled(): boolean {
     case "ticketdetail": return ok(state.ticketDetail);
     case "sprint": return ok(state.sprintDetail);
     case "repo": return state.repo.data !== null || state.repo.status === "error";
-    case "artifacts": case "artifactnew": case "artifact": return state.art.items !== null;
+    // A background refresh (after a write) keeps its data, so it never replays the entrance.
+    case "artifacts": return state.art.list.data !== null || ok(state.art.list);
+    case "artifactnew": return true;
+    case "artifact": {
+      const r = state.artRoute;
+      const d = r.slug ? state.art.details[detailKey(r.slug, r.diff ? null : r.v)] : undefined;
+      return !!d && (d.data !== null || d.status === "ok" || d.status === "error" || d.status === "missing");
+    }
     default: return true; // search re-queries per keystroke; the rest load nothing
   }
 }
@@ -215,7 +227,7 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
-  fitArtifactFrames(mount);
+  renderPendingMermaid(mount);
   // Reflect the current route in the URL hash so a reload restores it. The ticket
   // and sprint screens carry an id, so this is hashForRoute, not `#${screen}`.
   if (state.view === "app") {
@@ -806,6 +818,7 @@ function loadTicketDetail(id: number): void {
   // Keep the current ticket on screen while it refreshes; clear it when opening a different one.
   const keep = state.ticketDetail.data?.id === id ? state.ticketDetail.data : null;
   state.ticketDetail = { status: "loading", data: keep };
+  loadTicketArtifacts(id);            // the Artifacts block under Linked work
   rerender();
   getTicket(id)
     .then((t) => { if (seq !== ticketDetailSeq) return; state.ticketDetail = { status: "ok", data: t }; rerender(); })
@@ -947,58 +960,243 @@ function refreshMe(): void {
   getMe().then((me) => { state.me = me; state.displayName = me.name ?? me.handle; rerender(); }).catch(() => undefined);
 }
 
-// ── Artifacts (UI only: the sample set, artifacts-sample.ts) ─────────────────
-/** The sample set is a dynamic import (kept out of the main bundle); the session
- *  keeps ONE copy, so publish / ratify / upload edits survive switching screens. */
-function loadArtifactsIfNeeded(): void {
-  if (state.art.items === null) {
-    import("./artifacts-sample").then((m) => {
-      if (state.art.items === null) { state.art.items = m.sampleArtifacts(); state.art.ref = m.sampleRefs(); }
+// ── Artifacts (/api/artifacts; the screens are artifacts.ts) ─────────────────
+// Each read is its own slice: the library list (loaded unfiltered — the filter
+// popover counts every option), one detail per `slug@v`, one diff per pair, the
+// artifacts linked to a ticket, and every ticket for the attach dialog (the queue's
+// `state.tickets` follows the queue's filter, so it can't back that list). A
+// refresh keeps the slice's data on screen; only a first load shows "Loading…".
+const artSeq = new Map<string, number>();
+const nextArtSeq = (k: string): number => { const n = (artSeq.get(k) ?? 0) + 1; artSeq.set(k, n); return n; };
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+function loadArtifactList(force = false): void {
+  const cur = state.art.list;
+  if (!force && (cur.status === "ok" || cur.status === "loading")) return;
+  const seq = nextArtSeq("list");
+  state.art.list = { status: "loading", data: cur.data };
+  listArtifacts()
+    .then((rows) => { if (seq !== artSeq.get("list")) return; state.art.list = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get("list")) return;
+      state.art.list = { status: "error", data: state.art.list.data, error: errMsg(e) };
       rerender();
-    }).catch(() => undefined);
+    });
+}
+function loadArtifactDetail(slug: string, v: number | null, force = false): void {
+  const key = detailKey(slug, v);
+  const cur = state.art.details[key];
+  if (!force && cur && cur.status !== "idle" && cur.status !== "error") return;
+  const seq = nextArtSeq(`d:${key}`);
+  state.art.details[key] = { status: "loading", data: cur?.data ?? null };
+  getArtifact(slug, v)
+    .then((d) => { if (seq !== artSeq.get(`d:${key}`)) return; state.art.details[key] = { status: "ok", data: d }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`d:${key}`)) return;
+      state.art.details[key] = e instanceof NotFound ? { status: "missing", data: null } : { status: "error", data: null, error: errMsg(e) };
+      rerender();
+    });
+}
+function loadArtifactDiff(slug: string, a: number, b: number, force = false): void {
+  const key = diffKey(slug, a, b);
+  const cur = state.art.diffs[key];
+  if (!force && cur && cur.status !== "idle" && cur.status !== "error") return;
+  const seq = nextArtSeq(`x:${key}`);
+  state.art.diffs[key] = { status: "loading", data: cur?.data ?? null };
+  getArtifactDiff(slug, a, b)
+    .then((d) => { if (seq !== artSeq.get(`x:${key}`)) return; state.art.diffs[key] = { status: "ok", data: d }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`x:${key}`)) return;
+      state.art.diffs[key] = { status: e instanceof NotFound ? "missing" : "error", data: null, error: errMsg(e) };
+      rerender();
+    });
+}
+/** The ticket detail's Artifacts block: `GET /api/artifacts?ticket=<id>`. */
+function loadTicketArtifacts(id: number): void {
+  const seq = nextArtSeq(`t:${id}`);
+  const cur = state.art.ticketArts[id];
+  state.art.ticketArts[id] = { status: "loading", data: cur?.data ?? null };
+  listArtifacts({ ticket: id })
+    .then((rows) => { if (seq !== artSeq.get(`t:${id}`)) return; state.art.ticketArts[id] = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`t:${id}`)) return;
+      state.art.ticketArts[id] = { status: "error", data: state.art.ticketArts[id]?.data ?? null, error: errMsg(e) };
+      rerender();
+    });
+}
+/** Every ticket (seg=all) — the attach dialog's list and the library's ticket search. */
+function loadAttachTickets(): void {
+  const cur = state.art.attachTickets;
+  if (cur.status === "ok" || cur.status === "loading") return;
+  const seq = nextArtSeq("tix");
+  state.art.attachTickets = { status: "loading", data: cur.data };
+  listTickets({ seg: "all" })
+    .then((rows) => {
+      if (seq !== artSeq.get("tix")) return;
+      state.art.attachTickets = { status: "ok", data: rows.map((t) => ({ id: t.id, title: t.title, status: t.status })) };
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get("tix")) return;
+      state.art.attachTickets = { status: "error", data: state.art.attachTickets.data, error: errMsg(e) };
+      rerender();
+    });
+}
+/** Load what the current Artifacts screen reads. `fresh` refetches (keeping what is
+ *  on screen) — used on navigation and after a write; a plain rerender never refetches. */
+function loadArtifactsIfNeeded(fresh = false): void {
+  const r = state.artRoute;
+  if (state.screen === "artifacts") { loadArtifactList(fresh); loadSprintsIfNeeded(); loadAttachTickets(); }
+  else if (state.screen === "artifactnew") loadSprintsIfNeeded();
+  else if (state.screen === "artifact" && r.slug) {
+    loadSprintsIfNeeded();
+    loadAttachTickets();
+    if (r.diff) {
+      loadArtifactDetail(r.slug, null, fresh);
+      if (r.diff.a !== r.diff.b) loadArtifactDiff(r.slug, r.diff.a, r.diff.b, fresh);
+    } else loadArtifactDetail(r.slug, r.v, fresh);
   }
   rerender();
 }
-function goArt(screen: ArtScreen, route = ART_ROUTE_NONE): void {
+function goArt(screen: ArtScreen, route: ArtRoute = ART_ROUTE_NONE): void {
   state.screen = screen;
   state.artRoute = route;
   state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false; state.art.filterOpen = false;
-  loadArtifactsIfNeeded();
+  loadArtifactsIfNeeded(true);
   document.getElementById("cnpy-main")?.scrollTo(0, 0);
+}
+/** After a write to `slug`: drop its other cached versions and diffs, refetch what
+ *  is on screen (keeping it visible), and let the list / ticket blocks reload. */
+function refreshArt(slug: string): void {
+  const r = state.artRoute;
+  const keep = r.slug === slug ? detailKey(slug, r.diff ? null : r.v) : null;
+  for (const k of Object.keys(state.art.details)) if (k.startsWith(`${slug}@`) && k !== keep) delete state.art.details[k];
+  for (const k of Object.keys(state.art.diffs)) if (k.startsWith(`${slug}:`)) delete state.art.diffs[k];
+  state.art.ticketArts = {};
+  if (state.art.list.status !== "idle") loadArtifactList(true);
+  if (state.screen === "artifact" && r.slug === slug) loadArtifactsIfNeeded(true);
+  else rerender();
+}
+function runArtWrite(w: ArtWrite): void {
+  const c = state.art.c;
+  if (w.op === "fetchUrl") {
+    fetchArtifactUrl(w.url)
+      .then((dto) => {
+        c.fetching = false;
+        if (c.url.trim() !== w.url) { rerender(); return; } // the URL changed while fetching
+        c.urlFetched = { text: dto.content };
+        if (dto.kind) c.kind = dto.kind;
+        rerender();
+      })
+      .catch((e) => {
+        if (e instanceof Unauthorized) { unauth(e); return; }
+        c.fetching = false;
+        c.urlErr = e instanceof ApiError ? `Couldn't fetch that page (${e.message}).` : "Couldn't fetch that page.";
+        rerender();
+      });
+    rerender();
+    return;
+  }
+  if (w.op === "create") {
+    const body = w.file ? { file: w.file, filename: w.filename ?? "upload" } : { content: w.content ?? "" };
+    createArtifact(w.fields, body)
+      .then(async (d) => {
+        // Links are posted one by one after the page exists; a refused one is named, never fatal.
+        let failed = 0;
+        for (const l of w.links) {
+          try { await addArtifactLink(d.slug, l.target_type, l.target_ref); } catch (e) { if (e instanceof Unauthorized) throw e; failed++; }
+        }
+        state.art.c = { ...initialArtCreate(), repo: c.repo, area: c.area, vis: c.vis };
+        state.art.ticketArts = {};
+        if (state.art.list.status !== "idle") state.art.list = { status: "idle", data: state.art.list.data };
+        goArt("artifact", { slug: d.slug, v: null, diff: null });
+        flash(failed ? `Uploaded v1 · ${failed} link${failed === 1 ? "" : "s"} couldn't be added` : "Uploaded v1");
+      })
+      .catch((e) => {
+        if (e instanceof Unauthorized) { unauth(e); return; }
+        state.art.c.submitting = false;
+        flash(e instanceof ApiError ? `Upload failed: ${e.message}` : "Upload failed");
+      });
+    rerender();
+    return;
+  }
+  state.art.busy = true;
+  rerender();
+  const req = w.op === "patch" ? patchArtifact(w.slug, w.body)
+    : w.op === "ratify" ? ratifyArtifact(w.slug, w.version)
+      : addArtifactLink(w.slug, w.target_type, w.target_ref);
+  req
+    .then(() => {
+      state.art.busy = false;
+      if (w.op === "ratify") state.art.ratifyOpen = false;
+      if (w.op === "link") { state.art.attachOpen = false; state.art.attachPick = null; }
+      refreshArt(w.slug);
+      flash(w.flash);
+    })
+    .catch((e) => {
+      state.art.busy = false;
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (e instanceof NotFound) { state.art.ratifyOpen = false; state.art.attachOpen = false; refreshArt(w.slug); flash("This artifact isn't available anymore"); return; }
+      flash(e instanceof ApiError ? `Couldn't update the artifact (${e.message})` : "Couldn't update the artifact");
+    });
 }
 /** Carry out what the Artifacts reducer could not do itself. */
 function runArtEffect(fx: ArtEffect): void {
+  // The attach dialog lists every ticket; fetch them the first time it opens.
+  if (state.art.attachOpen) loadAttachTickets();
   if (!fx) { rerender(); return; }
   if ("nav" in fx) { goArt(fx.nav.screen, fx.nav.route); return; }
   if ("flash" in fx) { flash(fx.flash); return; }
+  if ("write" in fx) { runArtWrite(fx.write); return; }
+  if ("retry" in fx) { loadArtifactsIfNeeded(true); return; }
   if ("copy" in fx) {
     navigator.clipboard?.writeText(fx.copy.text).catch(() => undefined);
     flash(fx.copy.flash);
     return;
   }
-  const blobUrl = (body: string, type: string) => URL.createObjectURL(new Blob([body], { type }));
-  if ("download" in fx) {
-    const u = blobUrl(fx.download.text, "text/plain");
+  // Open in new tab / Download raw both go to the raw route (it sets the headers).
+  if ("openUrl" in fx) window.open(fx.openUrl, "_blank", "noopener");
+  else if ("download" in fx) {
     const el = document.createElement("a");
-    el.href = u; el.download = fx.download.name;
+    el.href = fx.download.url; el.download = fx.download.name; el.rel = "noopener";
     document.body.appendChild(el); el.click(); el.remove();
-    setTimeout(() => URL.revokeObjectURL(u), 1000);
-  } else if ("openTab" in fx) {
-    const u = blobUrl(fx.openTab.body, fx.openTab.type);
-    window.open(u, "_blank", "noopener");
-    setTimeout(() => URL.revokeObjectURL(u), 60_000);
   }
   rerender();
 }
-/** A picked or dropped file for the new-artifact form. Past 3 MB only the first
- *  200 KB is read — enough to preview; the size check uses the file's real size. */
+/** A picked or dropped file for the new-artifact form. The kind follows the
+ *  extension (kindForFilename): a binary kind keeps the File for the multipart
+ *  upload; a text kind is read as text (past 3 MB only the first 200 KB — enough
+ *  to preview; the cap check uses the file's real size, so it can't be sent). */
 function readArtFile(file: File | undefined | null): void {
   if (!file) return;
+  if (isBinaryKind(kindForFilename(file.name))) {
+    artAcceptFile(state.art, { name: file.name, size: file.size, text: null, blob: file });
+    rerender();
+    return;
+  }
   const r = new FileReader();
-  r.onload = () => { artAcceptFile(state.art, { name: file.name, size: file.size, text: String(r.result ?? "") }); rerender(); };
+  r.onload = () => { artAcceptFile(state.art, { name: file.name, size: file.size, text: String(r.result ?? ""), blob: null }); rerender(); };
   r.readAsText(file.size > 3 * 1024 * 1024 ? file.slice(0, 200 * 1024) : file);
 }
-window.addEventListener("resize", () => fitArtifactFrames(mount));
+// A framed HTML artifact reports its height (the raw route injects the script):
+// ONE listener, matched to the frame by `e.source`, resizes the box directly —
+// no rerender (which would rebuild, and so reload, the frame).
+window.addEventListener("message", (e) => {
+  const data = e.data as { type?: unknown; height?: unknown } | null;
+  if (!data || typeof data !== "object" || data.type !== "canopy:height") return;
+  const h = Number(data.height);
+  if (!Number.isFinite(h) || h <= 0) return;
+  for (const frame of Array.from(mount.querySelectorAll<HTMLIFrameElement>(".art-frame iframe"))) {
+    if (!e.source || e.source !== frame.contentWindow) continue;
+    const box = frame.parentElement;
+    if (box) box.style.height = `${setArtFrameHeight(box.dataset.artKey ?? "", h)}px`;
+  }
+});
 
 function flash(msg: string): void {
   state.toast = msg;
@@ -2057,7 +2255,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       // Every Artifacts act goes to the one reducer in artifacts.ts.
       if (act.startsWith("art")) {
         const screen = state.screen === "artifacts" || state.screen === "artifactnew" || state.screen === "artifact" ? state.screen : null;
-        runArtEffect(artifactsAct(state.art, { screen, route: state.artRoute, me: state.me?.handle ?? "", host: location.origin }, act, arg, value));
+        runArtEffect(artifactsAct(state.art, { screen, route: state.artRoute, me: state.me?.handle ?? "", host: location.origin, sprints: state.sprints.data.map((x) => ({ id: x.id, label: x.label, dates: x.dates, active: x.active })) }, act, arg, value));
       }
       return;
   }

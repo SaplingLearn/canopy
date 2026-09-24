@@ -18,6 +18,10 @@ import type { DashboardData } from "@shared/dashboard";
 import type { RepoDashboard, RepoRefreshResult } from "@shared/repo";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
+import type {
+  ArtifactSummaryDTO, ArtifactDetailDTO, ArtifactDiffDTO, ArtifactFetchDTO,
+  ArtifactKind, ArtifactVisibility, ArtifactLinkType,
+} from "@shared/artifacts-core";
 
 export class Unauthorized extends Error {
   constructor() { super("unauthorized"); }
@@ -398,6 +402,83 @@ export function setSprintActive(id: number, active: boolean): Promise<SprintView
 }
 export function addSprintResource(id: number, raw: string): Promise<SprintDetail> {
   return postJson<{ ok: true; sprint: SprintDetail }>(`/sprints/${id}/resources`, { raw }).then((r) => r.sprint);
+}
+
+// ── Artifacts (/api/artifacts — the spec's Track B routes) ────────────────────
+// One sender for every artifact call: JSON bodies, or a FormData (multipart, for a
+// binary kind's `file`), where the browser sets the content-type and boundary.
+// A 404 is NotFound — the API answers a missing slug and one private to someone
+// else identically, and the SPA shows both as the not-found page.
+async function sendJson<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const init: RequestInit = { method, credentials: "same-origin", headers: { accept: "application/json" } };
+  if (body instanceof FormData) init.body = body;
+  else if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { accept: "application/json", "content-type": "application/json" };
+  }
+  const res = await fetch(path, init);
+  if (res.status === 401) throw new Unauthorized();
+  if (res.status === 404) throw new NotFound(path);
+  if (!res.ok) {
+    let msg = String(res.status);
+    try { const j = (await res.json()) as { error?: string; message?: string }; msg = j.message || j.error || msg; } catch { /* non-JSON */ }
+    throw new ApiError(res.status, msg);
+  }
+  return res.json() as Promise<T>;
+}
+const artPath = (slug: string): string => `/api/artifacts/${encodeURIComponent(slug)}`;
+
+export interface ArtifactListFilters { area?: string; kind?: string; author?: string; status?: string; sprint?: number; ticket?: number; q?: string }
+export function listArtifacts(f: ArtifactListFilters = {}): Promise<ArtifactSummaryDTO[]> {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== "") p.set(k, String(v));
+  const qs = p.toString();
+  return sendJson<{ artifacts: ArtifactSummaryDTO[] }>("GET", `/api/artifacts${qs ? `?${qs}` : ""}`).then((r) => r.artifacts);
+}
+export function getArtifact(slug: string, v: number | null = null): Promise<ArtifactDetailDTO> {
+  return sendJson<ArtifactDetailDTO>("GET", `${artPath(slug)}${v !== null ? `?v=${v}` : ""}`);
+}
+export interface ArtifactCreateFields { title: string; kind: ArtifactKind; area: string; repo: string; visibility: ArtifactVisibility; summary: string }
+/** Text kinds post JSON with `content`; binary kinds post multipart: `file` + the same fields. */
+export function createArtifact(fields: ArtifactCreateFields, body: { content: string } | { file: Blob; filename: string }): Promise<ArtifactDetailDTO> {
+  if ("content" in body) return sendJson("POST", "/api/artifacts", { ...fields, content: body.content });
+  const fd = new FormData();
+  fd.set("file", body.file, body.filename);
+  for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+  return sendJson("POST", "/api/artifacts", fd);
+}
+export function patchArtifact(slug: string, body: { title?: string; area?: string; repo?: string; visibility?: ArtifactVisibility; status?: "draft" | "published" }): Promise<unknown> {
+  return sendJson("PATCH", artPath(slug), body);
+}
+/** A new version: full `content`, an `old_str`/`new_str` edit, or (binary) a file — multipart. */
+export function addArtifactVersion(
+  slug: string,
+  body: { content: string; summary: string } | { old_str: string; new_str: string; summary: string } | { file: Blob; filename: string; summary: string },
+): Promise<unknown> {
+  if ("file" in body) {
+    const fd = new FormData();
+    fd.set("file", body.file, body.filename);
+    fd.set("summary", body.summary);
+    return sendJson("POST", `${artPath(slug)}/versions`, fd);
+  }
+  return sendJson("POST", `${artPath(slug)}/versions`, body);
+}
+export function addArtifactLink(slug: string, target_type: ArtifactLinkType, target_ref: string): Promise<unknown> {
+  return sendJson("POST", `${artPath(slug)}/links`, { target_type, target_ref });
+}
+export function removeArtifactLink(slug: string, target_type: ArtifactLinkType, target_ref: string): Promise<unknown> {
+  return sendJson("POST", `${artPath(slug)}/links/remove`, { target_type, target_ref });
+}
+export function getArtifactDiff(slug: string, a: number, b: number): Promise<ArtifactDiffDTO> {
+  return sendJson("GET", `${artPath(slug)}/diff?a=${a}&b=${b}`);
+}
+/** Session-only, never an MCP tool (the human confirm gate). Only the latest published version. */
+export function ratifyArtifact(slug: string, version: number): Promise<unknown> {
+  return sendJson("POST", `${artPath(slug)}/ratify`, { version });
+}
+/** Fetch a page once for the new-artifact form's URL tab (https only; nothing is stored). */
+export function fetchArtifactUrl(url: string): Promise<ArtifactFetchDTO> {
+  return sendJson("POST", "/api/artifacts/fetch", { url });
 }
 
 export function logout(): Promise<{ ok: true }> {

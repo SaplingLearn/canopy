@@ -56,6 +56,16 @@ export function renderMarkdownInline(text: string): string {
 }
 
 /**
+ * Sanitize an uploaded SVG artifact for inline display in the app origin. An SVG can
+ * carry <script>, event handlers and javascript: links; DOMPurify's svg + svgFilters
+ * profiles keep the drawing and drop all of that. The Artifacts viewer inlines an
+ * SVG ONLY through this (render tests mock this module).
+ */
+export function sanitizeSvg(src: string): string {
+  return DOMPurify.sanitize(src ?? "", { USE_PROFILES: { svg: true, svgFilters: true } }) as string;
+}
+
+/**
  * Progressive-enhancement pass over the already-sanitized HTML, done in a detached
  * <template> (never re-inserts unsanitized markup):
  *  • wrap each fenced code block in a `.cnpy-code` panel, tagged with its language;
