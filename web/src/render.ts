@@ -126,7 +126,7 @@ export interface AppState {
   mapPicks: Record<string, string>;
   showHistory: boolean;
   searchQuery: string;
-  searchType: "all" | "doc" | "feed" | "decision";
+  searchType: "all" | "doc" | "feed" | "decision" | "artifact";
   searchResults: Loadable<QueryResult>;
   displayName: string;
   /** Settings › "Get connection command": the modal, open while non-null. `token` is
@@ -1026,10 +1026,10 @@ function roadmapDigest(s: AppState): string {
 // ── search ───────────────────────────────────────────────────────────────────
 // The ticket icon is the sidebar family's ticket glyph (a stub with a notch),
 // drawn at the same 24-viewBox scale as the rest of this map.
-const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5", artifact: "M3 4h18v16H3zM3 9h18M7 13.5h6M7 16.5h9" };
 // The "sprint" type covers the plan narrative + the sprints, so its badge keeps
 // reading "Roadmap" — the screen it navigates to.
-const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap" };
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap", artifact: "Artifact" };
 
 // Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
 // the others are mapped for completeness. Reuses the status badge styling.
@@ -1069,6 +1069,8 @@ function searchOpenAttr(type: string, id: string): string | null {
   if (type === "decision") return null;
   if (type === "feed") return `data-act="goFeed"`;
   if (type === "sprint") return `data-act="goRoadmap"`;
+  // An artifact hit's id is its slug → the artifact viewer (#artifacts/<slug>).
+  if (type === "artifact") return `data-act="artOpen" data-arg="${attr(id)}"`;
   return `data-act="openDocFrom" data-arg="${attr(id)}"`;
 }
 
@@ -1103,7 +1105,7 @@ function searchView(s: AppState): string {
 
   // No "Tickets" chip: tickets never appear in search results, so a filter for
   // them would only ever show an empty list.
-  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"]].map(([k, label]) => {
+  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"], ["artifact", "Artifacts"]].map(([k, label]) => {
     const sel = s.searchType === k;
     const style = `padding:6px 13px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};color:${sel ? "var(--accent)" : "var(--fg-55)"};background:${sel ? "var(--accent-soft)" : "transparent"};transition:all .12s ease`;
     return `<button data-act="setSearchType" data-arg="${k}" style="${style}">${label}</button>`;
