@@ -119,7 +119,7 @@ export function promptLibraryView(p: PromptLibraryProps): string {
         <button data-act="promptClearFilters" class="cnpy-link" style="font-size:12.5px;font-weight:500;color:var(--accent);margin-top:12px">Clear filters</button>
       </div>
     </div>`;
-  else body = `<div class="cnpy-mw-grid cnpy-stagger">${shown.map((x) => promptCard(x, p.persons)).join("")}</div>`;
+  else body = `<div class="cnpy-mw-grid is-3 cnpy-stagger">${shown.map((x) => promptCard(x, p.persons)).join("")}</div>`;
 
   return `<div data-screen-label="Prompt Library" style="${WORK_SHELL}">
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 16px">

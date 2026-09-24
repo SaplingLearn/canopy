@@ -188,6 +188,10 @@ input, select { font-family: inherit; }
 .cnpy-card:hover { border-color:var(--border-strong); }
 .cnpy-mw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:1fr; gap:14px; align-items:stretch; }
 @media (max-width:760px) { .cnpy-mw-grid { grid-template-columns:1fr; } }
+/* Prompt Library: three cards a row, two when the main pane is medium, one on a phone. */
+.cnpy-mw-grid.is-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+@media (max-width:1180px) { .cnpy-mw-grid.is-3 { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:760px) { .cnpy-mw-grid.is-3 { grid-template-columns:1fr; } }
 /* Handoffs inbox row: on a phone the who / branch columns give way, leaving the
    title, the status pill and the age (the grid is an inline style, hence !important). */
 @media (max-width:760px) {
