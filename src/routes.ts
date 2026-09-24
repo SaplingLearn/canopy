@@ -5,6 +5,7 @@ import { IngestPayload, QueryType } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
+import { oauthApp } from "./auth/oauth-routes";
 import { notificationsApp } from "./notifications/routes";
 import { artifactsApp } from "./artifacts/routes";
 import { rawApp, rawHeaders } from "./artifacts/raw";
@@ -82,6 +83,10 @@ app.get("/img/:sha", async (c) => {
 
 // Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
 app.route("/auth", authApp);
+
+// MCP OAuth (/.well-known/oauth-*, /oauth/*): public per the gate's prefix check;
+// /oauth/authorize reads the session itself.
+app.route("/", oauthApp);
 
 // Email notification prefs/policy/settings/outbox (session-gated; admin routes
 // re-check isAdmin inside). The signed one-click unsubscribe POST is NOT here —

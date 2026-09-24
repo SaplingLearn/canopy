@@ -162,6 +162,14 @@ export interface McpTokenSummary {
   last_used_at: string | null;
 }
 
+/** Settings › Connected apps: one OAuth connection (a grant). Never a token. */
+export interface OAuthGrantSummary {
+  id: number;
+  client_name: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
 // The replay ledger (0009). One row per (session_id, item_index) the worker has
 // seen; a re-POST of the same payload hits every row and drops as unchanged.
 export interface ProcessedItemRow {

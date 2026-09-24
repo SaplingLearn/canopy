@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../env";
 import { readSessionCookie, getSessionUser } from "./session";
 import { resolveToken } from "./tokens";
+import { ACCESS_PREFIX, resolveOAuthAccessToken } from "./oauth";
 
 export interface Principal {
   handle: string;
@@ -26,6 +27,11 @@ const PUBLIC_PATHS = new Set([
   "/auth/onboard", "/auth/handle-check", // gate themselves on the onboard cookie
 ]);
 
+/** The OAuth endpoints take no session cookie (/oauth/authorize checks the session
+ *  itself, to show a sign-in page instead of a bare 401). */
+const isPublicPath = (path: string): boolean =>
+  PUBLIC_PATHS.has(path) || path.startsWith("/oauth/") || path.startsWith("/.well-known/oauth-");
+
 export async function resolveSessionPrincipal(c: Context<AppEnv>): Promise<Principal | null> {
   const id = await readSessionCookie(c, c.env.COOKIE_SECRET);
   if (!id) return null;
@@ -33,11 +39,16 @@ export async function resolveSessionPrincipal(c: Context<AppEnv>): Promise<Princ
   return handle ? { handle } : null;
 }
 
+/** The /mcp principal. Dispatches on the token prefix: an OAuth access token
+ *  (`canopy_oat_`, obtained through /oauth/*) or a pasted `canopy_mcp_` token — both
+ *  resolve to the same `{ handle }`, so nothing downstream of /mcp can tell them apart. */
 export async function resolveBearerPrincipal(request: Request, env: Env): Promise<Principal | null> {
   const header = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
   if (!match) return null;
-  return resolveToken(env.DB, match[1]);
+  const raw = match[1].trim();
+  if (raw.startsWith(ACCESS_PREFIX)) return resolveOAuthAccessToken(env.DB, raw, Date.now());
+  return resolveToken(env.DB, raw);
 }
 
 /**
@@ -45,7 +56,7 @@ export async function resolveBearerPrincipal(request: Request, env: Env): Promis
  * data in the body. On success, sets the principal on the context for handlers.
  */
 export const sessionGate: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (PUBLIC_PATHS.has(c.req.path)) return next();
+  if (isPublicPath(c.req.path)) return next();
   // LOCAL DEV ONLY: DEV_LOGIN exists only in .dev.vars (never in production vars or
   // secrets), so this branch is inert in prod. When set, skip the OAuth/session check
   // and act as that seeded user — lets the UI be exercised over `wrangler dev` without

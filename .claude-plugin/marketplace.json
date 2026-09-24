@@ -9,7 +9,7 @@
     {
       "name": "canopy",
       "source": "./plugins/canopy",
-      "description": "Skills: canopy, load-context, record-session (orient→work→record), my-work, tickets, read-plan + update-plan (admin), handoff, prompts, artifacts — plus the auto-wired Canopy MCP server. Set $CANOPY_MCP_TOKEN to your personal bearer (Canopy → Settings → Get connection command), exported in the shell you launch Claude Code from.",
+      "description": "Skills: canopy, load-context, record-session (orient→work→record), my-work, tickets, read-plan + update-plan (admin), handoff, prompts, artifacts — plus the auto-wired Canopy MCP server. Connects by browser sign-in: run /mcp and choose Authenticate.",
       "keywords": ["canopy", "context", "mcp", "team-memory", "tickets", "handoffs", "prompts", "artifacts"]
     }
   ]

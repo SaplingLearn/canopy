@@ -205,19 +205,16 @@ route — is **`docs/artifact-contract.md`**; read it before your first artifact
 
 ## Connect an agent over MCP
 
-Mint a personal token first: Canopy web app → Settings → *Get connection command* (shown once).
-
 **Recommended — install the plugin** (bundles every skill — canopy, load-context, record-session,
 my-work, tickets, read-plan, update-plan, handoff, prompts, artifacts — AND auto-wires the MCP server):
 
 ```bash
 claude plugin marketplace add SaplingLearn/canopy
 claude plugin install canopy@canopy
-export CANOPY_MCP_TOKEN=canopy_mcp_…        # the plugin's MCP config reads this
 ```
 
-Export it in the shell Claude Code is launched from (fish: `set -gx CANOPY_MCP_TOKEN canopy_mcp_…`) —
-an empty variable sends an empty bearer and Canopy answers 401.
+Then run `/mcp` in Claude Code, choose **canopy → Authenticate**, sign in to Canopy in the browser and
+click **Allow**. (Headless clients can still use a token from Settings › MCP access.)
 
 **Manual fallback** — wire the MCP server and copy the skills yourself:
 

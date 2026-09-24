@@ -14,6 +14,8 @@ import { run } from "../db";
 import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, ONBOARD_TTL_S, type ProviderProfile, type ForkResult } from "./onboard";
 import { findLiveInvite, acceptInvite } from "./invites";
 import { sendWelcome } from "../notifications/welcome";
+import { takeOAuthPending } from "./oauth-routes";
+import { listGrants, revokeGrant } from "./oauth";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
 export interface AuthDeps { fetchImpl?: typeof fetch; now?: () => number }
@@ -67,7 +69,8 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     }
     const { id } = await createSession(c.env.DB, r.handle);
     await setSessionCookie(c, id, c.env.COOKIE_SECRET);
-    return c.redirect("/", 302);
+    // Signed in from an MCP client's authorize link: go back to the consent screen.
+    return c.redirect((await takeOAuthPending(c)) ?? "/", 302);
   }
 
   async function openTx(c: Context<AppEnv>) {
@@ -188,7 +191,10 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
         email, name: parsed.data.name ?? p.name, handle: parsed.data.handle, origin, fetchImpl: deps.fetchImpl,
       });
     }
-    return c.json({ ok: true, handle: parsed.data.handle });
+    // Signed up from an MCP client's authorize link: the SPA follows `redirect` back
+    // to the consent screen instead of Get Started.
+    const redirect = await takeOAuthPending(c);
+    return c.json({ ok: true, handle: parsed.data.handle, ...(redirect ? { redirect } : {}) });
   });
 
   // ── Session-gated ──
@@ -248,6 +254,14 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
   authApp.post("/mcp-tokens/:id/revoke", async (c) => {
     const id = Number(c.req.param("id"));
     if (!Number.isInteger(id) || !(await revokeToken(c.env.DB, c.get("principal").handle, id))) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
+  });
+  // Settings › Connected apps: the caller's OAuth connections. Session-cookie only,
+  // never MCP. Someone else's id is the same 404 as an unknown one.
+  authApp.get("/oauth-grants", async (c) => c.json({ grants: await listGrants(c.env.DB, c.get("principal").handle) }));
+  authApp.post("/oauth-grants/:id/revoke", async (c) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || !(await revokeGrant(c.env.DB, c.get("principal").handle, id, Date.now()))) return c.json({ error: "not_found" }, 404);
     return c.json({ ok: true });
   });
   return authApp;

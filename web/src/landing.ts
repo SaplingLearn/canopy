@@ -562,7 +562,7 @@ function agents(): string {
             <div style="white-space:nowrap">${prompt}${cmd1}</div>
             <div style="white-space:nowrap">${prompt}${cmd2}<span class="site-caret" style="${at(cmd2End + 150)}"></span></div>
           </div>
-          <p style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-55)">Wires the MCP server and loads all ten skills. Your personal token rides in <span style="font-family:var(--mono);font-size:11.5px">$CANOPY_MCP_TOKEN</span>.</p>
+          <p style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-55)">Wires the MCP server and loads all ten skills. Then connect by browser sign-in: run <span style="font-family:var(--mono);font-size:11.5px">/mcp</span>, pick canopy, and choose Authenticate.</p>
           <button data-act="siteGuide" class="site-btn site-btn-outline" style="margin-top:16px">Setup steps in Get Started</button>
         </div>
       </div>
