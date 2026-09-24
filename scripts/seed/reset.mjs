@@ -12,7 +12,7 @@ export const RESET_STATEMENTS = [
   "DELETE FROM ticket_links",
   "DELETE FROM ticket_assignees",
   "DELETE FROM tickets",
-  // Artifacts (0029): children first — versions, links and upload tokens all
+  // Artifacts (0030): children first — versions, links and upload tokens all
   // reference artifact_pages(id). artifacts_fts needs no DELETE: the
   // artifacts_fts_ad trigger cascades the page DELETE into the index.
   "DELETE FROM artifact_upload_tokens",

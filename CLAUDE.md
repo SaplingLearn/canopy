@@ -110,7 +110,7 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0027_repo_capture` [`repo_events` (append-only, UNIQUE `semantic_key`, kinds push/pr/review/deploy/check/run)
   / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
   `events`], then `0028_handoffs_prompts` [`handoffs` / `prompts` / `prompt_versions` / `prompts_fts` — see
-  "Handoffs & Prompt Library" below], then `0029_artifacts` [`artifact_pages` / `artifact_versions` /
+  "Handoffs & Prompt Library" below], then `0030_artifacts` [`artifact_pages` / `artifact_versions` /
   `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
@@ -957,7 +957,7 @@ agents is `docs/artifact-contract.md` (referenced by `AGENTS.md` and the `canopy
 
 - **Kinds and storage**: text kinds `html` / `markdown` / `svg` / `mermaid` (≤ 500 KB of UTF-8, the `content`
   column in D1) and binary kinds `image` (png/jpeg/gif/webp only) / `pdf` / `file` (≤ 10 MB, R2 bucket
-  `ARTIFACTS_BUCKET` at `artifacts/<sha256>`, put with R2's own `sha256` check). `0029_artifacts`:
+  `ARTIFACTS_BUCKET` at `artifacts/<sha256>`, put with R2's own `sha256` check). `0030_artifacts`:
   `artifact_pages` / `artifact_versions` (exactly one of `content` / `r2_key`) / `artifact_links` /
   `artifact_upload_tokens` / `artifacts_fts` (kept in sync by the repository, not triggers; bm25 like docs).
   The vocabulary, caps, status rules and wire DTOs live ONCE in `shared/artifacts-core.ts` (zod-free — the SPA

@@ -1,4 +1,4 @@
-// D1 row shapes for the artifacts tables (0029_artifacts.sql), re-exported by
+// D1 row shapes for the artifacts tables (0030_artifacts.sql), re-exported by
 // shared/rows.ts. Person columns hold HANDLES. Type-only; no zod.
 
 import type { ArtifactKind, ArtifactStatus, ArtifactVisibility, ArtifactLinkType, ArtifactBinaryKind } from "./artifacts-core";

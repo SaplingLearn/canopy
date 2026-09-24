@@ -36,7 +36,7 @@ starting point, not throwaway.
   their ids as strings.
 - **Migrations**: `0027_repo_capture` is the last on `main`. **`0028` is taken** by the other
   in-flight branch (`feat/handoffs-prompts-ui`, `0028_handoffs_prompts.sql`). Artifacts use
-  **`0029_artifacts.sql`**. Test reset list: `scripts/seed/reset.mjs`.
+  **`0030_artifacts.sql`**. Test reset list: `scripts/seed/reset.mjs`.
 - **Tests**: Vitest on a real Miniflare D1 (`vitest.config.ts` reads `wrangler.toml`, so an
   `[[r2_buckets]]` binding appears in tests as a local R2). GitHub/network is injected, never hit.
 - No `AGENTS.md` exists yet. Skills live in `plugins/canopy/skills/` (symlinked from `.claude/skills/`).
@@ -83,7 +83,7 @@ starting point, not throwaway.
 
 ## Track A — data layer (branch `feat/artifacts-a`)
 
-Files: `migrations/0029_artifacts.sql`, `src/tools/artifacts.ts` (repository), `shared/artifacts.ts`
+Files: `migrations/0030_artifacts.sql`, `src/tools/artifacts.ts` (repository), `shared/artifacts.ts`
 (zod request schemas; re-exports core), `src/env.ts` (`ARTIFACTS_BUCKET: R2Bucket`), `test/env.d.ts`,
 `wrangler.toml`, `scripts/seed/reset.mjs`, `src/auth/persons.ts` (HANDLE_COLUMNS), `test/artifacts.repo.test.ts`.
 
@@ -425,3 +425,6 @@ Track F (2026-09-24) — agent access + the plugin release (and issue #70). Bran
   (whatever was declared), `nosniff`, `default-src 'none'`; `test/artifacts.security-raw.test.ts` pins that a
   "pdf" uploaded as `text/html` with a script is still served that way. html/svg thumbnails and the html
   viewer keep their sandboxes.
+- **2026-09-24 · Orchestrator — the migration is `0030_artifacts`, not `0029`.** `feat/mcp-oauth` shipped its own
+  `0029_oauth.sql`, and it was applied to production (new `oauth_*` tables only) before this PR merged, so the
+  artifacts migration was renumbered to keep the sequence unique. It had not been applied anywhere remote.

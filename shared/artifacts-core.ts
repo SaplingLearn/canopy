@@ -4,7 +4,7 @@
 // DTOs. `shared/artifacts.ts` builds the zod request schemas on top and re-exports
 // all of it. No imports — the SPA reads these as values (the *-core.ts rule).
 
-// ── vocabulary (must match the CHECK constraints in 0029_artifacts.sql) ──────
+// ── vocabulary (must match the CHECK constraints in 0030_artifacts.sql) ──────
 
 export const ARTIFACT_TEXT_KINDS = ["html", "markdown", "svg", "mermaid"] as const;
 export const ARTIFACT_BINARY_KINDS = ["image", "pdf", "file"] as const;

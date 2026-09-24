@@ -15,7 +15,7 @@ export type {
   SprintStatus, SprintUrgency, SprintDomain, SprintResourceKind,
 } from "./sprints";
 
-// Artifacts (0029) are defined in shared/artifacts-rows.ts (the vocab unions come
+// Artifacts (0030) are defined in shared/artifacts-rows.ts (the vocab unions come
 // from the zod-free core) and re-exported here. Type-only.
 export type { ArtifactPageRow, ArtifactVersionRow, ArtifactLinkRow, ArtifactUploadTokenRow } from "./artifacts-rows";
 

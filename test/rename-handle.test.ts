@@ -81,7 +81,7 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     `${handle}:daily:w1`, handle, "daily", "w1", "[]", "pending", nowIso()); // notification_outbox.user_id
   await createInvite(env.DB, { email: "old-me-invite@test.io", name: null, invitedBy: handle }); // invites.invited_by
   await acceptInvite(env.DB, "old-me-invite@test.io", handle); // invites.accepted_by
-  // Artifacts (0029), through the REAL writers (src/tools/artifacts.ts): the create
+  // Artifacts (0030), through the REAL writers (src/tools/artifacts.ts): the create
   // covers artifact_pages.author_id + artifact_versions.created_by + (with a link)
   // artifact_links.created_by; publish + ratify covers ratified_by; a minted upload
   // token covers artifact_upload_tokens.principal.
