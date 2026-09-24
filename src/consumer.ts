@@ -11,6 +11,7 @@ import { contentHash } from "./hash";
 import { changeKind } from "./diff";
 import type { Principal } from "./auth/principal";
 import type { RepoEvent } from "./repo/types";
+import { applyArtifactLinks, type ArtifactLinkOutcome } from "./tools/artifacts-agent";
 
 // Per-type, per-outcome counts surfaced on /ingest so a re-run reads, e.g.,
 // "3 docs: 1 staged, 2 unchanged".
@@ -315,5 +316,25 @@ export async function consume(db: DB, payload: IngestPayload, principal: Princip
     result.triage.recorded++;
   }
 
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// recordBatch — the whole session batch: /ingest and MCP record_session both call
+// THIS, so the two surfaces cannot drift. It is consume() (the gate, untouched) plus
+// ONE post-batch step for `artifact_links` (issue #52): each link is a DIRECT
+// authored write through the artifacts repository's addLink under the SAME
+// authenticated principal — not an ingested item, so it never touches the replay
+// ledger (addLink is idempotent, which is what makes a replay safe). The outcomes
+// travel back as `artifact_links`, present only when the payload carried any.
+// ---------------------------------------------------------------------------
+export interface RecordBatchResult extends IngestResult {
+  artifact_links?: ArtifactLinkOutcome[];
+}
+
+export async function recordBatch(db: DB, payload: IngestPayload, principal: Principal): Promise<RecordBatchResult> {
+  const result: RecordBatchResult = await consume(db, payload, principal);
+  const links = payload.artifact_links ?? [];
+  if (links.length) result.artifact_links = await applyArtifactLinks(db, links, principal.handle);
   return result;
 }

@@ -306,6 +306,16 @@ async function loadPage(db: DB, slug: string, viewer: string, allowPending = fal
   return p;
 }
 
+/**
+ * The kind of a page `viewer` may write to, INCLUDING the author's own still-pending
+ * (version-0) binary page — the MCP `artifact_update` adapter needs it to pick the text
+ * or the upload path before it calls a writer. Same one not_found as every other read.
+ * (Track C addition, 2026-09-23.)
+ */
+export async function writablePageKind(db: DB, slug: string, viewer: string): Promise<ArtifactKind> {
+  return (await loadPage(db, slug, viewer, true)).kind;
+}
+
 const toVersionDTO = (v: ArtifactVersionRow | Omit<ArtifactVersionRow, "content">): ArtifactVersionDTO => ({
   version_no: v.version_no, summary: v.summary, created_by: v.created_by, created_at: v.created_at,
   size_bytes: v.size_bytes, content_type: v.content_type, sha256: v.sha256,

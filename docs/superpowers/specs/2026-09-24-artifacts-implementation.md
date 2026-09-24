@@ -217,3 +217,67 @@ Track A (2026-09-23) — `shared/artifacts-core.ts` is UNCHANGED. Decisions take
 - 2026-09-23 · **Tests**: Miniflare resets D1 per test (the harness) but NOT R2 — tests that assert an R2 key is
   absent must use bytes no other test uploads. `test/rename-handle.test.ts` now seeds every artifact handle
   column through the real writers.
+
+Track C (2026-09-23) — `shared/artifacts-core.ts` is UNCHANGED. Decisions taken beyond this doc:
+
+- 2026-09-23 · **`src/tools/artifacts.ts` (Track A) gained ONE export**, `writablePageKind(db, slug, viewer)` — a
+  wrapper over `loadPage(…, allowPending = true)` returning the page's kind, so `artifact_update` picks the text or
+  upload path only AFTER the visibility check (an input-shape error can never hint at what a hidden page is).
+- 2026-09-23 · **MCP tool shapes.** `artifact_create`: `title, kind, area, repo, visibility` required (`repo` may be
+  `""`), `content | size_bytes+sha256`, optional `links, summary, content_type, filename`. A text kind with any binary
+  field, a binary kind with `content`, or a binary kind missing `size_bytes`/`sha256` is `bad_request`.
+  `artifact_update`: `slug, summary` required; text `content` XOR `old_str`+`new_str` (both, neither, `old_str`
+  alone, or an empty `old_str` → `bad_request`); binary `size_bytes`+`sha256` (+`content_type`, `filename`) — an
+  `image` version needs a `content_type` or a filename with an image extension (the repository's rule; the
+  previous version's type is NOT inherited). `artifact_get`: `slug` (`slug@vN` / `slug/vN`) + optional `version`;
+  an embedded and an explicit version that disagree → `bad_request`.
+- 2026-09-23 · **Results.** create/update text → `{ id, slug, url, version, warnings }` (+ `unchanged` on update);
+  binary → `{ id, slug, url, upload_url, expires_at, warnings }` (`url` included so the agent can hand the person
+  the page link). get → the full `ArtifactDetailDTO` with `raw_url` made absolute, plus `url` and `warnings`.
+  `url` is always the page link `<origin>/#artifacts/<slug>` (never versioned). `warnings` is one human sentence per
+  `CLAUDE_ONLY_MARKERS` hit in the returned text content (create: v1; update: the NEW latest content, so an
+  `old_str` edit is judged on the result; get: the requested version); binary results always `[]`.
+- 2026-09-23 · **Origin.** `buildCanopyMcpServer(env, principal, { origin? })` gained an optional third argument;
+  `handleMcp` passes `new URL(request.url).origin` (`src/mcp.ts` — no `src/index.ts` change). Links use
+  `env.PUBLIC_ORIGIN` when set, else that origin, else relative (`artifactOrigin`).
+- 2026-09-23 · **Errors.** `runTool` maps `ArtifactError` like `TicketError` → `{ error: message, code }`. The not_found
+  message is `"not_found"`, so missing / private-to-someone-else / version-0 / malformed slug / out-of-range version
+  are byte-identical `{"error":"not_found","code":"not_found"}` (tested). No ratify tool is registered for anyone,
+  admin included (tested); the MCP module never imports `ratify`.
+- 2026-09-23 · **The raw route is session-only**, so an agent's absolute `raw_url` for a binary page opens in a
+  signed-in browser, not with the bearer. Agents cannot read binary bytes over MCP (deferred; stated in the tool
+  description and `docs/artifact-contract.md`).
+- 2026-09-23 · **`query`.** `artifact` joins `QueryType` (`shared/contract.ts` now exports `QueryType`, used by
+  `QueryRequest.types`, `QueryPrimary.type`, `QueryPointer.type`, the MCP `query` tool and `GET /search`'s `types`
+  parser) and the DEFAULT type list (existing query tests stay green). `query(db, req, viewer?)` — no viewer → no
+  private artifact. FTS via `searchArtifacts` (bm25 1.0/5.0/1.0/1.0, score = −rank like every other type), browse via
+  `listPages` (recency), hydration in ONE fan-out joining each page to its current version (visibility repeated as a
+  guard). `id` = the SLUG. Body: `Status: <status> · v<n>` / `Kind · Area · Repo` / `Summary:` (when set) / blank /
+  content — markdown & mermaid raw, html & svg as `ftsBody` visible text, binary a one-line description.
+  `updated_by` = the latest version's `created_by`. `section`/`space` drop artifacts (doc-only filters, as for
+  feed/decision/sprint). GET /search passes `include_staged: false`, so DRAFT artifacts do not appear to humans
+  (same as draft decisions).
+- 2026-09-23 · **`src/routes.ts` (Track B's mount file) — two small changes of mine**: `GET /search` passes the
+  session principal's handle as `query()`'s viewer and accepts `artifact` in `?types=`; `POST /ingest` calls
+  `recordBatch` instead of `consume`.
+- 2026-09-23 · **For Track D**: `GET /search` can now return `type: "artifact"` (id = slug). `web/src/render.ts`
+  `searchOpenAttr` has no `artifact` case and would open it as a doc — it needs `#artifacts/<id>`, a search-type badge
+  and (optionally) an "Artifacts" chip; `web/src/api.ts`'s `QueryType` mirror needs `"artifact"`. I did not touch web/.
+- 2026-09-23 · **`get_ticket` (MCP only)** returns `{ ...TicketDetail, artifacts: [{ slug, title, kind, status,
+  version }] }` from `listPages({ ticket: id }, principal)`. The HTTP `GET /tickets/:id` and the ticket WRITE tools'
+  returned detail are unchanged.
+- 2026-09-23 · **`artifact_links`** lives on `IngestPayload` (`ArtifactSessionLink`: `slug` ≤ 80, `target_type`,
+  `target_ref` ≤ 300; ≤ 50 per batch, default `[]`). Applied by `recordBatch` (`src/consumer.ts`) = `consume()` (the
+  gate, unchanged) then `applyArtifactLinks` — each `addLink` under the principal, sequentially, one failure never
+  stopping the rest. **/ingest APPLIES them identically** (same function, session principal) — decided because it is
+  the same contract and the same kind of principal; tested. Outcomes: `linked` (also for an already-present link —
+  `addLink` is idempotent, so a replayed session reports `linked` again and writes nothing), `not_found` (the one
+  not_found), `error` + message (e.g. `no such ticket: N`, a bad PR ref). The result key `artifact_links` is present
+  ONLY when the payload carried links, so existing `/ingest` responses are byte-for-byte unchanged. Links are not in
+  the replay ledger (not ingested items).
+- 2026-09-23 · **Skills/docs.** `canopy` SKILL.md: artifacts in the direct-write column, an "Artifacts — the artifact
+  contract" section, `artifact_get` in allowed-tools, and the query-type list corrected to the code (`ticket` was
+  never a query type; `artifact` is). `references/querying.md`: `artifact` type + an "Artifacts in query" section.
+  `load-context`: step 7 (a ticket's `artifacts` → `artifact_get`), `get_ticket` + `artifact_get` in allowed-tools.
+  `record-session`: `artifact_links` in step 4/5 and the reported outcomes. New `docs/artifact-contract.md` and
+  `AGENTS.md` (both skill and AGENTS.md point at the contract).
