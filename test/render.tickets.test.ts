@@ -544,7 +544,8 @@ describe("the ticket screens' frame", () => {
 
   it("runs the form's card and the detail's columns down the window", () => {
     expect(newTicketView(formProps())).toContain("min-height:calc(100vh - 210px)");
-    expect(ticketDetailView(detailProps(detail({ id: 1, title: "T" })))).toContain("min-height:calc(calc(100vh - 210px) - 92px)");
+    // The title now sits inside the grid, so the grid itself takes the full height.
+    expect(ticketDetailView(detailProps(detail({ id: 1, title: "T" })))).toContain("gap:34px;min-height:calc(100vh - 210px)");
   });
 });
 
@@ -665,7 +666,7 @@ describe("ticketDetailView — the status control (design call #7)", () => {
   it("the trigger IS the pill — no outlined box around it", () => {
     const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: null }));
     const triggers = html.match(/<button data-act="ticketStatusMenu"[^>]*>/g) ?? [];
-    expect(triggers).toHaveLength(2);
+    expect(triggers).toHaveLength(1);
     for (const t of triggers) {
       expect(t).toContain('class="cnpy-statusbtn"');
       expect(t).not.toContain("cnpy-outlinebtn");
@@ -673,19 +674,17 @@ describe("ticketDetailView — the status control (design call #7)", () => {
       expect(t).toContain("var(--blue)"); // tinted as the status itself
       expect(t).toContain('aria-expanded="false"');
     }
-    const open = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: "header" }));
-    expect(open).toContain('data-arg="header" title="Set status" aria-haspopup="menu" aria-expanded="true"');
-    expect(open).toContain('data-arg="rail" title="Set status" aria-haspopup="menu" aria-expanded="false"');
+    const open = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: "rail" }));
+    expect(open).toContain('data-arg="rail" title="Set status" aria-haspopup="menu" aria-expanded="true"');
   });
 
-  const props = (status: TicketStatus, stMenu: "header" | "rail" | null = null) =>
+  const props = (status: TicketStatus, stMenu: "rail" | null = null) =>
     detailProps(detail({ id: 1, title: "T", status }), { stMenu });
 
   it("shows the status as a pill you click — no accept/reject action buttons", () => {
     const html = ticketDetailView(props("submitted"));
-    // Two controls: the header's and the rail's STATUS row.
-    expect(html.match(/data-act="ticketStatusMenu"/g)?.length).toBe(2);
-    expect(html).toContain('data-act="ticketStatusMenu" data-arg="header"');
+    // ONE control, in the rail's STATUS row — the header's duplicate is gone.
+    expect(html.match(/data-act="ticketStatusMenu"/g)?.length).toBe(1);
     expect(html).toContain('data-act="ticketStatusMenu" data-arg="rail"');
     // Nothing is settable until a menu is open, and the old copy is gone.
     expect(html).not.toContain('data-act="ticketStatus"');
@@ -695,14 +694,13 @@ describe("ticketDetailView — the status control (design call #7)", () => {
   });
 
   it("offers submitted → in progress | declined, with the current status ticked", () => {
-    const html = ticketDetailView(props("submitted", "header"));
+    const html = ticketDetailView(props("submitted", "rail"));
     expect(html).toContain('data-act="ticketStatus" data-arg="in_progress"');
     expect(html).toContain('data-act="ticketStatus" data-arg="declined"');
     expect(html).not.toContain('data-act="ticketStatus" data-arg="done"');
     // The current status is listed but inert (a ticked row, not a button).
     expect(html).not.toContain('data-act="ticketStatus" data-arg="submitted"');
     expect(html).toContain("color:var(--accent)");
-    // One menu opens at a time — the rail's control stays closed.
     expect(html.match(/data-act="ticketStatus" /g)?.length).toBe(2);
   });
 
@@ -716,7 +714,7 @@ describe("ticketDetailView — the status control (design call #7)", () => {
 
   it("renders a terminal status as a plain pill — no control, nothing to set", () => {
     for (const status of ["done", "declined"] as const) {
-      const html = ticketDetailView(props(status, "header"));
+      const html = ticketDetailView(props(status, "rail"));
       expect(html).not.toContain('data-act="ticketStatusMenu"');
       expect(html).not.toContain('data-act="ticketStatus"');
       expect(html).toContain(TICKET_STATUS_LABEL[status].toUpperCase());
@@ -724,7 +722,23 @@ describe("ticketDetailView — the status control (design call #7)", () => {
   });
 
   it("dismisses the open menu with the shared backdrop", () => {
-    expect(ticketDetailView(props("submitted", "header"))).toContain('data-act="closeTicketMenus"');
+    expect(ticketDetailView(props("submitted", "rail"))).toContain('data-act="closeTicketMenus"');
+  });
+
+  it("is laid out like the sprint page: the title heads the left column, the rail starts at the top", () => {
+    const html = ticketDetailView(props("submitted"));
+    const grid = html.indexOf('class="cnpy-td-grid"');
+    expect(grid).toBeGreaterThan(-1);
+    expect(html.indexOf("<h2")).toBeGreaterThan(grid); // the title sits INSIDE the grid
+    expect(html).toContain(">opened ");
+  });
+
+  it("names the requester in the rail, not under the title", () => {
+    const html = ticketDetailView(props("submitted"));
+    const title = html.indexOf("<h2"), rail = html.indexOf(">REQUESTER<");
+    expect(rail).toBeGreaterThan(-1);
+    // Between the title and the body there is no person chip any more.
+    expect(html.slice(title, html.indexOf(">opened ")).includes("cnpy-av")).toBe(false);
   });
 });
 

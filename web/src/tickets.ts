@@ -521,7 +521,8 @@ function sprintMenuBox(sprints: SprintView[], current: number | null, act: strin
 /** Which anchor has the status menu open — the header control or the rail's
  *  STATUS row. Both render the same menu, so one flag naming the anchor keeps
  *  exactly one of them open. */
-export type StatusMenuAnchor = "header" | "rail";
+/** Where a status menu hangs. One place since the header control went: the rail. */
+export type StatusMenuAnchor = "rail";
 
 /** THE status control. A status is a property a person SETS, so it is rendered
  *  as the pill you click, not as a row of action buttons: the old "Start" +
@@ -822,19 +823,14 @@ function relationsRail(p: TicketDetailProps): string {
 
 export function ticketDetailView(p: TicketDetailProps): string {
   const t = p.ticket;
+  // Laid out like the sprint page: the title heads the LEFT column and the rail
+  // starts at the top beside it. Status is set in ONE place (the rail's STATUS
+  // row), and who filed it is the rail's REQUESTER row, not a line under the title.
   return `<div style="${DETAIL_SHELL}">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
-      <div style="flex:1;min-width:0">
-        <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:9px;font-size:12px;color:var(--fg-55)">
-          <div style="display:flex;align-items:center;gap:6px">${personChip(person(p.persons, t.requester), 20, t.requester)}<span style="font-weight:500;color:var(--fg-70);white-space:nowrap">${esc(nameOf(p.persons, t.requester))}</span></div>
-          <span style="color:var(--fg-40);white-space:nowrap">&middot; opened ${esc(relTime(t.created_at))}</span>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">${statusControl(t.status, p.stMenu === "header", "header")}</div>
-    </div>
-    <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px;min-height:calc(${CARD_MIN_H} - 92px)">
+    <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;min-height:${CARD_MIN_H}">
       <div style="min-width:0;display:flex;flex-direction:column">
+        <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
+        <div style="margin:9px 0 22px;font-size:12px;color:var(--fg-40);white-space:nowrap">opened ${esc(relTime(t.created_at))}</div>
         ${ticketBody(t.body)}
         ${linkedWorkBlock(p)}
         ${threadBlock(p)}
@@ -845,6 +841,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">STATUS</div><div style="min-width:0">${statusControl(t.status, p.stMenu === "rail", "rail")}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">CATEGORY</div><div>${categoryChip(t.category)}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">PRIORITY</div><div>${priorityChip(t.priority)}</div></div>
+          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">REQUESTER</div><div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(p.persons, t.requester), 20, t.requester)}<span style="font-size:12.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nameOf(p.persons, t.requester))}</span></div></div>
         </div>
         ${assigneeRail(p)}
         ${sprintRail(p)}
