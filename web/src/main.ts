@@ -5,7 +5,7 @@
 
 import "./canopy.css";
 import {
-  render, initialState, firstDocForSpace, docReaderHtml, connectSnippet, CONNECT_CLIENTS,
+  render, initialState, firstDocForSpace, docReaderHtml, connectSnippet, CONNECT_CLIENTS, browserConnectCommand,
   type AppState, type Screen, type ConnectClient,
 } from "./render";
 import {
@@ -17,7 +17,7 @@ import {
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
-  listMcpTokens, revokeMcpToken,
+  listMcpTokens, revokeMcpToken, listOAuthGrants, revokeOAuthGrant,
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
   addTicketLink, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
@@ -626,6 +626,14 @@ function loadTokens(): void {
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
       state.tokens = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+  state.grants = { status: "loading", data: state.grants.data };
+  listOAuthGrants()
+    .then((data) => { state.grants = { status: "ok", data }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) return; // the tokens load above already sends the person to sign-in
+      state.grants = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
 }
@@ -1976,7 +1984,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvitesIfAdmin();
       return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
-    case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
+    case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; state.grantRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
     // chrome: theme + sidebar
@@ -2533,6 +2541,26 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         });
       return;
     }
+    case "revokeGrantArm": state.grantRevokeArm = Number(arg); break;
+    case "revokeGrantCancel": state.grantRevokeArm = null; break;
+    case "revokeGrant": {
+      const id = Number(arg);
+      revokeOAuthGrant(id)
+        .then(() => {
+          state.grants = { status: "ok", data: state.grants.data.filter((g) => g.id !== id) };
+          state.grantRevokeArm = null;
+          flash("App disconnected");
+          rerender();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not disconnect the app");
+        });
+      return;
+    }
+    case "copyBrowserConnect":
+      copyToClipboard(browserConnectCommand()).then((ok) => flash(ok ? "Command copied" : "Couldn't copy the command"));
+      return;
 
     // ── Settings › Profile (display name, color, link/unlink) ───────────────
     case "saveProfile": {

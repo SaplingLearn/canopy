@@ -17,7 +17,7 @@ import type {
 import type { DashboardData } from "@shared/dashboard";
 import type { RepoDashboard, RepoRefreshResult } from "@shared/repo";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
-import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
+import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary, OAuthGrantSummary } from "@shared/rows";
 import type {
   ArtifactSummaryDTO, ArtifactDetailDTO, ArtifactDiffDTO, ArtifactFetchDTO,
   ArtifactKind, ArtifactVisibility, ArtifactLinkType,
@@ -495,6 +495,12 @@ export async function listMcpTokens(): Promise<McpTokenSummary[]> {
 }
 export function revokeMcpToken(id: number): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(`/auth/mcp-tokens/${id}/revoke`);
+}
+export async function listOAuthGrants(): Promise<OAuthGrantSummary[]> {
+  return (await getJson<{ grants: OAuthGrantSummary[] }>("/auth/oauth-grants")).grants;
+}
+export function revokeOAuthGrant(id: number): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(`/auth/oauth-grants/${id}/revoke`);
 }
 
 // Re-export the row types the UI renders, so screens import shapes from one place.

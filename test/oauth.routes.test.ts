@@ -5,6 +5,7 @@ import { resolveBearerPrincipal } from "../src/auth/principal";
 import { mintToken } from "../src/auth/tokens";
 import { registerClient, checkAuthorizeRequest, issueAuthorization, exchangeAuthorizationCode } from "../src/auth/oauth";
 import { buildOAuthApp } from "../src/auth/oauth-routes";
+import { app } from "../src/routes";
 import { seedPerson, cookieFor } from "./helpers/persons";
 import type { Env } from "../src/env";
 
@@ -274,5 +275,22 @@ describe("never a 500", () => {
     const r = await buildOAuthApp().request("/oauth/authorize?client_id=x&redirect_uri=y", {}, throwingEnv);
     expect(r.status).toBe(503);
     expect(await r.text()).toContain("finish this right now");
+  });
+});
+
+describe("Settings › Connected apps routes", () => {
+  it("lists the caller's grants and revokes only their own", async () => {
+    await oauthAccessToken("oauth-user");
+    await oauthAccessToken("other-user");
+    const mine = await cookieFor("oauth-user");
+    const list = (await (await app.request("/auth/oauth-grants", { headers: { cookie: mine } }, env)).json()) as { grants: { id: number; client_name: string }[] };
+    expect(list.grants).toHaveLength(1);
+    expect(list.grants[0].client_name).toBe("Claude Code");
+    const other = (await env.DB.prepare(`SELECT id FROM oauth_grants WHERE person = 'other-user'`).first<{ id: number }>())!.id;
+    expect((await app.request(`/auth/oauth-grants/${other}/revoke`, { method: "POST", headers: { cookie: mine } }, env)).status).toBe(404);
+    expect((await app.request(`/auth/oauth-grants/abc/revoke`, { method: "POST", headers: { cookie: mine } }, env)).status).toBe(404);
+    const r = await app.request(`/auth/oauth-grants/${list.grants[0].id}/revoke`, { method: "POST", headers: { cookie: mine } }, env);
+    expect(await r.json()).toEqual({ ok: true });
+    expect((await app.request("/auth/oauth-grants", {}, env)).status).toBe(401);
   });
 });

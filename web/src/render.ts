@@ -4,7 +4,7 @@
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
 import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
-import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor, OAuthGrantSummary } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, SprintDetail, PlanView } from "./api";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory } from "./api";
 import type { TicketPriority } from "@shared/tickets";
@@ -152,6 +152,9 @@ export interface AppState {
   tokens: Loadable<McpTokenSummary[]>;
   /** The token whose Revoke was clicked once — the second click is the one that revokes. */
   tokenRevokeArm: number | null;
+  /** Settings › Connected apps: the caller's OAuth connections. */
+  grants: Loadable<OAuthGrantSummary[]>;
+  grantRevokeArm: number | null;
   // Settings › Profile: the handle rename editor.
   handleEdit: boolean;
   handleDraft: string;
@@ -327,6 +330,8 @@ export function initialState(): AppState {
     connectCopied: false,
     tokens: { status: "idle", data: [] },
     tokenRevokeArm: null,
+    grants: { status: "idle", data: [] },
+    grantRevokeArm: null,
     handleEdit: false,
     handleDraft: "",
     handleCheck: "idle",
@@ -1459,6 +1464,11 @@ export function accountSection(s: AppState): string {
   </section>`;
 }
 
+/** This Canopy's own MCP endpoint — the origin the SPA is served from, so a local
+ *  `wrangler dev` hands out a local URL and prod hands out prod's. */
+const mcpEndpoint = (): string =>
+  `${typeof location !== "undefined" && location.origin ? location.origin : "https://canopy.saplinglearn.com"}/mcp`;
+
 /** Settings › MCP access tokens: one hairline row per live token. Only the hint is ever
  *  known here — the server keeps a hash — so a row is `canopy_mcp_ab12…`, when it was
  *  minted and last used, and a two-click Revoke (an agent stops working the moment it lands). */
@@ -1486,6 +1496,37 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
   return `<div class="cnpy-scroll cnpy-set-tokens">${rows}</div>`;
 }
 
+/** Settings › Connected apps: one hairline row per OAuth connection — the app's
+ *  self-reported name, when it connected and was last used, and a two-click Revoke. */
+export function grantListBody(s: Pick<AppState, "grants" | "grantRevokeArm">): string {
+  const note = (text: string) => `<div style="padding:12px 0;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-40)">${text}</div>`;
+  const g = s.grants;
+  if (g.status === "error") return note(`Couldn't load connected apps${g.error ? ` &mdash; ${esc(g.error)}` : ""}.`);
+  if (g.status !== "ok" && !g.data.length) return note("Loading connected apps&hellip;");
+  if (!g.data.length) return note("No apps connected. Run the command above, then sign in from the app.");
+  return g.data.map((gr) => {
+    const armed = s.grantRevokeArm === gr.id;
+    const btn = "flex:none;padding:4px 10px;border-radius:6px;font-size:12px";
+    const actions = armed
+      ? `<button data-act="revokeGrant" data-arg="${gr.id}" class="cnpy-revoke" style="${btn};font-weight:600;color:var(--red);border:1px solid var(--red)">Disconnect</button>
+         <button data-act="revokeGrantCancel" class="cnpy-ghostbtn" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Keep</button>`
+      : `<button data-act="revokeGrantArm" data-arg="${gr.id}" class="cnpy-revoke" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Revoke</button>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)">
+      <div style="flex:1;min-width:0;line-height:1.35">
+        <span style="display:block;font-size:13px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(gr.client_name)}</span>
+        <span style="font-size:11.5px;color:var(--fg-40)">${armed ? "The app is signed out the moment you disconnect it." : `Connected ${esc(relTime(gr.created_at))} &middot; ${gr.last_used_at ? `last used ${esc(relTime(gr.last_used_at))}` : "never used"}`}</span>
+      </div>
+      ${actions}
+    </div>`;
+  }).join("");
+}
+
+/** The browser sign-in setup: the server with no header — Claude Code opens the
+ *  browser on `/mcp` → Authenticate. Mints nothing. */
+export function browserConnectCommand(url: string = mcpEndpoint()): string {
+  return `claude mcp add --transport http --scope user canopy ${url}`;
+}
+
 // ── Settings › Connect an agent ──────────────────────────────────────────────
 
 export type ConnectClient = "claude" | "codex" | "json" | "token";
@@ -1495,11 +1536,6 @@ export const CONNECT_CLIENTS: readonly { id: ConnectClient; label: string }[] = 
   { id: "json", label: ".mcp.json" },
   { id: "token", label: "Token only" },
 ];
-
-/** This Canopy's own MCP endpoint — the origin the SPA is served from, so a local
- *  `wrangler dev` hands out a local URL and prod hands out prod's. */
-const mcpEndpoint = (): string =>
-  `${typeof location !== "undefined" && location.origin ? location.origin : "https://canopy.saplinglearn.com"}/mcp`;
 
 /**
  * The setup text for one client, with `token` filled in. Pure, so a test pins each
@@ -1577,7 +1613,7 @@ export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "co
       <div style="display:grid;font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${stack((id) => `<div>${CONNECT_NOTE[id]}</div>`)}</div>
       <div style="display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:9px;border:1px solid var(--border);font-size:12px;line-height:1.55;color:var(--fg-70)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
-        <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--mono);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">MCP access tokens</strong> in Settings. Revoke it there to disconnect the agent.</div>
+        <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--mono);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">Access tokens</strong> under MCP access in Settings. Revoke it there to disconnect the agent.</div>
       </div>
       <div style="display:flex;justify-content:flex-end;margin-top:18px"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:600;color:var(--fg)">Done</button></div>`;
   }
@@ -1624,12 +1660,21 @@ function settingsView(s: AppState): string {
     ${accountSection(s)}
 
     <section class="cnpy-tile" style="display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
-        <div style="${SECTION_LABEL};margin-bottom:0">MCP access tokens</div>
+      <div style="${SECTION_LABEL}">MCP access</div>
+      <div style="font-size:12.5px;font-weight:500;margin-bottom:6px">Sign in with browser <span style="font-weight:400;color:var(--fg-40)">· recommended</span></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:8px 8px 8px 12px">
+        <code style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(browserConnectCommand())}</code>
+        <button data-act="copyBrowserConnect" class="cnpy-copybtn" style="flex:none;padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;border:1px solid var(--border-strong);color:var(--fg-70)">Copy</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin:6px 0 14px;line-height:1.5">Then run <code style="font-family:var(--mono);font-size:11px">/mcp</code> in Claude Code and choose Authenticate.</div>
+      <div style="font-size:12.5px;font-weight:500;margin-bottom:4px">Connected apps</div>
+      ${grantListBody(s)}
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 4px">
+        <div style="font-size:12.5px;font-weight:500">Access tokens <span style="font-weight:400;color:var(--fg-40)">· for CI and other headless clients</span></div>
         <button data-act="connectOpen" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Get connection command</button>
       </div>
       ${tokenList}
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">Each connection command creates its own token. Revoking one disconnects that agent immediately.</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">Each connection command creates its own token. Revoking a token or an app disconnects it immediately.</div>
     </section>
 
     <section class="cnpy-tile cnpy-set-appear">

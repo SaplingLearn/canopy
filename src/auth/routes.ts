@@ -15,6 +15,7 @@ import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, O
 import { findLiveInvite, acceptInvite } from "./invites";
 import { sendWelcome } from "../notifications/welcome";
 import { takeOAuthPending } from "./oauth-routes";
+import { listGrants, revokeGrant } from "./oauth";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
 export interface AuthDeps { fetchImpl?: typeof fetch; now?: () => number }
@@ -253,6 +254,14 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
   authApp.post("/mcp-tokens/:id/revoke", async (c) => {
     const id = Number(c.req.param("id"));
     if (!Number.isInteger(id) || !(await revokeToken(c.env.DB, c.get("principal").handle, id))) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
+  });
+  // Settings › Connected apps: the caller's OAuth connections. Session-cookie only,
+  // never MCP. Someone else's id is the same 404 as an unknown one.
+  authApp.get("/oauth-grants", async (c) => c.json({ grants: await listGrants(c.env.DB, c.get("principal").handle) }));
+  authApp.post("/oauth-grants/:id/revoke", async (c) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || !(await revokeGrant(c.env.DB, c.get("principal").handle, id, Date.now()))) return c.json({ error: "not_found" }, 404);
     return c.json({ ok: true });
   });
   return authApp;
