@@ -217,3 +217,51 @@ Track A (2026-09-23) — `shared/artifacts-core.ts` is UNCHANGED. Decisions take
 - 2026-09-23 · **Tests**: Miniflare resets D1 per test (the harness) but NOT R2 — tests that assert an R2 key is
   absent must use bytes no other test uploads. `test/rename-handle.test.ts` now seeds every artifact handle
   column through the real writers.
+
+Track B (2026-09-23) — `shared/artifacts-core.ts`, `shared/artifacts.ts` and `src/tools/artifacts.ts` are UNCHANGED.
+Decisions taken beyond this doc:
+
+- 2026-09-23 · **Files**: `src/artifacts/routes.ts` (`createArtifactsApp({ fetchImpl })`, `artifactsApp`),
+  `src/artifacts/raw.ts`, `src/artifacts/upload.ts`, `src/artifacts/fetch-url.ts`, plus `src/artifacts/http.ts` — the
+  ONE `ArtifactError` → response mapping the three adapters share.
+- 2026-09-23 · **Error bodies**: not-found is exactly `{"error":"not_found"}` (API and raw alike, every cause —
+  including an unparseable slug and a version out of range); every other `ArtifactError` is
+  `{ error: <code>, message }` at `ARTIFACT_ERROR_STATUS`; a schema failure is `400 { error: "bad_request", message,
+  issues }` (zod issues); a malformed JSON / multipart body is 400. Upstream failures of `POST /fetch` are
+  `502 { error: "bad_gateway", message }` (network, timeout, non-2xx); refused address/scheme/type/too many
+  redirects `400`; > 500 KB `413`.
+- 2026-09-23 · **Status codes**: create and upload-url answer **201**; `POST …/versions` answers **201** with the
+  repository's `{ unchanged, version_no, page }`, or **200** when `unchanged` (the sha no-op); PATCH / links / ratify
+  answer 200 with the detail DTO. The upload PUT answers 200 with `{ unchanged, version_no, page }`.
+- 2026-09-23 · **Version addressing on the API**: `GET /api/artifacts/:slug` accepts `slug@vN`, `GET
+  /api/artifacts/:slug/vN` and `?v=N`; `?v` that disagrees with a version in the path is 400, a malformed `?v` 400.
+  Writes take the plain slug only (a versioned slug there is the one not_found — the repository's rule).
+- 2026-09-23 · **Multipart is binary-only**: `POST /api/artifacts` with `multipart/form-data` needs a binary
+  `kind` (a text kind → 400 "use JSON"); `links` is a JSON-array string field; `content_type` / `filename` fields
+  override the `file` part's own type / name. A declared `Content-Length` over `ARTIFACT_BINARY_CAP + 1 MB`
+  is 413 before the body is read; a chunked body is read (Cloudflare's own request cap bounds it) and the
+  repository re-checks the size. JSON bodies are refused above `ARTIFACT_TEXT_CAP × 6 + 64 KB` declared.
+- 2026-09-23 · **Ratify** additionally refuses (403) any request that carries an `Authorization` header, so a
+  future change to `sessionGate` can never make a bearer a ratification.
+- 2026-09-23 · **Upload PUT dispatch** (`isUploadRequest`): every PUT under `/api/artifacts/upload/`, and any
+  other method on a TOKEN-SHAPED segment (43 base64url chars) → 405 `Allow: PUT`; any other non-PUT falls through
+  to the app (so a page slugged `upload` still reads at `/api/artifacts/upload/v1`). A declared `Content-Length`
+  over the binary cap is 413 before the token is touched. `upload-url` returns `upload_url` ABSOLUTE, built from
+  the request origin (not `PUBLIC_ORIGIN`), and never the bare token.
+- 2026-09-23 · **Raw route**: the lock-down headers (nosniff, SAMEORIGIN, `Cache-Control: private`, the passive
+  CSP) are ALSO applied by a `/raw/*` middleware registered before `sessionGate`, so the gate's 401 and the 404
+  carry them; a served version sets its own kind's CSP. `Content-Disposition` always carries
+  `filename="<slug>-v<n>.<ext>"` (inline or attachment); a `file` is always attachment. Binary `ext`: the content
+  type's (png/jpg/gif/webp/pdf/txt/csv/json/zip), else the stored filename's last extension (`[a-z0-9]{1,10}`),
+  else `bin`. The height script is injected into INLINE html only — `?download=1` returns the stored bytes
+  untouched. The script posts to `"*"` (the sandboxed frame's origin is opaque; it sends only a height).
+- 2026-09-23 · **SSRF guard extras** beyond this doc's list: URLs with credentials are refused; `*.localhost`,
+  bare `local` / `internal`, 192.0.0.0/24, 198.18.0.0/15 and everything ≥ 224.0.0.0 are refused; IPv6 `::`,
+  fec0::/10, multicast, IPv4-compatible `::a.b.c.d` and NAT64 `64:ff9b::/96` are refused. The one 5 s timeout
+  spans all hops. Accepted content types: `text/*`, `image/svg+xml`, `application/xhtml+xml`, `application/xml`,
+  `application/json`, `application/x-mermaid`; a response with no content type is refused. Kind: content type
+  first (html / xhtml → html, svg, text/markdown → markdown, text/vnd.mermaid → mermaid), else the URL path's
+  extension if it maps to a TEXT kind, else null. The DTO's `url` is the final URL after redirects.
+- 2026-09-23 · **Tests**: `test/artifacts.http.test.ts` (62). The "fixed-length pipe ended prematurely" /
+  "client disconnected" lines in the vitest output come from R2 aborting a refused short-body put (Track A's
+  tests print the same); they do not fail the run.

@@ -6,6 +6,8 @@ import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
+import { artifactsApp } from "./artifacts/routes";
+import { rawApp, rawHeaders } from "./artifacts/raw";
 import { consume } from "./consumer";
 import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
@@ -39,9 +41,18 @@ import type { InviteRow } from "@shared/rows";
 
 export const app = new Hono<AppEnv>();
 
+// The raw artifact route's lock-down headers wrap EVERYTHING under /raw/, the gate's
+// own 401 included — so this one middleware runs before the gate.
+app.use("/raw/*", rawHeaders);
+
 // Gate first: everything except /auth/login and /auth/callback requires a session.
 // Fails closed with 401 (no data in the body).
 app.use("*", sessionGate);
+
+// Artifacts (issue #52): the JSON API and the raw bytes, both session-gated. The
+// token-authenticated upload PUT is dispatched in src/index.ts, before this app.
+app.route("/api/artifacts", artifactsApp);
+app.route("/raw/a", rawApp);
 
 // Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
 app.route("/auth", authApp);

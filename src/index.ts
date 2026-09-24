@@ -7,6 +7,7 @@ import { DAILY_CRON, WEEKLY_CRON, handleNotificationCron } from "./notifications
 import { REPO_CRON, handleRepoCron } from "./repo/cron";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe";
 import { run } from "./db";
+import { handleArtifactUpload, isUploadRequest } from "./artifacts/upload";
 import type { Env } from "./env";
 
 export default {
@@ -45,6 +46,10 @@ export default {
       await run(env.DB, `UPDATE persons SET email_unsubscribed = 1 WHERE handle = ?`, login);
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    // Artifact binary upload (issue #52): the single-use token minted by
+    // POST /api/artifacts/upload-url IS the auth — no session, so it is dispatched
+    // here, before the app and its sessionGate (src/artifacts/upload.ts).
+    if (isUploadRequest(request.method, url.pathname)) return handleArtifactUpload(request, env);
     return app.fetch(request, env, ctx);
   },
 
