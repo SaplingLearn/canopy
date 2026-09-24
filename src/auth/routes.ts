@@ -14,6 +14,7 @@ import { run } from "../db";
 import { completeSignIn, linkSignIn, sealOnboard, openOnboard, ONBOARD_COOKIE, ONBOARD_TTL_S, type ProviderProfile, type ForkResult } from "./onboard";
 import { findLiveInvite, acceptInvite } from "./invites";
 import { sendWelcome } from "../notifications/welcome";
+import { takeOAuthPending } from "./oauth-routes";
 
 const OAUTH_TX_COOKIE = "oauth_tx";
 export interface AuthDeps { fetchImpl?: typeof fetch; now?: () => number }
@@ -67,7 +68,8 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
     }
     const { id } = await createSession(c.env.DB, r.handle);
     await setSessionCookie(c, id, c.env.COOKIE_SECRET);
-    return c.redirect("/", 302);
+    // Signed in from an MCP client's authorize link: go back to the consent screen.
+    return c.redirect((await takeOAuthPending(c)) ?? "/", 302);
   }
 
   async function openTx(c: Context<AppEnv>) {
@@ -188,7 +190,10 @@ export function buildAuthApp(deps: AuthDeps = {}): Hono<AppEnv> {
         email, name: parsed.data.name ?? p.name, handle: parsed.data.handle, origin, fetchImpl: deps.fetchImpl,
       });
     }
-    return c.json({ ok: true, handle: parsed.data.handle });
+    // Signed up from an MCP client's authorize link: the SPA follows `redirect` back
+    // to the consent screen instead of Get Started.
+    const redirect = await takeOAuthPending(c);
+    return c.json({ ok: true, handle: parsed.data.handle, ...(redirect ? { redirect } : {}) });
   });
 
   // ── Session-gated ──

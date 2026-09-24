@@ -159,7 +159,7 @@ export function getOnboardPrefill(): Promise<OnboardPrefill> { return getJson<On
 export function checkHandle(handle: string): Promise<{ available: boolean; reason?: "invalid" | "reserved" | "taken" }> {
   return getJson(`/auth/handle-check?handle=${encodeURIComponent(handle)}`);
 }
-export function submitOnboard(b: { handle: string; name: string | null; color: PersonColor }): Promise<{ ok: true; handle: string }> { return postJson("/auth/onboard", b); }
+export function submitOnboard(b: { handle: string; name: string | null; color: PersonColor }): Promise<{ ok: true; handle: string; redirect?: string }> { return postJson("/auth/onboard", b); }
 
 // ── profile + identities ──────────────────────────────────────────────────────
 export function updateMe(b: { name?: string | null; color?: PersonColor }): Promise<{ ok: true; name: string | null; color: PersonColor }> { return putJson("/auth/me", b); }

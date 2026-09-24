@@ -1492,7 +1492,9 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         // empty on day one, and this is the one moment they are guaranteed to be
         // new. The boot path restores the route from the hash, so #guide is all
         // it takes. Every later sign-in goes wherever their hash points.
-        .then(() => { window.location.href = "/#guide"; })
+        // Signed up from an MCP client's authorize link → back to the consent screen
+        // (a same-origin path the Worker built); otherwise Get Started, as before.
+        .then((r) => { window.location.href = r.redirect?.startsWith("/oauth/authorize?") ? r.redirect : "/#guide"; })
         .catch((e) => {
           o.submitting = false;
           if (e instanceof ApiError && e.message === "handle_taken") { o.check = "taken"; }
