@@ -18,7 +18,7 @@ layer, built and verified against Claude Code first; phase 2 is verification plu
 
 ### Success criteria
 
-1. A new teammate installs plugin v0.4.0, runs `/mcp` → Authenticate, signs in, clicks Allow, and every
+1. A new teammate installs plugin v0.5.0, runs `/mcp` → Authenticate, signs in, clicks Allow, and every
    Canopy MCP tool works as that person.
 2. An existing `canopy_mcp_` bearer token keeps working unchanged.
 3. A person can see and revoke each connection in Settings; revoking stops it on the next call.
@@ -68,9 +68,9 @@ Changed units:
 - `src/auth/persons.ts` — `HANDLE_COLUMNS` gains `oauth_codes.person` and `oauth_grants.person`.
 - `src/repo/cron.ts` — the 6-hourly `:30` tick also calls `pruneOAuth` (D1 only, no subrequests).
 - `scripts/seed/reset.mjs` — truncates the four new tables.
-- `web/src/render.ts` — Settings › Connected apps card; the Get connection command modal gains a first
-  option, "Sign in with browser (recommended)".
-- `plugins/canopy/.mcp.json` — `headers` removed; `plugin.json` → 0.4.0, description no longer mentions
+- `web/src/render.ts` — Settings › MCP access tile: the Sign in with browser command, Connected apps, then
+  Access tokens (see Amendment 3); the modal is unchanged.
+- `plugins/canopy/.mcp.json` — `headers` removed; `plugin.json` → 0.5.0, description no longer mentions
   `$CANOPY_MCP_TOKEN`.
 - `CLAUDE.md` — Auth section (bearer class), the bare-401 line, the deferred-seams line.
 
@@ -336,7 +336,7 @@ Plus `npm run typecheck`, and a live check: `/mcp` → Authenticate against `wra
 
 ## Rollout
 
-1. Phase 1 PR: migration 0029, the OAuth layer, Settings, plugin 0.4.0, CLAUDE.md. Apply `0029` to
+1. Phase 1 PR: migration 0029, the OAuth layer, Settings, plugin 0.5.0, CLAUDE.md. Apply `0029` to
    prod (`db:migrate:remote`) before or with the merge — a merge to `main` deploys.
 2. Owner verifies in Claude Code against prod; teammates update the plugin and drop `CANOPY_MCP_TOKEN`.
 3. Phase 2: add the claude.ai connector, verify, fix, document.
