@@ -41,3 +41,96 @@ describe("bearer dispatch", () => {
     expect(res.status).not.toBe(401);
   });
 });
+
+const form = (o: Record<string, string>) => ({
+  method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(o).toString(),
+});
+
+describe("metadata endpoints", () => {
+  it("serve both documents publicly with CORS, including the /mcp-suffixed form", async () => {
+    for (const p of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
+      const r = await SELF.fetch(`https://example.com${p}`);
+      expect(r.status).toBe(200);
+      expect(r.headers.get("access-control-allow-origin")).toBe("*");
+      expect(((await r.json()) as { resource: string }).resource).toBe("https://example.com/mcp");
+    }
+    const as = await SELF.fetch("https://example.com/.well-known/oauth-authorization-server");
+    expect(((await as.json()) as { token_endpoint: string }).token_endpoint).toBe("https://example.com/oauth/token");
+    const pre = await SELF.fetch("https://example.com/oauth/token", { method: "OPTIONS" });
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get("access-control-allow-origin")).toBe("*");
+  });
+});
+
+describe("POST /oauth/register", () => {
+  it("201 with a client_id for a valid public client", async () => {
+    const r = await SELF.fetch("https://example.com/oauth/register", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Claude Code", redirect_uris: [REDIRECT] }),
+    });
+    expect(r.status).toBe(201);
+    const b = (await r.json()) as Record<string, unknown>;
+    expect(b).toMatchObject({ client_name: "Claude Code", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" });
+    expect(typeof b.client_id).toBe("string");
+  });
+  it("400 invalid_client_metadata on bad JSON, a bad redirect, or a body over 8 KB — writing nothing", async () => {
+    const bodies = ["{nope", JSON.stringify({ redirect_uris: ["http://evil.example/cb"] }), JSON.stringify({ redirect_uris: [REDIRECT], client_name: "x".repeat(9000) })];
+    for (const body of bodies) {
+      const r = await SELF.fetch("https://example.com/oauth/register", { method: "POST", headers: { "content-type": "application/json" }, body });
+      expect(r.status).toBe(400);
+      expect(((await r.json()) as { error: string }).error).toBe("invalid_client_metadata");
+    }
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM oauth_clients`).first<{ n: number }>())?.n).toBe(0);
+  });
+});
+
+describe("POST /oauth/token", () => {
+  async function codeFor(person: string) {
+    await seedPerson(person);
+    const c = await registerClient(env.DB, { client_name: "Claude Code", redirect_uris: [REDIRECT] }, Date.now());
+    const { verifier, challenge } = await pkce();
+    const check = await checkAuthorizeRequest(env.DB, new URLSearchParams({
+      response_type: "code", client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: "S256",
+    }), "https://example.com");
+    if (!check.ok) throw new Error("expected ok");
+    const { code } = await issueAuthorization(env.DB, { client: c, params: check.params, person, nowMs: Date.now() });
+    return { c, verifier, code };
+  }
+  it("authorization_code then refresh_token, form-encoded; no-store; CORS", async () => {
+    const { c, verifier, code } = await codeFor("oauth-user");
+    const r = await SELF.fetch("https://example.com/oauth/token", form({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: REDIRECT, client_id: c.client_id }));
+    expect(r.status).toBe(200);
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(r.headers.get("access-control-allow-origin")).toBe("*");
+    const t = (await r.json()) as { access_token: string; refresh_token: string };
+    const r2 = await SELF.fetch("https://example.com/oauth/token", form({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: c.client_id }));
+    expect(r2.status).toBe(200);
+    expect(((await r2.json()) as { access_token: string }).access_token).not.toBe(t.access_token);
+  });
+  it("accepts a JSON body too", async () => {
+    const { c, verifier, code } = await codeFor("oauth-user");
+    const r = await SELF.fetch("https://example.com/oauth/token", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: REDIRECT, client_id: c.client_id }),
+    });
+    expect(r.status).toBe(200);
+  });
+  it("standard errors: missing param, bad code, unsupported grant", async () => {
+    const miss = await SELF.fetch("https://example.com/oauth/token", form({ grant_type: "authorization_code", code: "x" }));
+    expect(miss.status).toBe(400);
+    expect(((await miss.json()) as { error: string }).error).toBe("invalid_request");
+    const bad = await SELF.fetch("https://example.com/oauth/token", form({ grant_type: "authorization_code", code: "x", code_verifier: "v", redirect_uri: REDIRECT, client_id: "c" }));
+    expect(((await bad.json()) as { error: string }).error).toBe("invalid_grant");
+    const un = await SELF.fetch("https://example.com/oauth/token", form({ grant_type: "password" }));
+    expect(((await un.json()) as { error: string }).error).toBe("unsupported_grant_type");
+  });
+});
+
+describe("POST /oauth/revoke", () => {
+  it("always 200, and a revoked access token stops working on /mcp", async () => {
+    const oat = await oauthAccessToken("oauth-user");
+    expect((await SELF.fetch("https://example.com/oauth/revoke", form({ token: oat }))).status).toBe(200);
+    expect((await SELF.fetch("https://example.com/oauth/revoke", form({ token: "junk" }))).status).toBe(200);
+    expect(await resolveBearerPrincipal(bearer(oat), env as unknown as Env)).toBeNull();
+  });
+});
