@@ -7,6 +7,7 @@
 import type { PromptSummary, PromptDetail, PromptVersion, PromptStatus, PromptSort } from "@shared/handoffs";
 import { detectVars } from "@shared/handoffs";
 import { TAGS } from "@shared/vocabulary";
+import { filterMenu, filterMenuBackdrop, type FilterMenuProps } from "./filter-menu";
 import type { PersonSummary } from "./api";
 import { esc, attr, relTime, statusBadge, WORK_SHELL } from "./ui";
 import { personChip, handleTag } from "./people";
@@ -35,14 +36,17 @@ const tagPill = (t: string) =>
   `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none">${esc(t)}</span>`;
 
 // ── library ──────────────────────────────────────────────────────────────────
-export type PromptMenu = null | "root" | "tag" | "sort";
+export type PromptFilterCat = "tag" | "sort";
 export interface PromptLibraryProps {
   status: "idle" | "loading" | "ok" | "error" | "unauth";
   prompts: PromptSummary[];
   q: string;
   tag: string | null;
   sort: PromptSort;
-  menu: PromptMenu;
+  filterOpen: boolean;
+  filterCat: PromptFilterCat;
+  /** The filter menu this render opens (plays its entrance once). */
+  fmOpening: string | null;
   persons: PersonSummary[];
 }
 
@@ -53,31 +57,31 @@ export function filterPrompts(list: PromptSummary[], q: string, tag: string | nu
   return out.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1) * (sort === "updated_asc" ? -1 : 1));
 }
 
-const CHEV_R = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="flex:none;color:var(--fg-40)"><path d="M9 6l6 6-6 6"></path></svg>`;
-const MENU_ROW = "display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap";
+const SORTS = [["updated_desc", "Recently updated"], ["updated_asc", "Least recently updated"]] as const;
 
-function filterMenu(p: PromptLibraryProps): string {
-  if (!p.menu) return "";
-  const sortOn = p.sort !== "updated_desc";
-  const hasFilter = !!p.tag || sortOn;
-  const check = (on: boolean) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="flex:none;${on ? "color:var(--accent)" : "visibility:hidden"}"><path d="M20 6 9 17l-5-5"></path></svg>`;
-  const label = (text: string, on: boolean, mono: boolean) => `<span style="flex:1;color:${on ? "var(--fg)" : "var(--fg-70)"};font-family:${mono ? "var(--mono)" : "inherit"}">${esc(text)}</span>`;
-  let inner: string;
-  if (p.menu === "root") {
-    inner = `<button data-act="promptMenu" data-arg="tag" class="cnpy-menurow" style="${MENU_ROW}"><span style="flex:1">Tag</span><span style="font-size:12px;color:var(--fg-40)">${esc(p.tag ?? "All")}</span>${CHEV_R}</button>
-      <button data-act="promptMenu" data-arg="sort" class="cnpy-menurow" style="${MENU_ROW}"><span style="flex:1">Sort</span><span style="font-size:12px;color:var(--fg-40)">${sortOn ? "Oldest" : "Newest"}</span>${CHEV_R}</button>
-      ${hasFilter ? `<div style="height:1px;background:var(--border);margin:5px 4px"></div><button data-act="promptResetFilters" class="cnpy-menurow" style="${MENU_ROW};color:var(--fg-55)">Reset</button>` : ""}`;
-  } else {
-    const opts = p.menu === "sort"
-      ? ([["updated_desc", "Recently updated"], ["updated_asc", "Least recently updated"]] as const).map(([k, l]) =>
-          `<button data-act="promptSort" data-arg="${k}" class="cnpy-menurow" style="${MENU_ROW}">${check(p.sort === k)}${label(l, p.sort === k, false)}</button>`)
-      : [null, ...TAGS].map((t) =>
-          `<button data-act="promptTag" data-arg="${attr(t ?? "")}" class="cnpy-menurow" style="${MENU_ROW}">${check(p.tag === t)}${label(t ?? "All tags", p.tag === t, !!t)}</button>`);
-    inner = `<button data-act="promptMenu" data-arg="root" class="cnpy-menurow" style="${MENU_ROW}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="flex:none;color:var(--fg-40)"><path d="M15 6l-6 6 6 6"></path></svg><span style="${MONO_EYEBROW}">${p.menu === "sort" ? "Sort" : "Tag"}</span></button>
-      <div style="height:1px;background:var(--border);margin:4px 4px 5px"></div>${opts.join("")}`;
-  }
-  return `<div data-act="promptMenuClose" style="position:fixed;inset:0;z-index:29"></div>
-    <div style="position:absolute;top:calc(100% + 6px);right:0;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:11px;padding:5px;box-shadow:0 14px 38px rgba(0,0,0,.38);width:230px">${inner}</div>`;
+/** The shared filter menu (web/src/filter-menu.ts) with the library's two categories:
+ *  Tag (one tag, or all) and Sort (the order the cards are listed in). */
+function promptFilterMenu(p: PromptLibraryProps): FilterMenuProps {
+  const shown = filterPrompts(p.prompts, p.q, p.tag, p.sort).length;
+  return {
+    id: "prompt", open: p.filterOpen, opening: p.fmOpening === "prompt", cat: p.filterCat,
+    activeCount: (p.tag ? 1 : 0) + (p.sort !== "updated_desc" ? 1 : 0),
+    showLabel: `Show ${shown} ${shown === 1 ? "prompt" : "prompts"}`, clearAct: "promptResetFilters",
+    align: "stretch", ariaLabel: "Filter and sort prompts",
+    groups: [
+      {
+        key: "tag", label: "Tag", value: p.tag ?? "", none: "",
+        options: [null, ...TAGS].map((t) => ({
+          v: t ?? "", l: t ?? "All tags", mono: !!t, act: "promptTag", arg: t ?? "",
+          n: t ? p.prompts.filter((x) => x.tags.includes(t)).length : p.prompts.length,
+        })),
+      },
+      {
+        key: "sort", label: "Sort", value: p.sort, none: "updated_desc",
+        options: SORTS.map(([k, l]) => ({ v: k, l, act: "promptSort", arg: k })),
+      },
+    ],
+  };
 }
 
 function promptCard(x: PromptSummary, persons: PersonSummary[]): string {
@@ -103,9 +107,7 @@ function promptCard(x: PromptSummary, persons: PersonSummary[]): string {
 
 export function promptLibraryView(p: PromptLibraryProps): string {
   const shown = filterPrompts(p.prompts, p.q, p.tag, p.sort);
-  const sortOn = p.sort !== "updated_desc";
-  const nFilters = (p.tag ? 1 : 0) + (sortOn ? 1 : 0);
-  const filterBtnSt = `flex:none;display:flex;align-items:center;gap:6px;height:34px;box-sizing:border-box;padding:0 11px;margin-left:-1px;border:1px solid var(--border);border-radius:0 8px 8px 0;color:${nFilters || p.menu ? "var(--fg)" : "var(--fg-55)"};background:${p.menu ? "var(--hover)" : "transparent"}`;
+  const menu = promptFilterMenu(p);
   const staged = shown.filter((x) => x.status === "staged").length;
   const loading = (p.status === "idle" || p.status === "loading") && p.prompts.length === 0;
 
@@ -123,13 +125,13 @@ export function promptLibraryView(p: PromptLibraryProps): string {
 
   return `<div data-screen-label="Prompt Library" style="${WORK_SHELL}">
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 16px">
-    <div style="position:relative;display:flex;width:340px;max-width:100%">
+    <div style="position:relative;display:flex;align-items:stretch;width:420px;max-width:100%;height:34px">
       <div class="cnpy-search" style="flex:1;min-width:0;height:34px;box-sizing:border-box;padding:0 10px;border-top-right-radius:0;border-bottom-right-radius:0">
         <svg class="cnpy-nav-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
         <input data-act="promptQuery" data-field="promptQuery" value="${attr(p.q)}" class="cnpy-search-in" placeholder="Search titles, slugs and bodies" aria-label="Search prompts" autocomplete="off" spellcheck="false">
       </div>
-      <button data-act="promptMenuToggle" class="cnpy-outlinebtn" aria-label="Filter and sort" aria-expanded="${p.menu ? "true" : "false"}" style="${filterBtnSt}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 6h16"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>${nFilters ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--accent)">${nFilters}</span>` : ""}</button>
-      ${filterMenu(p)}
+      ${filterMenuBackdrop(menu)}
+      ${filterMenu(menu)}
     </div>
     <span style="flex:1"></span>
     <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;margin-left:6px">${loading ? "" : `${shown.length} shown · ${staged} staged`}</span>

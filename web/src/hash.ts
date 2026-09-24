@@ -8,6 +8,11 @@
 //   #sprints/<id>     → one sprint's screen
 //   #repo             → the Repo dashboard's Overview
 //   #repo/<tab>       → one of its other tabs (code / ci / usage / planning)
+//   #artifacts        → the Artifacts library
+//   #artifacts/new    → the new-artifact form
+//   #artifacts/<slug>[/v<n>]           → one artifact (a version other than the latest;
+//                                        `<slug>@v<n>` is accepted, `/v<n>` written back)
+//   #artifacts/<slug>/diff/<a>..<b>    → two of its versions compared
 //   #handoffs         → the handoffs inbox; #handoffs/new the form; #handoffs/<id> one handoff
 //   #prompts          → the Prompt Library; #prompts/new the editor; #prompts/<slug> one
 //                       prompt; #prompts/<slug>/edit and #prompts/<slug>/version its editor
@@ -20,6 +25,8 @@
 
 import type { Screen } from "./render";
 import { isRepoTab, type RepoTab } from "@shared/repo";
+import type { ArtRoute } from "./artifacts";
+import { parseSlugVersion } from "@shared/artifacts-core";
 import { MAINT_TABS, type MaintTab } from "./maintenance";
 
 /** Every screen addressable by its bare name (`#feed`). The compound ticket /
@@ -37,6 +44,8 @@ export interface Route {
   sprintId: number | null;
   /** Set only on `repo` (absent everywhere else, so older routes compare equal). */
   repoTab?: RepoTab;
+  /** Set only on `artifact` (absent everywhere else, like `repoTab`). */
+  art?: ArtRoute;
   /** Set only on `handoff` (a positive integer, rendered `#12`). */
   handoffId?: number;
   /** Set only on `prompt` and on `promptedit` for an existing prompt. */
@@ -50,13 +59,17 @@ export interface Route {
 /** Whether two routes name the same place (the hashchange no-op check). */
 export function sameRoute(a: Route, b: Route): boolean {
   return a.screen === b.screen && a.ticketId === b.ticketId && a.sprintId === b.sprintId && a.repoTab === b.repoTab
-    && a.handoffId === b.handoffId && a.promptSlug === b.promptSlug && a.promptMode === b.promptMode && a.maintTab === b.maintTab;
+    && a.handoffId === b.handoffId && a.promptSlug === b.promptSlug && a.promptMode === b.promptMode && a.maintTab === b.maintTab
+    && JSON.stringify(a.art ?? null) === JSON.stringify(b.art ?? null);
 }
 
 /** A URL path segment decoded, or null when it is malformed. */
 function seg(v: string): string | null {
   try { const d = decodeURIComponent(v); return d ? d : null; } catch { return null; }
 }
+
+/** An artifact slug: lowercase words joined by dashes (`new` is the form, never a slug). */
+const isArtSlug = (v: string): boolean => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v) && v !== "new";
 
 /** A positive integer path segment, or null (so `#tickets/abc` is not a detail route). */
 function intSeg(v: string): number | null {
@@ -92,6 +105,23 @@ export function parseHash(hash: string): Route {
     if (parts.length === 2 && isRepoTab(parts[1])) return { screen: "repo", ticketId: null, sprintId: null, repoTab: parts[1] };
     return none;
   }
+  if (parts[0] === "artifacts") {
+    if (parts.length === 1) return { screen: "artifacts", ticketId: null, sprintId: null };
+    if (parts.length === 2 && parts[1] === "new") return { screen: "artifactnew", ticketId: null, sprintId: null };
+    // `<slug>@v<n>` (the raw route's spelling) is accepted too; `/v<n>` is canonical.
+    const at = parts.length === 2 && parts[1].includes("@") ? parseSlugVersion(parts[1]) : null;
+    if (at && at.version !== null && isArtSlug(at.slug)) return { screen: "artifact", ticketId: null, sprintId: null, art: { slug: at.slug, v: at.version, diff: null } };
+    if (!isArtSlug(parts[1] ?? "")) return none;
+    const one =(v: number | null, diff: ArtRoute["diff"]): Route => ({ screen: "artifact", ticketId: null, sprintId: null, art: { slug: parts[1], v, diff } });
+    if (parts.length === 2) return one(null, null);
+    const v = parts.length === 3 && /^v\d+$/.test(parts[2]) ? intSeg(parts[2].slice(1)) : null;
+    if (v !== null) return one(v, null);
+    const d = parts.length === 4 && parts[2] === "diff" ? /^(\d+)\.\.(\d+)$/.exec(parts[3]) : null;
+    const a = d ? intSeg(d[1]) : null;
+    const b = d ? intSeg(d[2]) : null;
+    if (a !== null && b !== null) return one(null, { a, b });
+    return none;
+  }
   const base = { ticketId: null, sprintId: null };
   if (parts[0] === "handoffs" && parts.length === 2) {
     if (parts[1] === "new") return { screen: "newhandoff", ...base };
@@ -124,6 +154,13 @@ export function hashForRoute(r: Route): string {
   if (r.screen === "ticketdetail") return r.ticketId !== null ? `#tickets/${r.ticketId}` : "#tickets";
   if (r.screen === "newticket") return "#tickets/new";
   if (r.screen === "repo") return !r.repoTab || r.repoTab === "overview" ? "#repo" : `#repo/${r.repoTab}`;
+  if (r.screen === "artifactnew") return "#artifacts/new";
+  if (r.screen === "artifact") {
+    const a = r.art;
+    if (!a?.slug) return "#artifacts";
+    if (a.diff) return `#artifacts/${a.slug}/diff/${a.diff.a}..${a.diff.b}`;
+    return a.v !== null ? `#artifacts/${a.slug}/v${a.v}` : `#artifacts/${a.slug}`;
+  }
   if (r.screen === "sprint") return r.sprintId !== null ? `#sprints/${r.sprintId}` : "#roadmap";
   if (r.screen === "handoff") return r.handoffId ? `#handoffs/${r.handoffId}` : "#handoffs";
   if (r.screen === "newhandoff") return "#handoffs/new";

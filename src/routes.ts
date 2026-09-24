@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { IngestPayload } from "@shared/contract";
+import { IngestPayload, QueryType } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { oauthApp } from "./auth/oauth-routes";
 import { notificationsApp } from "./notifications/routes";
-import { consume, ingestDocProposal } from "./consumer";
+import { artifactsApp } from "./artifacts/routes";
+import { rawApp, rawHeaders } from "./artifacts/raw";
+import { ingestDocProposal, recordBatch } from "./consumer";
 import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
@@ -46,9 +48,18 @@ import type { InviteRow } from "@shared/rows";
 
 export const app = new Hono<AppEnv>();
 
+// The raw artifact route's lock-down headers wrap EVERYTHING under /raw/, the gate's
+// own 401 included — so this one middleware runs before the gate.
+app.use("/raw/*", rawHeaders);
+
 // Gate first: everything except /auth/login and /auth/callback requires a session.
 // Fails closed with 401 (no data in the body).
 app.use("*", sessionGate);
+
+// Artifacts (issue #52): the JSON API and the raw bytes, both session-gated. The
+// token-authenticated upload PUT is dispatched in src/index.ts, before this app.
+app.route("/api/artifacts", artifactsApp);
+app.route("/raw/a", rawApp);
 
 // Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
 app.route("/auth", authApp);
@@ -69,7 +80,8 @@ app.post("/ingest", async (c) => {
     return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   }
   // SEAM: a Cloudflare Queue producer.send({ payload, principal }) would slot in here.
-  const result = await consume(c.env.DB, parsed.data, c.get("principal"));
+  // recordBatch = consume() + the post-batch artifact_links step, identical to MCP record_session.
+  const result = await recordBatch(c.env.DB, parsed.data, c.get("principal"));
   return c.json({ ok: true, result });
 });
 
@@ -101,8 +113,7 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "sprint" =>
-        t === "doc" || t === "decision" || t === "feed" || t === "sprint"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is QueryType => QueryType.safeParse(t).success))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "technical" || spaceRaw === "product" ? spaceRaw : undefined;
@@ -114,7 +125,7 @@ app.get("/search", async (c) => {
     space,
     include_staged: false,
     limit: limit ? Number(limit) : undefined,
-  });
+  }, c.get("principal").handle); // the viewer: a private artifact reaches only its author
   return c.json({ result });
 });
 
