@@ -92,6 +92,13 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
   await setArtifactStatus(env.DB, art.slug, "published", handle);
   await ratifyArtifact(env.DB, art.slug, 1, handle);
   await mintUploadToken(env.DB, { kind: "file", size_bytes: 1, sha256: "e".repeat(64), title: "Rename test upload", area: "ui" }, handle);
+  // Handoffs + Prompt Library (0028): direct inserts for sender / recipient /
+  // claimed_by and the prompt's author plus its version's (the real writers
+  // take the principal from auth, which this seed does not have).
+  await run(env.DB, `INSERT INTO handoffs (sender, recipient, status, body, created_at, claimed_at, claimed_by, expires_at) VALUES (?, ?, 'claimed', 'b', ?, ?, ?, ?)`,
+    handle, handle, nowIso(), nowIso(), handle, nowIso());
+  await run(env.DB, `INSERT INTO prompts (slug, title, author, current_version, created_at, updated_at) VALUES (?, 'T', ?, 1, ?, ?)`, "rename-test", handle, nowIso(), nowIso());
+  await run(env.DB, `INSERT INTO prompt_versions (slug, version, status, author, body, created_at) VALUES (?, 1, 'published', ?, 'b', ?)`, "rename-test", handle, nowIso());
 }
 
 describe("renamePerson", () => {

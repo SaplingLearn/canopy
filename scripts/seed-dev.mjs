@@ -26,6 +26,8 @@ const fx = {
   tickets: load("tickets.json"),
   events: load("events.json"),
   identity: load("identity.json"),
+  handoffs: load("handoffs.json"),
+  prompts: load("prompts.json"),
 };
 
 const statements = buildSeedStatements(fx);

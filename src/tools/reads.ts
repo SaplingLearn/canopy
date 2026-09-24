@@ -423,7 +423,7 @@ const SNIPPET = `'', '', '…', 12`; // open, close, ellipsis, tokens — no mar
 // quote each token as a phrase, OR them together. Returns null when nothing is
 // left to match (caller degrades to browse). Quoting every token guarantees we
 // never feed FTS5 its own operator/syntax characters.
-function buildMatch(q: string): string | null {
+export function buildMatch(q: string): string | null {
   const cleaned = q.replace(/[^\p{L}\p{N}_]+/gu, " ").trim();
   if (!cleaned) return null;
   return cleaned.split(/\s+/).map((t) => `"${t}"`).join(" OR ");

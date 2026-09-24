@@ -113,6 +113,10 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   // Artifacts (0029): plain TEXT handles, no FK.
   ["artifact_pages", "author_id"], ["artifact_pages", "ratified_by"], ["artifact_versions", "created_by"],
   ["artifact_links", "created_by"], ["artifact_upload_tokens", "principal"],
+  // Handoffs + Prompt Library (0028). `handoffs.recipient` may hold the literal
+  // 'anyone'; the rename's WHERE only ever matches a real handle.
+  ["handoffs", "sender"], ["handoffs", "recipient"], ["handoffs", "claimed_by"],
+  ["prompts", "author"], ["prompt_versions", "author"],
 ];
 
 export type RenameResult = { ok: true } | { ok: false; reason: HandleProblem | "same" | "not_found" };

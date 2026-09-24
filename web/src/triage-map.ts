@@ -149,6 +149,8 @@ export function unplacedFromRow(r: NeedsTriageRow): UnplacedItem {
     reason: r.reason.toLowerCase().startsWith("low confidence") ? "LOW CONFIDENCE" : "AGENT FLAGGED",
     meta: `${r.source_author ?? "unknown"} · ${relTime(r.created_at)}`,
     reasonNote: r.reason,
+    author: r.source_author ?? null,
+    when: relTime(r.created_at),
   };
 }
 

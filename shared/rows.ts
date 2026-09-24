@@ -167,7 +167,7 @@ export interface McpTokenSummary {
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "triage" | "event";
+  item_type: "feed" | "doc" | "adr" | "triage" | "event" | "handoff";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;

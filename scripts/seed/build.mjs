@@ -170,6 +170,39 @@ export function buildSeedStatements(fx) {
     }
   }
 
+  // Handoffs + Prompt Library (0028). Their fixtures carry RELATIVE times
+  // (`*_ago_min`), stamped against the clock at seed time, so the inbox always
+  // reads "8m ago" / "2h ago" the way the design does rather than aging out.
+  const now = Date.now();
+  const agoIso = (min) => (min === null || min === undefined ? null : new Date(now - Number(min) * 60000).toISOString());
+  for (const h of fx.handoffs?.handoffs ?? []) {
+    const c = h.context ?? {};
+    const context = { repo: c.repo ?? "", branch: c.branch ?? "", task: c.task ?? "", done: c.done ?? [], next: c.next ?? [], files: c.files ?? [] };
+    const created = agoIso(h.created_ago_min);
+    // A handoff expires 7 days after it was sent (src/tools/handoffs.ts HANDOFF_TTL_MS).
+    const expires = new Date(Date.parse(created) + 7 * 24 * 60 * 60 * 1000).toISOString();
+    s.push(
+      `INSERT INTO handoffs (id, sender, recipient, status, body, context, prompt_title, prompt_body, created_at, claimed_at, claimed_by, claimed_by_session, expires_at) VALUES (` +
+        `${num(h.id)}, ${q(h.sender)}, ${q(h.recipient)}, ${q(h.status)}, ${q(h.body)}, ${jsonLit(context)}, ${q(h.prompt?.title)}, ${q(h.prompt?.body)}, ` +
+        `${q(created)}, ${q(agoIso(h.claimed_ago_min))}, ${q(h.claimed_by)}, ${q(h.claimed_by_session)}, ${q(expires)})`
+    );
+  }
+  for (const p of fx.prompts?.prompts ?? []) {
+    const versions = p.versions ?? [];
+    const latest = versions[versions.length - 1];
+    s.push(
+      `INSERT INTO prompts (slug, title, description, tags, author, current_version, created_at, updated_at) VALUES (` +
+        `${q(p.slug)}, ${q(p.title)}, ${q(p.description ?? "")}, ${jsonLit(p.tags ?? [])}, ${q(p.author)}, ${num(latest?.version)}, ` +
+        `${q(agoIso(versions[0]?.created_ago_min))}, ${q(agoIso(p.updated_ago_min))})`
+    );
+    for (const v of versions) {
+      s.push(
+        `INSERT INTO prompt_versions (slug, version, status, author, summary, body, created_at) VALUES (` +
+          `${q(p.slug)}, ${num(v.version)}, ${q(v.status)}, ${q(v.author)}, ${q(v.summary ?? "")}, ${q(v.body)}, ${q(agoIso(v.created_ago_min))})`
+      );
+    }
+  }
+
   for (const t of fx.identity?.identity_tasks ?? []) {
     s.push(
       `INSERT INTO identity_tasks (login, first_seen, status, resolved_at, resolved_by) VALUES (` +

@@ -1,5 +1,5 @@
 -- Artifacts (issue #52; spec: docs/superpowers/specs/2026-09-24-artifacts-implementation.md).
--- (0028 is taken by another in-flight branch — feat/handoffs-prompts-ui — so this is 0029.)
+-- (0028 is handoffs_prompts — feat/handoffs-prompts-ui — so this is 0029.)
 --
 -- An artifact is a PAGE (slug, title, kind, status, visibility) with an append-only
 -- list of VERSIONS. Text kinds (html / markdown / svg / mermaid) keep their content

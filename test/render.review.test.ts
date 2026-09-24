@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { lineDiff, collapsedLineDiff } from "../web/src/diff";
 import { reviewView, reviewDetail, reviewCard, unifiedDiff, renderedPreview, splitDiffRows, type ReviewItem, type ReviewProps } from "../web/src/review";
-import { maintenanceView, assignPanel, personPicker, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
+import { maintenanceView, assignPanel, personPicker, fileHint, type MaintenanceProps, type UnplacedItem, type IdentityGroup } from "../web/src/maintenance";
 
 // ── lineDiff ──────────────────────────────────────────────────────────────────
 
@@ -359,6 +359,7 @@ function makeGroup(overrides: Partial<IdentityGroup> = {}): IdentityGroup {
 
 function makeMaintProps(overrides: Partial<MaintenanceProps> = {}): MaintenanceProps {
   return {
+    tab: "unplaced",
     unplaced: [makeUnplaced()],
     assign: {
       kinds: [
@@ -371,6 +372,7 @@ function makeMaintProps(overrides: Partial<MaintenanceProps> = {}): MaintenanceP
       tags: ["auth", "infra"],
     },
     assignOpen: null, assignKind: null, assignSection: null, assignSpace: null, assignTags: [],
+    discardArm: false,
     identity: [makeGroup()],
     people: [{ id: "maya-k", name: "maya-k", initials: "MA" }],
     mapPicks: {},
@@ -379,60 +381,67 @@ function makeMaintProps(overrides: Partial<MaintenanceProps> = {}): MaintenanceP
   };
 }
 
-describe("maintenanceView — populated", () => {
-  it("renders both sections with their count labels", () => {
-    const html = maintenanceView(makeMaintProps());
-    expect(html).toContain("UNPLACED");
-    expect(html).toContain("IDENTITY");
-    expect(html).toContain("1 item");
-    expect(html).toContain("1 login to match");
+describe("maintenanceView — Unplaced tab", () => {
+  it("lists the items and shows the first one on screen with its position", () => {
+    const html = maintenanceView(makeMaintProps({ unplaced: [makeUnplaced(), makeUnplaced({ id: "u2", title: "Second thing", snippet: "Second." })] }));
+    expect(html).toContain("Things an agent produced but couldn&#39;t place.");
+    expect(html).toContain('data-act="maintSelect" data-arg="u1"');
+    expect(html).toContain('data-act="maintSelect" data-arg="u2"');
+    expect(html).toContain("1 of 2");
+    expect(html).toContain("Why it wasn't placed:");
+    expect(html).not.toContain("mk-dev2"); // Identity is its own tab now
   });
 
-  it("centers its single-column wrapper (margin:0 auto) like every other screen", () => {
-    // Regression: the wrapper was max-width-capped but had no horizontal auto
-    // margin, so it pinned to the left of the full-width <main> instead of
-    // centering the way My Work / Roadmap / Search / Settings do.
+  it("selecting another item puts it on screen", () => {
+    const html = maintenanceView(makeMaintProps({ unplaced: [makeUnplaced(), makeUnplaced({ id: "u2", title: "Second thing", snippet: "Second." })], assignOpen: "u2" }));
+    expect(html).toContain("2 of 2");
+    expect(html).toContain('data-act="maintFile" data-arg="u2"');
+  });
+
+  it("centers its wrapper (margin:0 auto) like every other screen", () => {
     const html = maintenanceView(makeMaintProps());
     expect(html).toMatch(/max-width:\s*\d+px;\s*margin:\s*0 auto/);
   });
 
-  it("renders the unplaced row with its assign/discard affordances (panel closed)", () => {
-    const html = maintenanceView(makeMaintProps());
-    expect(html).toContain("Loose thing");
-    expect(html).toContain("Discard");
-    expect(html).toContain("Assign…");
-    expect(html).not.toContain("WHAT IS IT");
+  it("gates File it on a kind (and a section for a doc), and arms Discard in two steps", () => {
+    const none = maintenanceView(makeMaintProps());
+    expect(none).toContain("Pick what it is first");
+    expect(none).not.toMatch(/class="cnpy-accentbtn"[^>]*>File it/);
+    const doc = maintenanceView(makeMaintProps({ assignOpen: "u1", assignKind: "doc" }));
+    expect(doc).toContain("Pick a section");
+    expect(doc).toContain("reference");
+    const ready = maintenanceView(makeMaintProps({ assignOpen: "u1", assignKind: "doc", assignSection: "reference" }));
+    expect(ready).toContain("Stages a proposal in reference");
+    expect(ready).toContain("cnpy-accentbtn");
+    expect(maintenanceView(makeMaintProps())).toContain(">Discard<");
+    expect(maintenanceView(makeMaintProps({ discardArm: true }))).toContain("Click again to discard");
   });
+});
 
-  it("opens the assign panel and gates targets on a kind pick", () => {
-    const closed = maintenanceView(makeMaintProps({ assignOpen: "u1" }));
-    expect(closed).toContain("WHAT IS IT");
-    expect(closed).toContain("Pick what kind of thing it is first.");
-    const picked = maintenanceView(makeMaintProps({ assignOpen: "u1", assignKind: "doc" }));
-    expect(picked).toContain("reference");
-    expect(picked).not.toContain("Pick what kind of thing it is first.");
-  });
-
-  it("renders the identity card pairing the activity sample with the person picker", () => {
-    const html = maintenanceView(makeMaintProps());
+describe("maintenanceView — Identity tab", () => {
+  it("pairs the activity sample with the person picker", () => {
+    const html = maintenanceView(makeMaintProps({ tab: "identity" }));
     expect(html).toContain("mk-dev2");
     expect(html).toContain("#412 Fix a thing");
-    expect(html).toContain("recent activity");
-    expect(html).toContain("WHO IS THIS");
+    expect(html).toContain("Who is this?");
     expect(html).toContain("maya-k");
     expect(html).toContain("Map login");
+    expect(html).not.toContain("Loose thing");
   });
 });
 
 describe("maintenanceView — empty states", () => {
-  it("renders both section empty states (the normal state) with empty count labels", () => {
-    const html = maintenanceView(makeMaintProps({ unplaced: [], identity: [] }));
-    expect(html).toContain("All clear");
-    expect(html).toContain("Everything an agent produced found its place on its own.");
-    expect(html).toContain("Everyone is accounted for");
-    expect(html).toContain("Every login in the activity stream is matched to a person.");
-    expect(html).not.toContain("1 item");
-    expect(html).not.toContain("events waiting");
+  it("Unplaced and Identity each have their own empty card", () => {
+    const u = maintenanceView(makeMaintProps({ unplaced: [], identity: [] }));
+    expect(u).toContain("All clear");
+    expect(u).toContain("Everything an agent produced found its place on its own.");
+    const i = maintenanceView(makeMaintProps({ tab: "identity", unplaced: [], identity: [] }));
+    expect(i).toContain("Everyone is accounted for");
+    expect(i).toContain("Every login in the activity stream is matched to a person.");
+  });
+
+  it("People renders the body the caller passes", () => {
+    expect(maintenanceView(makeMaintProps({ tab: "people" }), "<p>directory</p>")).toContain("<p>directory</p>");
   });
 });
 
@@ -447,7 +456,7 @@ describe("XSS: maintenance fields are escaped in text and attributes", () => {
 
   it("escapes a hostile login and sample text", () => {
     const hostile = makeGroup({ login: "x<script>y", sample: [{ kind: "PR", text: '<svg onload="alert(1)">', when: "now" }] });
-    const html = maintenanceView(makeMaintProps({ identity: [hostile] }));
+    const html = maintenanceView(makeMaintProps({ tab: "identity", identity: [hostile] }));
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<svg onload");
     expect(html).toContain("&lt;script&gt;");
@@ -457,31 +466,32 @@ describe("XSS: maintenance fields are escaped in text and attributes", () => {
 describe("assignPanel — per-type targets from the real vocabulary", () => {
   const assign = makeMaintProps().assign;
 
-  it("prompts for a kind first", () => {
-    expect(assignPanel("7", assign, null, null, null, [])).toContain("Pick what kind of thing it is first.");
+  it("offers the three kinds and no target until one is picked", () => {
+    const html = assignPanel("7", assign, null, null, null, []);
+    expect(html).toContain("File it as");
+    expect(html).toContain("Doc section");
+    expect(html).not.toContain("reference");
   });
 
-  it("doc kind offers sections plus an optional space, File it gated on section", () => {
-    const noSection = assignPanel("7", assign, "doc", null, null, []);
-    expect(noSection).toContain("reference");
-    expect(noSection).toContain("decisions");
-    expect(noSection).toContain("SPACE (OPTIONAL)");
-    expect(noSection).not.toContain("cnpy-accentbtn"); // File it disabled
-    const withSection = assignPanel("7", assign, "doc", "reference", null, []);
-    expect(withSection).toContain("cnpy-accentbtn"); // File it enabled
+  it("doc kind offers sections plus an optional space", () => {
+    const html = assignPanel("7", assign, "doc", null, null, []);
+    expect(html).toContain("reference");
+    expect(html).toContain("decisions");
+    expect(html).toContain("technical");
+    expect(html).toContain("optional");
   });
 
-  it("feed kind offers multi-select tags and can file without one", () => {
+  it("feed kind offers multi-select tags", () => {
     const html = assignPanel("7", assign, "feed", null, null, ["auth"]);
-    expect(html).toContain("auth");
-    expect(html).toContain("Tags are optional");
-    expect(html).toContain("cnpy-accentbtn");
+    expect(html).toContain('data-act="maintAssignTag" data-arg="auth"');
+    expect(html).toContain('data-act="maintAssignTag" data-arg="infra"');
   });
 
-  it("the adr kind needs no target (and says what it files as)", () => {
+  it("the adr kind needs no target", () => {
     const html = assignPanel("7", assign, "adr", null, null, []);
-    expect(html).toContain("No target needed");
-    expect(html).toContain("decision draft");
+    expect(html).not.toContain("maintAssignSection");
+    expect(html).not.toContain("maintAssignTag");
+    expect(fileHint("adr", null)).toBe("Creates a draft decision in Review");
   });
 });
 
@@ -491,13 +501,13 @@ describe("personPicker — two-step confirm guard", () => {
   it("shows Map login and no effect-note before the first click", () => {
     const html = personPicker("mk-dev2", people, "maya-k", false);
     expect(html).toContain("Map login");
-    expect(html).not.toContain("This attributes");
+    expect(html).not.toContain("past and future");
   });
 
   it("states the concrete effect and switches to Confirm mapping when confirming", () => {
     const html = personPicker("mk-dev2", people, "maya-k", true);
-    expect(html).toContain("This attributes");
-    expect(html).toContain("mk-dev2");
+    expect(html).toContain("mk-dev2's activity will show as maya-k's, past and future.");
     expect(html).toContain("Confirm mapping");
+    expect(html).toContain('data-act="identityCancel"');
   });
 });
