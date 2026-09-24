@@ -25,6 +25,10 @@ import { emailNotificationsSection, notificationsMaintenanceSections, unsubscrib
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
 import { sidebarView, NAV_CLOSED, type NavOpen } from "./sidebar";
 import { repoView, repoControls, repoCrumb, type RepoProps, type RepoPollState } from "./repo";
+import {
+  artifactsView, artifactsHeader, artifactsDialogs, ticketArtifactsBlock, initialArtUi, ART_ROUTE_NONE,
+  type ArtUi, type ArtRoute, type ArtScreen, type ArtProps,
+} from "./artifacts";
 import type { RepoDashboard, RepoTab, RepoRange } from "@shared/repo";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
@@ -40,7 +44,10 @@ export type Screen =
   // `sprint` is a Roadmap child — the sidebar highlights Roadmap while it is open.
   | "tickets" | "ticketdetail" | "newticket" | "sprint"
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
-  | "repo";
+  | "repo"
+  // Artifacts (Knowledge › Artifacts): the library, the new-artifact form, and one
+  // artifact (its viewer, or its version diff). UI only — sample data (artifacts.ts).
+  | "artifacts" | "artifactnew" | "artifact";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -209,6 +216,11 @@ export interface AppState {
   nsDue: string;
   nsLead: string | null;
   nsDom: SprintDomain | null;
+  // ── Artifacts (UI only; artifacts.ts) ────────────────────────────────────
+  /** The artifact the `artifact` screen shows (slug, version, diff pair). */
+  artRoute: ArtRoute;
+  /** Library filters, menus, dialogs, the create form, and the session's sample copy. */
+  art: ArtUi;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -297,6 +309,8 @@ export function initialState(): AppState {
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
     nsOpen: false, nsName: "", nsDates: "", nsDesc: "", nsUrg: "normal", nsDue: "", nsLead: null, nsDom: null,
+    artRoute: ART_ROUTE_NONE,
+    art: initialArtUi(),
     toast: null,
     backfillSync: null,
   };
@@ -518,6 +532,7 @@ function header(s: AppState): string {
     // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
     tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
     repo: "Repo",
+    artifacts: "Artifacts", artifactnew: "Artifacts", artifact: "Artifacts",
   };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
@@ -607,14 +622,17 @@ function header(s: AppState): string {
     ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="ticketsBack" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
     : `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">${titles[s.screen]}</h1>`;
 
+  // The Artifacts screens draw their own title + crumbs (a diff has two crumbs).
+  const art = isArtScreen(s.screen) ? artifactsHeader(artProps(s, s.screen)) : null;
+
   return `<header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;min-height:57px;border-bottom:1px solid var(--border);flex:none">
     <div style="display:flex;align-items:center;gap:12px;min-width:0">
-      ${title}
-      ${crumb}
+      ${art ? art.title : title}
+      ${art ? art.crumb : crumb}
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${themeBtn}
+      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${art ? art.controls : ""}${themeBtn}
     </div>
   </header>`;
 }
@@ -1825,6 +1843,7 @@ function ticketDetailScreen(s: AppState): string {
     relMenu: s.relMenu,
     lkMenu: s.lkMenu,
     stMenu: s.stMenu,
+    artifactsBlock: ticketArtifactsBlock(),
   });
 }
 
@@ -1854,6 +1873,9 @@ function screenBody(s: AppState): string {
     case "ticketdetail": return ticketDetailScreen(s);
     case "sprint": return sprintScreenBody(s);
     case "repo": return repoView(repoProps(s));
+    case "artifacts":
+    case "artifactnew":
+    case "artifact": return artifactsView(artProps(s, s.screen));
     default: return feedView(s);
   }
 }
@@ -1865,6 +1887,15 @@ function repoProps(s: AppState): RepoProps {
     admin: s.me?.admin === true, poll: s.repoPoll, productEnv: s.repoProductEnv,
   };
 }
+
+/** Project the app state onto the Artifacts screens' props. */
+function artProps(s: AppState, screen: ArtScreen): ArtProps {
+  return {
+    screen, route: s.artRoute, ui: s.art, me: s.me?.handle ?? "",
+    persons: s.persons.data, host: typeof location !== "undefined" ? location.host : "canopy",
+  };
+}
+const isArtScreen = (screen: Screen): screen is ArtScreen => screen === "artifacts" || screen === "artifactnew" || screen === "artifact";
 
 // `.cnpy-shell` is the seam web/src/morph.ts looks for: inside it the <aside> is
 // patched in place (so its transitions run) and <main> is swapped.
@@ -1918,5 +1949,6 @@ export function render(s: AppState): string {
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
     ${s.view === "app" ? connectModal(s) : ""}
+    ${s.view === "app" && isArtScreen(s.screen) ? artifactsDialogs(artProps(s, s.screen)) : ""}
   </div>`;
 }

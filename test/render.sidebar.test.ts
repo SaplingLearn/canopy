@@ -49,7 +49,7 @@ describe("sidebar — groups and order (the design's five sections)", () => {
   it("orders Workspace · Monitor · Knowledge · Triage · Help, with Repo in Monitor", () => {
     const html = sidebarView(props());
     const at = (needle: string) => html.indexOf(needle);
-    const order = [">Workspace<", "goMyWork", "goTickets", "goRoadmap", ">Monitor<", "goRepo", "goFeed", ">Knowledge<", "goDocs", ">Triage<", "goReview", "goMaintenance", ">Help<", "goGuide"];
+    const order = [">Workspace<", "goMyWork", "goTickets", "goRoadmap", ">Monitor<", "goRepo", "goFeed", ">Knowledge<", "goDocs", "goArtifacts", ">Triage<", "goReview", "goMaintenance", ">Help<", "goGuide"];
     for (let i = 1; i < order.length; i++) expect(at(order[i]), order[i]).toBeGreaterThan(at(order[i - 1]));
   });
 
@@ -75,6 +75,8 @@ describe("sidebar — active state", () => {
     expect(navKeyOf("ticketdetail")).toBe("tickets");
     expect(navKeyOf("sprint")).toBe("roadmap");
     expect(navKeyOf("settings")).toBeNull();
+    expect(navKeyOf("artifact")).toBe("artifacts");
+    expect(navKeyOf("artifactnew")).toBe("artifacts");
     expect(sidebarView(props({ screen: "sprint" }))).toContain('class="cnpy-navrow n-roadmap is-active"');
   });
 
@@ -113,7 +115,7 @@ describe("sidebar — open/closed and collapsed are attributes", () => {
     const html = sidebarView(props({ collapsed: true, navOpen: { ...NAV_CLOSED, repo: true } }));
     expect(html).toContain('data-arg="repo:code" class="cnpy-sub-i" tabindex="-1"');
     expect(html).toContain('aria-label="Expand sidebar" aria-expanded="false"');
-    for (const tip of ["My Work", "Tickets", "Roadmap", "Repo", "Feed", "Docs", "Review", "Maintenance", "Get Started", "Search", "Settings"]) {
+    for (const tip of ["My Work", "Tickets", "Roadmap", "Repo", "Feed", "Docs", "Artifacts", "Review", "Maintenance", "Get Started", "Search", "Settings"]) {
       expect(html).toContain(`data-tip="${tip}"`);
     }
   });

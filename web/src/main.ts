@@ -42,6 +42,7 @@ import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
 import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
+import { artifactsAct, artAcceptFile, fitArtifactFrames, ART_ROUTE_NONE, type ArtScreen, type ArtEffect } from "./artifacts";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -100,6 +101,7 @@ function screenSettled(): boolean {
     case "ticketdetail": return ok(state.ticketDetail);
     case "sprint": return ok(state.sprintDetail);
     case "repo": return state.repo.data !== null || state.repo.status === "error";
+    case "artifacts": case "artifactnew": case "artifact": return state.art.items !== null;
     default: return true; // search re-queries per keystroke; the rest load nothing
   }
 }
@@ -213,6 +215,7 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
+  fitArtifactFrames(mount);
   // Reflect the current route in the URL hash so a reload restores it. The ticket
   // and sprint screens carry an id, so this is hashForRoute, not `#${screen}`.
   if (state.view === "app") {
@@ -226,7 +229,8 @@ window.addEventListener("hashchange", () => {
   if (state.view !== "app") return;
   const r = parseHash(location.hash);
   const cur = currentRoute();
-  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId && r.repoTab === cur.repoTab) return;
+  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId && r.repoTab === cur.repoTab
+    && JSON.stringify(r.art ?? null) === JSON.stringify(cur.art ?? null)) return;
   applyRoute(r);
   loadForScreen(r.screen);
 });
@@ -294,6 +298,7 @@ function persistNavOpen(): void {
 function currentRoute(): Route {
   const r: Route = { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
   if (state.screen === "repo") r.repoTab = state.repoTab;
+  if (state.screen === "artifact") r.art = state.artRoute;
   return r;
 }
 function applyRoute(r: Route): void {
@@ -301,6 +306,9 @@ function applyRoute(r: Route): void {
   state.ticketId = r.ticketId;
   state.sprintId = r.sprintId;
   if (r.repoTab) state.repoTab = r.repoTab;
+  state.artRoute = r.art ?? ART_ROUTE_NONE;
+  // A route change closes the artifact viewer's menus and dialogs (the design's onHash).
+  state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false;
 }
 
 // Kick off the data load for a screen (mirrors the go* dispatch cases).
@@ -314,6 +322,7 @@ function loadForScreen(screen: Screen): void {
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
     case "repo": loadRepoIfNeeded(); break;
+    case "artifacts": case "artifactnew": case "artifact": loadArtifactsIfNeeded(); break;
     case "settings": loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); break;
     case "unsubscribe": runUnsubscribe(); break;
     // The queue's sprint group headers and the form/rail menus all read `sprints`.
@@ -938,6 +947,59 @@ function refreshMe(): void {
   getMe().then((me) => { state.me = me; state.displayName = me.name ?? me.handle; rerender(); }).catch(() => undefined);
 }
 
+// ── Artifacts (UI only: the sample set, artifacts-sample.ts) ─────────────────
+/** The sample set is a dynamic import (kept out of the main bundle); the session
+ *  keeps ONE copy, so publish / ratify / upload edits survive switching screens. */
+function loadArtifactsIfNeeded(): void {
+  if (state.art.items === null) {
+    import("./artifacts-sample").then((m) => {
+      if (state.art.items === null) { state.art.items = m.sampleArtifacts(); state.art.ref = m.sampleRefs(); }
+      rerender();
+    }).catch(() => undefined);
+  }
+  rerender();
+}
+function goArt(screen: ArtScreen, route = ART_ROUTE_NONE): void {
+  state.screen = screen;
+  state.artRoute = route;
+  state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false; state.art.filterOpen = false;
+  loadArtifactsIfNeeded();
+  document.getElementById("cnpy-main")?.scrollTo(0, 0);
+}
+/** Carry out what the Artifacts reducer could not do itself. */
+function runArtEffect(fx: ArtEffect): void {
+  if (!fx) { rerender(); return; }
+  if ("nav" in fx) { goArt(fx.nav.screen, fx.nav.route); return; }
+  if ("flash" in fx) { flash(fx.flash); return; }
+  if ("copy" in fx) {
+    navigator.clipboard?.writeText(fx.copy.text).catch(() => undefined);
+    flash(fx.copy.flash);
+    return;
+  }
+  const blobUrl = (body: string, type: string) => URL.createObjectURL(new Blob([body], { type }));
+  if ("download" in fx) {
+    const u = blobUrl(fx.download.text, "text/plain");
+    const el = document.createElement("a");
+    el.href = u; el.download = fx.download.name;
+    document.body.appendChild(el); el.click(); el.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 1000);
+  } else if ("openTab" in fx) {
+    const u = blobUrl(fx.openTab.body, fx.openTab.type);
+    window.open(u, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(u), 60_000);
+  }
+  rerender();
+}
+/** A picked or dropped file for the new-artifact form. Past 3 MB only the first
+ *  200 KB is read — enough to preview; the size check uses the file's real size. */
+function readArtFile(file: File | undefined | null): void {
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = () => { artAcceptFile(state.art, { name: file.name, size: file.size, text: String(r.result ?? "") }); rerender(); };
+  r.readAsText(file.size > 3 * 1024 * 1024 ? file.slice(0, 200 * 1024) : file);
+}
+window.addEventListener("resize", () => fitArtifactFrames(mount));
+
 function flash(msg: string): void {
   state.toast = msg;
   rerender();
@@ -1148,6 +1210,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 
     // primary navigation
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
+    case "goArtifacts": goArt("artifacts"); return;
 
     // ── Repo dashboard ───────────────────────────────────────────────────────
     case "goRepo": state.screen = "repo"; state.repoTab = "overview"; loadRepoIfNeeded(); return;
@@ -1991,6 +2054,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "inviteRevoke": { if (!arg) return; revokeInvite(arg).then(() => { flash("Invite revoked"); loadInvites(); }).catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't revoke"); }); return; }
 
     default:
+      // Every Artifacts act goes to the one reducer in artifacts.ts.
+      if (act.startsWith("art")) {
+        const screen = state.screen === "artifacts" || state.screen === "artifactnew" || state.screen === "artifact" ? state.screen : null;
+        runArtEffect(artifactsAct(state.art, { screen, route: state.artRoute, me: state.me?.handle ?? "", host: location.origin }, act, arg, value));
+      }
       return;
   }
   rerender();
@@ -2027,6 +2095,28 @@ mount.addEventListener("change", (e) => {
   if (el instanceof HTMLInputElement && el.dataset.act && el.dataset.commit) {
     dispatch(`${el.dataset.act}Commit`, el.dataset.arg ?? null, el.value);
   }
+});
+
+// The new-artifact form's file picker and drop zone (a file has no string value to dispatch).
+mount.addEventListener("change", (e) => {
+  const el = e.target as HTMLElement;
+  if (el instanceof HTMLInputElement && el.type === "file" && el.hasAttribute("data-art-file")) readArtFile(el.files?.[0]);
+});
+mount.addEventListener("dragover", (e) => {
+  if ((e.target as Element | null)?.closest?.("[data-art-drop]")) e.preventDefault();
+});
+mount.addEventListener("drop", (e) => {
+  if (!(e.target as Element | null)?.closest?.("[data-art-drop]")) return;
+  e.preventDefault();
+  readArtFile(e.dataTransfer?.files[0]);
+});
+// Enter in an input that names a `data-enter` act dispatches it (the artifact form's Link field).
+mount.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const el = (e.target as Element | null)?.closest?.<HTMLInputElement>("input[data-enter]");
+  if (!el) return;
+  e.preventDefault();
+  dispatch(el.dataset.enter ?? "", null, null);
 });
 
 mount.addEventListener("input", (e) => {
