@@ -16,6 +16,15 @@ binding = "DB"
 database_name = "canopy"
 database_id = "80386dc4-deef-461d-932a-0670d22ddf83"
 
+# R2 — binary artifact bytes (image / pdf / file), content-addressed at
+# `artifacts/<sha256>` (src/tools/artifacts.ts). Tests and `wrangler dev` get a
+# local bucket from Miniflare. OWNER STEP before any prod deploy that carries this
+# binding: `wrangler r2 bucket create canopy-artifacts` — a deploy that binds a
+# bucket that does not exist fails.
+[[r2_buckets]]
+binding = "ARTIFACTS_BUCKET"
+bucket_name = "canopy-artifacts"
+
 [vars]
 # GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are secrets, not vars — set them via
 # `wrangler secret put GOOGLE_CLIENT_ID` / `wrangler secret put GOOGLE_CLIENT_SECRET`.

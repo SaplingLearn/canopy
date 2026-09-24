@@ -42,32 +42,28 @@ function docsState(docs: DocRow[]): ReturnType<typeof initialState> {
   };
 }
 
-describe("Docs space toggle — fixed two-tab set", () => {
+describe("Docs spaces — picked from the sidebar, a fixed two-tab set", () => {
   it("DOC_SPACES is exactly ['technical', 'product'] in order", () => {
     expect([...DOC_SPACES]).toEqual(["technical", "product"]);
   });
 
-  it("renders exactly the Technical and Product tabs", () => {
+  it("the sidebar's Docs sub-pages are the switcher; the header has none", () => {
     const html = render(docsState([doc()]));
-    expect(html).toContain('data-act="setDocSpace" data-arg="technical"');
-    expect(html).toContain(">Technical<");
-    expect(html).toContain('data-act="setDocSpace" data-arg="product"');
-    expect(html).toContain(">Product<");
+    expect(html).toContain('data-act="navSub" data-arg="docs:technical"');
+    expect(html).toContain('data-act="navSub" data-arg="docs:product"');
+    expect(html).not.toContain('data-act="setDocSpace"');
+    expect(html).toContain('data-act="newDoc"');
   });
 
-  it("both tabs render even when the data has only one space present", () => {
-    // Data-derived tabs would have hidden the empty tab (old length>1 guard);
-    // the fixed set always shows both.
+  it("both sub-pages render even when the data has only one space present", () => {
     const html = render(docsState([doc({ space: "technical" })]));
-    expect(html).toContain('data-arg="technical"');
-    expect(html).toContain('data-arg="product"');
+    expect(html).toContain('data-arg="docs:technical"');
+    expect(html).toContain('data-arg="docs:product"');
   });
 
-  it("a doc with a foreign space never adds a third tab", () => {
+  it("a doc with a foreign space never adds a third sub-page", () => {
     const html = render(docsState([doc({ slug: "stray", space: "sapling" })]));
-    expect(html).not.toContain('data-arg="sapling"');
-    // Only the two canonical setDocSpace tabs exist.
-    const tabCount = (html.match(/data-act="setDocSpace"/g) ?? []).length;
-    expect(tabCount).toBe(2);
+    expect(html).not.toContain('data-arg="docs:sapling"');
+    expect((html.match(/data-arg="docs:/g) ?? []).length).toBe(2);
   });
 });

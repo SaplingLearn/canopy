@@ -2,7 +2,7 @@
 // (numeric handoff ids rendered `#12`, the write affordances each screen offers).
 import { describe, it, expect } from "vitest";
 import { handoffsView, handoffDetailView, handoffAsPrompt, docDraftFromHandoff } from "../web/src/handoffs";
-import { promptDetailView, filterPrompts } from "../web/src/prompts";
+import { promptDetailView, promptLibraryView, filterPrompts } from "../web/src/prompts";
 import { newDocView, blankDoc } from "../web/src/newdoc";
 import type { HandoffView, PromptSummary, PromptDetail, PromptVersion } from "../shared/handoffs";
 
@@ -96,6 +96,23 @@ describe("prompts", () => {
     expect(raw).toContain("## Steps"); // the source, escaped, in the mono block
     expect(handoffDetailView({ status: "ok", handoff: h({ body: "x", prompt: { title: "t", body } }), me: "AndresL230", persons, expireArm: false, promptView: "raw" }))
       .toContain('data-act="promptBoxView" data-arg="rendered"');
+  });
+
+  it("the library's filter is the shared filter menu, with Tag AND Sort", () => {
+    const s = (slug: string, tags: string[]): PromptSummary => ({ slug, title: slug, tags, author: "a", version: 1, status: "published", updated_at: "2026-09-01T00:00:00Z", excerpt: "x" });
+    const lib = { status: "ok" as const, prompts: [s("a", ["api"]), s("b", ["ui"])], q: "", tag: null, sort: "updated_desc" as const, persons, filterCat: "tag" as const, fmOpening: null };
+    const closed = promptLibraryView({ ...lib, filterOpen: false });
+    expect(closed).toContain('data-hover-menu="prompt"');
+    expect(closed).toContain('data-act="fmToggle" data-arg="prompt"');
+    const open = promptLibraryView({ ...lib, filterOpen: true, sort: "updated_asc" });
+    expect(open).toContain('data-arg="prompt:tag"');
+    expect(open).toContain('data-arg="prompt:sort"');
+    // Sort keeps both orders; a non-default sort counts as an active filter (the badge).
+    expect(open).toContain('data-act="promptSort" data-arg="updated_desc"');
+    expect(open).toContain('data-act="promptSort" data-arg="updated_asc"');
+    expect(open).toContain(">Least recently updated<");
+    expect(open).toMatch(/Filter\s*<span[^>]*>1<\/span>/);
+    expect(open).toContain('data-act="promptResetFilters"');
   });
 
   it("filters the library by text and tag without a description field", () => {

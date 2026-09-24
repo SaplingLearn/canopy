@@ -434,6 +434,8 @@ export interface TicketDetailProps {
   mention: { query: string; start: number; index: number; line: number } | null;
   /** The comment box's dragged height (the bottom-left grip), null = resting. */
   commentHeight: number | null;
+  /** The Artifacts block under Linked work (artifacts.ts), pre-rendered; absent = none. */
+  artifactsBlock?: string;
 }
 
 /**
@@ -833,6 +835,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
         <h2 style="margin:0 0 22px;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
         ${ticketBody(t.body)}
         ${linkedWorkBlock(p)}
+        ${p.artifactsBlock ?? ""}
         ${threadBlock(p)}
       </div>
       <div style="border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">

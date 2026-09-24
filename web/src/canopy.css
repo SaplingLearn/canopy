@@ -621,6 +621,56 @@ input, select { font-family: inherit; }
 .site-nav { border-bottom:1px solid transparent; transition:border-color .3s ease, box-shadow .3s ease; }
 .site-nav[data-scrolled] { border-bottom-color:var(--border); box-shadow:0 12px 32px -24px rgba(0,0,0,.4); }
 
+/* ── Filter menu (web/src/filter-menu.ts; behavior in main.ts's filter-menu registry) ──
+   Open: the popover scales in from its trigger's corner, then the category rows and the
+   shown options stagger in — ONLY on the paint that opens it (.is-opening), never on a
+   later rerender. Switching category rerenders nothing: the highlight (.fm-ind) slides on
+   a transform transition and the new panel's options play in from the direction moved
+   (.is-switching + data-dir). Close: a short exit on the live popover (.is-closing). */
+.fm-pop { transform-origin:top left; }
+/* The option list never shows a scrollbar: the popover is sized to fit it, and a list
+   past MAX_ROWS (filter-menu.ts) still scrolls, just without the bar. */
+.fm-scroll { scrollbar-width:none; }
+.fm-scroll::-webkit-scrollbar { display:none; }
+.fm-pop.is-right { transform-origin:top right; }
+.fm-pop.is-opening { animation:fm-in .26s cubic-bezier(.2,.9,.25,1) both; }
+.fm-pop.is-closing { animation:fm-out .13s cubic-bezier(.4,0,1,1) both; pointer-events:none; }
+.fm-pop.is-opening .fm-cat { animation:fm-rise .24s cubic-bezier(.2,.8,.2,1) both; animation-delay:calc(70ms + var(--i) * 30ms); }
+/* The options cascade in FROM THE TOP, one after another, unhurried — on the paint that
+   opens the menu and on every category switch (main.ts restarts it by re-adding
+   .is-switching). Hover intent (main.ts) keeps a sweep across the categories from
+   starting a cascade per row it passes. */
+.fm-pop.is-opening .fm-panel:not([hidden]) .fm-opt,
+.fm-panel.is-switching .fm-opt { animation:fm-opt-drop .38s cubic-bezier(.22,.8,.26,1) both; animation-delay:calc(var(--i) * 40ms); }
+.fm-pop.is-opening .fm-panel:not([hidden]) .fm-opt { animation-delay:calc(120ms + var(--i) * 40ms); }
+.fm-ind { position:absolute; left:6px; right:6px; top:6px; height:32px; background:var(--hover); pointer-events:none;
+  transform:translateY(calc(var(--ci) * 33px)); transition:transform .26s cubic-bezier(.3,.85,.25,1); }
+.fm-pop.is-opening .fm-ind { animation:fm-fade .2s ease both; animation-delay:.08s; }
+.fm-cat { position:relative; color:var(--fg-55); transition:color .16s ease; }
+.fm-cat.is-on { color:var(--fg); }
+.fm-cat.cnpy-menurow:hover { background:transparent; color:var(--fg); }
+@keyframes fm-in { from { opacity:0; transform:translateY(-6px) scale(.96); } to { opacity:1; transform:none; } }
+@keyframes fm-out { to { opacity:0; transform:translateY(-4px) scale(.98); } }
+@keyframes fm-rise { from { opacity:0; transform:translateX(5px); } to { opacity:1; transform:none; } }
+@keyframes fm-opt-drop { from { opacity:0; transform:translateY(-9px); } to { opacity:1; transform:none; } }
+@keyframes fm-fade { from { opacity:0; } to { opacity:1; } }
+@media (prefers-reduced-motion: reduce) {
+  .fm-pop, .fm-pop *, .fm-panel, .fm-panel * { animation:none !important; transition:none !important; }
+}
+
+/* ── Artifacts (web/src/artifacts.ts) ───────────────────────────────────────── */
+/* The viewer's details: Properties beside Linked work, stacking on a narrow screen. */
+.art-bento { grid-template-columns:repeat(12,minmax(0,1fr)); }
+.art-b-props { grid-column:span 5; }
+.art-b-links { grid-column:span 7; }
+@media (max-width:1150px) { .art-b-props, .art-b-links { grid-column:span 6; } }
+@media (max-width:860px) { .art-b-props, .art-b-links { grid-column:1 / -1; } }
+/* An inlined (sanitized) SVG and a rendered mermaid diagram fit the viewer's width. */
+.art-svg svg, .art-mermaid svg { max-width:100%; height:auto; }
+/* A framed HTML artifact's box follows the page's reported height. */
+.art-frame { transition:height .18s ease; }
+@media (prefers-reduced-motion: reduce) { .art-frame { transition:none; } }
+
 /* ── corners: tightened ──────────────────────────────────────────────────────
    Canopy's corners are TIGHTER than the design file's: every radius is shrunk by one
    factor, --corner-scale, so a card stays rounder than a chip and the hierarchy of the

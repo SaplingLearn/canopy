@@ -22,9 +22,17 @@ import { getMyWork, list_events } from "./tools/mywork";
 import { getRepoDashboardForAgent } from "./tools/repo-agent";
 import { repoEnvironments } from "./repo/config";
 import { REPO_RANGES, REPO_TAB_SECTIONS, type RepoTab } from "@shared/repo";
-import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
+import { ingestFeedEntry, ingestDocProposal, recordBatch } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
-import { IngestPayload } from "@shared/contract";
+import { IngestPayload, QueryType } from "@shared/contract";
+import { ArtifactError } from "./tools/artifacts";
+import {
+  agentArtifactCreate, agentArtifactUpdate, agentArtifactGet, agentArtifactList, artifactsForTicket, artifactOrigin,
+} from "./tools/artifacts-agent";
+import {
+  ARTIFACT_AREAS, ARTIFACT_KINDS, ARTIFACT_STATUSES, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
+  ArtifactLinkInputSchema,
+} from "@shared/artifacts";
 import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
 import {
   listHandoffs, getHandoff, createHandoff, claimHandoff, expireHandoff, handoffAsTask, HandoffCreateInput, HandoffError,
@@ -50,7 +58,10 @@ async function runTool(fn: () => Promise<unknown>) {
     // `conflict` means "the shared rule says no" (an illegal move, a nesting break),
     // `bad_request` means "your input is wrong". The cookie routes map the same
     // codes onto HTTP statuses; this is the MCP spelling of it.
-    const code = err instanceof TicketError || err instanceof SprintError || err instanceof HandoffError || err instanceof PromptError ? err.code : undefined;
+    // An ArtifactError travels the same way. Its not_found message IS "not_found", so a
+    // missing slug, a private page and a version-0 page all read exactly
+    // { error: "not_found", code: "not_found" } — the check is never an existence oracle.
+    const code = err instanceof TicketError || err instanceof SprintError || err instanceof ArtifactError || err instanceof HandoffError || err instanceof PromptError ? err.code : undefined;
     return {
       content: [{ type: "text" as const, text: JSON.stringify(code ? { error: message, code } : { error: message }) }],
       isError: true as const,
@@ -66,15 +77,20 @@ async function runTool(fn: () => Promise<unknown>) {
  * A fresh McpServer per request is required (SDK 1.26+ guards against reuse), so
  * this must NOT be hoisted to global scope.
  */
-export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer {
+export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { origin?: string } = {}): McpServer {
   const server = new McpServer({ name: "canopy", version: "1.0.0" });
+  // Absolute links in artifact results: PUBLIC_ORIGIN, else the /mcp request's origin.
+  // COOKIE_SECRET is only the ROOT of the download-URL key (derived with a purpose label).
+  const artifactCtx = {
+    db: env.DB, handle: principal.handle, origin: artifactOrigin(env.PUBLIC_ORIGIN, opts.origin), downloadSecret: env.COOKIE_SECRET,
+  };
 
   server.tool(
     "query",
-    "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
+    "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest, over docs, decisions, feed, sprints and artifacts (an artifact's id is its slug — open it with artifact_get; its body starts `Status: <draft|published|ratified> · v<n>`). Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
     {
       q: z.string().optional(),
-      types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(),
+      types: z.array(QueryType).optional(),
       section: z.string().optional(),
       space: z.enum(["technical", "product"]).optional(),
       include_staged: z.boolean().optional(),
@@ -83,7 +99,8 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     },
     // Agent default include_staged:true — the agent should see staged/unpromoted
     // context (flagged), unlike the human Search which defaults false.
-    async (args) => runTool(() => query(env.DB, { ...args, q: args.q ?? "", include_staged: args.include_staged ?? true })),
+    // The bearer principal is the viewer: a private artifact reaches only its author.
+    async (args) => runTool(() => query(env.DB, { ...args, q: args.q ?? "", include_staged: args.include_staged ?? true }, principal.handle)),
   );
 
   server.tool("get_doc", "Get a doc and all its versions by slug.", { slug: z.string() }, async ({ slug }) =>
@@ -169,13 +186,13 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "get_ticket",
-    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, and its sprint. A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
+    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, its sprint, and `artifacts` ([{slug, title, kind, status, version}] — the artifact pages linked to it that you can see; open one with artifact_get). A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {
         const ticket = await get_ticket(env.DB, id);
         if (!ticket) throw new Error(`no such ticket: ${id}`);
-        return ticket;
+        return { ...ticket, artifacts: await artifactsForTicket(env.DB, id, principal.handle) };
       }),
   );
 
@@ -320,13 +337,90 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "record_session",
-    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
+    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage, and optional artifact_links). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. `artifact_links` ([{slug, target_type: ticket|sprint|pr|issue, target_ref}], for artifacts this session produced) are NOT staged: after the batch is reconciled each is linked directly, as you, and reported in `artifact_links` as linked / not_found / error (idempotent — a replay re-links nothing). Used by the record-session skill at session end; you only ever stage knowledge — humans confirm.",
     IngestPayload.shape,
     // Same reconciling path as the cookie /ingest route: forward the full payload to
     // consume() under the bearer principal already in scope. Re-parse with the contract
     // so defaults (empty arrays) are applied and the type is exactly IngestPayload —
     // the SDK already validated against IngestPayload.shape, so this never throws.
-    async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
+    // recordBatch = consume() (the gate) + the post-batch artifact_links step — the same
+    // function /ingest calls, so the two surfaces cannot drift.
+    async (payload) => runTool(() => recordBatch(env.DB, IngestPayload.parse(payload), principal)),
+  );
+
+  // ── Artifacts: for every principal (issue #52; docs/artifact-contract.md) ─────
+  //
+  // Thin adapters over src/tools/artifacts-agent.ts, which calls the artifacts
+  // repository with the BEARER principal as author and viewer — the same permission
+  // checks as the HTTP API: whoever can read a page can version it; a private page is
+  // its author's alone; missing / private / version-0 are ONE not_found. Direct
+  // authored writes in the promote class, like tickets: no gate, nothing staged.
+  // There is deliberately NO ratify tool — ratifying is a person's act on the web
+  // (a session-cookie route), exactly like promoting a doc or ratifying an ADR.
+
+  const artifactPageShape = {
+    title: z.string().min(1).max(ARTIFACT_TITLE_MAX),
+    kind: z.enum(ARTIFACT_KINDS),
+    area: z.enum(ARTIFACT_AREAS),
+    repo: z.string(),
+    visibility: z.enum(ARTIFACT_VISIBILITIES),
+  };
+  const binaryShape = {
+    // No .max: over the cap is the repository's too_large, not an input-validation error (Track E).
+    size_bytes: z.number().int().min(1).optional(),
+    sha256: z.string().optional(),
+    content_type: z.string().max(255).optional(),
+    filename: z.string().max(255).optional(),
+  };
+
+  server.tool(
+    "artifact_create",
+    "Create an artifact page (v1, status draft) — a rendered HTML page, markdown doc, SVG, mermaid diagram, image, PDF or file the team keeps and versions. Text kinds (html | markdown | svg | mermaid; ≤ 500 KB): pass `content` → { id, slug, url, version }. Binary kinds (image | pdf | file; ≤ 10 MB): pass `size_bytes` and `sha256` (hex, e.g. `shasum -a 256 file.pdf`), NOT content → { id, slug, url, upload_url, expires_at }; then PUT the exact bytes to upload_url (single use, valid 5 minutes, e.g. `curl -X PUT --data-binary @file.pdf -H \"Content-Type: application/pdf\" \"<upload_url>\"`) — the page does not exist to anyone until that PUT lands. `area` is one of auth | architecture | infra | api | ui | data; `repo` is owner/repo or \"\"; `visibility` org (the whole org) or private (only you). Optional `links` ([{target_type: ticket|sprint|pr|issue, target_ref}]) and `summary`. Every result has `warnings` — non-empty when content calls something only claude.ai has (window.claude, window.storage, api.anthropic.com); the page is still created. You author it; a PERSON ratifies it on the web — there is no ratify tool. Contract: docs/artifact-contract.md.",
+    {
+      ...artifactPageShape,
+      content: z.string().optional(),
+      links: z.array(ArtifactLinkInputSchema).max(50).optional(),
+      summary: z.string().max(ARTIFACT_SUMMARY_MAX).optional(),
+      ...binaryShape,
+    },
+    async (input) => runTool(() => agentArtifactCreate(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_update",
+    "Add a version to an artifact you can see (any org page, or your own private one). A new version is `published` and clears any ratification. Text kinds: pass `content` (the whole new body) OR `old_str` + `new_str` (an exact edit of the latest version — old_str must occur EXACTLY once) → { id, slug, url, version, unchanged } (unchanged: true = identical to the latest, nothing written). Binary kinds: pass `size_bytes` + `sha256` (+ optional content_type / filename) → { id, slug, url, upload_url, expires_at }, then PUT the bytes (single use, 5 minutes). `summary` says what changed. Every result has `warnings` (claude.ai-only calls in the content — a warning, never a rejection). An unknown or private-to-someone-else slug is { error: \"not_found\", code: \"not_found\" }.",
+    {
+      slug: z.string().min(1),
+      summary: z.string().max(ARTIFACT_SUMMARY_MAX),
+      content: z.string().optional(),
+      old_str: z.string().optional(),
+      new_str: z.string().optional(),
+      ...binaryShape,
+    },
+    async (input) => runTool(() => agentArtifactUpdate(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_get",
+    "Read one artifact: metadata (title, kind, area, repo, author, status draft | published | ratified, visibility, versions, links, ratified_version) plus, for text kinds, `content` of the requested version (binary kinds: `content` is null). To get the FILE — any kind, binary included — use `download_url`: absolute, signed for you, reusable for 5 minutes (`download_expires_at`), no header needed: `curl -fsSL \"$download_url\" -o <path>` returns the exact stored bytes as an attachment named `download_filename`. Verify it against `sha256` / `size_bytes` (this version's; `shasum -a 256 <path>`). Expired → HTTP 410: call artifact_get again. `raw_url` is the browser view (signed-in session only — it does not take your bearer). `slug` may name a version (`slug@v3` or `slug/v3`), or pass `version`; default the latest. `url` is the page in the Canopy web app — share that when a person just wants the link. `warnings` flags claude.ai-only calls in the content. Only `ratified` is team-confirmed; draft / published are one person's word. An unknown, private-to-someone-else or not-yet-uploaded slug is { error: \"not_found\", code: \"not_found\" }.",
+    { slug: z.string().min(1), version: z.number().int().min(1).optional() },
+    async (input) => runTool(() => agentArtifactGet(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_list",
+    "Read-only: the artifact pages you can see (every org page, plus your own private ones), newest first — the same filters as the web library. All optional: `q` (full text over title / summary / body, or a title / slug substring), `kind` (html | markdown | svg | mermaid | image | pdf | file), `area` (auth | architecture | infra | api | ui | data), `author` (a handle), `status` (draft | published | ratified), `ticket` / `sprint` (an id — pages linked to it), `limit` (default 25, max 100). → { artifacts: [{ slug, title, kind, status, version, updated_at, url, area, author, visibility }], total, truncated }. Open one with artifact_get (its `download_url` fetches the file). Only `ratified` is team-confirmed.",
+    {
+      q: z.string().max(200).optional(),
+      kind: z.enum(ARTIFACT_KINDS).optional(),
+      area: z.enum(ARTIFACT_AREAS).optional(),
+      author: z.string().max(80).optional(),
+      status: z.enum(ARTIFACT_STATUSES).optional(),
+      ticket: z.union([z.number().int().min(1), z.string().max(20)]).optional(),
+      sprint: z.union([z.number().int().min(1), z.string().max(20)]).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    async (input) => runTool(() => agentArtifactList(artifactCtx, input)),
   );
 
   // ADMIN-only: the plan write surface — non-admin principals don't even see the tool
@@ -523,7 +617,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 }
 
 export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
-  const server = buildCanopyMcpServer(env, principal);
+  const server = buildCanopyMcpServer(env, principal, { origin: new URL(request.url).origin });
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
   const handler = createMcpHandler(server, { route: "/mcp" });
   return handler(request, env, ctx);

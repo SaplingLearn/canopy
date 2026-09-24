@@ -23,6 +23,7 @@ import {
   addTicketLink, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
   getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
+  listArtifacts, getArtifact, getArtifactDiff, createArtifact, patchArtifact, ratifyArtifact, addArtifactLink, fetchArtifactUrl,
   listHandoffs, getHandoff, listPrompts, getPrompt, getPromptVersions,
   createHandoff, claimHandoff, expireHandoff, savePrompt, setPromptTags, publishPrompt, proposeDoc,
   Unauthorized, NotFound, ApiError,
@@ -50,6 +51,11 @@ import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
 import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
+import {
+  artifactsAct, artAcceptFile, renderPendingMermaid, setArtFrameHeight, detailKey, diffKey, initialArtCreate, ART_ROUTE_NONE, ART_FILTER_KEYS,
+  type ArtScreen, type ArtEffect, type ArtWrite, type ArtRoute, type ArtFilterKey,
+} from "./artifacts";
+import { kindForFilename, isBinaryKind } from "@shared/artifacts-core";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -110,6 +116,14 @@ function screenSettled(): boolean {
     case "ticketdetail": return ok(state.ticketDetail);
     case "sprint": return ok(state.sprintDetail);
     case "repo": return state.repo.data !== null || state.repo.status === "error";
+    // A background refresh (after a write) keeps its data, so it never replays the entrance.
+    case "artifacts": return state.art.list.data !== null || ok(state.art.list);
+    case "artifactnew": return true;
+    case "artifact": {
+      const r = state.artRoute;
+      const d = r.slug ? state.art.details[detailKey(r.slug, r.diff ? null : r.v)] : undefined;
+      return !!d && (d.data !== null || d.status === "ok" || d.status === "error" || d.status === "missing");
+    }
     // These four refetch on every visit and paint what they already hold meanwhile,
     // so "landed" means "has something to show" (like the Repo dashboard) — else the
     // cached paint plays the entrance and the refresh landing plays it a second time.
@@ -124,8 +138,18 @@ function screenSettled(): boolean {
 function markEnter(): void {
   const root = mount.firstElementChild as HTMLElement | null;
   if (!root || state.view !== "app") return;
-  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${screenSettled() ? 1 : 0}`;
+  const settled = screenSettled();
+  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${settled ? 1 : 0}`;
   const now = performance.now();
+  // A still-loading paint does not enter: the entrance plays ONCE, when the screen's
+  // read lands. Playing it for the loading paint too made every first visit (and every
+  // visit to an empty list) enter twice — the "double click" flash.
+  if (!settled) {
+    enterKey = key;
+    enterAt = now - ENTER_MS;
+    root.removeAttribute("data-enter");
+    return;
+  }
   if (key !== enterKey) { enterKey = key; enterAt = now; }
   const elapsed = now - enterAt;
   if (elapsed >= ENTER_MS) return;
@@ -230,6 +254,7 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
+  renderPendingMermaid(mount);
   // Reflect the current route in the URL hash so a reload restores it. The ticket
   // and sprint screens carry an id, so this is hashForRoute, not `#${screen}`.
   if (state.view === "app") {
@@ -311,6 +336,7 @@ function persistNavOpen(): void {
 function currentRoute(): Route {
   const r: Route = { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
   if (state.screen === "repo") r.repoTab = state.repoTab;
+  if (state.screen === "artifact") r.art = state.artRoute;
   if (state.screen === "handoff" && state.handoffId) r.handoffId = state.handoffId;
   if (state.screen === "prompt" && state.promptSlug) r.promptSlug = state.promptSlug;
   if (state.screen === "promptedit") {
@@ -325,6 +351,9 @@ function applyRoute(r: Route): void {
   state.ticketId = r.ticketId;
   state.sprintId = r.sprintId;
   if (r.repoTab) state.repoTab = r.repoTab;
+  state.artRoute = r.art ?? ART_ROUTE_NONE;
+  // A route change closes the artifact viewer's menus and dialogs (the design's onHash).
+  state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false;
   if (r.handoffId) state.handoffId = r.handoffId;
   if (r.promptSlug) state.promptSlug = r.promptSlug;
   if (r.promptMode) state.promptMode = r.promptMode;
@@ -349,6 +378,7 @@ function loadForScreen(screen: Screen): void {
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
     case "repo": loadRepoIfNeeded(); break;
+    case "artifacts": case "artifactnew": case "artifact": loadArtifactsIfNeeded(); break;
     case "settings": loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); break;
     case "unsubscribe": runUnsubscribe(); break;
     // The queue's sprint group headers and the form/rail menus all read `sprints`.
@@ -934,6 +964,7 @@ function loadTicketDetail(id: number): void {
   // Keep the current ticket on screen while it refreshes; clear it when opening a different one.
   const keep = state.ticketDetail.data?.id === id ? state.ticketDetail.data : null;
   state.ticketDetail = { status: "loading", data: keep };
+  loadTicketArtifacts(id);            // the Artifacts block under Linked work
   rerender();
   getTicket(id)
     .then((t) => { if (seq !== ticketDetailSeq) return; state.ticketDetail = { status: "ok", data: t }; rerender(); })
@@ -1074,6 +1105,244 @@ function loadInvites(): void {
 function refreshMe(): void {
   getMe().then((me) => { state.me = me; state.displayName = me.name ?? me.handle; rerender(); }).catch(() => undefined);
 }
+
+// ── Artifacts (/api/artifacts; the screens are artifacts.ts) ─────────────────
+// Each read is its own slice: the library list (loaded unfiltered — the filter
+// popover counts every option), one detail per `slug@v`, one diff per pair, the
+// artifacts linked to a ticket, and every ticket for the attach dialog (the queue's
+// `state.tickets` follows the queue's filter, so it can't back that list). A
+// refresh keeps the slice's data on screen; only a first load shows "Loading…".
+const artSeq = new Map<string, number>();
+const nextArtSeq = (k: string): number => { const n = (artSeq.get(k) ?? 0) + 1; artSeq.set(k, n); return n; };
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+function loadArtifactList(force = false): void {
+  const cur = state.art.list;
+  if (!force && (cur.status === "ok" || cur.status === "loading")) return;
+  const seq = nextArtSeq("list");
+  state.art.list = { status: "loading", data: cur.data };
+  listArtifacts()
+    .then((rows) => { if (seq !== artSeq.get("list")) return; state.art.list = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get("list")) return;
+      state.art.list = { status: "error", data: state.art.list.data, error: errMsg(e) };
+      rerender();
+    });
+}
+function loadArtifactDetail(slug: string, v: number | null, force = false): void {
+  const key = detailKey(slug, v);
+  const cur = state.art.details[key];
+  if (!force && cur && cur.status !== "idle" && cur.status !== "error") return;
+  const seq = nextArtSeq(`d:${key}`);
+  state.art.details[key] = { status: "loading", data: cur?.data ?? null };
+  getArtifact(slug, v)
+    .then((d) => { if (seq !== artSeq.get(`d:${key}`)) return; state.art.details[key] = { status: "ok", data: d }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`d:${key}`)) return;
+      state.art.details[key] = e instanceof NotFound ? { status: "missing", data: null } : { status: "error", data: null, error: errMsg(e) };
+      rerender();
+    });
+}
+function loadArtifactDiff(slug: string, a: number, b: number, force = false): void {
+  const key = diffKey(slug, a, b);
+  const cur = state.art.diffs[key];
+  if (!force && cur && cur.status !== "idle" && cur.status !== "error") return;
+  const seq = nextArtSeq(`x:${key}`);
+  state.art.diffs[key] = { status: "loading", data: cur?.data ?? null };
+  getArtifactDiff(slug, a, b)
+    .then((d) => { if (seq !== artSeq.get(`x:${key}`)) return; state.art.diffs[key] = { status: "ok", data: d }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`x:${key}`)) return;
+      state.art.diffs[key] = { status: e instanceof NotFound ? "missing" : "error", data: null, error: errMsg(e) };
+      rerender();
+    });
+}
+/** The ticket detail's Artifacts block: `GET /api/artifacts?ticket=<id>`. */
+function loadTicketArtifacts(id: number): void {
+  const seq = nextArtSeq(`t:${id}`);
+  const cur = state.art.ticketArts[id];
+  state.art.ticketArts[id] = { status: "loading", data: cur?.data ?? null };
+  listArtifacts({ ticket: id })
+    .then((rows) => { if (seq !== artSeq.get(`t:${id}`)) return; state.art.ticketArts[id] = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`t:${id}`)) return;
+      state.art.ticketArts[id] = { status: "error", data: state.art.ticketArts[id]?.data ?? null, error: errMsg(e) };
+      rerender();
+    });
+}
+/** Every ticket (seg=all) — the attach dialog's list and the library's ticket search. */
+function loadAttachTickets(): void {
+  const cur = state.art.attachTickets;
+  if (cur.status === "ok" || cur.status === "loading") return;
+  const seq = nextArtSeq("tix");
+  state.art.attachTickets = { status: "loading", data: cur.data };
+  listTickets({ seg: "all" })
+    .then((rows) => {
+      if (seq !== artSeq.get("tix")) return;
+      state.art.attachTickets = { status: "ok", data: rows.map((t) => ({ id: t.id, title: t.title, status: t.status })) };
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get("tix")) return;
+      state.art.attachTickets = { status: "error", data: state.art.attachTickets.data, error: errMsg(e) };
+      rerender();
+    });
+}
+/** Load what the current Artifacts screen reads. `fresh` refetches (keeping what is
+ *  on screen) — used on navigation and after a write; a plain rerender never refetches. */
+function loadArtifactsIfNeeded(fresh = false): void {
+  const r = state.artRoute;
+  if (state.screen === "artifacts") { loadArtifactList(fresh); loadSprintsIfNeeded(); loadAttachTickets(); }
+  else if (state.screen === "artifactnew") loadSprintsIfNeeded();
+  else if (state.screen === "artifact" && r.slug) {
+    loadSprintsIfNeeded();
+    loadAttachTickets();
+    if (r.diff) {
+      loadArtifactDetail(r.slug, null, fresh);
+      if (r.diff.a !== r.diff.b) loadArtifactDiff(r.slug, r.diff.a, r.diff.b, fresh);
+    } else loadArtifactDetail(r.slug, r.v, fresh);
+  }
+  rerender();
+}
+function goArt(screen: ArtScreen, route: ArtRoute = ART_ROUTE_NONE): void {
+  state.screen = screen;
+  state.artRoute = route;
+  state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false; state.art.filterOpen = false;
+  loadArtifactsIfNeeded(true);
+  document.getElementById("cnpy-main")?.scrollTo(0, 0);
+}
+/** After a write to `slug`: drop its other cached versions and diffs, refetch what
+ *  is on screen (keeping it visible), and let the list / ticket blocks reload. */
+function refreshArt(slug: string): void {
+  const r = state.artRoute;
+  const keep = r.slug === slug ? detailKey(slug, r.diff ? null : r.v) : null;
+  for (const k of Object.keys(state.art.details)) if (k.startsWith(`${slug}@`) && k !== keep) delete state.art.details[k];
+  for (const k of Object.keys(state.art.diffs)) if (k.startsWith(`${slug}:`)) delete state.art.diffs[k];
+  state.art.ticketArts = {};
+  if (state.art.list.status !== "idle") loadArtifactList(true);
+  if (state.screen === "artifact" && r.slug === slug) loadArtifactsIfNeeded(true);
+  else rerender();
+}
+function runArtWrite(w: ArtWrite): void {
+  const c = state.art.c;
+  if (w.op === "fetchUrl") {
+    fetchArtifactUrl(w.url)
+      .then((dto) => {
+        c.fetching = false;
+        if (c.url.trim() !== w.url) { rerender(); return; } // the URL changed while fetching
+        c.urlFetched = { text: dto.content };
+        if (dto.kind) c.kind = dto.kind;
+        rerender();
+      })
+      .catch((e) => {
+        if (e instanceof Unauthorized) { unauth(e); return; }
+        c.fetching = false;
+        c.urlErr = e instanceof ApiError ? `Couldn't fetch that page (${e.message}).` : "Couldn't fetch that page.";
+        rerender();
+      });
+    rerender();
+    return;
+  }
+  if (w.op === "create") {
+    const body = w.file ? { file: w.file, filename: w.filename ?? "upload" } : { content: w.content ?? "" };
+    createArtifact(w.fields, body)
+      .then(async (d) => {
+        // Links are posted one by one after the page exists; a refused one is named, never fatal.
+        let failed = 0;
+        for (const l of w.links) {
+          try { await addArtifactLink(d.slug, l.target_type, l.target_ref); } catch (e) { if (e instanceof Unauthorized) throw e; failed++; }
+        }
+        state.art.c = { ...initialArtCreate(), repo: c.repo, area: c.area, vis: c.vis };
+        state.art.ticketArts = {};
+        if (state.art.list.status !== "idle") state.art.list = { status: "idle", data: state.art.list.data };
+        goArt("artifact", { slug: d.slug, v: null, diff: null });
+        flash(failed ? `Uploaded v1 · ${failed} link${failed === 1 ? "" : "s"} couldn't be added` : "Uploaded v1");
+      })
+      .catch((e) => {
+        if (e instanceof Unauthorized) { unauth(e); return; }
+        state.art.c.submitting = false;
+        flash(e instanceof ApiError ? `Upload failed: ${e.message}` : "Upload failed");
+      });
+    rerender();
+    return;
+  }
+  state.art.busy = true;
+  rerender();
+  const req = w.op === "patch" ? patchArtifact(w.slug, w.body)
+    : w.op === "ratify" ? ratifyArtifact(w.slug, w.version)
+      : addArtifactLink(w.slug, w.target_type, w.target_ref);
+  req
+    .then(() => {
+      state.art.busy = false;
+      if (w.op === "ratify") state.art.ratifyOpen = false;
+      if (w.op === "link") { state.art.attachOpen = false; state.art.attachPick = null; }
+      refreshArt(w.slug);
+      flash(w.flash);
+    })
+    .catch((e) => {
+      state.art.busy = false;
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (e instanceof NotFound) { state.art.ratifyOpen = false; state.art.attachOpen = false; refreshArt(w.slug); flash("This artifact isn't available anymore"); return; }
+      flash(e instanceof ApiError ? `Couldn't update the artifact (${e.message})` : "Couldn't update the artifact");
+    });
+}
+/** Carry out what the Artifacts reducer could not do itself. */
+function runArtEffect(fx: ArtEffect): void {
+  // The attach dialog lists every ticket; fetch them the first time it opens.
+  if (state.art.attachOpen) loadAttachTickets();
+  if (!fx) { rerender(); return; }
+  if ("nav" in fx) { goArt(fx.nav.screen, fx.nav.route); return; }
+  if ("flash" in fx) { flash(fx.flash); return; }
+  if ("write" in fx) { runArtWrite(fx.write); return; }
+  if ("retry" in fx) { loadArtifactsIfNeeded(true); return; }
+  if ("copy" in fx) {
+    navigator.clipboard?.writeText(fx.copy.text).catch(() => undefined);
+    flash(fx.copy.flash);
+    return;
+  }
+  // Open in new tab / Download raw both go to the raw route (it sets the headers).
+  if ("openUrl" in fx) window.open(fx.openUrl, "_blank", "noopener");
+  else if ("download" in fx) {
+    const el = document.createElement("a");
+    el.href = fx.download.url; el.download = fx.download.name; el.rel = "noopener";
+    document.body.appendChild(el); el.click(); el.remove();
+  }
+  rerender();
+}
+/** A picked or dropped file for the new-artifact form. The kind follows the
+ *  extension (kindForFilename): a binary kind keeps the File for the multipart
+ *  upload; a text kind is read as text (past 3 MB only the first 200 KB — enough
+ *  to preview; the cap check uses the file's real size, so it can't be sent). */
+function readArtFile(file: File | undefined | null): void {
+  if (!file) return;
+  if (isBinaryKind(kindForFilename(file.name))) {
+    artAcceptFile(state.art, { name: file.name, size: file.size, text: null, blob: file });
+    rerender();
+    return;
+  }
+  const r = new FileReader();
+  r.onload = () => { artAcceptFile(state.art, { name: file.name, size: file.size, text: String(r.result ?? ""), blob: null }); rerender(); };
+  r.readAsText(file.size > 3 * 1024 * 1024 ? file.slice(0, 200 * 1024) : file);
+}
+// A framed HTML artifact reports its height (the raw route injects the script):
+// ONE listener, matched to the frame by `e.source`, resizes the box directly —
+// no rerender (which would rebuild, and so reload, the frame).
+window.addEventListener("message", (e) => {
+  const data = e.data as { type?: unknown; height?: unknown } | null;
+  if (!data || typeof data !== "object" || data.type !== "canopy:height") return;
+  const h = Number(data.height);
+  if (!Number.isFinite(h) || h <= 0) return;
+  for (const frame of Array.from(mount.querySelectorAll<HTMLIFrameElement>(".art-frame iframe"))) {
+    if (!e.source || e.source !== frame.contentWindow) continue;
+    const box = frame.parentElement;
+    if (box) box.style.height = `${setArtFrameHeight(box.dataset.artKey ?? "", h)}px`;
+  }
+});
 
 function flash(msg: string): void {
   state.toast = msg;
@@ -1285,6 +1554,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 
     // primary navigation
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
+    case "goArtifacts": goArt("artifacts"); return;
+    case "fmToggle": case "fmClose": case "fmCat": filterMenuAct(act, arg); return;
 
     // ── Repo dashboard ───────────────────────────────────────────────────────
     case "goRepo": state.screen = "repo"; state.repoTab = "overview"; loadRepoIfNeeded(); return;
@@ -1818,7 +2089,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       rerender();
       return;
     case "setSearchType":
-      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision") state.searchType = arg;
+      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision" || arg === "artifact") state.searchType = arg;
       break;
 
     // settings — display name echoes live; everything else is Phase 2
@@ -1917,16 +2188,14 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Prompt Library ───────────────────────────────────────────────────────
-    case "goPrompts": state.screen = "prompts"; state.promptMenu = null; loadPrompts(); return;
+    case "goPrompts": state.screen = "prompts"; state.promptFilterOpen = false; loadPrompts(); return;
     case "newPrompt": state.screen = "promptedit"; openEditor("new", null); return;
     case "openPrompt": if (!arg) return; state.screen = "prompt"; openPrompt(arg); return;
     case "promptQuery": state.promptQ = value ?? ""; break;
-    case "promptMenuToggle": state.promptMenu = state.promptMenu ? null : "root"; break;
-    case "promptMenuClose": state.promptMenu = null; break;
-    case "promptMenu": if (arg === "root" || arg === "tag" || arg === "sort") state.promptMenu = arg; break;
-    case "promptTag": state.promptTag = arg || null; state.promptMenu = "root"; break;
-    case "promptSort": state.promptSort = arg === "updated_asc" ? "updated_asc" : "updated_desc"; state.promptMenu = "root"; break;
-    case "promptResetFilters": state.promptTag = null; state.promptSort = "updated_desc"; state.promptMenu = null; break;
+    // The filter menu itself (open / close / category) is the shared filter-menu registry.
+    case "promptTag": state.promptTag = arg || null; break;
+    case "promptSort": state.promptSort = arg === "updated_asc" ? "updated_asc" : "updated_desc"; break;
+    case "promptResetFilters": state.promptTag = null; state.promptSort = "updated_desc"; break;
     case "promptClearFilters": state.promptQ = ""; state.promptTag = null; break;
     case "promptDiff": {
       const v = Number(arg);
@@ -2341,6 +2610,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "inviteRevoke": { if (!arg) return; revokeInvite(arg).then(() => { flash("Invite revoked"); loadInvites(); }).catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't revoke"); }); return; }
 
     default:
+      // Every Artifacts act goes to the one reducer in artifacts.ts.
+      if (act.startsWith("art")) {
+        const screen = state.screen === "artifacts" || state.screen === "artifactnew" || state.screen === "artifact" ? state.screen : null;
+        runArtEffect(artifactsAct(state.art, { screen, route: state.artRoute, me: state.me?.handle ?? "", host: location.origin, sprints: state.sprints.data.map((x) => ({ id: x.id, label: x.label, dates: x.dates, active: x.active })) }, act, arg, value));
+      }
       return;
   }
   rerender();
@@ -2349,6 +2623,147 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 // Clicks drive buttons; selects/inputs are handled by change/input so their
 // native interaction (dropdown open, typing) is preserved. Anchors keep their
 // default behavior (open the GitHub link in a new tab).
+// ── filter menus (web/src/filter-menu.ts): hover, animated open/close, in-place category switch ──
+//
+// Each menu is a registry entry over its screen's own state. Open plays the entrance
+// once (`state.fmOpening` is read by the ONE paint that opens it). Close plays a short
+// exit on the live popover, THEN flips the state and rerenders. Switching category
+// never rerenders: every category's options are already in the DOM, so the switch
+// flips `hidden`, slides the highlight and plays the new panel's options in — the
+// popover survives, which is what lets any of that animate.
+interface FilterMenuSpec { isOpen: () => boolean; setOpen: (v: boolean) => void; cat: () => string; setCat: (k: string) => boolean }
+const FILTER_MENUS: Record<string, FilterMenuSpec> = {
+  art: {
+    isOpen: () => state.art.filterOpen, setOpen: (v) => { state.art.filterOpen = v; }, cat: () => state.art.filterCat,
+    setCat: (k) => { if (!(ART_FILTER_KEYS as readonly string[]).includes(k)) return false; state.art.filterCat = k as ArtFilterKey; return true; },
+  },
+  prompt: {
+    isOpen: () => state.promptFilterOpen, setOpen: (v) => { state.promptFilterOpen = v; }, cat: () => state.promptFilterCat,
+    setCat: (k) => { if (k !== "tag" && k !== "sort") return false; state.promptFilterCat = k; return true; },
+  },
+};
+const FM_CLOSE_MS = 130;
+let fmClosing: string | null = null;
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+const HOVER_INTENT_MS = 60;
+let hoverIntentTimer: ReturnType<typeof setTimeout> | null = null;
+/** When a hover last opened a menu — a click on its trigger right after is the same
+ *  intent ("open"), not a toggle that would shut what the hover just opened. */
+let hoverOpenedAt = 0;
+const cancelHoverClose = () => { if (hoverCloseTimer !== null) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; } };
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+const livePopover = (id: string) => mount.querySelector<HTMLElement>(`[data-fm-pop="${id}"]`);
+
+function openFilterMenu(id: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec) return;
+  cancelHoverClose();
+  if (fmClosing === id) {           // re-entered while it was fading out: keep it
+    fmClosing = null;
+    livePopover(id)?.classList.remove("is-closing");
+    return;
+  }
+  if (spec.isOpen()) return;
+  spec.setOpen(true);
+  state.fmOpening = id;
+  rerender();
+  state.fmOpening = null;
+}
+function closeFilterMenu(id: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec || !spec.isOpen() || fmClosing === id) return;
+  cancelHoverClose();
+  const finish = () => { fmClosing = null; spec.setOpen(false); rerender(); };
+  const pop = livePopover(id);
+  if (!pop || reducedMotion()) { finish(); return; }
+  fmClosing = id;
+  pop.classList.remove("is-opening");
+  pop.classList.add("is-closing");
+  setTimeout(() => { if (fmClosing === id) finish(); }, FM_CLOSE_MS);
+}
+function switchFilterCat(id: string, key: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec) return;
+  const prev = spec.cat();
+  if (key === prev || !spec.setCat(key)) return;
+  const pop = livePopover(id);
+  if (!pop) { rerender(); return; }
+  const rows = Array.from(pop.querySelectorAll<HTMLElement>("[data-fm-cat]"));
+  const from = rows.findIndex((r) => r.dataset.fmCat === prev);
+  const to = rows.findIndex((r) => r.dataset.fmCat === key);
+  for (const r of rows) r.classList.toggle("is-on", r.dataset.fmCat === key);
+  pop.querySelector<HTMLElement>(".fm-ind")?.style.setProperty("--ci", String(Math.max(0, to)));
+  pop.classList.remove("is-opening");
+  for (const panel of Array.from(pop.querySelectorAll<HTMLElement>("[data-fm-panel]"))) {
+    const on = panel.dataset.fmPanel === key;
+    panel.hidden = !on;
+    panel.classList.remove("is-switching");
+    if (on) {
+      panel.dataset.dir = to < from ? "up" : "down";
+      void panel.offsetWidth;        // restart the options' entrance
+      panel.classList.add("is-switching");
+      if (panel.parentElement) panel.parentElement.scrollTop = 0;
+    }
+  }
+}
+/** The filter menu's acts (clicks, and `data-hover="fmCat"` rows). */
+function filterMenuAct(act: string, arg: string | null): void {
+  if (!arg) return;
+  if (act === "fmToggle") {
+    const spec = FILTER_MENUS[arg];
+    if (!spec) return;
+    if (spec.isOpen() && fmClosing !== arg) {
+      if (performance.now() - hoverOpenedAt < 1000) return;
+      closeFilterMenu(arg);
+    } else openFilterMenu(arg);
+    return;
+  }
+  if (act === "fmClose") { closeFilterMenu(arg); return; }
+  if (act === "fmCat") {
+    const i = arg.indexOf(":");
+    if (i > 0) switchFilterCat(arg.slice(0, i), arg.slice(i + 1));
+  }
+}
+
+// Hover (a MOUSE pointer only — a touch tap must not open, then toggle shut).
+// `data-hover-menu="<id>"` wraps the trigger and its popover: entering opens it,
+// leaving closes it 200 ms later (re-entering cancels) — the design's
+// onMouseEnter / onMouseLeave. `data-hover="<act>"` rows dispatch on hover.
+mount.addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const target = e.target as Element;
+  const menu = target.closest<HTMLElement>("[data-hover-menu]");
+  const id = menu?.dataset.hoverMenu ?? "";
+  if (FILTER_MENUS[id]) {
+    cancelHoverClose();
+    if (!FILTER_MENUS[id].isOpen() || fmClosing === id) { hoverOpenedAt = performance.now(); openFilterMenu(id); }
+  }
+  // Hover intent: a row acts only once the pointer RESTS on it (~60 ms), so sweeping
+  // across the categories toward the options doesn't flip through every one on the way.
+  const row = target.closest<HTMLElement>("[data-hover]");
+  if (hoverIntentTimer !== null) { clearTimeout(hoverIntentTimer); hoverIntentTimer = null; }
+  if (row) {
+    const act = row.dataset.hover ?? "";
+    const arg = row.dataset.arg ?? null;
+    hoverIntentTimer = setTimeout(() => { hoverIntentTimer = null; dispatch(act, arg, null); }, HOVER_INTENT_MS);
+  }
+});
+mount.addEventListener("pointerout", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const menu = (e.target as Element).closest<HTMLElement>("[data-hover-menu]");
+  const id = menu?.dataset.hoverMenu ?? "";
+  if (!FILTER_MENUS[id]) return;
+  const to = e.relatedTarget as Element | null;
+  if (to && to.closest?.(`[data-hover-menu="${id}"]`)) return;   // moving between its own children
+  cancelHoverClose();
+  hoverCloseTimer = setTimeout(() => { hoverCloseTimer = null; closeFilterMenu(id); }, 200);
+});
+// Escape closes an open filter menu.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  for (const [id, spec] of Object.entries(FILTER_MENUS)) if (spec.isOpen()) closeFilterMenu(id);
+});
+
 mount.addEventListener("click", (e) => {
   const target = e.target as Element;
   // Textareas carry data-act too (the description / comment drafts); clicking
@@ -2377,6 +2792,28 @@ mount.addEventListener("change", (e) => {
   if (el instanceof HTMLInputElement && el.dataset.act && el.dataset.commit) {
     dispatch(`${el.dataset.act}Commit`, el.dataset.arg ?? null, el.value);
   }
+});
+
+// The new-artifact form's file picker and drop zone (a file has no string value to dispatch).
+mount.addEventListener("change", (e) => {
+  const el = e.target as HTMLElement;
+  if (el instanceof HTMLInputElement && el.type === "file" && el.hasAttribute("data-art-file")) readArtFile(el.files?.[0]);
+});
+mount.addEventListener("dragover", (e) => {
+  if ((e.target as Element | null)?.closest?.("[data-art-drop]")) e.preventDefault();
+});
+mount.addEventListener("drop", (e) => {
+  if (!(e.target as Element | null)?.closest?.("[data-art-drop]")) return;
+  e.preventDefault();
+  readArtFile(e.dataTransfer?.files[0]);
+});
+// Enter in an input that names a `data-enter` act dispatches it (the artifact form's Link field).
+mount.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const el = (e.target as Element | null)?.closest?.<HTMLInputElement>("input[data-enter]");
+  if (!el) return;
+  e.preventDefault();
+  dispatch(el.dataset.enter ?? "", null, null);
 });
 
 mount.addEventListener("input", (e) => {
@@ -2530,12 +2967,11 @@ mount.addEventListener("keydown", (e) => {
     if (first) dispatch("promptTagAdd", first.tag, null);
   }
 });
-// Escape closes the expanded handoff prompt and the library's filter menu.
+// Escape closes the expanded handoff prompt (the filter menus close in their own listener).
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || state.view !== "app") return;
   if (state.handoffPromptOpen) { state.handoffPromptOpen = false; rerender(); }
   else if (state.promptExpanded) { state.promptExpanded = false; rerender(); }
-  else if (state.promptMenu) { state.promptMenu = null; rerender(); }
 });
 
 // ── sidebar: ⌘K / Ctrl+K, the search box, and the collapsed-rail tooltip ──────

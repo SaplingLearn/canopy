@@ -21,11 +21,12 @@ export type NavOpen = Record<NavGroup, boolean>;
 export const NAV_CLOSED: NavOpen = { tickets: false, roadmap: false, repo: false, docs: false, maintenance: false };
 
 /** The nav entry a screen lights up (a ticket lights Tickets, a sprint lights Roadmap). */
-export type NavKey = "mywork" | "tickets" | "roadmap" | "handoffs" | "repo" | "feed" | "docs" | "prompts" | "review" | "maintenance" | "guide";
+export type NavKey = "mywork" | "tickets" | "roadmap" | "handoffs" | "repo" | "feed" | "docs" | "artifacts" | "prompts" | "review" | "maintenance" | "guide";
 const NAV_OF: Record<string, NavKey> = {
   mywork: "mywork", feed: "feed", docs: "docs", roadmap: "roadmap", sprint: "roadmap", repo: "repo",
   review: "review", maintenance: "maintenance", guide: "guide",
   tickets: "tickets", ticketdetail: "tickets", newticket: "tickets",
+  artifacts: "artifacts", artifactnew: "artifacts", artifact: "artifacts",
   handoffs: "handoffs", handoff: "handoffs", newhandoff: "handoffs",
   prompts: "prompts", prompt: "prompts", promptedit: "prompts",
   newdoc: "docs",
@@ -65,6 +66,7 @@ const ICONS: Record<NavKey | "search" | "collapse", string> = {
   repo: ICON(`<path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path>`),
   feed: ICON(`<path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path>`),
   docs: ICON(`<path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path>`),
+  artifacts: ICON(`<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M7 13.5h6"></path><path d="M7 16.5h9"></path>`),
   review: ICON(`<rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m9 12.5 2 2 4-5"></path>`),
   maintenance: ICON(`<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>`),
   guide: ICON(`<path d="M2 4h7a3 3 0 0 1 3 3v14a2.5 2.5 0 0 0-2.5-2.5H2z"></path><path d="M22 4h-7a3 3 0 0 0-3 3v14a2.5 2.5 0 0 1 2.5-2.5H22z"></path>`),
@@ -156,6 +158,7 @@ export function sidebarView(p: SidebarProps): string {
       ${item("feed", "goFeed", "Feed")}
       ${section("Knowledge")}
       ${item("docs", "goDocs", "Docs")}
+      ${item("artifacts", "goArtifacts", "Artifacts")}
       ${item("prompts", "goPrompts", "Prompt Library", c.prompts)}
       ${section("Triage")}
       ${item("review", "goReview", "Review", c.review)}

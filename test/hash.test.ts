@@ -110,6 +110,28 @@ describe("hashForRoute", () => {
     expect(parseHash("#repo/ci/extra").screen).toBe("mywork");
   });
 
+  it("routes the Artifacts library, form, viewer, a version and a diff — and round-trips each", () => {
+    const base = { ticketId: null, sprintId: null };
+    expect(parseHash("#artifacts")).toEqual({ screen: "artifacts", ...base });
+    expect(parseHash("#artifacts/new")).toEqual({ screen: "artifactnew", ...base });
+    expect(parseHash("#artifacts/auth-audit")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: null, diff: null } });
+    expect(parseHash("#artifacts/auth-audit/v2")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: 2, diff: null } });
+    expect(parseHash("#artifacts/auth-audit/diff/1..3")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: null, diff: { a: 1, b: 3 } } });
+    for (const h of ["#artifacts", "#artifacts/new", "#artifacts/auth-audit", "#artifacts/auth-audit/v2", "#artifacts/auth-audit/diff/1..3"]) {
+      expect(hashForRoute(parseHash(h)), h).toBe(h);
+    }
+    for (const junk of ["#artifacts/Bad_Slug", "#artifacts/x/v0", "#artifacts/x/vx", "#artifacts/x/diff/1", "#artifacts/x/diff/a..b", "#artifacts/x/y/z/w"]) {
+      expect(parseHash(junk).screen, junk).toBe("mywork");
+    }
+    expect(hashForRoute({ screen: "artifact", ...base })).toBe("#artifacts");
+    // The raw route's `slug@v<n>` spelling is accepted; `/v<n>` is what gets written back.
+    expect(parseHash("#artifacts/auth-audit@v2")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: 2, diff: null } });
+    expect(hashForRoute(parseHash("#artifacts/auth-audit@v2"))).toBe("#artifacts/auth-audit/v2");
+    for (const junk of ["#artifacts/auth-audit@v0", "#artifacts/auth-audit@2", "#artifacts/new@v1", "#artifacts/x@v2/diff/1..2"]) {
+      expect(parseHash(junk).screen, junk).toBe("mywork");
+    }
+  });
+
   it("degrades to the parent screen when the id is missing", () => {
     expect(hashForRoute({ screen: "ticketdetail", ticketId: null, sprintId: null })).toBe("#tickets");
     expect(hashForRoute({ screen: "sprint", ticketId: null, sprintId: null })).toBe("#roadmap");

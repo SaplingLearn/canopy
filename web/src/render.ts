@@ -23,7 +23,7 @@ import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } fr
 import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind, type MaintTab } from "./maintenance";
 import { handoffsView, handoffDetailView, newHandoffView, handoffPromptModal, blankHandoff, type NewHandoffDraft } from "./handoffs";
 import type { PromptView } from "./prompt-box";
-import { promptLibraryView, promptDetailView, promptEditorView, promptPageModal, type PromptMenu, type PromptDraft } from "./prompts";
+import { promptLibraryView, promptDetailView, promptEditorView, promptPageModal, type PromptFilterCat, type PromptDraft } from "./prompts";
 import { newDocView, blankDoc, type NewDocDraft } from "./newdoc";
 import type { HandoffView, PromptSummary, PromptDetail, PromptVersion, PromptSort } from "@shared/handoffs";
 import { firstLine } from "@shared/handoffs";
@@ -31,6 +31,10 @@ import { emailNotificationsSection, notificationsMaintenanceSections, unsubscrib
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
 import { sidebarView, NAV_CLOSED, type NavOpen } from "./sidebar";
 import { repoView, repoControls, repoCrumb, type RepoProps, type RepoPollState } from "./repo";
+import {
+  artifactsView, artifactsHeader, artifactsDialogs, ticketArtifactsBlock, initialArtUi, ART_ROUTE_NONE,
+  type ArtUi, type ArtRoute, type ArtScreen, type ArtProps,
+} from "./artifacts";
 import type { RepoDashboard, RepoTab, RepoRange } from "@shared/repo";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
@@ -47,6 +51,9 @@ export type Screen =
   | "tickets" | "ticketdetail" | "newticket" | "sprint"
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
   | "repo"
+  // Artifacts (Knowledge › Artifacts): the library, the new-artifact form, and one
+  // artifact (its viewer, or its version diff), over /api/artifacts (artifacts.ts).
+  | "artifacts" | "artifactnew" | "artifact"
   // Handoffs (Workspace): the inbox, one handoff, the new-handoff form.
   | "handoffs" | "handoff" | "newhandoff"
   // Prompt Library (Knowledge): the library, one prompt, the editor (new / edit / new version).
@@ -131,7 +138,7 @@ export interface AppState {
   mapPicks: Record<string, string>;
   showHistory: boolean;
   searchQuery: string;
-  searchType: "all" | "doc" | "feed" | "decision";
+  searchType: "all" | "doc" | "feed" | "decision" | "artifact";
   searchResults: Loadable<QueryResult>;
   displayName: string;
   /** Settings › "Get connection command": the modal, open while non-null. `token` is
@@ -221,6 +228,11 @@ export interface AppState {
   nsDue: string;
   nsLead: string | null;
   nsDom: SprintDomain | null;
+  // ── Artifacts (artifacts.ts) ─────────────────────────────────────────────
+  /** The artifact the `artifact` screen shows (slug, version, diff pair). */
+  artRoute: ArtRoute;
+  /** The artifact reads (list, details, diffs, per-ticket), library filters, menus, dialogs, the create form. */
+  art: ArtUi;
   // ── Handoffs (UI-first: reads are real, writes are not built yet) ──────────
   handoffs: Loadable<HandoffView[]>;
   handoffDetail: Loadable<HandoffView | null>;
@@ -236,7 +248,8 @@ export interface AppState {
   promptQ: string;
   promptTag: string | null;
   promptSort: PromptSort;
-  promptMenu: PromptMenu;
+  promptFilterOpen: boolean;
+  promptFilterCat: PromptFilterCat;
   promptSlug: string | null;
   promptDetail: Loadable<{ prompt: PromptDetail; versions: PromptVersion[] } | null>;
   /** The version whose diff replaces the body (null = the body). */
@@ -253,6 +266,8 @@ export interface AppState {
   nd: NewDocDraft;
   maintTab: MaintTab;
   maintDiscardArm: boolean;
+  /** The filter menu (web/src/filter-menu.ts) the NEXT paint opens — its entrance plays once, then main.ts clears this. */
+  fmOpening: string | null;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -341,18 +356,21 @@ export function initialState(): AppState {
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
     nsOpen: false, nsName: "", nsDates: "", nsDesc: "", nsUrg: "normal", nsDue: "", nsLead: null, nsDom: null,
+    artRoute: ART_ROUTE_NONE,
+    art: initialArtUi(),
     handoffs: { status: "idle", data: [] },
     handoffDetail: { status: "idle", data: null },
     handoffId: null, handoffExpireArm: false, handoffPromptOpen: false,
     nh: blankHandoff(),
     promptList: { status: "idle", data: [] },
-    promptQ: "", promptTag: null, promptSort: "updated_desc", promptMenu: null,
+    promptQ: "", promptTag: null, promptSort: "updated_desc", promptFilterOpen: false, promptFilterCat: "tag",
     promptSlug: null,
     promptDetail: { status: "idle", data: null },
     promptDiffV: null, promptTagMenu: false, promptTagDraft: "", promptExpanded: false, promptView: "raw",
     promptMode: "new", promptEd: null,
     nd: blankDoc("technical", ""),
     maintTab: "unplaced", maintDiscardArm: false,
+    fmOpening: null,
     toast: null,
     backfillSync: null,
   };
@@ -595,6 +613,7 @@ function header(s: AppState): string {
     // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
     tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
     repo: "Repo",
+    artifacts: "Artifacts", artifactnew: "Artifacts", artifact: "Artifacts",
     handoffs: "Handoffs", handoff: "Handoffs", newhandoff: "Handoffs",
     prompts: "Prompt Library", prompt: "Prompt Library", promptedit: "Prompt Library",
     newdoc: "Docs",
@@ -632,11 +651,10 @@ function header(s: AppState): string {
       </select>
     </div>` : "";
 
-  const spaceTab = (k: DocSpace) =>
-    `<button data-act="setDocSpace" data-arg="${attr(k)}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${esc(spaceLabel(k))}</button>`;
+  // The Technical / Product space is picked from the sidebar's Docs sub-pages, so the
+  // header carries only New doc (it had a second copy of the same switcher).
   const docsControls = s.screen === "docs"
-    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${DOC_SPACES.map(spaceTab).join("")}</div>
-      <button data-act="newDoc" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap">${PLUS_ICON}New doc</button>`
+    ? `<button data-act="newDoc" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap">${PLUS_ICON}New doc</button>`
     : "";
   const accentNew = (act: string, label: string) =>
     `<button data-act="${act}" class="cnpy-accentbtn" style="display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap;transition:filter .12s ease">${PLUS_ICON}${label}</button>`;
@@ -700,14 +718,17 @@ function header(s: AppState): string {
     ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="${backAct}" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
     : `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">${titles[s.screen]}</h1>`;
 
+  // The Artifacts screens draw their own title + crumbs (a diff has two crumbs).
+  const art = isArtScreen(s.screen) ? artifactsHeader(artProps(s, s.screen)) : null;
+
   return `<header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;min-height:57px;border-bottom:1px solid var(--border);flex:none">
     <div style="display:flex;align-items:center;gap:12px;min-width:0">
-      ${title}
-      ${crumb}
+      ${art ? art.title : title}
+      ${art ? art.crumb : crumb}
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${newControls}${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${themeBtn}
+      ${newControls}${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${art ? art.controls : ""}${themeBtn}
     </div>
   </header>`;
 }
@@ -1101,10 +1122,10 @@ function roadmapDigest(s: AppState): string {
 // ── search ───────────────────────────────────────────────────────────────────
 // The ticket icon is the sidebar family's ticket glyph (a stub with a notch),
 // drawn at the same 24-viewBox scale as the rest of this map.
-const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5", artifact: "M3 4h18v16H3zM3 9h18M7 13.5h6M7 16.5h9" };
 // The "sprint" type covers the plan narrative + the sprints, so its badge keeps
 // reading "Roadmap" — the screen it navigates to.
-const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap" };
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap", artifact: "Artifact" };
 
 // Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
 // the others are mapped for completeness. Reuses the status badge styling.
@@ -1144,6 +1165,8 @@ function searchOpenAttr(type: string, id: string): string | null {
   if (type === "decision") return null;
   if (type === "feed") return `data-act="goFeed"`;
   if (type === "sprint") return `data-act="goRoadmap"`;
+  // An artifact hit's id is its slug → the artifact viewer (#artifacts/<slug>).
+  if (type === "artifact") return `data-act="artOpen" data-arg="${attr(id)}"`;
   return `data-act="openDocFrom" data-arg="${attr(id)}"`;
 }
 
@@ -1178,7 +1201,7 @@ function searchView(s: AppState): string {
 
   // No "Tickets" chip: tickets never appear in search results, so a filter for
   // them would only ever show an empty list.
-  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"]].map(([k, label]) => {
+  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"], ["artifact", "Artifacts"]].map(([k, label]) => {
     const sel = s.searchType === k;
     const style = `padding:6px 13px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};color:${sel ? "var(--accent)" : "var(--fg-55)"};background:${sel ? "var(--accent-soft)" : "transparent"};transition:all .12s ease`;
     return `<button data-act="setSearchType" data-arg="${k}" style="${style}">${label}</button>`;
@@ -1916,6 +1939,7 @@ function ticketDetailScreen(s: AppState): string {
     relMenu: s.relMenu,
     lkMenu: s.lkMenu,
     stMenu: s.stMenu,
+    artifactsBlock: ticketArtifactsBlock(s.art.ticketArts[slice.data.id]),
   });
 }
 
@@ -1945,10 +1969,13 @@ function screenBody(s: AppState): string {
     case "ticketdetail": return ticketDetailScreen(s);
     case "sprint": return sprintScreenBody(s);
     case "repo": return repoView(repoProps(s));
+    case "artifacts":
+    case "artifactnew":
+    case "artifact": return artifactsView(artProps(s, s.screen));
     case "handoffs": return handoffsView({ status: s.handoffs.status, handoffs: s.handoffs.data, me: s.me?.handle ?? "", persons: s.persons.data });
     case "handoff": return handoffDetailView({ status: s.handoffDetail.status, handoff: s.handoffDetail.data, me: s.me?.handle ?? "", persons: s.persons.data, expireArm: s.handoffExpireArm, promptView: s.promptView });
     case "newhandoff": return newHandoffView({ draft: s.nh, me: s.me?.handle ?? "", persons: s.persons.data });
-    case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, menu: s.promptMenu, persons: s.persons.data });
+    case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, filterOpen: s.promptFilterOpen, filterCat: s.promptFilterCat, fmOpening: s.fmOpening, persons: s.persons.data });
     case "prompt": return promptDetailView({
       status: s.promptDetail.status, prompt: s.promptDetail.data?.prompt ?? null, versions: s.promptDetail.data?.versions ?? [],
       persons: s.persons.data, knownTags: [...new Set(s.promptList.data.flatMap((p) => p.tags))],
@@ -1968,12 +1995,28 @@ function repoProps(s: AppState): RepoProps {
   };
 }
 
+/** Project the app state onto the Artifacts screens' props. */
+function artProps(s: AppState, screen: ArtScreen): ArtProps {
+  return {
+    screen, route: s.artRoute, ui: s.art, me: s.me?.handle ?? "", fmOpening: s.fmOpening,
+    persons: s.persons.data, host: typeof location !== "undefined" ? location.host : "canopy",
+    theme: resolved(s),
+    // Every ticket (the attach dialog's own read); the queue's filtered list until it lands.
+    tickets: s.art.attachTickets.data ?? s.tickets.data.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    sprints: s.sprints.data.map((x) => ({ id: x.id, label: x.label, dates: x.dates, active: x.active })),
+  };
+}
+const isArtScreen = (screen: Screen): screen is ArtScreen => screen === "artifacts" || screen === "artifactnew" || screen === "artifact";
+
 // `.cnpy-shell` is the seam web/src/morph.ts looks for: inside it the <aside> is
-// patched in place (so its transitions run) and <main> is swapped.
+// patched in place (so its transitions run) and <main> is swapped — or, on the
+// Artifacts screens, patched too while the SAME view stays up (`data-morph` = the
+// screen + its route): their previews are iframes, and a swapped iframe reloads.
 function appView(s: AppState): string {
+  const morphKey = isArtScreen(s.screen) ? `${s.screen}:${JSON.stringify(s.screen === "artifact" ? s.artRoute : null)}` : "";
   return `<div class="cnpy-shell" style="display:flex;height:100vh;overflow:hidden">
     ${sidebar(s)}
-    <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
+    <main${morphKey ? ` data-morph="${attr(morphKey)}"` : ""} style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
       ${header(s)}
       <div id="cnpy-main" class="cnpy-scroll" style="flex:1;overflow-y:auto;min-height:0">${screenBody(s)}</div>
     </main>
@@ -2020,6 +2063,7 @@ export function render(s: AppState): string {
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
     ${s.view === "app" ? connectModal(s) : ""}
+    ${s.view === "app" && isArtScreen(s.screen) ? artifactsDialogs(artProps(s, s.screen)) : ""}
     ${s.view === "app" && s.screen === "handoff" && s.handoffPromptOpen && s.handoffDetail.data ? handoffPromptModal(s.handoffDetail.data) : ""}
     ${s.view === "app" && s.screen === "prompt" && s.promptExpanded && s.promptDetail.data ? promptPageModal(s.promptDetail.data.prompt) : ""}
   </div>`;
