@@ -5,7 +5,7 @@ import { resolveBearerPrincipal } from "../src/auth/principal";
 import { mintToken } from "../src/auth/tokens";
 import { registerClient, checkAuthorizeRequest, issueAuthorization, exchangeAuthorizationCode } from "../src/auth/oauth";
 import { buildOAuthApp } from "../src/auth/oauth-routes";
-import { seedPerson } from "./helpers/persons";
+import { seedPerson, cookieFor } from "./helpers/persons";
 import type { Env } from "../src/env";
 
 const REDIRECT = "http://localhost:4444/callback";
@@ -143,6 +143,103 @@ describe("POST /oauth/revoke", () => {
   });
 });
 
+async function registered() {
+  const c = await registerClient(env.DB, { client_name: "Claude <Code>", redirect_uris: [REDIRECT] }, Date.now());
+  const { verifier, challenge } = await pkce();
+  const qs = new URLSearchParams({ response_type: "code", client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: "S256", state: "st-9", scope: "mcp" });
+  return { c, verifier, qs };
+}
+const manual = (init: RequestInit = {}) => ({ redirect: "manual" as const, ...init });
+const csrfOf = (html: string) => /name="csrf" value="([^"]+)"/.exec(html)?.[1] ?? "";
+function consentForm(qs: URLSearchParams, csrf: string, decision: "allow" | "deny"): URLSearchParams {
+  const f = new URLSearchParams(qs); f.set("csrf", csrf); f.set("decision", decision); return f;
+}
+
+describe("GET /oauth/authorize", () => {
+  it("unknown client → error page (400), no redirect; hardened headers", async () => {
+    const r = await SELF.fetch("https://example.com/oauth/authorize?client_id=nope&redirect_uri=https://evil.example/cb", manual());
+    expect(r.status).toBe(400);
+    expect(r.headers.get("location")).toBeNull();
+    expect(r.headers.get("x-frame-options")).toBe("DENY");
+    expect(r.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  });
+  it("a bad parameter on a good client → redirect with invalid_request and state", async () => {
+    const { qs } = await registered();
+    qs.set("code_challenge_method", "plain");
+    const r = await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual());
+    expect(r.status).toBe(302);
+    const loc = new URL(r.headers.get("location")!);
+    expect(loc.origin + loc.pathname).toBe(REDIRECT);
+    expect(loc.searchParams.get("error")).toBe("invalid_request");
+    expect(loc.searchParams.get("state")).toBe("st-9");
+  });
+  it("signed out → the sign-in page and an oauth_pending cookie", async () => {
+    const { qs } = await registered();
+    const r = await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual());
+    expect(r.status).toBe(200);
+    const html = await r.text();
+    expect(html).toContain("Claude &lt;Code&gt;");
+    expect(html).toContain(`href="/auth/login"`);
+    expect(html).toContain(`href="/auth/google/login"`);
+    expect(r.headers.get("set-cookie") ?? "").toContain("oauth_pending=");
+  });
+  it("signed in → the consent page naming the app, the redirect host and the handle; form-action allows the redirect origin", async () => {
+    const { qs } = await registered();
+    const r = await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual({ headers: { cookie: await cookieFor("oauth-user") } }));
+    expect(r.status).toBe(200);
+    const html = await r.text();
+    expect(html).toContain("Claude &lt;Code&gt;");
+    expect(html).toContain("localhost");
+    expect(html).toContain("@oauth-user");
+    expect(csrfOf(html)).not.toBe("");
+    expect(r.headers.get("content-security-policy")).toContain("form-action 'self' http://localhost:4444");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("POST /oauth/authorize", () => {
+  it("Allow → redirect with a code that exchanges for tokens; the whole flow ends at /mcp", async () => {
+    const { c, verifier, qs } = await registered();
+    const cookie = await cookieFor("oauth-user");
+    const page = await (await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual({ headers: { cookie } }))).text();
+    const r = await SELF.fetch("https://example.com/oauth/authorize", manual({
+      method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      body: consentForm(qs, csrfOf(page), "allow").toString(),
+    }));
+    expect(r.status).toBe(302);
+    const loc = new URL(r.headers.get("location")!);
+    expect(loc.searchParams.get("state")).toBe("st-9");
+    const code = loc.searchParams.get("code")!;
+    const t = await SELF.fetch("https://example.com/oauth/token", form({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: REDIRECT, client_id: c.client_id }));
+    const { access_token } = (await t.json()) as { access_token: string };
+    expect(await resolveBearerPrincipal(bearer(access_token), env as unknown as Env)).toEqual({ handle: "oauth-user" });
+  });
+  it("Deny → access_denied, nothing granted", async () => {
+    const { qs } = await registered();
+    const cookie = await cookieFor("oauth-user");
+    const page = await (await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual({ headers: { cookie } }))).text();
+    const r = await SELF.fetch("https://example.com/oauth/authorize", manual({
+      method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: consentForm(qs, csrfOf(page), "deny").toString(),
+    }));
+    expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("access_denied");
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM oauth_grants`).first<{ n: number }>())?.n).toBe(0);
+  });
+  it("a forged CSRF value, another session's CSRF, or no session → 403 page, nothing granted", async () => {
+    const { qs } = await registered();
+    const mine = await cookieFor("oauth-user");
+    const theirs = await cookieFor("other-user");
+    const theirPage = await (await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual({ headers: { cookie: theirs } }))).text();
+    for (const [cookie, csrf] of [[mine, "forged"], [mine, csrfOf(theirPage)], ["", csrfOf(theirPage)]] as const) {
+      const r = await SELF.fetch("https://example.com/oauth/authorize", manual({
+        method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: consentForm(qs, csrf, "allow").toString(),
+      }));
+      expect(r.status).toBe(403);
+      expect(r.headers.get("location")).toBeNull();
+    }
+    expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM oauth_grants`).first<{ n: number }>())?.n).toBe(0);
+  });
+});
+
 describe("never a 500", () => {
   // A DB that throws on every prepare() stands in for an unexpected D1 failure —
   // register and revoke must both answer 503, never let the throw escape as Hono's
@@ -162,5 +259,11 @@ describe("never a 500", () => {
     const r = await buildOAuthApp().request("/oauth/revoke", form({ token: "whatever" }), throwingEnv);
     expect(r.status).toBe(503);
     expect(await r.json()).toEqual({ error: "temporarily_unavailable" });
+  });
+
+  it("authorize: an unexpected DB throw is a 503 error page, not a 500", async () => {
+    const r = await buildOAuthApp().request("/oauth/authorize?client_id=x&redirect_uri=y", {}, throwingEnv);
+    expect(r.status).toBe(503);
+    expect(await r.text()).toContain("couldn't finish");
   });
 });

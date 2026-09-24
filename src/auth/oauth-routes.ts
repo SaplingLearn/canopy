@@ -2,11 +2,16 @@
 // are public JSON endpoints with open CORS (no cookies are read); authorize is the
 // one route that reads the session, to show the consent page. Never a 500.
 import { Hono, type Context } from "hono";
+import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./principal";
 import {
   OAuthError, oauthOrigin, protectedResourceMetadata, authorizationServerMetadata,
   validateRegistration, registerClient, exchangeAuthorizationCode, refreshAccessToken, revokeOAuthToken,
+  AUTHORIZE_KEYS, canonicalAuthorizeQuery, checkAuthorizeRequest, issueAuthorization, type AuthorizeCheck,
 } from "./oauth";
+import { readSessionCookie, getSessionUser } from "./session";
+import { hmacSeal, hmacUnseal, b64uEncode, b64uDecode } from "./crypto";
+import { errorPage, signInPage, consentPage } from "./oauth-pages";
 
 const MAX_REGISTER_BYTES = 8 * 1024;
 const CORS: Record<string, string> = {
@@ -14,6 +19,58 @@ const CORS: Record<string, string> = {
   "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "content-type, authorization, mcp-protocol-version",
 };
+
+export const OAUTH_PENDING_COOKIE = "oauth_pending";
+const OAUTH_PENDING_TTL_S = 600;
+
+/** Remember a validated authorize request across sign-in (and onboarding): sealed,
+ *  HttpOnly, 10 minutes — the same shape as the `onboard` cookie. */
+export async function setOAuthPending(c: Context<AppEnv>, q: URLSearchParams, nowMs: number): Promise<void> {
+  const value = b64uEncode(JSON.stringify({ q: canonicalAuthorizeQuery(q), exp: nowMs + OAUTH_PENDING_TTL_S * 1000 }));
+  setCookie(c, OAUTH_PENDING_COOKIE, await hmacSeal(value, `oauth-pending:${c.env.COOKIE_SECRET}`),
+    { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: OAUTH_PENDING_TTL_S });
+}
+
+/** After a sign-in lands a session: where to send the person — the pending authorize
+ *  URL (re-validated there) — or null. Always clears the cookie. A tampered, expired
+ *  or malformed cookie is null, so the person just lands in the app. */
+export async function takeOAuthPending(c: Context<AppEnv>, nowMs: number = Date.now()): Promise<string | null> {
+  const sealed = getCookie(c, OAUTH_PENDING_COOKIE);
+  if (!sealed) return null;
+  deleteCookie(c, OAUTH_PENDING_COOKIE, { path: "/" });
+  const v = await hmacUnseal(sealed, `oauth-pending:${c.env.COOKIE_SECRET}`);
+  if (!v) return null;
+  try {
+    const o = JSON.parse(b64uDecode(v)) as { q?: unknown; exp?: unknown };
+    if (typeof o.q !== "string" || typeof o.exp !== "number" || o.exp <= nowMs) return null;
+    return `/oauth/authorize?${o.q}`;
+  } catch { return null; }
+}
+
+/** The consent CSRF value: an HMAC over the session id and the canonical request, so
+ *  a form can't be replayed by another session or with altered parameters. */
+async function consentCsrf(secret: string, sessionId: string, q: URLSearchParams): Promise<string> {
+  const sealed = await hmacSeal(`${sessionId}|${canonicalAuthorizeQuery(q)}`, `oauth-consent:${secret}`);
+  return sealed.slice(sealed.lastIndexOf(".") + 1);
+}
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+/** The signed-in person for authorize. DEV_LOGIN mirrors sessionGate's local-dev
+ *  bypass (inert in prod), so the flow can be exercised over `wrangler dev`. */
+async function consentSession(c: Context<AppEnv>): Promise<{ id: string; handle: string } | null> {
+  if (c.env.DEV_LOGIN) return { id: "dev", handle: c.env.DEV_LOGIN };
+  const id = await readSessionCookie(c, c.env.COOKIE_SECRET);
+  if (!id) return null;
+  const handle = await getSessionUser(c.env.DB, id);
+  return handle ? { id, handle } : null;
+}
+
+const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'";
 
 export interface OAuthDeps { now?: () => number }
 
@@ -107,6 +164,73 @@ export function buildOAuthApp(deps: OAuthDeps = {}): Hono<AppEnv> {
       return json(c, { error: "temporarily_unavailable" }, 503);
     }
     return c.body(null, 200, CORS);
+  });
+
+  // ── Authorize ──
+  // Chrome applies form-action to the redirect that follows a form POST, so the
+  // consent page must also allow the app's redirect origin.
+  const page = (c: Context<AppEnv>, html: string, status: 200 | 400 | 403 | 503, formTarget?: string) =>
+    c.html(html, status, {
+      "cache-control": "no-store", "x-frame-options": "DENY",
+      "content-security-policy": formTarget ? `${PAGE_CSP} ${formTarget}` : PAGE_CSP,
+    });
+  const back = (redirectUri: string, state: string | null, params: Record<string, string>): string => {
+    const u = new URL(redirectUri);
+    for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+    if (state) u.searchParams.set("state", state);
+    return u.toString();
+  };
+  const refuse = (c: Context<AppEnv>, check: Exclude<AuthorizeCheck, { ok: true }>) =>
+    check.kind === "page"
+      ? page(c, errorPage(check.message), 400)
+      : c.redirect(back(check.redirect_uri, check.state, { error: "invalid_request", error_description: check.description }), 302);
+  // Never a 500: an unexpected throw (e.g. D1 down) renders the same hardened error
+  // page as a known refusal, just at 503 — logging only the message, never request data.
+  const unavailable = (c: Context<AppEnv>, e: unknown) => {
+    console.error("oauth authorize: unexpected error", e instanceof Error ? e.message : "unknown");
+    return page(c, errorPage("Canopy couldn't finish this right now. Try again from the app."), 503);
+  };
+
+  o.get("/oauth/authorize", async (c) => {
+    try {
+      const q = new URL(c.req.url).searchParams;
+      const check = await checkAuthorizeRequest(c.env.DB, q, oauthOrigin(c.req.url));
+      if (!check.ok) return refuse(c, check);
+      const s = await consentSession(c);
+      if (!s) {
+        await setOAuthPending(c, q, now());
+        return page(c, signInPage(check.client.client_name), 200);
+      }
+      const hidden: Record<string, string> = {};
+      for (const k of AUTHORIZE_KEYS) { const v = q.get(k); if (v) hidden[k] = v; }
+      const target = new URL(check.params.redirect_uri);
+      return page(c, consentPage({
+        clientName: check.client.client_name, redirectHost: target.hostname, handle: s.handle,
+        hidden, csrf: await consentCsrf(c.env.COOKIE_SECRET, s.id, q),
+      }), 200, target.origin);
+    } catch (e) {
+      return unavailable(c, e);
+    }
+  });
+
+  o.post("/oauth/authorize", async (c) => {
+    try {
+      const body = await c.req.parseBody();
+      const q = new URLSearchParams();
+      for (const k of AUTHORIZE_KEYS) { const v = body[k]; if (typeof v === "string" && v) q.set(k, v); }
+      const check = await checkAuthorizeRequest(c.env.DB, q, oauthOrigin(c.req.url));
+      if (!check.ok) return refuse(c, check);
+      const s = await consentSession(c);
+      const csrf = typeof body.csrf === "string" ? body.csrf : "";
+      if (!s || !constantTimeEqual(csrf, await consentCsrf(c.env.COOKIE_SECRET, s.id, q))) {
+        return page(c, errorPage("This approval form expired or didn't come from your session. Start the connection again from the app."), 403);
+      }
+      if (body.decision !== "allow") return c.redirect(back(check.params.redirect_uri, check.params.state, { error: "access_denied" }), 302);
+      const { code } = await issueAuthorization(c.env.DB, { client: check.client, params: check.params, person: s.handle, nowMs: now() });
+      return c.redirect(back(check.params.redirect_uri, check.params.state, { code }), 302);
+    } catch (e) {
+      return unavailable(c, e);
+    }
   });
 
   return o;
