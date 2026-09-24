@@ -9,7 +9,7 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
 | param | type | default | what it does |
 |---|---|---|---|
 | `q` | string | `""` | the search text. **Empty `q` → browse mode** (recency-ordered, filtered by the params below). |
-| `types` | `("doc"\|"decision"\|"feed"\|"sprint"\|"ticket")[]` | all | restrict to one or more record types. `sprint` covers the roadmap plan narrative + sprints; `ticket` the org-wide ticket queue. |
+| `types` | `("doc"\|"decision"\|"feed"\|"sprint"\|"artifact")[]` | all five | restrict to one or more record types. `sprint` covers the roadmap plan narrative + sprints; `artifact` the artifact pages (see below). Tickets are not a query type — use `list_tickets` / `get_ticket`. |
 | `section` | string | — | restrict docs to a section (docs only). |
 | `space` | `"sapling"\|"canopy"` | both | restrict docs to a space (docs only). |
 | `include_staged` | boolean | **true via MCP**, **false via `/search`** | whether staged / unpromoted / draft content is returned. Agents see it (flagged); the human Search UI hides it. |
@@ -36,6 +36,19 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
   `include_staged` is true and a doc has a pending version, `pending_version` and `staged_body` are
   populated so you can inspect the proposed change without it being live.
 
+### Artifacts in `query`
+
+- An `artifact` result's `id` is its **slug** — open it with `artifact_get <slug>` (the raw markup,
+  every version, its links). `current_version` is the latest version number.
+- `authority` is `draft` for a draft page and `live` for a `published` **or** `ratified` one — so read
+  the body's first line, `Status: <draft|published|ratified> · v<n>`: only `ratified` is
+  team-confirmed. Then `Kind / Area / Repo`, the latest version's summary, and the content (markdown
+  and mermaid raw, html and svg as their visible text, a one-line description for binary files).
+- **Private artifacts reach only their author**: your query sees your own private pages and nobody
+  else's. The human `/search` (include_staged false) hides drafts, like draft decisions.
+- `section` / `space` are doc-only filters, so setting either drops artifacts out.
+- The full artifact contract is `docs/artifact-contract.md`.
+
 ## Patterns
 
 - **Orient before work** (what `load-context` does): a *tight* `q` (the subsystem/concept) + `types`
@@ -59,12 +72,15 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
   same sprint list `get_roadmap` carries, without the narrative; `get_sprint` adds that sprint's
   tickets (roots then sub-tickets) and its merged resource links.
 - **`list_tickets` / `get_ticket <id>`** — you want the ticket queue by filter (`seg`, `assignee`,
-  `category`) or one whole ticket. Use `query` with `types: ["ticket"]` to search ticket TEXT;
-  use `list_tickets` to enumerate by state. Both reads are unscoped — you see the whole org's queue.
+  `category`) or one whole ticket (`get_ticket` also lists the artifacts linked to it that you can
+  see). Tickets are not a `query` type; use `list_tickets` to enumerate by state. Both reads are
+  unscoped — you see the whole org's queue.
   The ticket WRITE tools are scoped to tickets already assigned to you, with TWO exceptions:
   `create_ticket` is unscoped (filing is how work enters the queue), and an **admin** may call
   `set_ticket_sprint` on any ticket (composing a sprint is sprint management — it spreads to no other
   verb). Sprint writes are admin-only. See the `canopy` skill, or the `tickets` skill to drive them.
+- **`artifact_get <slug>`** — you know the artifact's slug (from a `query` hit or `get_ticket`'s
+  `artifacts`) and want its content, versions and links; `slug@v3` reads an older version.
 - **`get_my_work`** — you want your own previous-activity + to-do projection from captured GitHub events.
 
 `query` is read-only and safe to call freely.

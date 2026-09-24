@@ -1,7 +1,7 @@
 ---
 name: canopy
 description: Overview and entry point for working with Canopy, the team's shared context store ("the team brain"). Use when someone asks how Canopy works, how to use it, how to connect an agent, what can be read or written, or wants the whole orient→work→record loop — and as the map to the load-context (orient before work) and record-session (record at the end) skills. Read-only itself; it explains the loop and points to the right tool/skill.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard, mcp__canopy__artifact_get
 ---
 
 # Canopy — the team's shared context store
@@ -21,7 +21,7 @@ one you are in:
 
 | | Staged — a human confirms | Direct — takes effect now |
 |---|---|---|
-| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`) |
+| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`), artifacts (`artifact_create` / `artifact_update`) |
 | **Why** | an agent proposing knowledge can be wrong, and a wrong doc is believed | a request or a plan is an act, not a claim — and it is visibly somebody's |
 | **What bounds it** | the gate: vocab, confidence, content-hash dedupe, then Triage | scope: your own lane, or admin |
 
@@ -68,7 +68,7 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
 ## Reading
 
 - **`query`** — the rich, ranked, full-text read over five types (`doc` / `decision` / `feed` /
-  `sprint` / `ticket`). Whole authoritative bodies for the top hits plus ranked pointers to the rest,
+  `sprint` / `artifact`; tickets are read with `list_tickets` / `get_ticket`). Whole authoritative bodies for the top hits plus ranked pointers to the rest,
   every result authority-flagged. **See `references/querying.md` for the full parameter set and
   patterns** (filter by type/section/space, browse, fan out via pointers, `include_staged`). This is
   the tool `load-context` wraps; call it directly for ad-hoc exploration.
@@ -142,6 +142,32 @@ through their own token. The **`tickets`** skill is the explicit-only wrapper fo
 Note there is **no provenance**: a write made through your token is recorded as *you*, with nothing
 marking it agent-made. Use the `tickets` skill's `comment_prefix` config if your team wants agent
 comments recognizable.
+
+### Artifacts — the artifact contract
+
+Artifacts are versioned pages the team keeps next to its tickets and sprints: `html`, `markdown`,
+`svg`, `mermaid` (text, ≤ 500 KB, sent inline) and `image`, `pdf`, `file` (≤ 10 MB, uploaded). The
+whole contract — kinds, caps, statuses, permissions, the upload flow with a `curl` example, the raw
+route — is **`docs/artifact-contract.md`**; read it before your first artifact write. In short:
+
+- **`artifact_create`** `{ title, kind, area, repo, visibility, content? | size_bytes + sha256, links?, summary? }`
+  — text kinds take `content` → `{ id, slug, url, version }`; binary kinds take `size_bytes` + `sha256`
+  (`shasum -a 256 <file>`) → `{ …, upload_url, expires_at }`, and you then `curl -X PUT --data-binary
+  @<file>` the exact bytes to that URL (**single use, 5 minutes**). The page is invisible until the PUT lands.
+- **`artifact_update`** `{ slug, summary, content | old_str + new_str }` for text (`old_str` must occur
+  exactly once), or `{ slug, summary, size_bytes, sha256 }` for binary. Every new version is `published`.
+- **`artifact_get`** `{ slug, version? }` — `slug@v3` / `slug/v3` name a version.
+- Every result carries **`warnings`** — non-empty when content calls something only claude.ai has
+  (`window.claude`, `window.storage`, `api.anthropic.com`). A warning, never a rejection.
+- **Direct, not staged**: a create or update takes effect now, as you. Whoever can see a page can write
+  it; `private` pages are their author's alone, and a private / missing / not-yet-uploaded slug is the
+  same `{ "error": "not_found", "code": "not_found" }`.
+- **Ratifying is human-only.** `draft` → `published` → `ratified`; only `ratified` is team-confirmed,
+  and a person does it on the web. There is no ratify tool. Never describe a `published` artifact as
+  agreed.
+- Artifacts show up in **`query`** (type `artifact`, id = slug; the body's first line is
+  `Status: <status> · v<n>`) and in **`get_ticket`**'s `artifacts`. `record_session`'s
+  `artifact_links` links the artifacts a session produced to their ticket / sprint / PR / issue.
 
 ## Connect an agent over MCP
 
