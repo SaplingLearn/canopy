@@ -13,6 +13,10 @@ export const RESET_STATEMENTS = [
   "DELETE FROM ticket_assignees",
   "DELETE FROM tickets",
   "DELETE FROM processed_items",
+  // Handoffs + Prompt Library (0028): prompt_versions references prompts(slug).
+  "DELETE FROM handoffs",
+  "DELETE FROM prompt_versions",
+  "DELETE FROM prompts",
   "DELETE FROM pr_summaries",
   "DELETE FROM issue_summaries",
   "DELETE FROM events",

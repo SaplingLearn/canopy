@@ -49,7 +49,8 @@ orient (load-context)  →   do the work   →   record (record-session)
 > They can't share one `SKILL.md`. This `canopy` skill is the umbrella that documents both.
 
 Alongside the loop: **`tickets`** (explicit-only) works the ticket queue and, for an admin, the
-sprints; **`my-work`** reads your own plate; **`read-plan`** / **`update-plan`** read and write the
+sprints; **`handoff`** (explicit-only) leaves one handoff for the next session; **`prompts`** finds,
+fills and stages Prompt Library prompts; **`my-work`** reads your own plate; **`read-plan`** / **`update-plan`** read and write the
 roadmap plan. Reading tickets, sprints and the roadmap needs no skill — those tools are registered for
 every principal.
 
@@ -102,6 +103,11 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
   `ciFailures.rate`, a `null` or empty delta) is unknown / not captured, **never zero**, and
   `usage[].seen` says whether that source has ever reported. Read-only: polling and Sync GitHub are
   admin actions in the web app, never MCP tools.
+- **`list_handoffs` / `get_handoff`** — handoffs left for you (and for `anyone`), pending only by default;
+  `box: "sent"` lists your own. `get_handoff <id>` reads one without claiming it.
+- **`search_prompts` / `get_prompt`** — the Prompt Library: search by text and tags; `get_prompt { slug,
+  vars }` returns the body with `{{vars}}` filled and lists every variable still unfilled — ask for
+  those, never guess (the `prompts` skill).
 
 ## Writing (agents stage, humans confirm)
 
@@ -139,6 +145,17 @@ triage step — a ticket write is org-visible immediately. What bounds them is s
 merging, an issue closing, the cron, or every ticket in a sprint resolving. A person asks for them,
 through their own token. The **`tickets`** skill is the explicit-only wrapper for all of this.
 
+### Handoffs and prompts
+
+- **`send_handoff`** — leave one addressed note for the next session (`recipient`: a handle or `anyone`)
+  with the fixed context `{ repo, branch, task, done[], next[], files[] }`. Direct, not staged — it is a
+  message, not knowledge. One per session; the explicit-only **`handoff`** skill wraps it.
+- **`claim_handoff` / `expire_handoff`** — claiming is atomic and happens once; it returns the handoff as
+  one markdown block to act on. `load-context` lists pending handoffs at session start and claims only
+  the one the person picks — never on its own.
+- **`save_prompt`** — stages a new prompt or a new version of one. Always `staged`, whatever you send; a
+  human publishes it in the Prompt Library. See the **`prompts`** skill.
+
 Note there is **no provenance**: a write made through your token is recorded as *you*, with nothing
 marking it agent-made. Use the `tickets` skill's `comment_prefix` config if your team wants agent
 comments recognizable.
@@ -161,7 +178,7 @@ export CANOPY_MCP_TOKEN=canopy_mcp_…        # the plugin's MCP config reads th
 claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp \
   --header "Authorization: Bearer canopy_mcp_…"
 # then copy the skill folders into another repo / your home dir:
-cp -r .claude/skills/{canopy,load-context,record-session,tickets} ~/.claude/skills/
+cp -r .claude/skills/{canopy,load-context,record-session,tickets,handoff,prompts} ~/.claude/skills/
 ```
 
 The skills are bundled in this repo under `plugins/canopy/skills/` (the in-repo `.claude/skills/*`

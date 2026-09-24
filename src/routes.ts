@@ -6,7 +6,7 @@ import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
 import { notificationsApp } from "./notifications/routes";
-import { consume } from "./consumer";
+import { consume, ingestDocProposal } from "./consumer";
 import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
@@ -25,6 +25,12 @@ import {
 } from "./tools/sprints";
 import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
 import { get_plan } from "./tools/plan";
+import {
+  listHandoffs, getHandoff, createHandoff, claimHandoff, expireHandoff, HandoffCreateInput, HandoffError, HANDOFF_ERROR_STATUS,
+} from "./tools/handoffs";
+import { listPrompts, getPrompt, listPromptVersions, savePrompt, setPromptTags, publishPrompt, PromptSaveInput, PromptError, PROMPT_ERROR_STATUS } from "./tools/prompts";
+import { isSection } from "@shared/vocabulary";
+import { HANDOFF_BOXES, type HandoffBox } from "@shared/handoffs";
 import { getMyWork } from "./tools/mywork";
 import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
 import { reconcileRepo, type ReconcileResult } from "./repo/github";
@@ -121,6 +127,122 @@ app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.que
 // not rejected, server-joined with both bodies + reconciler metadata. Kills the
 // old web N+1 (audit G9) and is the data source Phase 4's detail pane renders.
 app.get("/proposals", async (c) => c.json({ proposals: await list_proposals(c.env.DB) }));
+
+// ── Handoffs + Prompt Library (session-cookie; the MCP tools are the agent side) ──
+// A handoff is an addressed message, not knowledge: its writers are direct (NOT
+// the ingestion gate). The prompt writers take `via: "human"` here — a person may
+// save a draft or publish; the MCP save_prompt passes "agent" and is forced to
+// `staged`. Errors are `{ error }` with the writers' own 400/403/404/409.
+const handoffFail = (c: Context<AppEnv>, e: unknown) => {
+  if (e instanceof HandoffError) return c.json({ error: e.message }, HANDOFF_ERROR_STATUS[e.code]);
+  if (e instanceof PromptError) return c.json({ error: e.message }, PROMPT_ERROR_STATUS[e.code]);
+  throw e;
+};
+const handoffId = (raw: string): number | null => (/^\d+$/.test(raw) && Number(raw) > 0 ? Number(raw) : null);
+
+app.get("/api/handoffs", async (c) => {
+  const box = c.req.query("box") ?? "mine";
+  if (!(HANDOFF_BOXES as readonly string[]).includes(box)) return c.json({ error: "unknown box" }, 400);
+  return c.json({ handoffs: await listHandoffs(c.env.DB, c.get("principal").handle, box as HandoffBox) });
+});
+app.get("/api/handoffs/:id", async (c) => {
+  const id = handoffId(c.req.param("id"));
+  const handoff = id === null ? null : await getHandoff(c.env.DB, id);
+  return handoff ? c.json({ handoff }) : c.json({ error: "not found" }, 404);
+});
+app.post("/api/handoffs", async (c) => {
+  const raw = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const parsed = HandoffCreateInput.safeParse(raw);
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "invalid payload" }, 400);
+  // Optional replay key, the /ingest scheme: { session: { id }, item_index }.
+  const sess = raw?.session as { id?: unknown } | undefined;
+  const ledger = sess && typeof sess.id === "string" && sess.id
+    ? { sessionId: sess.id, itemIndex: Number.isInteger(raw?.item_index) ? (raw!.item_index as number) : 0 }
+    : undefined;
+  try {
+    const { handoff } = await createHandoff(c.env.DB, c.get("principal").handle, parsed.data, ledger);
+    return c.json({ ok: true, handoff });
+  } catch (e) { return handoffFail(c, e); }
+});
+app.post("/api/handoffs/:id/claim", async (c) => {
+  const id = handoffId(c.req.param("id"));
+  if (id === null) return c.json({ error: "not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { session?: unknown };
+  const session = typeof body.session === "string" && body.session.trim() ? body.session.trim().slice(0, 120) : `web_${crypto.randomUUID().slice(0, 8)}`;
+  try { return c.json({ ok: true, handoff: await claimHandoff(c.env.DB, id, c.get("principal").handle, session) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+app.post("/api/handoffs/:id/expire", async (c) => {
+  const id = handoffId(c.req.param("id"));
+  if (id === null) return c.json({ error: "not found" }, 404);
+  try { return c.json({ ok: true, handoff: await expireHandoff(c.env.DB, id, c.get("principal").handle) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+
+app.get("/api/prompts", async (c) => {
+  const tags = (c.req.query("tags") ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+  const sort = c.req.query("sort") === "updated_asc" ? "updated_asc" : "updated_desc";
+  return c.json({ prompts: await listPrompts(c.env.DB, { q: c.req.query("q") ?? "", tags, sort }) });
+});
+app.get("/api/prompts/:slug", async (c) => {
+  const prompt = await getPrompt(c.env.DB, c.req.param("slug"));
+  return prompt ? c.json({ prompt }) : c.json({ error: "not found" }, 404);
+});
+app.get("/api/prompts/:slug/versions", async (c) => {
+  const slug = c.req.param("slug");
+  if (!(await getPrompt(c.env.DB, slug))) return c.json({ error: "not found" }, 404);
+  return c.json({ versions: await listPromptVersions(c.env.DB, slug) });
+});
+app.post("/api/prompts", async (c) => {
+  const parsed = PromptSaveInput.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "invalid payload" }, 400);
+  try { return c.json({ ok: true, prompt: await savePrompt(c.env.DB, c.get("principal").handle, parsed.data, "human") }); }
+  catch (e) { return handoffFail(c, e); }
+});
+app.post("/api/prompts/:slug/tags", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { tags?: unknown } | null;
+  if (!body || !Array.isArray(body.tags) || !body.tags.every((t) => typeof t === "string")) return c.json({ error: "tags (string[]) required" }, 400);
+  try { return c.json({ ok: true, prompt: await setPromptTags(c.env.DB, c.req.param("slug"), body.tags as string[]) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+// Publishing is a human confirmation, gated exactly like POST /doc/:slug/promote:
+// any signed-in person (sessionGate), never an MCP tool.
+app.post("/api/prompts/:slug/publish", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { version?: unknown } | null;
+  const version = Number(body?.version);
+  if (!Number.isInteger(version)) return c.json({ error: "version (integer) required" }, 400);
+  try { return c.json({ ok: true, prompt: await publishPrompt(c.env.DB, c.req.param("slug"), version) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+
+// A person stages a NEW doc (version 1) through the same gate an agent's
+// propose_doc_update uses — so it lands in Review as a staged proposal and goes
+// live only when promoted. An existing slug is a 409: this route never edits.
+const DocPropose = z.object({
+  title: z.string().trim().min(1).max(200),
+  section: z.string().trim().min(1),
+  space: z.enum(["technical", "product"]),
+  body: z.string().refine((b) => b.trim().length > 0, "body required"),
+  summary: z.string().max(300).optional(),
+  slug: z.string().regex(/^[a-z0-9][a-z0-9_/-]*$/).optional(),
+});
+app.post("/api/docs/propose", async (c) => {
+  const parsed = DocPropose.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "invalid payload" }, 400);
+  const d = parsed.data;
+  if (!isSection(d.section)) return c.json({ error: `unknown section: ${d.section}` }, 400);
+  const slug = d.slug ?? d.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+  if (!slug) return c.json({ error: "title has no usable slug" }, 400);
+  if (await first(c.env.DB, `SELECT 1 FROM docs WHERE slug = ?`, slug)) return c.json({ error: `a doc named ${slug} already exists` }, 409);
+  const result = await ingestDocProposal(
+    c.env.DB,
+    { slug, section: d.section, space: d.space, title: d.title, body: d.body, change_summary: d.summary?.trim() || "Created in Canopy", confidence: "high" },
+    c.get("principal").handle,
+  );
+  if (result.outcome !== "written") return c.json({ error: result.outcome === "triaged" ? result.reason : "nothing to stage" }, 409);
+  const proposal = (await list_proposals(c.env.DB)).find((p) => p.slug === slug && p.version === result.version) ?? null;
+  return c.json({ ok: true, proposal });
+});
 
 // Human confirmation (session-gated): promote a staged doc version into the live doc.
 app.post("/doc/:slug/promote", async (c) => {

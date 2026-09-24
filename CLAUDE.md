@@ -109,7 +109,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0026_token_hint` [`mcp_tokens.token_hint` — the clear-text label Settings lists a token by], then
   `0027_repo_capture` [`repo_events` (append-only, UNIQUE `semantic_key`, kinds push/pr/review/deploy/check/run)
   / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
-  `events`]).
+  `events`], then `0028_handoffs_prompts` [`handoffs` / `prompts` / `prompt_versions` / `prompts_fts` — see
+  "Handoffs & Prompt Library" below]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
   the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
@@ -908,6 +909,41 @@ HOURLY usage metrics (`cf_*` / `rw_*` / `active_users_*`) older than 100 days; a
 older than **7 days, EXCEPT the rows stamped exactly 00:00 UTC, kept 100 days** (the daily totals the trend
 reads — `sap_*` and the usage globs never match each other's names). `pr` / `push` / `deploy` /
 `run` / `review` rows and `coverage` / `bundle_kb` / `todo_count` match no rule and are kept forever.
+
+## Handoffs & Prompt Library — direct writers, NOT the ingestion gate
+
+Ported from the Claude Design project `2c8cfa50`: **Handoffs** (Workspace; `#handoffs`, `#handoffs/new`,
+`#handoffs/<id>` — `web/src/handoffs.ts`), **Prompt Library** (Knowledge; `#prompts`, `#prompts/new`,
+`#prompts/<slug>`, `#prompts/<slug>/edit|version` — `web/src/prompts.ts`), **Docs › New doc** (`#docs/new`) and
+the tabbed **Maintenance** (Unplaced / Identity / People; the admin email-notification sections sit under People).
+Storage is `0028_handoffs_prompts` (`handoffs` with an INTEGER id rendered `#12`, `context` JSON
+`{ repo, branch, task, done[], next[], files[] }`, an inline prompt that is both-or-neither, `expires_at` =
+created + 7 days; `prompts` / `prompt_versions`; standalone `prompts_fts` over slug/title/description/body/tags
+kept at the LATEST version by triggers on BOTH tables). DTOs + helpers: `shared/handoffs.ts`.
+
+- **A handoff is an addressed message, not knowledge** — `src/tools/handoffs.ts` writes it directly (no vocab,
+  no confidence, never staged). The sender is always the principal. A create carrying a session id is
+  replay-safe through `processed_items` (item_type `handoff`, same session-id + item-index key as `/ingest`).
+  **Claim is ONE conditional UPDATE** (`… WHERE status = 'pending' AND (recipient = 'anyone' OR recipient = me OR
+  sender = me)`); on 0 changes it re-reads for 404 / 403 / 409 `handoff is <status>`, so a race has one winner.
+  Expire: sender or named recipient, pending only. Create writes a feed row through `append_feed` (no tags).
+  The repo cron expires overdue pending handoffs on EVERY tick (`expireDueHandoffs`, D1 only, before the `:00`
+  early return).
+- **Prompts** (`src/tools/prompts.ts`): every save appends a version; the latest version's status/body ARE the
+  prompt's. `savePrompt(…, via)` — a person (`via: "human"`, the cookie route) saves draft/staged/published and
+  may rename the slug (both tables, one batch); an agent (`via: "agent"`, MCP `save_prompt`) is FORCED to
+  `staged` and may not rename. Publishing a staged version and retagging are session-cookie only.
+- **Routes** (session cookie, `{ error }` on failure): `GET /api/handoffs?box=mine|me|anyone|sent`,
+  `GET /api/handoffs/:id`, `POST /api/handoffs`, `POST /api/handoffs/:id/claim`, `POST /api/handoffs/:id/expire`,
+  `GET /api/prompts?q&tags&sort`, `GET /api/prompts/:slug`, `GET /api/prompts/:slug/versions`, `POST /api/prompts`,
+  `POST /api/prompts/:slug/tags`, `POST /api/prompts/:slug/publish`, and `POST /api/docs/propose` (a person stages
+  a NEW doc through `ingestDocProposal`; an existing slug is a 409). The Hono app stays cookie-only — agents
+  reach these through MCP, not a bearer on `/api/*` (no new auth class).
+- **MCP** (every principal): `send_handoff`, `list_handoffs` (pending `me` + `anyone` by default; only `sent`
+  shows claimed/expired), `get_handoff`, `claim_handoff` (returns one markdown block: prompt, `## Handoff
+  summary`, `## Context`), `expire_handoff`, `search_prompts`, `get_prompt` (fills `{{vars}}`, lists `unfilled`),
+  `save_prompt` (always staged). There is no per-token rate limit in Canopy today.
+- Skills: `handoff`, `prompts`, and `load-context` (lists waiting handoffs at session start; never auto-claims).
 
 ## Sidebar & motion — the `<aside>` outlives rerenders
 

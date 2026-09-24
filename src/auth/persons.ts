@@ -110,6 +110,10 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   ["plan", "updated_by"], ["plan_versions", "created_by"],
   ["notification_policy", "updated_by"], ["notification_prefs", "user_id"], ["notification_outbox", "user_id"],
   ["invites", "invited_by"], ["invites", "accepted_by"],
+  // Handoffs + Prompt Library (0028). `handoffs.recipient` may hold the literal
+  // 'anyone'; the rename's WHERE only ever matches a real handle.
+  ["handoffs", "sender"], ["handoffs", "recipient"], ["handoffs", "claimed_by"],
+  ["prompts", "author"], ["prompt_versions", "author"],
 ];
 
 export type RenameResult = { ok: true } | { ok: false; reason: HandleProblem | "same" | "not_found" };

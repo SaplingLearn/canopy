@@ -80,6 +80,13 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     `${handle}:daily:w1`, handle, "daily", "w1", "[]", "pending", nowIso()); // notification_outbox.user_id
   await createInvite(env.DB, { email: "old-me-invite@test.io", name: null, invitedBy: handle }); // invites.invited_by
   await acceptInvite(env.DB, "old-me-invite@test.io", handle); // invites.accepted_by
+  // Handoffs + Prompt Library (0028): direct inserts for sender / recipient /
+  // claimed_by and the prompt's author plus its version's (the real writers
+  // take the principal from auth, which this seed does not have).
+  await run(env.DB, `INSERT INTO handoffs (sender, recipient, status, body, created_at, claimed_at, claimed_by, expires_at) VALUES (?, ?, 'claimed', 'b', ?, ?, ?, ?)`,
+    handle, handle, nowIso(), nowIso(), handle, nowIso());
+  await run(env.DB, `INSERT INTO prompts (slug, title, author, current_version, created_at, updated_at) VALUES (?, 'T', ?, 1, ?, ?)`, "rename-test", handle, nowIso(), nowIso());
+  await run(env.DB, `INSERT INTO prompt_versions (slug, version, status, author, body, created_at) VALUES (?, 1, 'published', ?, 'b', ?)`, "rename-test", handle, nowIso());
 }
 
 describe("renamePerson", () => {

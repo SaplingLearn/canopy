@@ -1,0 +1,239 @@
+{
+  "prompts": [
+    {
+      "slug": "sse-endpoint-review",
+      "title": "Review an SSE endpoint",
+      "description": "Checks a server-sent-events route for resume support, headers and heartbeats, then reports a pass/fail checklist.",
+      "tags": [
+        "api",
+        "architecture"
+      ],
+      "author": "lpcooper-arch",
+      "updated_ago_min": 4320,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "author": "lpcooper-arch",
+          "summary": "First cut from the ADR-0006 review",
+          "body": "Review the SSE endpoint `{{endpoint}}` in `{{router_file}}`.\n\nCheck:\n- The response is `text/event-stream` with `Cache-Control: no-cache`.\n- Every event carries an `id:` so the client can resume.\n- The generator closes cleanly when the client disconnects.\n\nReport findings as a checklist.",
+          "created_ago_min": 30240
+        },
+        {
+          "version": 2,
+          "status": "published",
+          "author": "lpcooper-arch",
+          "summary": "Add heartbeat check (CF idle timeout)",
+          "body": "Review the SSE endpoint `{{endpoint}}` in `{{router_file}}`.\n\nCheck:\n- The response is `text/event-stream` with `Cache-Control: no-cache`.\n- Every event carries an `id:` so the client can resume.\n- The generator closes cleanly when the client disconnects.\n- Heartbeat comments (`: ping`) go out at least every 15s so Cloudflare does not drop the stream.\n\nReport findings as a checklist.",
+          "created_ago_min": 17280
+        },
+        {
+          "version": 3,
+          "status": "published",
+          "author": "Jose-Gael-Cruz-Lopez",
+          "summary": "Cover the client's Last-Event-ID resume",
+          "body": "Review the SSE endpoint `{{endpoint}}` in `{{router_file}}`.\n\nCheck:\n- The response is `text/event-stream` with `Cache-Control: no-cache`.\n- Every event carries an `id:` so the client can resume.\n- The generator closes cleanly when the client disconnects.\n- Heartbeat comments (`: ping`) go out at least every 15s so Cloudflare does not drop the stream.\n\nThen read the client in `{{client_file}}` and confirm it sends `Last-Event-ID` on reconnect.\n\nReport findings as a checklist, one line per check, marked pass / fail / n/a.",
+          "created_ago_min": 4320
+        }
+      ]
+    },
+    {
+      "slug": "record-session-reconcile",
+      "title": "Reconcile a session before record_session",
+      "description": "Run before record_session. Reconciles what actually shipped against the docs so the feed and proposals match reality.",
+      "tags": [
+        "data"
+      ],
+      "author": "AndresL230",
+      "updated_ago_min": 2880,
+      "versions": [
+        {
+          "version": 3,
+          "status": "published",
+          "author": "AndresL230",
+          "summary": "Read docs back before diffing",
+          "body": "Before calling `record_session`, reconcile what actually shipped in `{{repo}}` since {{since}}.\n\n1. Run `git log --oneline {{since}}..HEAD` and `gh pr list --state merged --search \"merged:>={{since}}\"`.\n2. For each doc you plan to touch, `get_doc` it first and diff against the live version.\n3. Draft one feed entry per shipped change.",
+          "created_ago_min": 43200
+        },
+        {
+          "version": 4,
+          "status": "published",
+          "author": "AndresL230",
+          "summary": "Link PRs, route unplaced items to triage",
+          "body": "Before calling `record_session`, reconcile what actually shipped in `{{repo}}` since {{since}}.\n\n1. Run `git log --oneline {{since}}..HEAD` and `gh pr list --state merged --search \"merged:>={{since}}\"`.\n2. For each doc you plan to touch, `get_doc` it first and diff against the live version.\n3. Draft one feed entry per shipped change. Link the PR, never a bare commit.\n4. Anything you can't place in a section goes to `needs_triage` with a one-line reason.",
+          "created_ago_min": 12960
+        },
+        {
+          "version": 5,
+          "status": "published",
+          "author": "AndresL230",
+          "summary": "One batch per session",
+          "body": "Before calling `record_session`, reconcile what actually shipped in `{{repo}}` since {{since}}.\n\n1. Run `git log --oneline {{since}}..HEAD` and `gh pr list --state merged --search \"merged:>={{since}}\"`.\n2. For each doc you plan to touch, `get_doc` it first and diff against the live version.\n3. Draft one feed entry per shipped change. Link the PR, never a bare commit.\n4. Anything you can't place in a section goes to `needs_triage` with a one-line reason.\n\nStage ONE batch. Do not call `record_session` twice for the same session.",
+          "created_ago_min": 2880
+        }
+      ]
+    },
+    {
+      "slug": "adr-draft",
+      "title": "Draft an ADR from a decision thread",
+      "description": "Turns a decision thread into a staged ADR with context, rationale and the alternatives that were rejected.",
+      "tags": [
+        "architecture"
+      ],
+      "author": "Darkest-Teddy",
+      "updated_ago_min": 25920,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "author": "Darkest-Teddy",
+          "summary": "Initial template",
+          "body": "Draft ADR-{{adr_number}} for this decision: {{decision}}\n\nUse the sections Context, Decision, Rationale.",
+          "created_ago_min": 57600
+        },
+        {
+          "version": 2,
+          "status": "published",
+          "author": "Darkest-Teddy",
+          "summary": "List rejected alternatives",
+          "body": "Draft ADR-{{adr_number}} for this decision: {{decision}}\n\nUse the sections Context, Decision, Rationale, Alternatives considered.\n\nAlternatives on the table: {{alternatives}}. Say in one sentence why each was rejected.\n\nStage it with `propose_doc_update` under **Decisions** — never promote it yourself.",
+          "created_ago_min": 25920
+        }
+      ]
+    },
+    {
+      "slug": "gemini-prompt-hardening",
+      "title": "Harden a Gemini agent prompt",
+      "description": "Tightens a Gemini agent's system prompt against known failure examples without changing its output schema.",
+      "tags": [
+        "api"
+      ],
+      "author": "Jose-Gael-Cruz-Lopez",
+      "updated_ago_min": 40,
+      "versions": [
+        {
+          "version": 1,
+          "status": "staged",
+          "author": "Jose-Gael-Cruz-Lopez",
+          "summary": "Staged by a session on fix/quiz-agent-json",
+          "body": "Harden the system prompt in `{{agent_file}}` against these failures:\n\n{{failure_examples}}\n\n- Keep the Pydantic AI output schema unchanged.\n- Add at most two few-shot examples.\n- Route through `services/gemini_service.py`; never call the SDK directly.\n\nShow the before/after prompt and which failure each change addresses.",
+          "created_ago_min": 40
+        }
+      ]
+    },
+    {
+      "slug": "supabase-migration-review",
+      "title": "Review a Supabase migration",
+      "description": "Pre-flight review for a Supabase migration: RLS, defaults, concurrent indexes and lock duration.",
+      "tags": [
+        "data",
+        "infra"
+      ],
+      "author": "lpcooper-arch",
+      "updated_ago_min": 8640,
+      "versions": [
+        {
+          "version": 3,
+          "status": "published",
+          "author": "lpcooper-arch",
+          "summary": "RLS check",
+          "body": "Review `{{migration_file}}` before it runs against production.\n\n- `{{table}}` has RLS enabled and a policy per role.\n- New columns are nullable or have a default.",
+          "created_ago_min": 36000
+        },
+        {
+          "version": 4,
+          "status": "published",
+          "author": "lpcooper-arch",
+          "summary": "Index + lock checks",
+          "body": "Review `{{migration_file}}` before it runs against production.\n\n- `{{table}}` has RLS enabled and a policy per role.\n- New columns are nullable or have a default.\n- Indexes on large tables are created `CONCURRENTLY`.\n- Nothing takes an `ACCESS EXCLUSIVE` lock for longer than a second.",
+          "created_ago_min": 8640
+        }
+      ]
+    },
+    {
+      "slug": "pr-summary-structured",
+      "title": "Structured PR summary",
+      "description": "Summarizes a PR into the title / what / why / impact fields the My Work card expects.",
+      "tags": [
+        "ui",
+        "data"
+      ],
+      "author": "AndresL230",
+      "updated_ago_min": 15840,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "author": "AndresL230",
+          "summary": "Initial",
+          "body": "Summarize PR #{{pr_number}} as title / what / why.",
+          "created_ago_min": 72000
+        },
+        {
+          "version": 2,
+          "status": "published",
+          "author": "AndresL230",
+          "summary": "Match the My Work card fields",
+          "body": "Summarize PR #{{pr_number}} for the My Work card.\n\nReturn JSON with exactly these keys: `title`, `what`, `why`, `impact`. One sentence each, no markdown.",
+          "created_ago_min": 15840
+        }
+      ]
+    },
+    {
+      "slug": "lesson-mdx-lint",
+      "title": "Lint a Sapling lesson (MDX)",
+      "description": "Lints a Sapling lesson's frontmatter, links, code blocks and reading time. Returns one problem per line.",
+      "tags": [
+        "ui"
+      ],
+      "author": "Darkest-Teddy",
+      "updated_ago_min": 300,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "author": "Darkest-Teddy",
+          "summary": "Initial",
+          "body": "Lint the Sapling lesson at `{{lesson_path}}`.\n\n- Frontmatter has `title`, `slug`, `course`, `order`.\n- Every internal link resolves to an existing lesson slug.",
+          "created_ago_min": 47520
+        },
+        {
+          "version": 2,
+          "status": "published",
+          "author": "Darkest-Teddy",
+          "summary": "Require code-block languages",
+          "body": "Lint the Sapling lesson at `{{lesson_path}}`.\n\n- Frontmatter has `title`, `slug`, `course`, `order`.\n- Every internal link resolves to an existing lesson slug.\n- Code blocks declare a language.",
+          "created_ago_min": 20160
+        },
+        {
+          "version": 3,
+          "status": "staged",
+          "author": "Darkest-Teddy",
+          "summary": "Staged by a session on feat/lesson-preview-ci",
+          "body": "Lint the Sapling lesson at `{{lesson_path}}`.\n\n- Frontmatter has `title`, `slug`, `course`, `order`.\n- Every internal link resolves to an existing lesson slug.\n- Code blocks declare a language.\n- No lesson exceeds {{max_minutes}} minutes of estimated reading time.\n\nReturn the problems as `path:line — message`, nothing else.",
+          "created_ago_min": 300
+        }
+      ]
+    },
+    {
+      "slug": "ocr-failure-triage",
+      "title": "Triage an OCR pipeline failure",
+      "description": "Decides whether a failed OCR job hit quota, a timeout or a bad PDF, and what to do next.",
+      "tags": [
+        "infra"
+      ],
+      "author": "Jose-Gael-Cruz-Lopez",
+      "updated_ago_min": 11520,
+      "versions": [
+        {
+          "version": 1,
+          "status": "draft",
+          "author": "Jose-Gael-Cruz-Lopez",
+          "summary": "Draft",
+          "body": "Triage OCR job `{{job_id}}` ({{pdf_pages}} pages).\n\n1. Pull the job row from `document_jobs` and its DBOS workflow status.\n2. Decide: quota, timeout, or malformed PDF.\n3. If quota, do not retry. Post the job id to the feed tagged `infra`.",
+          "created_ago_min": 11520
+        }
+      ]
+    }
+  ]
+}

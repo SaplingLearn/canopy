@@ -185,6 +185,12 @@ input, select { font-family: inherit; }
 .cnpy-card:hover { border-color:var(--border-strong); }
 .cnpy-mw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:1fr; gap:14px; align-items:stretch; }
 @media (max-width:760px) { .cnpy-mw-grid { grid-template-columns:1fr; } }
+/* Handoffs inbox row: on a phone the who / branch columns give way, leaving the
+   title, the status pill and the age (the grid is an inline style, hence !important). */
+@media (max-width:760px) {
+  .cnpy-hrow { grid-template-columns:minmax(0,1fr) auto auto !important; }
+  .cnpy-hrow > .cnpy-hrow-who, .cnpy-hrow > .cnpy-hrow-ref, .cnpy-hrow .cnpy-hrow-chip { display:none !important; }
+}
 /* Settings: a bento of tiles on three columns — Profile / Account / tokens across the
    top (their natural heights match), then Email and the Appearance strip at full
    width. At two columns Appearance drops beside the tokens (dense flow); then one
@@ -668,6 +674,7 @@ input, select { font-family: inherit; }
 [data-cnpy-theme] .cnpy-scroll::-webkit-scrollbar-thumb { border-radius:calc(8px * var(--corner-scale)) !important; }
 /* Inline styles, by value. AFTER the classes on purpose: equal specificity, so an
    inline radius beats its element's class radius here exactly as it does unscaled. */
+[data-cnpy-theme] [style*="border-radius:2px"] { border-radius:calc(2px * var(--corner-scale)) !important; }
 [data-cnpy-theme] [style*="border-radius:3px"] { border-radius:calc(3px * var(--corner-scale)) !important; }
 [data-cnpy-theme] [style*="border-radius:4px"] { border-radius:calc(4px * var(--corner-scale)) !important; }
 [data-cnpy-theme] [style*="border-radius:5px"] { border-radius:calc(5px * var(--corner-scale)) !important; }

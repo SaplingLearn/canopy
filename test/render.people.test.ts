@@ -16,8 +16,8 @@ const invites = [
 
 describe("peopleSection", () => {
   it("lists persons with colored chips and pending invites with Resend/Revoke; accepted invites are not pending", () => {
-    const html = peopleSection({ persons, invites, inviteDraft: "", loading: false, error: null });
-    expect(html).toContain("PEOPLE");
+    const html = peopleSection({ persons, invites, inviteDraft: "", loading: false, error: null, me: "AndresL230" });
+    expect(html).toContain("YOU");
     expect(html).toContain("@AndresL230");
     expect(html).toContain("var(--p-plum)");
     expect(html).toContain("m.okafor@gmail.com");
@@ -27,6 +27,12 @@ describe("peopleSection", () => {
     expect(html).toContain("resend 500");
     expect(html).toContain('data-act="inviteDraft"');
     expect(html).toContain('data-act="inviteSend"');
+  });
+  it("without invite rights it is the directory alone", () => {
+    const html = peopleSection({ persons, invites, inviteDraft: "", loading: false, error: null, canInvite: false });
+    expect(html).toContain("@AndresL230");
+    expect(html).not.toContain('data-act="inviteSend"');
+    expect(html).not.toContain("m.okafor@gmail.com");
   });
   it("disables Invite until the draft looks like an email", () => {
     expect(peopleSection({ persons, invites: [], inviteDraft: "nope", loading: false, error: null })).toMatch(/data-act="inviteSend"[^>]*disabled/);

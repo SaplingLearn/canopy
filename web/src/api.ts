@@ -18,6 +18,9 @@ import type { DashboardData } from "@shared/dashboard";
 import type { RepoDashboard, RepoRefreshResult } from "@shared/repo";
 import type { Cadence, PrefsView, PolicyKindView } from "@shared/notifications";
 import type { NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "@shared/rows";
+import type {
+  HandoffView, HandoffBox, HandoffCreate, PromptSummary, PromptDetail, PromptVersion, PromptSort, PromptSave, DocProposeBody,
+} from "@shared/handoffs";
 
 export class Unauthorized extends Error {
   constructor() { super("unauthorized"); }
@@ -420,3 +423,50 @@ export type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, Tic
 export type { DashboardData };
 export type { PrefsView, PolicyKindView, Cadence, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary };
 export type { InviteRow, PersonColor };
+
+// ── Handoffs + Prompt Library ────────────────────────────────────────────────
+export async function listHandoffs(box: HandoffBox = "mine"): Promise<HandoffView[]> {
+  return (await getJson<{ handoffs: HandoffView[] }>(`/api/handoffs?box=${encodeURIComponent(box)}`)).handoffs;
+}
+export async function getHandoff(id: number): Promise<HandoffView> {
+  return (await getJson<{ handoff: HandoffView }>(`/api/handoffs/${id}`)).handoff;
+}
+export async function createHandoff(body: HandoffCreate): Promise<HandoffView> {
+  return (await postJson<{ ok: true; handoff: HandoffView }>("/api/handoffs", body)).handoff;
+}
+/** 409 `{ error: "handoff is <status>" }` when someone got there first. */
+export async function claimHandoff(id: number, session: string): Promise<HandoffView> {
+  return (await postJson<{ ok: true; handoff: HandoffView }>(`/api/handoffs/${id}/claim`, { session })).handoff;
+}
+export async function expireHandoff(id: number): Promise<HandoffView> {
+  return (await postJson<{ ok: true; handoff: HandoffView }>(`/api/handoffs/${id}/expire`)).handoff;
+}
+export async function listPrompts(q: { q?: string; tags?: string[]; sort?: PromptSort } = {}): Promise<PromptSummary[]> {
+  const p = new URLSearchParams();
+  if (q.q) p.set("q", q.q);
+  if (q.tags && q.tags.length) p.set("tags", q.tags.join(","));
+  if (q.sort) p.set("sort", q.sort);
+  const qs = p.toString();
+  return (await getJson<{ prompts: PromptSummary[] }>(`/api/prompts${qs ? `?${qs}` : ""}`)).prompts;
+}
+export async function getPrompt(slug: string): Promise<PromptDetail> {
+  return (await getJson<{ prompt: PromptDetail }>(`/api/prompts/${encodeURIComponent(slug)}`)).prompt;
+}
+export async function getPromptVersions(slug: string): Promise<PromptVersion[]> {
+  return (await getJson<{ versions: PromptVersion[] }>(`/api/prompts/${encodeURIComponent(slug)}/versions`)).versions;
+}
+export async function savePrompt(body: PromptSave): Promise<PromptDetail> {
+  return (await postJson<{ ok: true; prompt: PromptDetail }>("/api/prompts", body)).prompt;
+}
+export async function setPromptTags(slug: string, tags: string[]): Promise<PromptDetail> {
+  return (await postJson<{ ok: true; prompt: PromptDetail }>(`/api/prompts/${encodeURIComponent(slug)}/tags`, { tags })).prompt;
+}
+/** 409 `{ error: "not staged" }` when that version is not staged. */
+export async function publishPrompt(slug: string, version: number): Promise<PromptDetail> {
+  return (await postJson<{ ok: true; prompt: PromptDetail }>(`/api/prompts/${encodeURIComponent(slug)}/publish`, { version })).prompt;
+}
+/** Stage a version-1 doc proposal through the gate (lands in Review). */
+export async function proposeDoc(body: DocProposeBody): Promise<StagedProposal> {
+  return (await postJson<{ ok: true; proposal: StagedProposal }>("/api/docs/propose", body)).proposal;
+}
+export type { HandoffView, HandoffBox, HandoffCreate, PromptSummary, PromptDetail, PromptVersion, PromptSort, PromptSave, DocProposeBody };

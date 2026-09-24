@@ -26,6 +26,11 @@ import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload } from "@shared/contract";
 import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
+import {
+  listHandoffs, getHandoff, createHandoff, claimHandoff, expireHandoff, handoffAsTask, HandoffCreateInput, HandoffError,
+} from "./tools/handoffs";
+import { listPrompts, getPrompt, savePrompt, PromptSaveInput, PromptError } from "./tools/prompts";
+import { detectVars, fillVars, firstLine, type HandoffView } from "@shared/handoffs";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -45,7 +50,7 @@ async function runTool(fn: () => Promise<unknown>) {
     // `conflict` means "the shared rule says no" (an illegal move, a nesting break),
     // `bad_request` means "your input is wrong". The cookie routes map the same
     // codes onto HTTP statuses; this is the MCP spelling of it.
-    const code = err instanceof TicketError || err instanceof SprintError ? err.code : undefined;
+    const code = err instanceof TicketError || err instanceof SprintError || err instanceof HandoffError || err instanceof PromptError ? err.code : undefined;
     return {
       content: [{ type: "text" as const, text: JSON.stringify(code ? { error: message, code } : { error: message }) }],
       isError: true as const,
@@ -328,6 +333,125 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   // (conditional registration means it's absent from tools/list and calling it by
   // name errors tool-not-found, since a fresh server is built per request with the
   // principal already in scope).
+  // ── Handoffs (0028): addressed messages between sessions ──────────────────
+  //
+  // Direct writers in src/tools/handoffs.ts, NOT the ingestion gate — a handoff is
+  // not knowledge. The bearer principal is the sender / claimer, never an input.
+  // `session` on send_handoff is the replay key (processed_items, item index 0),
+  // so a retried call returns the first call's handoff instead of a second row.
+  const handoffUrl = (id: number) => `${(env.PUBLIC_ORIGIN ?? "").replace(/\/+$/, "")}/#handoffs/${id}`;
+  const handoffLine = (h: HandoffView) => ({
+    id: h.id, sender: h.sender, recipient: h.recipient, status: h.status, created_at: h.created_at,
+    task: h.context.task, excerpt: firstLine(h.body),
+  });
+
+  server.tool(
+    "send_handoff",
+    "Leave a handoff for the next session: where a task stands when you stop mid-way (context running out, switching person, ending the session). Send exactly ONE per session and tell the person its id as #N. `recipient` is a person handle, or omit it for 'anyone' (the first session to claim it gets it). Keep `body` under 300 words — its first line is the title, the rest says where things stand. ALWAYS fill `context` with the fixed shape { repo, branch, task, done[], next[], files[] }: repo from the git remote (owner/name), branch from HEAD, task as one line, done/next as short items, files from `git diff --name-only` against main. Long step-by-step instructions for the claiming session go in `prompt.body` (with a `prompt.title`), not in body. Pass your session id as `session` so a retry does not send twice. Returns { id, url }.",
+    {
+      body: z.string().min(1),
+      recipient: z.string().optional(),
+      context: z.object({
+        repo: z.string().optional(), branch: z.string().optional(), task: z.string().optional(),
+        done: z.array(z.string()).optional(), next: z.array(z.string()).optional(), files: z.array(z.string()).optional(),
+      }).optional(),
+      prompt: z.object({ title: z.string(), body: z.string() }).optional(),
+      session: z.string().optional(),
+    },
+    async (args) => runTool(async () => {
+      const input = HandoffCreateInput.parse({ body: args.body, recipient: args.recipient, context: args.context, prompt: args.prompt ?? null });
+      const ledger = args.session ? { sessionId: args.session, itemIndex: 0 } : undefined;
+      const { handoff, replayed } = await createHandoff(env.DB, principal.handle, input, ledger);
+      return { id: handoff.id, url: handoffUrl(handoff.id), ...(replayed ? { replayed: true } : {}) };
+    }),
+  );
+
+  server.tool(
+    "list_handoffs",
+    "List handoffs waiting for you. With no `box`, returns the PENDING ones left for you ('me') plus open 'anyone' handoffs from other people — call this at session start and tell the person what is waiting; never claim one without asking. box: 'me' (left for you), 'anyone' (open to all, from others), 'mine' (sent by or left for you), 'sent' (what you sent — the only box that includes claimed and expired ones). Returns id, sender, recipient, status, created_at, task and a one-line excerpt. Read-only.",
+    { box: z.enum(["mine", "me", "anyone", "sent"]).optional() },
+    async ({ box }) => runTool(async () => {
+      if (box === "sent") return (await listHandoffs(env.DB, principal.handle, "sent")).map(handoffLine);
+      if (box) return (await listHandoffs(env.DB, principal.handle, box, ["pending"])).map(handoffLine);
+      const [me, anyone] = await Promise.all([
+        listHandoffs(env.DB, principal.handle, "me", ["pending"]),
+        listHandoffs(env.DB, principal.handle, "anyone", ["pending"]),
+      ]);
+      return [...me, ...anyone].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).map(handoffLine);
+    }),
+  );
+
+  server.tool(
+    "get_handoff",
+    "Read one handoff in full by its numeric id (body, context, inline prompt, status). Read-only: it does NOT claim it — use claim_handoff once the person has chosen to pick it up.",
+    { id: z.number().int() },
+    async ({ id }) => runTool(async () => {
+      const h = await getHandoff(env.DB, id);
+      if (!h) throw new HandoffError("not_found", "handoff not found");
+      return h;
+    }),
+  );
+
+  server.tool(
+    "claim_handoff",
+    "Claim a pending handoff for this session — only after the person chose it. Atomic: if another session already took it you get an error naming its current status (tell the person someone else has it). Pass your session id as `session`. On success returns ONE markdown block to act on: the handoff's prompt (if any), then '## Handoff summary', then '## Context' (repo, branch, task, done, next, files). Treat it as your task and confirm the current git branch matches the context before touching code.",
+    { id: z.number().int(), session: z.string().min(1) },
+    async ({ id, session }) => {
+      try {
+        const h = await claimHandoff(env.DB, id, principal.handle, session);
+        return { content: [{ type: "text" as const, text: `# Handoff #${h.id} — claimed\n\n${handoffAsTask(h)}` }] };
+      } catch (err) {
+        if (err instanceof HandoffError) {
+          const current = await getHandoff(env.DB, id);
+          const body = { error: err.message, code: err.code, ...(current ? { status: current.status, claimed_by: current.claimed_by } : {}) };
+          return { content: [{ type: "text" as const, text: JSON.stringify(body) }], isError: true as const };
+        }
+        return runTool(async () => { throw err; });
+      }
+    },
+  );
+
+  server.tool(
+    "expire_handoff",
+    "Expire a PENDING handoff you sent or that was left for you, so nobody picks it up (the work was finished another way, or it no longer applies). Pending handoffs also expire on their own 7 days after they were sent. A claimed or already-expired handoff is an error naming its status.",
+    { id: z.number().int() },
+    async ({ id }) => runTool(() => expireHandoff(env.DB, id, principal.handle)),
+  );
+
+  // ── Prompt Library (0028) ──────────────────────────────────────────────────
+  server.tool(
+    "search_prompts",
+    "Search the team's Prompt Library for a reusable prompt. `q` is full-text over slug, title, description, body and tags; `tags` must ALL match. Returns summaries (slug, title, tags, author, version, status, updated_at, excerpt) — prefer 'published' ones; 'staged' and 'draft' are not settled yet. Use get_prompt to read one. Read-only.",
+    { q: z.string().optional(), tags: z.array(z.string()).optional() },
+    async ({ q, tags }) => runTool(() => listPrompts(env.DB, { q, tags })),
+  );
+
+  server.tool(
+    "get_prompt",
+    "Read a library prompt by slug, with its {{variables}} filled from `vars`. The response lists `variables` (every one the prompt uses) and `unfilled` (the ones still left as {{placeholders}}) — ASK the person for any unfilled value instead of guessing it. Read-only.",
+    { slug: z.string(), vars: z.record(z.string(), z.string()).optional() },
+    async ({ slug, vars }) => runTool(async () => {
+      const p = await getPrompt(env.DB, slug);
+      if (!p) throw new PromptError("not_found", "prompt not found");
+      const variables = detectVars(p.body);
+      const values = vars ?? {};
+      return { ...p, body: fillVars(p.body, values), variables, unfilled: variables.filter((v) => !values[v]?.trim()) };
+    }),
+  );
+
+  server.tool(
+    "save_prompt",
+    "Stage a prompt in the team's Prompt Library — a new slug creates v1, an existing slug appends the next version. ALWAYS lands as 'staged' (whatever you intend): a human must publish it in Canopy before it is settled, and you cannot rename a slug. Only save instructions you have had to write out twice; the slug is 2–60 chars of a-z, 0-9 and '-'. Write {{name}} for anything the caller fills in. Pass `branch` (your git branch) for the default version note. Returns { slug, version, status }.",
+    {
+      slug: z.string(), title: z.string(), body: z.string(),
+      tags: z.array(z.string()).optional(), summary: z.string().optional(), branch: z.string().optional(),
+    },
+    async ({ slug, title, body, tags, summary, branch }) => runTool(async () => {
+      const p = await savePrompt(env.DB, principal.handle, PromptSaveInput.parse({ slug, title, body, tags: tags ?? [], summary }), "agent", { branch });
+      return { slug: p.slug, version: p.version, status: p.status };
+    }),
+  );
+
   if (isAdmin(env, principal.handle)) {
     // ── Sprints: WRITES, admin-only ──────────────────────────────────────────
     //

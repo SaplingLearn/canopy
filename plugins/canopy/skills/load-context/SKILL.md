@@ -1,7 +1,7 @@
 ---
 name: load-context
-description: Orient against Canopy (the team's working memory) BEFORE working an existing area. Fire when you start work on a named/existing subsystem, pick up an issue that references an area, or when the person says things like "the X system", "how we do Y", "our approach to Z", "where is the … code/doc" — and ALWAYS before proposing a doc change. Do NOT fire on trivial one-off questions, on a brand-new area with no prior context, or just to chat. Read-only — this skill never writes.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work, mcp__canopy__list_tickets, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard
+description: Orient against Canopy (the team's working memory) BEFORE working an existing area. Fire when you start work on a named/existing subsystem, pick up an issue that references an area, or when the person says things like "the X system", "how we do Y", "our approach to Z", "where is the … code/doc" — and ALWAYS before proposing a doc change. Do NOT fire on trivial one-off questions, on a brand-new area with no prior context, or just to chat. Read-only apart from claiming the one handoff the person picks.
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__get_my_work, mcp__canopy__list_tickets, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard, mcp__canopy__list_handoffs, mcp__canopy__get_handoff, mcp__canopy__claim_handoff, Bash(git branch:*)
 ---
 
 # Load Context ← Canopy
@@ -67,9 +67,24 @@ its `references/querying.md` for the full `query` parameter set (filtering by `s
    goes for a `null` figure *inside* an `ok` section (`usage[].requests`, a `product` value,
    `contributors[].reviews`, `ciFailures.rate`, a delta): unknown, never zero — `usage[].seen` says
    whether that source has ever reported.
+8. **At session start, check for handoffs.** Call `mcp__canopy__list_handoffs` (no args — handoffs
+   left for you plus those left for `anyone`, pending only). If any are pending, tell the person:
+   **"You have N handoffs: #12 <task> from <sender>, #9 <task> from <sender>"** and ask which to claim.
+   `mcp__canopy__get_handoff <id>` shows one in full without claiming it.
+   - **Never auto-claim.** A claim is permanent and takes the handoff from everyone else — only the
+     person decides. If they say none, carry on.
+   - When they pick one, call `mcp__canopy__claim_handoff { id, session }` (one session id, reused).
+     It returns one markdown block — the handoff's prompt, `## Handoff summary`, `## Context`. **Treat
+     that block as the task.**
+   - **Before touching code, confirm the branch:** compare `git branch --show-current` with the
+     context's `branch`. If they differ, say so and ask whether to switch — don't work on the wrong one.
+   - If the claim comes back with a status instead (`claimed` / `expired`), someone else took it or it
+     lapsed — tell the person that plainly.
 
 ## Hard rules
 
-- **Read-only.** This skill never proposes, stages, promotes, or ratifies anything.
+- **Read-only — with one exception.** This skill never proposes, stages, promotes, or ratifies
+  anything. The one write it may make is `claim_handoff`, and only for the handoff the person picked.
+- **Never auto-claim a handoff.** List them, ask, claim only on the person's answer.
 - **Authority is load-bearing.** Anything not `live` is not-yet-settled — flag that when you rely on it.
 - Orient first, then work. The point is to build on the team's memory, not to re-derive it.

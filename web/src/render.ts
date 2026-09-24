@@ -20,7 +20,12 @@ import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { landingView } from "./landing";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
-import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind, type MaintTab } from "./maintenance";
+import { handoffsView, handoffDetailView, newHandoffView, handoffPromptModal, blankHandoff, type NewHandoffDraft } from "./handoffs";
+import { promptLibraryView, promptDetailView, promptEditorView, type PromptMenu, type PromptDraft } from "./prompts";
+import { newDocView, blankDoc, type NewDocDraft } from "./newdoc";
+import type { HandoffView, PromptSummary, PromptDetail, PromptVersion, PromptSort } from "@shared/handoffs";
+import { firstLine } from "@shared/handoffs";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
 import { sidebarView, NAV_CLOSED, type NavOpen } from "./sidebar";
@@ -40,7 +45,13 @@ export type Screen =
   // `sprint` is a Roadmap child — the sidebar highlights Roadmap while it is open.
   | "tickets" | "ticketdetail" | "newticket" | "sprint"
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
-  | "repo";
+  | "repo"
+  // Handoffs (Workspace): the inbox, one handoff, the new-handoff form.
+  | "handoffs" | "handoff" | "newhandoff"
+  // Prompt Library (Knowledge): the library, one prompt, the editor (new / edit / new version).
+  | "prompts" | "prompt" | "promptedit"
+  // Docs › New doc.
+  | "newdoc";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -209,6 +220,35 @@ export interface AppState {
   nsDue: string;
   nsLead: string | null;
   nsDom: SprintDomain | null;
+  // ── Handoffs (UI-first: reads are real, writes are not built yet) ──────────
+  handoffs: Loadable<HandoffView[]>;
+  handoffDetail: Loadable<HandoffView | null>;
+  handoffId: number | null;
+  /** Expire was clicked once — the second click is the one that would expire. */
+  handoffExpireArm: boolean;
+  /** The handoff's prompt, expanded over the page. */
+  handoffPromptOpen: boolean;
+  nh: NewHandoffDraft;
+  // ── Prompt Library ─────────────────────────────────────────────────────────
+  /** The whole library; the search / tag / sort filter runs client-side over it. */
+  promptList: Loadable<PromptSummary[]>;
+  promptQ: string;
+  promptTag: string | null;
+  promptSort: PromptSort;
+  promptMenu: PromptMenu;
+  promptSlug: string | null;
+  promptDetail: Loadable<{ prompt: PromptDetail; versions: PromptVersion[] } | null>;
+  /** The version whose diff replaces the body (null = the body). */
+  promptDiffV: number | null;
+  promptTagMenu: boolean;
+  promptTagDraft: string;
+  promptCopied: boolean;
+  promptMode: "new" | "edit" | "version";
+  promptEd: PromptDraft | null;
+  // ── Docs › New doc / Maintenance tabs ──────────────────────────────────────
+  nd: NewDocDraft;
+  maintTab: MaintTab;
+  maintDiscardArm: boolean;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -297,6 +337,18 @@ export function initialState(): AppState {
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
     nsOpen: false, nsName: "", nsDates: "", nsDesc: "", nsUrg: "normal", nsDue: "", nsLead: null, nsDom: null,
+    handoffs: { status: "idle", data: [] },
+    handoffDetail: { status: "idle", data: null },
+    handoffId: null, handoffExpireArm: false, handoffPromptOpen: false,
+    nh: blankHandoff(),
+    promptList: { status: "idle", data: [] },
+    promptQ: "", promptTag: null, promptSort: "updated_desc", promptMenu: null,
+    promptSlug: null,
+    promptDetail: { status: "idle", data: null },
+    promptDiffV: null, promptTagMenu: false, promptTagDraft: "", promptCopied: false,
+    promptMode: "new", promptEd: null,
+    nd: blankDoc("technical", ""),
+    maintTab: "unplaced", maintDiscardArm: false,
     toast: null,
     backfillSync: null,
   };
@@ -317,6 +369,8 @@ export function reviewProps(s: AppState): ReviewProps {
 
 export function maintenanceProps(s: AppState): MaintenanceProps {
   return {
+    tab: s.maintTab,
+    discardArm: s.maintDiscardArm,
     unplaced: s.needsTriage.data.map(unplacedFromRow),
     assign: ASSIGN_OPTIONS,
     assignOpen: s.assignOpen,
@@ -338,6 +392,14 @@ export function triageCounts(s: AppState): { review: number; maintenance: number
     maintenance: s.needsTriage.data.length + s.identityTasks.data.length,
   };
 }
+
+/** Sidebar count for Handoffs: pending handoffs left for ME (the ones only I can pick up). */
+export function handoffBadge(s: AppState): number {
+  const me = s.me?.handle.toLowerCase() ?? "";
+  return s.handoffs.data.filter((h) => h.status === "pending" && h.recipient.toLowerCase() === me).length;
+}
+
+const PLUS_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>`;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function resolved(s: AppState): "dark" | "light" | "midnight" {
@@ -492,8 +554,9 @@ function sidebar(s: AppState): string {
     repoTab: s.repoTab,
     docSpace: s.docSpace,
     docSpaces: DOC_SPACES.map((k) => ({ key: k, label: spaceLabel(k) })),
+    maintTab: s.maintTab,
     // Tickets: unassigned ACTIVE tickets — a "nobody has this" signal (design call #2).
-    counts: { review: counts.review, maintenance: counts.maintenance, tickets: s.ticketBadge },
+    counts: { review: counts.review, maintenance: counts.maintenance, tickets: s.ticketBadge, handoffs: handoffBadge(s), prompts: s.promptList.data.filter((p) => p.status === "staged").length },
     me: s.me ? { handle: s.me.handle, name: s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null,
     displayName: s.displayName,
     logo: logo(24),
@@ -503,6 +566,16 @@ function sidebar(s: AppState): string {
 /** The "›" crumb text for the three child screens (empty on a top-level screen). */
 function headerCrumb(s: AppState): string {
   if (s.screen === "newticket") return "New ticket";
+  if (s.screen === "handoff") return s.handoffDetail.data ? firstLine(s.handoffDetail.data.body) : "";
+  if (s.screen === "newhandoff") return "New handoff";
+  if (s.screen === "prompt") return s.promptDetail.data?.prompt.title ?? "";
+  if (s.screen === "promptedit") {
+    const ed = s.promptEd;
+    if (!ed) return "";
+    return ed.mode === "new" ? "New prompt" : `${ed.mode === "edit" ? "Edit" : "New version"} · ${ed.title}`;
+  }
+  if (s.screen === "newdoc") return "New doc";
+  if (s.screen === "maintenance") return s.maintTab === "identity" ? "Identity" : s.maintTab === "people" ? "People" : "";
   if (s.screen === "ticketdetail") return s.ticketDetail.data?.title ?? "";
   if (s.screen === "sprint") {
     return s.sprintDetail.data?.label ?? s.sprints.data.find((sp) => sp.id === s.sprintId)?.label ?? "";
@@ -518,6 +591,9 @@ function header(s: AppState): string {
     // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
     tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
     repo: "Repo",
+    handoffs: "Handoffs", handoff: "Handoffs", newhandoff: "Handoffs",
+    prompts: "Prompt Library", prompt: "Prompt Library", promptedit: "Prompt Library",
+    newdoc: "Docs",
   };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
@@ -555,8 +631,12 @@ function header(s: AppState): string {
   const spaceTab = (k: DocSpace) =>
     `<button data-act="setDocSpace" data-arg="${attr(k)}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${esc(spaceLabel(k))}</button>`;
   const docsControls = s.screen === "docs"
-    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${DOC_SPACES.map(spaceTab).join("")}</div>`
+    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${DOC_SPACES.map(spaceTab).join("")}</div>
+      <button data-act="newDoc" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap">${PLUS_ICON}New doc</button>`
     : "";
+  const accentNew = (act: string, label: string) =>
+    `<button data-act="${act}" class="cnpy-accentbtn" style="display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap;transition:filter .12s ease">${PLUS_ICON}${label}</button>`;
+  const newControls = s.screen === "handoffs" ? accentNew("newHandoff", "New handoff") : s.screen === "prompts" ? accentNew("newPrompt", "New prompt") : "";
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
   const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
@@ -599,12 +679,21 @@ function header(s: AppState): string {
   // becomes a back button to its parent and a "›" crumb names the child.
   // `ticketsBack` resolves to Tickets, or Roadmap from a sprint (one act, like
   // the design's single `back` handler).
-  const child = s.screen === "ticketdetail" || s.screen === "newticket" || s.screen === "sprint";
+  const child = s.screen === "ticketdetail" || s.screen === "newticket" || s.screen === "sprint"
+    || s.screen === "handoff" || s.screen === "newhandoff" || s.screen === "prompt" || s.screen === "promptedit" || s.screen === "newdoc"
+    || (s.screen === "maintenance" && s.maintTab !== "unplaced");
+  // The act the title's back button fires: each child screen returns to its own parent.
+  const backAct = s.screen === "handoff" || s.screen === "newhandoff" ? "goHandoffs"
+    : s.screen === "prompt" ? "goPrompts"
+    : s.screen === "promptedit" ? "edCancel"
+    : s.screen === "newdoc" ? "goDocs"
+    : s.screen === "maintenance" ? "goMaintenance"
+    : "ticketsBack";
   const crumb = s.screen === "repo" ? repoCrumb(repoProps(s)) : child
     ? `<span style="display:inline-flex;align-items:center;gap:10px;min-width:0"><span style="color:var(--fg-40);font-size:13px">›</span><span style="font-size:13px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(headerCrumb(s))}</span></span>`
     : "";
   const title = child
-    ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="ticketsBack" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
+    ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="${backAct}" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
     : `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">${titles[s.screen]}</h1>`;
 
   return `<header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;min-height:57px;border-bottom:1px solid var(--border);flex:none">
@@ -614,7 +703,7 @@ function header(s: AppState): string {
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${themeBtn}
+      ${newControls}${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${themeBtn}
     </div>
   </header>`;
 }
@@ -1741,19 +1830,21 @@ function reviewScreen(s: AppState): string {
 function maintenanceScreen(s: AppState): string {
   if (slicePending(s.needsTriage) && slicePending(s.identityTasks)) return notice("Loading maintenance&hellip;");
   if (s.needsTriage.status === "error" && s.identityTasks.status === "error") return notice("Couldn't load maintenance.");
-  const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
-    : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
+  const hint = s.maintTab === "unplaced" && s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
+    : s.maintTab === "identity" && s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
     : "";
-  const people = s.me?.admin
-    ? peopleSection({
-        persons: s.persons.data,
-        invites: s.invites.data,
-        inviteDraft: s.inviteDraft,
-        loading: s.persons.status === "loading" || s.invites.status === "loading",
-        error: s.invites.error ?? null,
-      })
-    : "";
-  const notif = s.me?.admin
+  // People: the directory for everyone; invites (and the admin-only email
+  // notification sections that used to close the single column) for admins.
+  const admin = s.me?.admin === true;
+  const people = s.maintTab !== "people" ? "" : peopleSection({
+    persons: s.persons.data,
+    invites: admin ? s.invites.data : [],
+    inviteDraft: s.inviteDraft,
+    loading: s.persons.status === "loading" || (admin && s.invites.status === "loading"),
+    error: admin ? (s.invites.error ?? null) : null,
+    me: s.me?.handle ?? null,
+    canInvite: admin,
+  }) + (admin
     ? notificationsMaintenanceSections({
         policy: s.notifPolicy.data,
         settings: s.notifSettings.data,
@@ -1761,12 +1852,8 @@ function maintenanceScreen(s: AppState): string {
         outboxExpanded: s.outboxExpanded,
         fromDraft: s.fromDraft,
       })
-    : "";
-  // The maintenance view closes its own container; People + the notification
-  // sections share that column, so they are spliced in before its closing tag.
-  const base = maintenanceView(maintenanceProps(s));
-  const cut = base.lastIndexOf("</div>");
-  return `${hint}${base.slice(0, cut)}${people}${notif}${base.slice(cut)}`;
+    : "");
+  return `${hint}${maintenanceView(maintenanceProps(s), people)}`;
 }
 
 // ── tickets ──────────────────────────────────────────────────────────────────
@@ -1854,6 +1941,17 @@ function screenBody(s: AppState): string {
     case "ticketdetail": return ticketDetailScreen(s);
     case "sprint": return sprintScreenBody(s);
     case "repo": return repoView(repoProps(s));
+    case "handoffs": return handoffsView({ status: s.handoffs.status, handoffs: s.handoffs.data, me: s.me?.handle ?? "", persons: s.persons.data });
+    case "handoff": return handoffDetailView({ status: s.handoffDetail.status, handoff: s.handoffDetail.data, me: s.me?.handle ?? "", persons: s.persons.data, expireArm: s.handoffExpireArm });
+    case "newhandoff": return newHandoffView({ draft: s.nh, me: s.me?.handle ?? "", persons: s.persons.data });
+    case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, menu: s.promptMenu, persons: s.persons.data });
+    case "prompt": return promptDetailView({
+      status: s.promptDetail.status, prompt: s.promptDetail.data?.prompt ?? null, versions: s.promptDetail.data?.versions ?? [],
+      persons: s.persons.data, knownTags: [...new Set(s.promptList.data.flatMap((p) => p.tags))],
+      diffVersion: s.promptDiffV, tagMenu: s.promptTagMenu, tagDraft: s.promptTagDraft, copied: s.promptCopied,
+    });
+    case "promptedit": return promptEditorView({ draft: s.promptEd, takenSlugs: s.promptList.data.map((p) => p.slug) });
+    case "newdoc": return newDocView({ draft: s.nd, spaces: DOC_SPACES.map((k) => ({ key: k, label: spaceLabel(k) })), sections: ASSIGN_OPTIONS.sections });
     default: return feedView(s);
   }
 }
@@ -1918,5 +2016,6 @@ export function render(s: AppState): string {
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
     ${s.view === "app" ? connectModal(s) : ""}
+    ${s.view === "app" && s.screen === "handoff" && s.handoffPromptOpen && s.handoffDetail.data ? handoffPromptModal(s.handoffDetail.data) : ""}
   </div>`;
 }
