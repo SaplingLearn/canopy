@@ -5,6 +5,7 @@
 import { expireDueHandoffs } from "../tools/handoffs";
 import type { PollOutcome, RepoRefreshResult, UsagePollResult, UsagePollSource } from "@shared/repo";
 import type { Env } from "../env";
+import { pruneOAuth } from "../auth/oauth";
 import { recomputeAllProgress } from "../tools/progress";
 import { repoEnvironments, type RepoEnvConfig } from "./config";
 import { run } from "../db";
@@ -297,7 +298,7 @@ export async function runLockedRepoRefresh(env: Env, by: string, now: number, fe
  *                branch pages + 2 drift compares + 2 per environment (head
  *                commit, head checks). With the tick's own pings that is
  *                19 + 4N — 27 today, and N ≤ 7 under the 50.
- *   :30 (h%6)    `pruneRepoCapture` — D1 only, no subrequests.
+ *   :30 (h%6)    `pruneRepoCapture` + `pruneOAuth` — D1 only, no subrequests.
  *
  * Health (4) + the heaviest of those (23) leaves ample headroom; stacking all
  * three on one tick did not, and the reconcile is what died.
@@ -351,5 +352,10 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
     });
   }
 
-  if (minute === 30) await safely("prune", () => pruneRepoCapture(env.DB, scheduledTime));
+  if (minute === 30) {
+    await safely("prune", () => pruneRepoCapture(env.DB, scheduledTime));
+    // MCP OAuth housekeeping rides the same D1-only tick: spent codes, dead tokens,
+    // never-used client registrations. Grants are never deleted.
+    await safely("oauth-prune", () => pruneOAuth(env.DB, scheduledTime));
+  }
 }

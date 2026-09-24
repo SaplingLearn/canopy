@@ -110,7 +110,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0027_repo_capture` [`repo_events` (append-only, UNIQUE `semantic_key`, kinds push/pr/review/deploy/check/run)
   / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
   `events`], then `0028_handoffs_prompts` [`handoffs` / `prompts` / `prompt_versions` / `prompts_fts` — see
-  "Handoffs & Prompt Library" below], then `0030_artifacts` [`artifact_pages` / `artifact_versions` /
+  "Handoffs & Prompt Library" below], then `0029_oauth` [`oauth_clients` / `oauth_grants` / `oauth_codes` /
+  `oauth_tokens` — MCP OAuth, see Auth], then `0030_artifacts` [`artifact_pages` / `artifact_versions` /
   `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
@@ -301,13 +302,33 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
   onboarding (a sealed 10-minute `onboard` cookie; the person row is created only on `POST /auth/onboard`
   with handle + color); else denied. Link mode (`?link=1` with a session) attaches a second provider in
   Settings; the last identity can't be unlinked.
-- **Bearer token** (agents, `/mcp`): per-person tokens stored hashed (`canopy_mcp_` prefix); the principal
-  is resolved from the bearer. Settings lists a person's live tokens by `token_hint` (the first 4 characters
+- **Bearer token** (agents, `/mcp`): either a pasted per-person `canopy_mcp_` token (stored hashed) or an
+  OAuth access token (`canopy_oat_`) obtained through Canopy's own OAuth server — both resolve to the same
+  person handle in `resolveBearerPrincipal`, so OAuth is how a bearer is OBTAINED, not a fourth class.
+  Settings lists a person's live tokens by `token_hint` (the first 4 characters
   of the random part; the value itself is shown once, at mint) via `GET /auth/mcp-tokens`, and
   `POST /auth/mcp-tokens/:id/revoke` soft-revokes the caller's OWN token — someone else's id is the same
-  404 as an unknown one. Both are session-cookie routes, never MCP tools. Settings › **Get connection command** (`connectModal` / `connectSnippet` in `web/src/render.ts`) is the ONE place a token's value appears: the click mints, a modal shows the exact setup for Claude Code (`claude mcp add … --header`), Codex (`CANOPY_MCP_TOKEN` + `--bearer-token-env-var`), a `.mcp.json` or the bare token, against the SPA's own origin, and names the Settings row the token now lives under; closing the modal drops the token from the page for good. `/mcp` is **bearer-only** — on bad/missing creds it returns a bare `401`
-  with NO `WWW-Authenticate` and NO OAuth discovery. A fresh `McpServer` is constructed per request
+  404 as an unknown one. Both are session-cookie routes, never MCP tools. Settings › **Get connection command** (`connectModal` / `connectSnippet` in `web/src/render.ts`) is the ONE place a token's value appears: the click mints, a modal shows the exact setup for Claude Code (`claude mcp add … --header`), Codex (`CANOPY_MCP_TOKEN` + `--bearer-token-env-var`), a `.mcp.json` or the bare token, against the SPA's own origin, and names the Settings row the token now lives under; closing the modal drops the token from the page for good. `/mcp` is **bearer-only**; its `401` carries
+  `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"` (plus
+  `error="invalid_token"` when a token was presented), which is how Claude Code and claude.ai discover
+  sign-in. A fresh `McpServer` is constructed per request
   (SDK ≥1.26 guards against reuse); `createMcpHandler` is stateless (no Durable Object / McpAgent).
+- **MCP OAuth** (`src/auth/oauth.ts` core, `oauth-routes.ts` HTTP, `oauth-pages.ts` pages; spec
+  `docs/superpowers/specs/2026-09-24-mcp-oauth-design.md`; migration `0029_oauth`): RFC 9728/8414 metadata,
+  RFC 7591 registration (public clients, loopback redirects match on any port), authorization code + S256
+  PKCE, a server-rendered consent page shown on EVERY authorization (CSRF = HMAC over session + request),
+  access 1 h; refresh tokens rotate with a 60 s reuse interval — a reuse past that window revokes the
+  whole grant — and a rotated refresh token is kept until its OWN expiry (90 days idle), so a late reuse
+  is still caught. Sign-in from
+  an authorize link survives GitHub/Google and onboarding via the sealed `oauth_pending` cookie. Settings ›
+  MCP access lists connections (`GET /auth/oauth-grants`, `POST /auth/oauth-grants/:id/revoke` —
+  cookie-only, never MCP). `pruneOAuth` rides the repo cron's `:30` tick and deletes spent or expired
+  codes, access tokens a day past expiry, refresh tokens past expiry, and client registrations that never
+  got a grant after 90 days (`UNGRANTED_CLIENT_TTL_MS` — long enough that a person denied at authorize,
+  e.g. not yet invited, still finds their registration on a retry days later) — grants themselves are never
+  deleted. An unknown `client_id` at authorize is an error PAGE naming the Claude Code fix (`/mcp` → canopy
+  → Clear authentication → Authenticate again), never a silent redirect. Every OAuth endpoint answers an unexpected error
+  with `503 { error: "temporarily_unavailable" }` (the authorize pages with a 503 error page), never a 500.
 - **GitHub webhook** (`/webhook/github`, `src/webhook.ts`): a delivery authenticates by an HMAC-SHA256
   `X-Hub-Signature-256` over the raw body against `GITHUB_WEBHOOK_SECRET` (NOT `COOKIE_SECRET`). HMAC is
   verified in the branch BEFORE the gate; a bad/absent signature (or unset secret) is a bare `401`. The
@@ -1100,7 +1121,7 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   `scripts/seed/reset.mjs` (add new tables — `events`, `repo_events`, `repo_snapshots`, `repo_metrics`,
   `pr_summaries`, `sprints`, `sprint_progress`,
   `sprint_resources`, `tickets` + `ticket_*`, `persons`, `identities`, `invites`, `plan`,
-  `plan_versions`, `notification_*` — there). That file is also the canonical person seed: the four
+  `plan_versions`, `notification_*`, `oauth_*` — there). That file is also the canonical person seed: the four
   engineers (github identities) plus two Google-only non-engineers, `meilin` / `sanaok`.
   GitHub I/O and the PR summarizer are dependency-injected (`fetchImpl?: typeof fetch`, `summarizer`)
   because the vitest pool exports no fetch/AI mock — stub at the `Response`/`Summarizer` level, never hit
@@ -1110,7 +1131,7 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   `RESEND_API_KEY`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN_STAGING` /
   `_PRODUCTION`, `SAPLING_METRICS_TOKEN`) — a test that needs one passes its own value in a per-test env
   object, and the suite is fully green with no carve-out.
-- **Deferred seams — do NOT activate:** Cloudflare Queue, Vectorize, the GitHub OAuth provider for MCP.
+- **Deferred seams — do NOT activate:** Cloudflare Queue, Vectorize.
   They exist as `// SEAM:` comments only.
 
 ## Env / bindings
