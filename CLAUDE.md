@@ -110,7 +110,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0027_repo_capture` [`repo_events` (append-only, UNIQUE `semantic_key`, kinds push/pr/review/deploy/check/run)
   / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
   `events`], then `0028_handoffs_prompts` [`handoffs` / `prompts` / `prompt_versions` / `prompts_fts` — see
-  "Handoffs & Prompt Library" below]).
+  "Handoffs & Prompt Library" below], then `0029_artifacts` [`artifact_pages` / `artifact_versions` /
+  `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
   the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
@@ -945,6 +946,66 @@ kept at the LATEST version by triggers on BOTH tables). DTOs + helpers: `shared/
   `save_prompt` (always staged). There is no per-token rate limit in Canopy today.
 - Skills: `handoff`, `prompts`, and `load-context` (lists waiting handoffs at session start; never auto-claims).
 
+## Artifacts — stored, versioned pages; direct writers, human ratify (spec: `docs/superpowers/specs/2026-09-24-artifacts-implementation.md`, issue #52)
+
+An artifact is one self-contained page an agent or person produced (a design page, spec, report, diagram, image,
+PDF, file), stored and versioned in Canopy and linked to the work it came from. Knowledge › **Artifacts** in the
+SPA (`#artifacts`, `#artifacts/new`, `#artifacts/<slug>[/v<n>|@v<n>]`, `#artifacts/<slug>/diff/<a>..<b>` —
+`web/src/artifacts.ts`, ported from the Claude Design `Canopy Artifacts.dc.html`, decoded copy in
+`docs/superpowers/specs/artifacts-prototype/`), plus an Artifacts block on the ticket detail. The contract for
+agents is `docs/artifact-contract.md` (referenced by `AGENTS.md` and the `canopy` / `artifacts` skills).
+
+- **Kinds and storage**: text kinds `html` / `markdown` / `svg` / `mermaid` (≤ 500 KB of UTF-8, the `content`
+  column in D1) and binary kinds `image` (png/jpeg/gif/webp only) / `pdf` / `file` (≤ 10 MB, R2 bucket
+  `ARTIFACTS_BUCKET` at `artifacts/<sha256>`, put with R2's own `sha256` check). `0029_artifacts`:
+  `artifact_pages` / `artifact_versions` (exactly one of `content` / `r2_key`) / `artifact_links` /
+  `artifact_upload_tokens` / `artifacts_fts` (kept in sync by the repository, not triggers; bm25 like docs).
+  The vocabulary, caps, status rules and wire DTOs live ONCE in `shared/artifacts-core.ts` (zod-free — the SPA
+  imports it); `shared/artifacts.ts` adds the zod request schemas. The repository is `src/tools/artifacts.ts`
+  (`ArtifactError` codes → 404/403/400/409/413/410); every surface calls it, none re-implements a rule.
+- **Rules**: create = v1 `draft`; draft ⇄ published by anyone who can READ the page; a later version →
+  `published` and clears `ratified_*`; → draft clears `ratified_*`; an identical sha256 to the current version is
+  a no-op (`unchanged`). Only the AUTHOR may set `private`; a private page is readable (and writable) only by its
+  author; a binary page whose upload has not landed (`current_version = 0`) exists to NO reader. Those three and
+  a missing slug are ONE byte-identical not-found on every surface (HTTP, raw, MCP, query, list) — pinned by
+  `test/artifacts.security-access.test.ts`. Slugs are one namespace, so allocating `<slug>-2` does reveal that a
+  hidden page with that title exists (never its content or author) — a known, accepted leak.
+- **Ratify is the human confirm gate**: `POST /api/artifacts/:slug/ratify {version}`, session cookie only, only
+  the LATEST version of a `published` page, and it refuses any request carrying an `Authorization` header. There
+  is NO MCP ratify tool.
+- **HTTP** (`src/artifacts/routes.ts`, mounted at `/api/artifacts`, session cookie): list (filters area, kind,
+  author, status, sprint, ticket, q), get `?v=`, create (JSON text / multipart binary), PATCH, add version
+  (content or `old_str`/`new_str`, which must match exactly once; multipart for binary), links add/remove,
+  diff, ratify, `upload-url`, and `POST /api/artifacts/fetch` (the From-URL tab: `src/artifacts/fetch-url.ts`,
+  https only, private/loopback/link-local literals refused, every redirect hop re-checked, 5 s, 500 KB, text
+  only, nothing stored — a Worker cannot resolve DNS first, so rebinding is out of its reach).
+- **Two token-authenticated routes sit in `src/index.ts` BEFORE the session-gated app** (like `/u/`): the upload
+  `PUT /api/artifacts/upload/:token` (`src/artifacts/upload.ts`: single use, 5 minutes, bound to principal /
+  page / kind / size / sha256; stored only as a hash; a length or hash mismatch leaves it retryable) and the
+  agent download `GET /api/artifacts/download/:token` (`src/artifacts/download.ts`: stateless HMAC over
+  {handle, page, version, exp} keyed from COOKIE_SECRET with its own purpose label, 5 minutes, reusable, the
+  page's visibility RE-CHECKED at download, exact stored bytes as an attachment with `sandbox` CSP).
+- **Raw route** `GET /raw/a/:slug[@v<n>|/v<n>]` (`src/artifacts/raw.ts`, session cookie) is what the SPA frames:
+  html/svg get the active CSP (inline scripts + the two CDNs, `connect-src 'none'`) PLUS `sandbox allow-scripts`,
+  so an artifact opened in its own tab still runs at an opaque origin; image/pdf/file get
+  `default-src 'none'; frame-ancestors 'self'`; always nosniff, `X-Frame-Options: SAMEORIGIN`,
+  `Cache-Control: private`; html alone gets the injected `canopy:height` postMessage script (never on
+  `?download=1`). The SPA frames html as `<iframe src="/raw/…" sandbox="allow-scripts">` — never `srcdoc`, never
+  `allow-same-origin` — and inlines svg ONLY through `sanitizeSvg` (DOMPurify, `web/src/markdown.ts`).
+- **MCP** (every principal, `src/tools/artifacts-agent.ts`): `artifact_list`, `artifact_get` (text content inline;
+  for every kind a `download_url` + `sha256` + `size_bytes` to verify), `artifact_create` / `artifact_update`
+  (text inline; binary returns an absolute `upload_url` the agent PUTs to). All carry `warnings` (never a
+  rejection) for `window.claude` / `window.storage` / `api.anthropic.com`. `query` has an `artifact` type
+  (draft → `draft`, published/ratified → `live`; private only to the author — `query()` takes a viewer);
+  `get_ticket` lists the ticket's visible artifacts; `record_session` and `/ingest` accept `artifact_links`,
+  applied after the batch as direct writes (`recordBatch` in `src/consumer.ts`).
+- **Skills**: `artifacts` (find / pull into `.canopy/artifacts/<slug>/v<n>.<ext>` and verify the sha256 / serve an
+  html one locally / link / publish), plus `canopy`, `load-context` and `record-session`. `.canopy/` is gitignored.
+  End-to-end check against a live `wrangler dev`: `scripts/e2e/artifacts-agent.mjs` (start dev with
+  `--var PUBLIC_ORIGIN:<its URL>`, or the script refuses the production-origin upload/download URLs).
+- **Deferred on purpose**: external share links, per-person sharing, a raw-content subdomain, PDF text extraction
+  for search, a UI for uploading a new version of an existing artifact (the API supports it).
+
 ## Sidebar & motion — the `<aside>` outlives rerenders
 
 `rerender()` swaps the app wholesale, which is fatal for a transition: a width, a rotating chevron or an
@@ -1104,7 +1165,9 @@ drift (it needs two environments), no pings and no polls, and `environments` / `
 `usage` / `cloudflare` / `hosting` stay `not_connected` — but the **branches arm still runs**
 (`computeBranches` degrades correctly with `envs: []`), and `ciFailures` never consults it.
 
-Bindings: `DB` (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`),
+Bindings: `DB` (D1), `ASSETS` (static), `ARTIFACTS_BUCKET` (R2, bucket `canopy-artifacts` — binary artifact
+bodies at `artifacts/<sha256>`; **the bucket must exist before the first deploy that carries this binding**:
+`wrangler r2 bucket create canopy-artifacts`). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`),
 never at render — not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` is three
 expressions: `*/10 * * * *` is the repo cron — its per-tick schedule and subrequest arithmetic are described
 ONCE, under "The repo cron" in the Repo dashboard section — plus the two hourly digest candidates (see Email
