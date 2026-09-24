@@ -419,3 +419,9 @@ Track F (2026-09-24) — agent access + the plugin release (and issue #70). Bran
   PUBLIC_ORIGIN:<baseUrl> --var COOKIE_SECRET:<anything>` (a local token can be minted with `--var DEV_LOGIN:<handle>`
   and `POST /auth/mcp-token`). Run green against local D1 + R2 on 2026-09-24.
 - 2026-09-24 · **Tests**: `test/artifacts.download.test.ts` (15). No SPA change — the web app shows nothing new.
+- **2026-09-24 · Orchestrator, at the owner's call — PDFs render in an UNSANDBOXED frame.** Chrome will not
+  draw a PDF inside any `sandbox` (the viewer showed a broken-page icon), so `web/src/artifacts.ts` drops
+  `sandbox=""` for the pdf viewer only. Safe because the raw route always serves a pdf as `application/pdf`
+  (whatever was declared), `nosniff`, `default-src 'none'`; `test/artifacts.security-raw.test.ts` pins that a
+  "pdf" uploaded as `text/html` with a script is still served that way. html/svg thumbnails and the html
+  viewer keep their sandboxes.

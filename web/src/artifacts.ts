@@ -14,7 +14,7 @@
 //   • svg   → inline, only after DOMPurify's svg profile (sanitizeSvg).
 //   • markdown → renderMarkdown (marked + DOMPurify).
 //   • mermaid  → the CDN build, rendered post-paint and cached per version + theme.
-//   • image → <img>; pdf → <iframe sandbox="">; file → a card with Download.
+//   • image → <img>; pdf → an UNsandboxed <iframe> (see the pdf case); file → a card with Download.
 //
 // Shape: pure views over props (render.ts calls them), plus ONE reducer,
 // `artifactsAct`, that main.ts hands every `art*` act to. The reducer never
@@ -570,11 +570,15 @@ function contentBlock(p: ArtProps, d: ArtifactDetailDTO): string {
     case "image":
       return `<div style="display:grid;place-items:center;padding:32px 24px;background:var(--bg)"><img src="${attr(raw)}" alt="${attr(d.title)}" style="display:block;max-width:100%;height:auto"></div>`;
     case "pdf":
-      // sandbox="" is mandated; some browsers refuse to draw a PDF inside it, so a
-      // plain link to the same raw bytes sits under the frame.
+      // NOT sandboxed: Chrome will not draw a PDF inside any `sandbox`, so the frame
+      // would stay blank. It is safe unsandboxed because of what the raw route serves
+      // for a pdf, pinned in test/artifacts.security-raw.test.ts: ALWAYS
+      // `application/pdf` (whatever type was declared at upload), `nosniff`, and
+      // `default-src 'none'` — the browser's PDF viewer renders it, and nothing in it
+      // can run as a page in Canopy's origin.
       return `<div style="background:var(--bg)">
-        <iframe title="${attr(d.title)}" src="${attr(raw)}" sandbox="" style="display:block;width:100%;height:78vh;min-height:480px;border:0;background:#fff"></iframe>
-        <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-55)"><a href="${attr(raw)}" target="_blank" rel="noopener" class="cnpy-link" style="color:var(--accent);font-weight:500">Open PDF in a new tab</a> · if the preview above stays blank, your browser won't draw a PDF in a sandboxed frame.</div>
+        <iframe title="${attr(d.title)}" src="${attr(raw)}" style="display:block;width:100%;height:78vh;min-height:480px;border:0;background:#fff"></iframe>
+        <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-55)"><a href="${attr(raw)}" target="_blank" rel="noopener" class="cnpy-link" style="color:var(--accent);font-weight:500">Open PDF in a new tab</a></div>
       </div>`;
     default: {
       const name = artFileName(d.slug, d.kind, ver);

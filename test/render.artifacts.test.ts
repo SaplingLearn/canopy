@@ -178,10 +178,11 @@ describe("artifacts — viewer per kind", () => {
     expect(mm).toContain("Rendering diagram…");
   });
 
-  it("image as <img>, pdf in an empty sandbox with a new-tab fallback, file as a download card", () => {
+  it("image as <img>, pdf in an unsandboxed frame (Chrome draws no PDF in a sandbox) with a new-tab link, file as a download card", () => {
     expect(artifactsView(viewer(detail("login-mock", "image")))).toContain('<img src="/raw/a/login-mock@v3" alt="login mock"');
     const pdf = artifactsView(viewer(detail("rfc", "pdf")));
-    expect(pdf).toContain('src="/raw/a/rfc@v3" sandbox=""');
+    expect(pdf).toContain('src="/raw/a/rfc@v3" style=');
+    expect(pdf).not.toMatch(/src="\/raw\/a\/rfc@v3"[^>]*sandbox/);
     expect(pdf).toContain("Open PDF in a new tab");
     const f = detail("bundle", "file");
     f.version = ver(3, { content_type: "application/zip", size_bytes: 3 * 1024 * 1024 });

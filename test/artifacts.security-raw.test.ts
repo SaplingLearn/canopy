@@ -69,6 +69,15 @@ describe("7 · raw route headers, per kind", () => {
       expect(dl.headers.get("content-disposition")).toBe(`attachment; filename="${slug}-v1.${ext}"`);
       expect(await dl.text()).not.toContain("canopy:height");
     }
+    // The SPA frames a pdf WITHOUT a sandbox (Chrome draws no PDF in one), so a "pdf"
+    // must never be served as anything a browser would run: an upload declaring
+    // text/html with script-bearing bytes is still application/pdf + nosniff + the
+    // passive CSP.
+    await createBinary(me, { title: "K evil pdf", kind: "pdf", area: "api" }, { bytes: new TextEncoder().encode("<html><script>alert(1)</script></html>"), name: "x.html", type: "text/html" });
+    const evil = await get("/raw/a/k-evil-pdf", me);
+    expect(evil.status).toBe(200);
+    lockedDown(evil, CSP_PASSIVE, "evil pdf");
+    expect(evil.headers.get("content-type")).toBe("application/pdf");
     // the download of html is the stored bytes, untouched
     expect(await (await get("/raw/a/k-html?download=1", me)).text()).toBe("<html><body><p>x</p></body></html>");
     // a later version's download name carries its number
