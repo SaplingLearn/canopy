@@ -1937,7 +1937,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       rerender();
       return;
     case "setSearchType":
-      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision") state.searchType = arg;
+      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision" || arg === "artifact") state.searchType = arg;
       break;
 
     // settings — display name echoes live; everything else is Phase 2

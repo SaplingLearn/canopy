@@ -398,6 +398,51 @@ describe("artifacts — on the ticket detail", () => {
   });
 });
 
+// ── search results (GET /search `type: "artifact"`, id = slug) ────────────────
+
+describe("artifacts — in Search", () => {
+  function searchHtml(over: Partial<ReturnType<typeof initialState>> = {}): string {
+    return render({
+      ...initialState(), view: "app", screen: "search",
+      searchResults: {
+        status: "ok",
+        data: {
+          primary: [{
+            type: "artifact", id: "google-signin-design", title: "Google sign-in design page",
+            section: null, space: null, body: "Status: published · v3", authority: "live",
+            current_version: null, pending_version: null, staged_body: null, confidence: null,
+            updated_at: null, updated_by: null, score: 1,
+          }],
+          pointers: [{ type: "artifact", id: "auth-audit-sep-2026", title: "Auth audit", snippet: "…", authority: "draft", score: 1 }],
+          meta: { engine: "fts5", total: 2 },
+        },
+      },
+      ...over,
+    });
+  }
+
+  it("QueryType carries artifact, and an artifact hit opens the viewer through artOpen, not the doc route", () => {
+    const html = searchHtml();
+    expect(html).toContain('data-act="artOpen" data-arg="google-signin-design"');
+    expect(html).toContain('data-act="artOpen" data-arg="auth-audit-sep-2026"');
+    expect(html).not.toContain('data-act="openDocFrom"');
+    // …and artOpen with that id lands on #artifacts/<slug>.
+    const p = props("artifacts");
+    expect(artifactsAct(p.ui, ctx(p), "artOpen", "google-signin-design", null)).toEqual({ nav: { screen: "artifact", route: { slug: "google-signin-design", v: null, diff: null } } });
+  });
+
+  it("labels an artifact result like the other types", () => {
+    expect(searchHtml()).toMatch(/<path d="M3 4h18v16H3zM3 9h18M7 13\.5h6M7 16\.5h9"><\/path><\/svg>Artifact<\/span>/);
+  });
+
+  it("the type filter offers Artifacts and keeps only artifact hits", () => {
+    expect(searchHtml()).toContain('data-act="setSearchType" data-arg="artifact"');
+    const docOnly = searchHtml({ searchType: "doc" });
+    expect(docOnly).not.toContain('data-arg="google-signin-design"');
+    expect(searchHtml({ searchType: "artifact" })).toContain('data-arg="google-signin-design"');
+  });
+});
+
 // ── in the app shell ─────────────────────────────────────────────────────────
 
 describe("artifacts — in the app shell", () => {
