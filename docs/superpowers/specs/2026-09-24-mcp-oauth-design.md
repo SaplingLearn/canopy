@@ -176,10 +176,11 @@ No rate limit (Canopy has none anywhere); unused registrations are pruned after 
 
 Validation, in order:
 
-1. `client_id` unknown, or `redirect_uri` not an EXACT string match of one registered URI → render the
-   **error page** (400). Never redirect — this is what keeps authorize from being an open redirector.
+1. `client_id` unknown, or `redirect_uri` not a registered URI (exact; a loopback `http:` URI matches on
+   any port) → render the **error page** (400). Never redirect — this is what keeps authorize from being
+   an open redirector.
 2. Anything else wrong — `response_type ≠ code`, no `code_challenge`, `code_challenge_method ≠ S256`,
-   `scope` present and ≠ `mcp`, `resource` present and ≠ `<origin>/mcp` — → `302 redirect_uri?
+   `state` longer than 1024 characters, `resource` present and ≠ `<origin>/mcp` — → `302 redirect_uri?
    error=invalid_request&error_description=…&state=…`.
 
 Then:
@@ -277,9 +278,10 @@ Settings › **Connected apps** card beside the token list: one row per grant �
 "last used <date>", Revoke. Empty state: "No apps connected. Use *Get connection command* → Sign in with
 browser." Any new border radius gets its line in the corners block (`test/render.corners.test.ts`).
 
-**Get connection command** modal: a first option, "Sign in with browser (recommended)", showing
-`claude mcp add --transport http canopy <origin>/mcp` and "then run `/mcp` in Claude Code and choose
-Authenticate". Choosing it mints nothing. The existing token options follow unchanged.
+**Browser-connect lives in the Settings tile, not the modal.** The Get connection command modal mints on
+open, so the "Sign in with browser" command is shown in the Settings tile (renamed "MCP access") above
+the token list, with a Copy button that mints nothing. The Connected apps list lives in the same tile.
+The modal is unchanged.
 
 ## Housekeeping
 
@@ -338,3 +340,11 @@ Plus `npm run typecheck`, and a live check: `/mcp` → Authenticate against `wra
    prod (`db:migrate:remote`) before or with the merge — a merge to `main` deploys.
 2. Owner verifies in Claude Code against prod; teammates update the plugin and drop `CANOPY_MCP_TOKEN`.
 3. Phase 2: add the claude.ai connector, verify, fix, document.
+
+## Amendments (from planning, 2026-09-24)
+
+1. **Loopback redirect ports.** A loopback `http:` redirect matches a registered loopback URI on scheme + host + path + query, ANY port (RFC 8252 §7.3) — Claude Code picks a fresh port per attempt. `https:` redirects stay exact-match. The code exchange still requires the redirect to equal the one used at authorize, exactly.
+2. **Scope is lenient.** An unknown `scope` value is ignored, not an error; every token is issued with scope `mcp` (RFC 6749 §3.3 permits the server to narrow). Reduces claude.ai interop risk.
+3. **Browser-connect lives in the Settings tile, not the modal.** The Get connection command modal mints on open, so the "Sign in with browser" command is shown in the Settings tile (renamed "MCP access") above the token list, with a Copy button that mints nothing. The Connected apps list lives in the same tile. The modal is unchanged.
+4. **`state` is capped at 1024 characters** so the `oauth_pending` cookie can never outgrow a browser's cookie limit.
+5. **Token-endpoint unexpected error** → `503 temporarily_unavailable` (spec said "never a 500" without naming the fallback).

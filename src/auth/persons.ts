@@ -114,6 +114,8 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   // 'anyone'; the rename's WHERE only ever matches a real handle.
   ["handoffs", "sender"], ["handoffs", "recipient"], ["handoffs", "claimed_by"],
   ["prompts", "author"], ["prompt_versions", "author"],
+  // MCP OAuth (0029): a rename carries a person's connections and in-flight codes.
+  ["oauth_grants", "person"], ["oauth_codes", "person"],
 ];
 
 export type RenameResult = { ok: true } | { ok: false; reason: HandleProblem | "same" | "not_found" };

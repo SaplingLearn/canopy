@@ -87,6 +87,12 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     handle, handle, nowIso(), nowIso(), handle, nowIso());
   await run(env.DB, `INSERT INTO prompts (slug, title, author, current_version, created_at, updated_at) VALUES (?, 'T', ?, 1, ?, ?)`, "rename-test", handle, nowIso(), nowIso());
   await run(env.DB, `INSERT INTO prompt_versions (slug, version, status, author, body, created_at) VALUES (?, 1, 'published', ?, 'b', ?)`, "rename-test", handle, nowIso());
+  // oauth_grants.person + oauth_codes.person (0029) — direct inserts; the writer
+  // (issueAuthorization) needs a registered client, seeded here too.
+  await run(env.DB, `INSERT OR IGNORE INTO oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES ('rename-client', 'C', '["http://localhost/cb"]', ?)`, nowIso());
+  const grant = await run(env.DB, `INSERT INTO oauth_grants (person, client_id, client_name, created_at) VALUES (?, 'rename-client', 'C', ?)`, handle, nowIso());
+  await run(env.DB, `INSERT INTO oauth_codes (code_hash, client_id, person, grant_id, redirect_uri, code_challenge, created_at, expires_at) VALUES (?, 'rename-client', ?, ?, 'http://localhost/cb', 'x', ?, ?)`,
+    `rename-code-${handle}`, handle, grant.meta.last_row_id, nowIso(), nowIso());
 }
 
 describe("renamePerson", () => {
