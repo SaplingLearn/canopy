@@ -183,6 +183,15 @@ describe("GET /oauth/authorize", () => {
     expect(html).toContain(`href="/auth/google/login"`);
     expect(r.headers.get("set-cookie") ?? "").toContain("oauth_pending=");
   });
+  it("escapes HTML-significant characters in the client name, including a bare quote", async () => {
+    const c = await registerClient(env.DB, { client_name: "O'Brien <x>", redirect_uris: [REDIRECT] }, Date.now());
+    const { challenge } = await pkce();
+    const qs = new URLSearchParams({ response_type: "code", client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: "S256" });
+    const r = await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual());
+    expect(r.status).toBe(200);
+    const html = await r.text();
+    expect(html).toContain("O&#39;Brien &lt;x&gt;");
+  });
   it("signed in → the consent page naming the app, the redirect host and the handle; form-action allows the redirect origin", async () => {
     const { qs } = await registered();
     const r = await SELF.fetch(`https://example.com/oauth/authorize?${qs}`, manual({ headers: { cookie: await cookieFor("oauth-user") } }));
@@ -264,6 +273,6 @@ describe("never a 500", () => {
   it("authorize: an unexpected DB throw is a 503 error page, not a 500", async () => {
     const r = await buildOAuthApp().request("/oauth/authorize?client_id=x&redirect_uri=y", {}, throwingEnv);
     expect(r.status).toBe(503);
-    expect(await r.text()).toContain("couldn't finish");
+    expect(await r.text()).toContain("finish this right now");
   });
 });

@@ -2,11 +2,8 @@
 // never depends on the web bundle loading). Pure string templates; every dynamic
 // value is escaped. Colours are Canopy's light/dark tokens (web/src/canopy.css).
 
-// Every attribute value these templates emit is double-quoted (never single-quoted),
-// so a bare apostrophe can't break out of one — no need to entity-escape it, which
-// would otherwise turn a message like "couldn't" into the harder-to-read "couldn&#39;t".
 const esc = (s: string): string =>
-  s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
+  s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
 
 const CSS = `
 :root{--bg:#faf8f3;--fg:#1a1814;--fg-55:rgba(26,24,20,.55);--border:rgba(42,39,31,.18);--accent:#8a9a5b;--accent-fg:#fff;--red:#a83a3a}
