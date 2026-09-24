@@ -5,7 +5,7 @@
 // and every clock read is a `nowMs` parameter so tests control time. Raw codes
 // and tokens are returned once and stored only as SHA-256 hashes.
 import { type DB, first, run } from "../db";
-import { randomToken } from "./crypto";
+import { randomToken, sha256Hex, pkceChallenge } from "./crypto";
 
 export const ACCESS_PREFIX = "canopy_oat_";
 export const REFRESH_PREFIX = "canopy_ort_";
@@ -133,4 +133,128 @@ export async function getClient(db: DB, clientId: string): Promise<RegisteredCli
     db, `SELECT client_id, client_name, redirect_uris FROM oauth_clients WHERE client_id = ?`, clientId);
   if (!row) return null;
   return { client_id: row.client_id, client_name: row.client_name, redirect_uris: JSON.parse(row.redirect_uris) as string[] };
+}
+
+// ── Authorize ───────────────────────────────────────────────────────────────
+
+export const AUTHORIZE_KEYS = [
+  "response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state", "scope", "resource",
+] as const;
+
+/** The authorize parameters that matter, in a fixed order — what the consent CSRF
+ *  signs and what the `oauth_pending` cookie carries. */
+export function canonicalAuthorizeQuery(q: URLSearchParams): string {
+  const out = new URLSearchParams();
+  for (const k of AUTHORIZE_KEYS) {
+    const v = q.get(k);
+    if (v) out.set(k, v);
+  }
+  return out.toString();
+}
+
+export interface AuthorizeParams { client_id: string; redirect_uri: string; code_challenge: string; state: string | null; resource: string | null }
+export type AuthorizeCheck =
+  | { ok: true; client: RegisteredClient; params: AuthorizeParams }
+  | { ok: false; kind: "page"; message: string }
+  | { ok: false; kind: "redirect"; redirect_uri: string; state: string | null; description: string };
+
+/**
+ * Validate an authorize request. A bad client or redirect is an error PAGE — never a
+ * redirect, so authorize can't be used as an open redirector; any other problem
+ * redirects back with invalid_request. `scope` is deliberately lenient: every token
+ * is issued with scope `mcp` whatever was asked for (RFC 6749 §3.3).
+ */
+export async function checkAuthorizeRequest(db: DB, q: URLSearchParams, origin: string): Promise<AuthorizeCheck> {
+  const clientId = q.get("client_id") ?? "";
+  const redirect = q.get("redirect_uri") ?? "";
+  const client = clientId ? await getClient(db, clientId) : null;
+  if (!client) return { ok: false, kind: "page", message: "This app isn't registered with Canopy. Start the connection again from the app." };
+  if (!redirectMatches(client.redirect_uris, redirect)) {
+    return { ok: false, kind: "page", message: "This app asked to return to an address it never registered, so Canopy won't send you there." };
+  }
+  const state = q.get("state");
+  const bad = (description: string): AuthorizeCheck => ({ ok: false, kind: "redirect", redirect_uri: redirect, state, description });
+  if (q.get("response_type") !== "code") return bad("response_type must be code");
+  const challenge = q.get("code_challenge") ?? "";
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) return bad("a PKCE code_challenge is required");
+  if (q.get("code_challenge_method") !== "S256") return bad("code_challenge_method must be S256");
+  if (state && state.length > MAX_STATE_LENGTH) return bad(`state must be at most ${MAX_STATE_LENGTH} characters`);
+  const resource = q.get("resource");
+  if (resource && resource.replace(/\/+$/, "") !== mcpResource(origin)) return bad(`resource must be ${mcpResource(origin)}`);
+  return { ok: true, client, params: { client_id: client.client_id, redirect_uri: redirect, code_challenge: challenge, state, resource } };
+}
+
+/** Consent given: the grant (the connection Settings lists) exists from here; the
+ *  code is single-use, lives 60 s, and carries the grant id. */
+export async function issueAuthorization(
+  db: DB, a: { client: RegisteredClient; params: AuthorizeParams; person: string; nowMs: number },
+): Promise<{ code: string; grantId: number }> {
+  const g = await run(db, `INSERT INTO oauth_grants (person, client_id, client_name, created_at) VALUES (?, ?, ?, ?)`,
+    a.person, a.client.client_id, a.client.client_name, iso(a.nowMs));
+  const grantId = Number(g.meta.last_row_id);
+  const code = randomToken(32);
+  await run(db,
+    `INSERT INTO oauth_codes (code_hash, client_id, person, grant_id, redirect_uri, code_challenge, resource, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    await sha256Hex(code), a.client.client_id, a.person, grantId, a.params.redirect_uri, a.params.code_challenge,
+    a.params.resource, iso(a.nowMs), iso(a.nowMs + CODE_TTL_MS));
+  return { code, grantId };
+}
+
+// ── Tokens ──────────────────────────────────────────────────────────────────
+
+export interface TokenResponse { access_token: string; token_type: "Bearer"; expires_in: number; refresh_token: string; scope: string }
+
+const invalidGrant = (d: string) => new OAuthError("invalid_grant", d);
+
+/** A fresh access (1 h) + refresh (90 d from now — the idle window) pair on a grant. */
+async function mintPair(db: DB, grantId: number, nowMs: number): Promise<TokenResponse> {
+  const access = ACCESS_PREFIX + randomToken(32);
+  const refresh = REFRESH_PREFIX + randomToken(32);
+  const insert = `INSERT INTO oauth_tokens (token_hash, grant_id, kind, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`;
+  await db.batch([
+    db.prepare(insert).bind(await sha256Hex(access), grantId, "access", iso(nowMs), iso(nowMs + ACCESS_TTL_MS)),
+    db.prepare(insert).bind(await sha256Hex(refresh), grantId, "refresh", iso(nowMs), iso(nowMs + REFRESH_TTL_MS)),
+  ]);
+  return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_MS / 1000, refresh_token: refresh, scope: OAUTH_SCOPE };
+}
+
+async function grantRevoked(db: DB, grantId: number): Promise<boolean> {
+  const g = await first<{ revoked_at: string | null }>(db, `SELECT revoked_at FROM oauth_grants WHERE id = ?`, grantId);
+  return !g || g.revoked_at !== null;
+}
+
+/** authorization_code grant. The code is burned by ONE conditional UPDATE before any
+ *  check, so a failed check still spends it and a race has one winner. */
+export async function exchangeAuthorizationCode(
+  db: DB, r: { code: string; code_verifier: string; redirect_uri: string; client_id: string; resource: string | null },
+  origin: string, nowMs: number,
+): Promise<TokenResponse> {
+  const row = await first<{ client_id: string; grant_id: number; redirect_uri: string; code_challenge: string; resource: string | null }>(db,
+    `UPDATE oauth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?
+     RETURNING client_id, grant_id, redirect_uri, code_challenge, resource`,
+    iso(nowMs), await sha256Hex(r.code), iso(nowMs));
+  if (!row) throw invalidGrant("the code is unknown, expired, or already used");
+  if (row.client_id !== r.client_id || row.redirect_uri !== r.redirect_uri) throw invalidGrant("client_id or redirect_uri does not match the authorization");
+  if ((await pkceChallenge(r.code_verifier)) !== row.code_challenge) throw invalidGrant("code_verifier does not match the code_challenge");
+  const expected = (row.resource ?? mcpResource(origin)).replace(/\/+$/, "");
+  if (r.resource && r.resource.replace(/\/+$/, "") !== expected) throw invalidGrant("resource does not match the authorization");
+  if (await grantRevoked(db, row.grant_id)) throw invalidGrant("this connection was revoked");
+  return mintPair(db, row.grant_id, nowMs);
+}
+
+/** A `canopy_oat_` bearer → its person, while unexpired and its grant unrevoked. ONE
+ *  read; `last_used_at` is written at most once a minute so MCP traffic isn't a write
+ *  per call. */
+export async function resolveOAuthAccessToken(db: DB, raw: string, nowMs: number): Promise<{ handle: string } | null> {
+  if (!raw.startsWith(ACCESS_PREFIX)) return null;
+  const row = await first<{ grant_id: number; person: string; last_used_at: string | null }>(db,
+    `SELECT g.id AS grant_id, g.person, g.last_used_at FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id
+     WHERE t.token_hash = ? AND t.kind = 'access' AND t.expires_at > ? AND g.revoked_at IS NULL`,
+    await sha256Hex(raw), iso(nowMs));
+  if (!row) return null;
+  if (!row.last_used_at || Date.parse(row.last_used_at) <= nowMs - LAST_USED_THROTTLE_MS) {
+    await run(db, `UPDATE oauth_grants SET last_used_at = ? WHERE id = ?`, iso(nowMs), row.grant_id);
+  }
+  return { handle: row.person };
 }
