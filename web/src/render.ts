@@ -1668,8 +1668,8 @@ function settingsView(s: AppState): string {
       <div style="font-size:11.5px;color:var(--fg-40);margin:6px 0 14px;line-height:1.5">Then run <code style="font-family:var(--mono);font-size:11px">/mcp</code> in Claude Code and choose Authenticate.</div>
       <div style="font-size:12.5px;font-weight:500;margin-bottom:4px">Connected apps</div>
       ${grantListBody(s)}
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 4px">
-        <div style="font-size:12.5px;font-weight:500">Access tokens <span style="font-weight:400;color:var(--fg-40)">· for CI and other headless clients</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;row-gap:8px;flex-wrap:wrap;margin:18px 0 4px">
+        <div style="flex:1 1 180px;min-width:0;font-size:12.5px;font-weight:500">Access tokens <span style="font-weight:400;color:var(--fg-40)">· for CI and other headless clients</span></div>
         <button data-act="connectOpen" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Get connection command</button>
       </div>
       ${tokenList}
