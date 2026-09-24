@@ -2134,6 +2134,16 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       return;
     }
 
+    // An uploaded doc image (Docs reader, Review's Rendered view), expanded: its alt
+    // text is the title. arg is the sha256 (DOC_IMAGE_PATH_RE in shared/doc-images).
+    case "docImgZoom": {
+      if (!arg || !/^[0-9a-f]{64}$/.test(arg)) return;
+      const img = mount.querySelector<HTMLImageElement>(`[data-act="docImgZoom"][data-arg="${arg}"] img`);
+      const alt = img?.getAttribute("alt")?.trim() ?? "";
+      openLightbox({ src: `/img/${arg}`, alt: alt || "Image", title: alt || "Image" });
+      return;
+    }
+
     // A guide figure, expanded: title = its caption's bold lead, caption = the rest.
     case "guideZoom": {
       const btn = arg ? mount.querySelector<HTMLElement>(`[data-act="guideZoom"][data-arg="${cssEscape(arg)}"]`) : null;

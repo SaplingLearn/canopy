@@ -181,16 +181,43 @@ export function splitDiff(entries: DiffEntry[], liveLabel: string): string {
   </div>`;
 }
 
+/** `![alt](/img/<sha256>)` — an uploaded doc image in a markdown line. */
+const IMG_MD = /!\[([^\]]*)\]\(\s*<?\/img\/([0-9a-f]{64})>?\s*\)/g;
+
+/** A line's doc images as the pictures themselves, outlined by what the proposal does
+ *  to them (added / removed), each opening the lightbox. Empty when the line has none. */
+function lineImages(text: string, t: DiffEntry["t"]): string {
+  const imgs = [...text.matchAll(IMG_MD)];
+  if (!imgs.length) return "";
+  const edge = t === "add" ? "var(--green)" : t === "del" ? "var(--red)" : "var(--border)";
+  return imgs.map((m) => `<figure style="margin:4px 0 14px">
+      <button type="button" class="cnpy-md-img" data-act="docImgZoom" data-arg="${m[2]}" aria-label="Expand image${m[1] ? `: ${esc(m[1])}` : ""}" style="border-color:${edge}${t === "del" ? ";opacity:.55" : ""}"><img src="/img/${m[2]}" alt="${esc(m[1])}" loading="lazy" decoding="async" /></button>
+      ${m[1] ? `<figcaption style="font-size:12px;color:var(--fg-40);margin-top:6px${t === "del" ? ";text-decoration:line-through" : ""}">${esc(m[1])}</figcaption>` : ""}
+    </figure>`).join("");
+}
+
 export function renderedPreview(entries: DiffEntry[]): string {
   const blocks = entries.filter((e) => e.t !== "gap").map((e) => {
-    const text = e.s ?? "";
-    if (e.t === "ellipsis") return `<div style="border-top:1px dashed var(--border);margin:16px 0"></div>`;
-    if (e.t === "h") return `<div style="font-size:18px;font-weight:600;letter-spacing:-0.01em;color:var(--fg);margin:18px 0 10px">${esc(text.replace(/^#+\s*/, ""))}</div>`;
-    const base = "font-size:15px;line-height:1.72;margin:0 0 10px";
-    if (e.t === "del") return `<div style="${base};text-decoration:line-through;color:color-mix(in srgb,var(--red) 75%,transparent);background:color-mix(in srgb,var(--red) 6%,transparent);border-radius:4px;padding:2px 6px">${esc(text)}</div>`;
-    if (e.t === "add") return `<div style="${base};color:var(--fg);background:color-mix(in srgb,var(--green) 9%,transparent);border-radius:4px;padding:2px 6px">${esc(text)}</div>`;
-    return `<div style="${base};color:var(--fg-70)">${esc(text)}</div>`;
+    const raw = e.s ?? "";
+    const pics = e.t === "ellipsis" ? "" : lineImages(raw, e.t);
+    const text = pics ? raw.replace(IMG_MD, "").trim() : raw;
+    if (pics && !text) return pics;
+    const line = renderedLine(e, text);
+    return pics ? line + pics : line;
   }).join("");
+  return renderedFrame(blocks);
+}
+
+function renderedLine(e: DiffEntry, text: string): string {
+  if (e.t === "ellipsis") return `<div style="border-top:1px dashed var(--border);margin:16px 0"></div>`;
+  if (e.t === "h") return `<div style="font-size:18px;font-weight:600;letter-spacing:-0.01em;color:var(--fg);margin:18px 0 10px">${esc(text.replace(/^#+\s*/, ""))}</div>`;
+  const base = "font-size:15px;line-height:1.72;margin:0 0 10px";
+  if (e.t === "del") return `<div style="${base};text-decoration:line-through;color:color-mix(in srgb,var(--red) 75%,transparent);background:color-mix(in srgb,var(--red) 6%,transparent);border-radius:4px;padding:2px 6px">${esc(text)}</div>`;
+  if (e.t === "add") return `<div style="${base};color:var(--fg);background:color-mix(in srgb,var(--green) 9%,transparent);border-radius:4px;padding:2px 6px">${esc(text)}</div>`;
+  return `<div style="${base};color:var(--fg-70)">${esc(text)}</div>`;
+}
+
+function renderedFrame(blocks: string): string {
   return `<div style="border:1px solid var(--border);border-radius:10px;padding:22px 28px 26px">
     ${blocks}
     <div style="display:flex;gap:16px;margin-top:20px;padding-top:14px;border-top:1px solid var(--border)">

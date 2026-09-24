@@ -26,6 +26,7 @@ import {
   ArtifactError, addLink, addTextVersion, createPage, getPage, listPages, mintUploadToken, versionFilename, writablePageKind,
 } from "./artifacts";
 import { downloadFilename, mintDownloadToken } from "../artifacts/download";
+import { mintDocImageUpload } from "./doc-images";
 import {
   claudeOnlyHits, isBinaryKind, isTextKind, parseSlugVersion,
   type ArtifactArea, type ArtifactDetailDTO, type ArtifactKind, type ArtifactLinkInput, type ArtifactLinkType,
@@ -61,15 +62,22 @@ export function artifactWarnings(content: string | null | undefined): string[] {
 
 const BINARY_FIELDS = ["size_bytes", "sha256", "content_type", "filename"] as const;
 
-// ── artifact_create ──────────────────────────────────────────────────────────
+// ── upload_asset (was artifact_create) ───────────────────────────────────
+// ONE tool for everything an agent puts into Canopy's asset stores, split by
+// `destination`: "artifact" (the default) creates an artifact page exactly as
+// artifact_create did; "doc" uploads an image a doc embeds as `![alt](/img/<sha256>)`
+// (src/tools/doc-images.ts) — content-addressed, so a stored image needs no PUT.
+
+export type AssetDestination = "artifact" | "doc";
 
 export interface AgentCreateInput {
-  title: string;
-  kind: ArtifactKind;
+  destination?: AssetDestination;
+  title?: string;
+  kind?: ArtifactKind;
   content?: string;
-  area: ArtifactArea;
-  repo: string;
-  visibility: ArtifactVisibility;
+  area?: ArtifactArea;
+  repo?: string;
+  visibility?: ArtifactVisibility;
   links?: ArtifactLinkInput[];
   summary?: string;
   size_bytes?: number;
@@ -80,9 +88,34 @@ export interface AgentCreateInput {
 
 export type AgentCreateResult =
   | { id: number; slug: string; url: string; version: number; warnings: string[] }
-  | { id: number; slug: string; url: string; upload_url: string; expires_at: string; warnings: string[] };
+  | { id: number; slug: string; url: string; upload_url: string; expires_at: string; warnings: string[] }
+  | { destination: "doc"; ref: string; markdown: string; sha256: string; uploaded: true; warnings: string[] }
+  | { destination: "doc"; ref: string; markdown: string; sha256: string; uploaded: false; upload_url: string; expires_at: string; warnings: string[] };
 
-export async function agentArtifactCreate(ctx: ArtifactAgentCtx, input: AgentCreateInput): Promise<AgentCreateResult> {
+/** Fields that only mean something for an artifact page — refused for a doc image. */
+const PAGE_FIELDS = ["title", "area", "repo", "visibility", "links", "summary", "filename", "content"] as const;
+
+export async function agentUploadAsset(ctx: ArtifactAgentCtx, input: AgentCreateInput): Promise<AgentCreateResult> {
+  const destination = input.destination ?? "artifact";
+  if (destination === "doc") {
+    if (input.kind !== undefined && input.kind !== "image") throw bad(`destination "doc" is for images — kind must be "image" (or omitted)`);
+    const extra = PAGE_FIELDS.filter((f) => input[f] !== undefined);
+    if (extra.length) throw bad(`${extra.join(", ")} are for artifact pages — a doc image takes only size_bytes, sha256 and content_type`);
+    const m = await mintDocImageUpload(ctx.db, input, ctx.handle);
+    const markdown = `![<describe the image>](${m.ref})`;
+    return m.uploaded
+      ? { destination: "doc", ref: m.ref, markdown, sha256: m.sha256, uploaded: true, warnings: [] }
+      : { destination: "doc", ref: m.ref, markdown, sha256: m.sha256, uploaded: false, upload_url: absolute(ctx, m.upload_url), expires_at: m.expires_at, warnings: [] };
+  }
+  if (destination !== "artifact") throw bad(`destination must be "artifact" or "doc"`);
+  const missing = (["title", "kind", "area", "repo", "visibility"] as const).filter((f) => input[f] === undefined);
+  if (missing.length) throw bad(`an artifact needs ${missing.join(", ")}`);
+  return createArtifact(ctx, input as AgentCreateInput & { title: string; kind: ArtifactKind; area: ArtifactArea; repo: string; visibility: ArtifactVisibility });
+}
+
+async function createArtifact(
+  ctx: ArtifactAgentCtx, input: AgentCreateInput & { title: string; kind: ArtifactKind; area: ArtifactArea; repo: string; visibility: ArtifactVisibility }
+): Promise<AgentCreateResult> {
   const page = { title: input.title, area: input.area, repo: input.repo, visibility: input.visibility, links: input.links };
   if (isTextKind(input.kind)) {
     if (typeof input.content !== "string") throw bad(`a ${input.kind} artifact needs \`content\``);

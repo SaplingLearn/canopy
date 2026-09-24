@@ -280,7 +280,7 @@ describe("11 · MCP permissions for a second principal", () => {
 
   it("a teammate's create is theirs: an org page they authored may be made private only by them", async () => {
     await seedPerson(OTHER);
-    const c = await mcpCall(OTHER, "artifact_create", { title: "Theirs", kind: "mermaid", content: "graph TD; A-->B", area: "infra", repo: "", visibility: "org" });
+    const c = await mcpCall(OTHER, "upload_asset", { title: "Theirs", kind: "mermaid", content: "graph TD; A-->B", area: "infra", repo: "", visibility: "org" });
     expect(c.isError).toBe(false);
     const owner = await cookieFor(OWNER);
     expect((await wf("/api/artifacts/theirs", jsonInit("PATCH", { visibility: "private" }, owner))).status).toBe(403);

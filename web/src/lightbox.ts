@@ -53,6 +53,18 @@ export function openLightbox(o: LightboxOptions): void {
   const panel = root.querySelector<HTMLElement>(".cnpy-lightbox-panel")!;
   const closeBtn = root.querySelector<HTMLButtonElement>(".cnpy-lightbox-close")!;
 
+  // The frame takes the image's OWN proportions once it loads (a doc image can be any
+  // shape; the guide's captures are 16:10, the CSS default), and the panel is as wide as
+  // both budgets allow at that ratio — so the frame never letterboxes or overflows.
+  const img = root.querySelector<HTMLImageElement>(".cnpy-lightbox-frame img")!;
+  const fit = (): void => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    root.querySelector<HTMLElement>(".cnpy-lightbox-frame")!.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+    panel.style.width = `min(1400px, 100%, calc((100vh - 170px) * ${ratio.toFixed(4)}))`;
+  };
+  if (img.complete) fit(); else img.addEventListener("load", fit, { once: true });
+
   // Scroll lock: the app's scroller is #cnpy-main, not <body>.
   const scroller = document.getElementById("cnpy-main") ?? document.body;
   const prevX = scroller.style.getPropertyValue("overflow-x");

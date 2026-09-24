@@ -111,7 +111,8 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
   `events`], then `0028_handoffs_prompts` [`handoffs` / `prompts` / `prompt_versions` / `prompts_fts` — see
   "Handoffs & Prompt Library" below], then `0030_artifacts` [`artifact_pages` / `artifact_versions` /
-  `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below]).
+  `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below], then `0031_doc_images`
+  [`doc_images` / `doc_image_upload_tokens` — see "Doc images" below]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
   the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
@@ -154,6 +155,10 @@ for the Repo dashboard — see below) off the SAME verified delivery. The gate *
 - **Low-confidence nuance**: low-conf on a NEW slug → triage; low-conf on an EXISTING slug → stage and
   flag (`low_confidence = 1`) for human scrutiny. Only low-conf new slugs go directly to triage.
 - Out-of-vocab tag/section → routed to `needs_triage` (nothing is guessed).
+- **Doc images**: a doc body may embed only UPLOADED images (`![alt](/img/<sha256>)`). A `/img/` ref with
+  no `doc_images` row, or any other image source (external URL, `data:` URI), makes the proposal
+  `refused` — checked first, nothing staged or triaged, NOT ledgered (so a resend after the upload
+  stages); a batch lists them under `refused`. Code blocks are not scanned. See "Doc images" below.
 - **Events** carry no vocab/confidence — an event is external fact captured verbatim, deduped by a UNIQUE
   `semantic_key` (`gh:pr:42:merged`, `gh:issue:…`) written `INSERT OR IGNORE` (a redelivery/backfill
   overlap drops as `unchanged`). Its `subject_login` is a SECOND identity (who the event is about),
@@ -993,7 +998,7 @@ agents is `docs/artifact-contract.md` (referenced by `AGENTS.md` and the `canopy
   `?download=1`). The SPA frames html as `<iframe src="/raw/…" sandbox="allow-scripts">` — never `srcdoc`, never
   `allow-same-origin` — and inlines svg ONLY through `sanitizeSvg` (DOMPurify, `web/src/markdown.ts`).
 - **MCP** (every principal, `src/tools/artifacts-agent.ts`): `artifact_list`, `artifact_get` (text content inline;
-  for every kind a `download_url` + `sha256` + `size_bytes` to verify), `artifact_create` / `artifact_update`
+  for every kind a `download_url` + `sha256` + `size_bytes` to verify), `upload_asset` / `artifact_update`
   (text inline; binary returns an absolute `upload_url` the agent PUTs to). All carry `warnings` (never a
   rejection) for `window.claude` / `window.storage` / `api.anthropic.com`. `query` has an `artifact` type
   (draft → `draft`, published/ratified → `live`; private only to the author — `query()` takes a viewer);
@@ -1005,6 +1010,30 @@ agents is `docs/artifact-contract.md` (referenced by `AGENTS.md` and the `canopy
   `--var PUBLIC_ORIGIN:<its URL>`, or the script refuses the production-origin upload/download URLs).
 - **Deferred on purpose**: external share links, per-person sharing, a raw-content subdomain, PDF text extraction
   for search, a UI for uploading a new version of an existing artifact (the API supports it).
+
+## Doc images — uploaded, content-addressed, gate-checked (spec: `docs/superpowers/specs/2026-09-24-doc-images-design.md`)
+
+A doc embeds an image as `![alt](/img/<sha256>)`. `0031_doc_images`: one `doc_images` row per sha256 (png /
+jpeg / gif / webp, ≤ 10 MB), bytes in R2 (`ARTIFACTS_BUCKET`) at `doc-images/<sha256>` — immutable, never
+deleted, so a promoted version renders the same forever. The reference format and the body scan live ONCE
+in `shared/doc-images.ts` (`scanDocImages`, zod-free); the repository is `src/tools/doc-images.ts`.
+
+- **Upload is the artifact upload's twin, through ONE tool**: MCP `upload_asset` (was `artifact_create`)
+  takes `destination: "artifact"` (default, unchanged) or `"doc"` → `{ ref, markdown, sha256, uploaded }`
+  plus `upload_url` / `expires_at` when the bytes are not stored yet (`uploaded: true` = no PUT, no token).
+  The PUT is the SAME route, `PUT /api/artifacts/upload/<token>`: `consumeDocImageToken` claims a
+  `doc_image_upload_tokens` token (single use, 5 minutes, hash-only, bound to principal + sha + size + type)
+  and returns `null` for any other token, which then goes to artifacts. R2's own sha256 check; a mismatch
+  releases the claim for a retry.
+- **The gate** (`docImageProblems`, first in `ingestDocProposal`) — see Core invariant. `/api/docs/propose`
+  answers a refusal with 400; triage assign throws it.
+- **Serving**: `GET /img/<sha>` on the session-gated app — `nosniff`, `default-src 'none'; sandbox`,
+  `Cache-Control: private, max-age=31536000, immutable`; 404 unknown. Agents cannot read it with a bearer
+  (deferred: a signed download like `artifact_get`'s).
+- **Web**: `markdown.ts` `enhance()` wraps each `/img/` image in a `.cnpy-md-img` zoom button (`docImgZoom`
+  → `web/src/lightbox.ts`, the lightbox the guide uses); Review's Rendered view (`renderedPreview`) shows a
+  line's images outlined green (added) / red and dimmed (removed); unified and split diffs show the text.
+- There is no web upload yet (agents only, by decision) and no garbage collection.
 
 ## Sidebar & motion — the `<aside>` outlives rerenders
 

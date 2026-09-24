@@ -210,8 +210,9 @@ input, select { font-family: inherit; }
 @keyframes cnpy-lb-panel-out { from { opacity:1; transform:none; } to { opacity:0; transform:scale(.975) translateY(6px); } }
 .cnpy-lightbox { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:clamp(16px, 4vw, 48px); background:rgba(12,11,9,.66); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); font-family:'Geist',system-ui,-apple-system,sans-serif; -webkit-font-smoothing:antialiased; animation:cnpy-lb-in .2s ease both; }
 /* The panel is as wide as the SMALLER of the width and height budgets allow, so the
-   frame is always exactly 16:10 (every capture is 2560×1600): a max-height on the
-   frame alone clamps its height while its width stays 100%, stretching the box. */
+   frame keeps its ratio (a max-height on the frame alone clamps its height while its
+   width stays 100%, stretching the box). 16:10 is the default (the guide's captures);
+   lightbox.ts swaps in the image's own ratio once it loads, for doc images of any shape. */
 .cnpy-lightbox-panel { position:relative; width:min(1400px, 100%, calc((100vh - 170px) * 1.6)); max-height:100%; display:flex; flex-direction:column; gap:14px; outline:none; animation:cnpy-lb-panel-in .28s cubic-bezier(.22,1,.36,1) both; }
 .cnpy-lightbox-frame { position:relative; width:100%; aspect-ratio:16 / 10; border-radius:14px; overflow:hidden; background:var(--bg); border:1px solid var(--border-strong); box-shadow:0 30px 80px -30px rgba(0,0,0,.7); }
 .cnpy-lightbox-frame img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
@@ -427,6 +428,12 @@ input, select { font-family: inherit; }
 
 .cnpy-md hr { border:none; border-top:1px solid var(--border); margin:30px 0; }
 .cnpy-md img { max-width:100%; border-radius:10px; border:1px solid var(--border); }
+/* An uploaded doc image (/img/<sha256>): a zoom button around the picture that opens
+   the lightbox. The button carries the frame; the image inside fills it. */
+.cnpy-md-img { display:block; max-width:100%; margin:6px 0; padding:0; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--bg); cursor:zoom-in; transition:border-color .2s, box-shadow .2s; }
+.cnpy-md-img:hover { border-color:var(--border-strong); box-shadow:var(--shadow); }
+.cnpy-md-img:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.cnpy-md-img img, .cnpy-md .cnpy-md-img img { display:block; max-width:100%; height:auto; border:0; border-radius:0; }
 
 /* tables — editorial ledger: rule-only borders, mono uppercase header */
 .cnpy-md-tablewrap { overflow-x:auto; margin:0 0 18px; }
@@ -766,6 +773,7 @@ input, select { font-family: inherit; }
 [data-cnpy-theme] .repo-tip,
 [data-cnpy-theme] .site-btn { border-radius:calc(9px * var(--corner-scale)) !important; }
 [data-cnpy-theme] .cnpy-md img,
+[data-cnpy-theme] .cnpy-md-img,
 [data-cnpy-theme] .cnpy-sw { border-radius:calc(10px * var(--corner-scale)) !important; }
 [data-cnpy-theme] .cnpy-titem,
 [data-cnpy-theme] .cnpy-code,

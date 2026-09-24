@@ -531,7 +531,8 @@ function agents(): string {
           ${group("Read", ["query", "get_doc", "list_docs", "get_feed", "get_roadmap", "get_my_work", "get_events", "get_repo_dashboard"])}
           ${group("Contribute", ["append_feed", "propose_doc_update", "record_session"])}
           ${group("Tickets", ["list_tickets", "get_ticket", "create_ticket", "transition_ticket", "add_ticket_comment", "add_ticket_link", "set_ticket_sprint", "set_ticket_parent", "list_sprints", "get_sprint"])}
-          ${group("Handoffs, prompts, artifacts", ["send_handoff", "list_handoffs", "get_handoff", "claim_handoff", "expire_handoff", "search_prompts", "get_prompt", "save_prompt", "artifact_list", "artifact_get", "artifact_create", "artifact_update"])}
+          ${group("Handoffs and prompts", ["send_handoff", "list_handoffs", "get_handoff", "claim_handoff", "expire_handoff", "search_prompts", "get_prompt", "save_prompt"])}
+          ${group("Artifacts and doc images", ["upload_asset", "artifact_update", "artifact_get", "artifact_list"])}
           ${group("Admin", ["update_plan", "create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource"], true)}`;
   n = 0;
   const skills = chips(["canopy", "load-context", "record-session", "my-work", "tickets", "handoff", "prompts", "artifacts", "read-plan", "update-plan"]);

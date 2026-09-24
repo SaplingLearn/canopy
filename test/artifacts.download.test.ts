@@ -50,7 +50,7 @@ const fetchUrl = (url: string, init: RequestInit = {}) => worker.fetch(new Reque
 const hex = async (buf: ArrayBuffer) => sha256Hex(new Uint8Array(buf));
 
 async function textPage(handle: string, o: Record<string, unknown> = {}) {
-  const r = await call(handle, "artifact_create", {
+  const r = await call(handle, "upload_asset", {
     title: "Checkout page", kind: "html", area: "ui", repo: "", visibility: "org",
     content: "<!doctype html><html><body><h1>Checkout — ünïcode ✓</h1><script>1</script></body></html>", ...o,
   });
@@ -60,7 +60,7 @@ async function textPage(handle: string, o: Record<string, unknown> = {}) {
 
 async function binaryPage(handle: string, bytes: Uint8Array, o: Record<string, unknown> = {}) {
   const sha = await sha256Hex(bytes);
-  const r = await call(handle, "artifact_create", {
+  const r = await call(handle, "upload_asset", {
     title: "Logo", kind: "image", area: "ui", repo: "", visibility: "org",
     size_bytes: bytes.byteLength, sha256: sha, filename: "logo.png", ...o,
   });
@@ -263,7 +263,7 @@ describe("artifact_list", () => {
     await textPage(ME, { title: "My private page", content: "<p>b</p>", visibility: "private" });
     await textPage(YOU, { title: "Their private page", content: "<p>c</p>", visibility: "private" });
     // a pending binary page (no PUT yet)
-    await call(ME, "artifact_create", { title: "Pending", kind: "pdf", area: "infra", repo: "", visibility: "org", size_bytes: 3, sha256: "a".repeat(64) });
+    await call(ME, "upload_asset", { title: "Pending", kind: "pdf", area: "infra", repo: "", visibility: "org", size_bytes: 3, sha256: "a".repeat(64) });
 
     const mine = await call(ME, "artifact_list", {});
     expect(mine.isError).toBe(false);
@@ -284,7 +284,7 @@ describe("artifact_list", () => {
     await seedPerson(ME);
     const ticket = await create_ticket(env.DB, { title: "T", body: "", category: "other", priority: "normal", assignees: [] }, ME);
     await textPage(ME, { title: "Checkout flow", content: "<p>zebra</p>", links: [{ target_type: "ticket", target_ref: String(ticket) }] });
-    await call(ME, "artifact_create", { title: "Notes", kind: "markdown", area: "api", repo: "", visibility: "org", content: "# notes" });
+    await call(ME, "upload_asset", { title: "Notes", kind: "markdown", area: "api", repo: "", visibility: "org", content: "# notes" });
     await binaryPage(YOU, pngBytes("track-f-list"), { title: "Badge" });
     await call(ME, "artifact_update", { slug: "notes", content: "# notes v2", summary: "v2" }); // → published
 
@@ -321,6 +321,6 @@ describe("artifact_list", () => {
     await client.connect(ct);
     const names = (await client.listTools()).tools.map((t) => t.name);
     await client.close();
-    expect(names).toEqual(expect.arrayContaining(["artifact_list", "artifact_get", "artifact_create", "artifact_update"]));
+    expect(names).toEqual(expect.arrayContaining(["artifact_list", "artifact_get", "upload_asset", "artifact_update"]));
   });
 });

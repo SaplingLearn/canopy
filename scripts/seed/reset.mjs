@@ -16,6 +16,8 @@ export const RESET_STATEMENTS = [
   // reference artifact_pages(id). artifacts_fts needs no DELETE: the
   // artifacts_fts_ad trigger cascades the page DELETE into the index.
   "DELETE FROM artifact_upload_tokens",
+  "DELETE FROM doc_image_upload_tokens",
+  "DELETE FROM doc_images",
   "DELETE FROM artifact_links",
   "DELETE FROM artifact_versions",
   "DELETE FROM artifact_pages",

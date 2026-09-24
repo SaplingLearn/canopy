@@ -27,7 +27,7 @@ import { feedEntryFromMcpArgs } from "./mcp-args";
 import { IngestPayload, QueryType } from "@shared/contract";
 import { ArtifactError } from "./tools/artifacts";
 import {
-  agentArtifactCreate, agentArtifactUpdate, agentArtifactGet, agentArtifactList, artifactsForTicket, artifactOrigin,
+  agentUploadAsset, agentArtifactUpdate, agentArtifactGet, agentArtifactList, artifactsForTicket, artifactOrigin,
 } from "./tools/artifacts-agent";
 import {
   ARTIFACT_AREAS, ARTIFACT_KINDS, ARTIFACT_STATUSES, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
@@ -144,7 +144,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
 
   server.tool(
     "propose_doc_update",
-    "Propose a doc version through the reconciling gate. Out-of-vocab section or low confidence on a NEW slug routes to needs_triage; an unchanged body is dropped; otherwise staged non-destructively (current_version untouched) and classified new/edit/rewrite. Pass base_version (the current_version you read) so a stale edit is flagged, space ('technical' for engineering docs or 'product' for product docs; defaults 'technical') to place a new doc, and force to stage an identical body.",
+    "Propose a doc version through the reconciling gate. Images: embed only uploaded doc images, as `![what it shows](/img/<sha256>)` — upload each first with upload_asset (destination \"doc\"); a body with a not-yet-uploaded /img ref or any other image source (external URL, data: URI) is REFUSED ({ outcome: \"refused\", reason }), nothing staged. Out-of-vocab section or low confidence on a NEW slug routes to needs_triage; an unchanged body is dropped; otherwise staged non-destructively (current_version untouched) and classified new/edit/rewrite. Pass base_version (the current_version you read) so a stale edit is flagged, space ('technical' for engineering docs or 'product' for product docs; defaults 'technical') to place a new doc, and force to stage an identical body.",
     {
       slug: z.string(),
       section: z.string(),
@@ -337,7 +337,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
 
   server.tool(
     "record_session",
-    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage, and optional artifact_links). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. `artifact_links` ([{slug, target_type: ticket|sprint|pr|issue, target_ref}], for artifacts this session produced) are NOT staged: after the batch is reconciled each is linked directly, as you, and reported in `artifact_links` as linked / not_found / error (idempotent — a replay re-links nothing). Used by the record-session skill at session end; you only ever stage knowledge — humans confirm.",
+    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage, and optional artifact_links). A doc proposal may embed only uploaded doc images (`![alt](/img/<sha256>)`, uploaded with upload_asset destination \"doc\" BEFORE this call); one that breaks that rule is listed under `refused` with its reason and is not ledgered, so re-sending the same batch after uploading stages it. Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. `artifact_links` ([{slug, target_type: ticket|sprint|pr|issue, target_ref}], for artifacts this session produced) are NOT staged: after the batch is reconciled each is linked directly, as you, and reported in `artifact_links` as linked / not_found / error (idempotent — a replay re-links nothing). Used by the record-session skill at session end; you only ever stage knowledge — humans confirm.",
     IngestPayload.shape,
     // Same reconciling path as the cookie /ingest route: forward the full payload to
     // consume() under the bearer principal already in scope. Re-parse with the contract
@@ -374,16 +374,24 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
   };
 
   server.tool(
-    "artifact_create",
-    "Create an artifact page (v1, status draft) — a rendered HTML page, markdown doc, SVG, mermaid diagram, image, PDF or file the team keeps and versions. Text kinds (html | markdown | svg | mermaid; ≤ 500 KB): pass `content` → { id, slug, url, version }. Binary kinds (image | pdf | file; ≤ 10 MB): pass `size_bytes` and `sha256` (hex, e.g. `shasum -a 256 file.pdf`), NOT content → { id, slug, url, upload_url, expires_at }; then PUT the exact bytes to upload_url (single use, valid 5 minutes, e.g. `curl -X PUT --data-binary @file.pdf -H \"Content-Type: application/pdf\" \"<upload_url>\"`) — the page does not exist to anyone until that PUT lands. `area` is one of auth | architecture | infra | api | ui | data; `repo` is owner/repo or \"\"; `visibility` org (the whole org) or private (only you). Optional `links` ([{target_type: ticket|sprint|pr|issue, target_ref}]) and `summary`. Every result has `warnings` — non-empty when content calls something only claude.ai has (window.claude, window.storage, api.anthropic.com); the page is still created. You author it; a PERSON ratifies it on the web — there is no ratify tool. Contract: docs/artifact-contract.md.",
+    "upload_asset",
+    "Put something into Canopy: an ARTIFACT page, or an IMAGE for a doc. `destination` picks which (default \"artifact\").\n\n" +
+      "destination \"doc\" — an image a doc embeds. Pass `sha256` (hex, `shasum -a 256 img.png`), `size_bytes` and `content_type` (image/png | image/jpeg | image/gif | image/webp; ≤ 10 MB); `kind` may be omitted (it is always image) and page fields (title, area, …) are refused. → { destination, ref: \"/img/<sha256>\", markdown, sha256, uploaded }. uploaded: true = that exact image is already stored, nothing to PUT. Otherwise also { upload_url, expires_at }: PUT the exact bytes (single use, 5 minutes, e.g. `curl -X PUT --data-binary @img.png -H \"Content-Type: image/png\" \"<upload_url>\"`). THEN reference it in the doc body as `![what it shows](/img/<sha256>)` and propose the doc (propose_doc_update / record_session). The doc gate REFUSES a body whose image is not uploaded yet, and any other image source (an external URL, a data: URI) — upload first, then propose. Images are immutable: a new picture is a new sha256.\n\n" +
+      "destination \"artifact\" (default) — create an artifact page (v1, status draft): a rendered HTML page, markdown doc, SVG, mermaid diagram, image, PDF or file the team keeps and versions. Needs `title`, `kind`, `area`, `repo`, `visibility`. Text kinds (html | markdown | svg | mermaid; ≤ 500 KB): pass `content` → { id, slug, url, version }. Binary kinds (image | pdf | file; ≤ 10 MB): pass `size_bytes` and `sha256`, NOT content → { id, slug, url, upload_url, expires_at }; then PUT the exact bytes to upload_url (single use, 5 minutes) — the page does not exist to anyone until that PUT lands. `area` is one of auth | architecture | infra | api | ui | data; `repo` is owner/repo or \"\"; `visibility` org (the whole org) or private (only you). Optional `links` ([{target_type: ticket|sprint|pr|issue, target_ref}]) and `summary`. You author it; a PERSON ratifies it on the web — there is no ratify tool. Contract: docs/artifact-contract.md.\n\n" +
+      "Every result has `warnings` — non-empty when artifact content calls something only claude.ai has (window.claude, window.storage, api.anthropic.com); the page is still created.",
     {
-      ...artifactPageShape,
+      destination: z.enum(["artifact", "doc"]).optional(),
+      title: artifactPageShape.title.optional(),
+      kind: artifactPageShape.kind.optional(),
+      area: artifactPageShape.area.optional(),
+      repo: artifactPageShape.repo.optional(),
+      visibility: artifactPageShape.visibility.optional(),
       content: z.string().optional(),
       links: z.array(ArtifactLinkInputSchema).max(50).optional(),
       summary: z.string().max(ARTIFACT_SUMMARY_MAX).optional(),
       ...binaryShape,
     },
-    async (input) => runTool(() => agentArtifactCreate(artifactCtx, input)),
+    async (input) => runTool(() => agentUploadAsset(artifactCtx, input)),
   );
 
   server.tool(

@@ -511,3 +511,27 @@ describe("personPicker — two-step confirm guard", () => {
     expect(html).toContain('data-act="identityCancel"');
   });
 });
+
+// ── doc images in the Rendered view (docs/superpowers/specs/2026-09-24-doc-images-design.md) ──
+
+describe("Review › Rendered shows the proposed images", () => {
+  const A = "f".repeat(64);
+  it("an added image line renders the picture (zoomable), outlined as added, with its alt as caption", () => {
+    const html = renderedPreview([{ t: "add", s: `![The deploy flow](/img/${A})` }]);
+    expect(html).toContain(`<img src="/img/${A}" alt="The deploy flow"`);
+    expect(html).toContain(`data-act="docImgZoom" data-arg="${A}"`);
+    expect(html).toContain("border-color:var(--green)");
+    expect(html).toContain("<figcaption");
+    expect(html).not.toContain("![The deploy flow]");
+  });
+  it("a removed image is dimmed with a red outline; text around an image still reads as text", () => {
+    const html = renderedPreview([{ t: "del", s: `See ![old](/img/${A}) above` }]);
+    expect(html).toContain("border-color:var(--red);opacity:.55");
+    expect(html).toContain("See  above");
+  });
+  it("an alt text cannot inject markup", () => {
+    const html = renderedPreview([{ t: "add", s: `![<b onmouseover=x>](/img/${A})` }]);
+    expect(html).not.toContain("<b onmouseover");
+    expect(html).toContain("&lt;b onmouseover=x&gt;");
+  });
+});

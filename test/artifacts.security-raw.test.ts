@@ -264,7 +264,7 @@ describe("9 · upload tokens", () => {
     expect(t.text.split(token).length - 1).toBe(1); // once, inside upload_url
     expect(t.dto.upload_url).toBe(`https://canopy.test/api/artifacts/upload/${token}`);
 
-    const m = await mcpCall(ME, "artifact_create", { title: "Mcp tok", kind: "pdf", area: "api", repo: "", visibility: "org", size_bytes: 3, sha256: "9".repeat(64) });
+    const m = await mcpCall(ME, "upload_asset", { title: "Mcp tok", kind: "pdf", area: "api", repo: "", visibility: "org", size_bytes: 3, sha256: "9".repeat(64) });
     expect(Object.keys(m.body).sort()).toEqual(["expires_at", "id", "slug", "upload_url", "url", "warnings"]);
     const mTok = m.body.upload_url.split("/").pop();
     expect(m.text.split(mTok).length - 1).toBe(1);

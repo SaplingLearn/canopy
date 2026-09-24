@@ -55,16 +55,16 @@ async function seedTicket(title = "Fix login", requester = ME): Promise<number> 
 // ── registration ─────────────────────────────────────────────────────────────
 
 describe("registration", () => {
-  it("registers artifact_create / artifact_update / artifact_get for every principal, and NO ratify tool for anyone", async () => {
+  it("registers upload_asset / artifact_update / artifact_get for every principal, and NO ratify tool for anyone", async () => {
     for (const who of [ME, ADMIN]) {
       const names = await withClient(who, async (c) => (await c.listTools()).tools.map((t) => t.name));
-      expect(names).toEqual(expect.arrayContaining(["artifact_create", "artifact_update", "artifact_get"]));
+      expect(names).toEqual(expect.arrayContaining(["upload_asset", "artifact_update", "artifact_get"]));
       expect(names.filter((n) => /ratif/i.test(n))).toEqual([]);
     }
   });
 
   it("calling a ratify tool by name is an error and ratifies nothing", async () => {
-    const c = await call(ME, "artifact_create", textArgs());
+    const c = await call(ME, "upload_asset", textArgs());
     await call(ME, "artifact_update", { slug: c.body.slug, content: "# v2", summary: "v2" }); // published
     for (const name of ["artifact_ratify", "ratify_artifact", "artifact-ratify"]) {
       const r = await withClient(ME, async (cl) => {
@@ -85,8 +85,8 @@ describe("registration", () => {
 // ── text create / update / get ───────────────────────────────────────────────
 
 describe("text artifacts", () => {
-  it("artifact_create → { id, slug, url, version, warnings } with an absolute SPA url, authored by the bearer", async () => {
-    const r = await call(ME, "artifact_create", textArgs({ summary: "first cut" }));
+  it("upload_asset → { id, slug, url, version, warnings } with an absolute SPA url, authored by the bearer", async () => {
+    const r = await call(ME, "upload_asset", textArgs({ summary: "first cut" }));
     expect(r.isError).toBe(false);
     expect(r.body).toEqual({ id: expect.any(Number), slug: "auth-flow", url: `${ORIGIN}/#artifacts/auth-flow`, version: 1, warnings: [] });
     const g = await call(YOU, "artifact_get", { slug: "auth-flow" });
@@ -100,22 +100,22 @@ describe("text artifacts", () => {
 
   it("falls back to the request origin when PUBLIC_ORIGIN is unset", async () => {
     const e = { ...(env as unknown as Env), PUBLIC_ORIGIN: undefined };
-    const r = await withClient(ME, async (c) => JSON.parse(((await c.callTool({ name: "artifact_create", arguments: textArgs() })) as ToolRes).content[0].text), e, "https://req.example");
+    const r = await withClient(ME, async (c) => JSON.parse(((await c.callTool({ name: "upload_asset", arguments: textArgs() })) as ToolRes).content[0].text), e, "https://req.example");
     expect(r.url).toBe("https://req.example/#artifacts/auth-flow");
   });
 
   it("a text create rejects binary fields and a missing content", async () => {
-    const a = await call(ME, "artifact_create", textArgs({ sha256: "a".repeat(64), size_bytes: 3 }));
+    const a = await call(ME, "upload_asset", textArgs({ sha256: "a".repeat(64), size_bytes: 3 }));
     expect(a.isError).toBe(true);
     expect(a.body.code).toBe("bad_request");
     const { content: _c, ...noContent } = textArgs();
-    const b = await call(ME, "artifact_create", noContent);
+    const b = await call(ME, "upload_asset", noContent);
     expect(b.body.code).toBe("bad_request");
     expect(await all(env.DB, `SELECT id FROM artifact_pages`)).toEqual([]);
   });
 
   it("artifact_update: full content, then an exact-once old_str/new_str edit; a teammate may version an org page", async () => {
-    await call(ME, "artifact_create", textArgs({ content: "alpha beta gamma" }));
+    await call(ME, "upload_asset", textArgs({ content: "alpha beta gamma" }));
     const v2 = await call(YOU, "artifact_update", { slug: "auth-flow", content: "alpha beta gamma delta", summary: "add delta" });
     expect(v2.body).toEqual({ id: expect.any(Number), slug: "auth-flow", url: `${ORIGIN}/#artifacts/auth-flow`, version: 2, unchanged: false, warnings: [] });
     const v3 = await call(ME, "artifact_update", { slug: "auth-flow", old_str: "beta", new_str: "BETA", summary: "caps" });
@@ -127,14 +127,14 @@ describe("text artifacts", () => {
   });
 
   it("identical content is a no-op: unchanged, same version", async () => {
-    await call(ME, "artifact_create", textArgs({ content: "same" }));
+    await call(ME, "upload_asset", textArgs({ content: "same" }));
     const r = await call(ME, "artifact_update", { slug: "auth-flow", content: "same", summary: "noop" });
     expect(r.body.unchanged).toBe(true);
     expect(r.body.version).toBe(1);
   });
 
   it("old_str rules: absent, repeated, empty, content + old_str together, old_str without new_str — all bad_request, nothing written", async () => {
-    await call(ME, "artifact_create", textArgs({ content: "one two two" }));
+    await call(ME, "upload_asset", textArgs({ content: "one two two" }));
     const cases: Record<string, unknown>[] = [
       { old_str: "three", new_str: "x" },
       { old_str: "two", new_str: "x" },
@@ -152,13 +152,13 @@ describe("text artifacts", () => {
   });
 
   it("text update refuses binary fields", async () => {
-    await call(ME, "artifact_create", textArgs());
+    await call(ME, "upload_asset", textArgs());
     const r = await call(ME, "artifact_update", { slug: "auth-flow", summary: "s", size_bytes: 3, sha256: "a".repeat(64) });
     expect(r.body.code).toBe("bad_request");
   });
 
   it("artifact_get addresses versions as slug@v1, slug/v1 or version: 1; a disagreeing pair is bad_request; out of range is not_found", async () => {
-    await call(ME, "artifact_create", textArgs({ content: "v1 body" }));
+    await call(ME, "upload_asset", textArgs({ content: "v1 body" }));
     await call(ME, "artifact_update", { slug: "auth-flow", content: "v2 body", summary: "v2" });
     for (const args of [{ slug: "auth-flow@v1" }, { slug: "auth-flow/v1" }, { slug: "auth-flow", version: 1 }, { slug: "auth-flow@v1", version: 1 }]) {
       const g = await call(ME, "artifact_get", args);
@@ -172,7 +172,7 @@ describe("text artifacts", () => {
   });
 
   it("a text cap breach is too_large", async () => {
-    const r = await call(ME, "artifact_create", textArgs({ content: "x".repeat(500 * 1024 + 1) }));
+    const r = await call(ME, "upload_asset", textArgs({ content: "x".repeat(500 * 1024 + 1) }));
     expect(r.body.code).toBe("too_large");
   });
 });
@@ -182,7 +182,7 @@ describe("text artifacts", () => {
 describe("CLAUDE_ONLY_MARKERS warnings — warn, never reject", () => {
   it("create, update and get all carry a warning per marker, and the write still lands", async () => {
     const html = `<html><body><script>window.claude.complete("x"); fetch("https://api.anthropic.com/v1")</script></body></html>`;
-    const c = await call(ME, "artifact_create", textArgs({ kind: "html", content: html }));
+    const c = await call(ME, "upload_asset", textArgs({ kind: "html", content: html }));
     expect(c.isError).toBe(false);
     expect(c.body.version).toBe(1);
     expect(c.body.warnings).toHaveLength(2);
@@ -207,9 +207,9 @@ describe("CLAUDE_ONLY_MARKERS warnings — warn, never reject", () => {
 describe("binary artifacts — the upload_url flow", () => {
   const PDF = new TextEncoder().encode("%PDF-1.4 track-c mcp test " + "z".repeat(40));
 
-  it("artifact_create (pdf) → an absolute single-use upload_url; the page is invisible until the PUT lands", async () => {
+  it("upload_asset (pdf) → an absolute single-use upload_url; the page is invisible until the PUT lands", async () => {
     const sha = await sha256Hex(PDF);
-    const r = await call(ME, "artifact_create", { title: "Threat model", kind: "pdf", area: "infra", repo: "", visibility: "org", size_bytes: PDF.byteLength, sha256: sha, filename: "tm.pdf", summary: "first" });
+    const r = await call(ME, "upload_asset", { title: "Threat model", kind: "pdf", area: "infra", repo: "", visibility: "org", size_bytes: PDF.byteLength, sha256: sha, filename: "tm.pdf", summary: "first" });
     expect(r.isError).toBe(false);
     expect(Object.keys(r.body).sort()).toEqual(["expires_at", "id", "slug", "upload_url", "url", "warnings"]);
     expect(r.body.slug).toBe("threat-model");
@@ -237,10 +237,10 @@ describe("binary artifacts — the upload_url flow", () => {
 
   it("a binary create needs size_bytes + sha256 and refuses inline content", async () => {
     const base = { title: "Img", kind: "image", area: "ui", repo: "", visibility: "org" };
-    expect((await call(ME, "artifact_create", base)).body.code).toBe("bad_request");
-    expect((await call(ME, "artifact_create", { ...base, content: "x", size_bytes: 1, sha256: "a".repeat(64) })).body.code).toBe("bad_request");
-    expect((await call(ME, "artifact_create", { ...base, size_bytes: 1, sha256: "nothex" })).body.code).toBe("bad_request");
-    expect((await call(ME, "artifact_create", { ...base, size_bytes: 1, sha256: "a".repeat(64), content_type: "image/tiff" })).body.code).toBe("bad_request");
+    expect((await call(ME, "upload_asset", base)).body.code).toBe("bad_request");
+    expect((await call(ME, "upload_asset", { ...base, content: "x", size_bytes: 1, sha256: "a".repeat(64) })).body.code).toBe("bad_request");
+    expect((await call(ME, "upload_asset", { ...base, size_bytes: 1, sha256: "nothex" })).body.code).toBe("bad_request");
+    expect((await call(ME, "upload_asset", { ...base, size_bytes: 1, sha256: "a".repeat(64), content_type: "image/tiff" })).body.code).toBe("bad_request");
     expect(await all(env.DB, `SELECT id FROM artifact_pages`)).toEqual([]);
   });
 
@@ -267,7 +267,7 @@ describe("binary artifacts — the upload_url flow", () => {
 
 describe("private and missing are the same not_found", () => {
   it("get / update on another person's private page read exactly like a missing slug; the author sees it", async () => {
-    await call(ME, "artifact_create", textArgs({ title: "Secret plan", visibility: "private" }));
+    await call(ME, "upload_asset", textArgs({ title: "Secret plan", visibility: "private" }));
     const NF = JSON.stringify({ error: "not_found", code: "not_found" });
     for (const [name, args] of [
       ["artifact_get", { slug: "secret-plan" }],
@@ -290,8 +290,8 @@ describe("private and missing are the same not_found", () => {
 
 describe("query — the artifact type", () => {
   it("finds artifacts by default (id = slug), flags draft vs live, and states Status · v<n> first", async () => {
-    await call(ME, "artifact_create", textArgs({ title: "Zebra rollout", content: "zebra stripes everywhere" }));
-    await call(ME, "artifact_create", textArgs({ title: "Zebra retro", content: "zebra v1" }));
+    await call(ME, "upload_asset", textArgs({ title: "Zebra rollout", content: "zebra stripes everywhere" }));
+    await call(ME, "upload_asset", textArgs({ title: "Zebra retro", content: "zebra v1" }));
     await call(ME, "artifact_update", { slug: "zebra-retro", content: "zebra v2", summary: "v2" });
     const r = await call(ME, "query", { q: "zebra" });
     const hits = [...r.body.primary, ...r.body.pointers].filter((h: { type: string }) => h.type === "artifact");
@@ -305,7 +305,7 @@ describe("query — the artifact type", () => {
   });
 
   it("ratified reads live with Status: ratified", async () => {
-    await call(ME, "artifact_create", textArgs({ title: "Quokka spec", content: "quokka" }));
+    await call(ME, "upload_asset", textArgs({ title: "Quokka spec", content: "quokka" }));
     await call(ME, "artifact_update", { slug: "quokka-spec", content: "quokka 2", summary: "v2" });
     await run(env.DB, `UPDATE artifact_pages SET status='ratified', ratified_version=2, ratified_by=?, ratified_at=? WHERE slug='quokka-spec'`, ME, nowIso());
     const r = await call(YOU, "query", { q: "quokka", types: ["artifact"] });
@@ -315,7 +315,7 @@ describe("query — the artifact type", () => {
   });
 
   it("a private artifact reaches only its author — in search and in browse", async () => {
-    await call(ME, "artifact_create", textArgs({ title: "Walrus notes", content: "walrus", visibility: "private" }));
+    await call(ME, "upload_asset", textArgs({ title: "Walrus notes", content: "walrus", visibility: "private" }));
     const mine = await call(ME, "query", { q: "walrus", types: ["artifact"] });
     expect(mine.body.primary.map((h: { id: string }) => h.id)).toEqual(["walrus-notes"]);
     const theirs = await call(YOU, "query", { q: "walrus", types: ["artifact"] });
@@ -328,9 +328,9 @@ describe("query — the artifact type", () => {
   });
 
   it("GET /search threads the session principal, and drops drafts (include_staged false)", async () => {
-    await call(ME, "artifact_create", textArgs({ title: "Heron plan", content: "heron", visibility: "private" }));
+    await call(ME, "upload_asset", textArgs({ title: "Heron plan", content: "heron", visibility: "private" }));
     await call(ME, "artifact_update", { slug: "heron-plan", content: "heron 2", summary: "v2" }); // published, still private
-    await call(ME, "artifact_create", textArgs({ title: "Heron draft", content: "heron draft" })); // org, draft
+    await call(ME, "upload_asset", textArgs({ title: "Heron draft", content: "heron draft" })); // org, draft
     const search = async (who: string) => {
       const res = await app.request("/search?q=heron&types=artifact", { headers: { cookie: await cookieFor(who) } }, env);
       expect(res.status).toBe(200);
@@ -343,7 +343,7 @@ describe("query — the artifact type", () => {
   });
 
   it("section/space filters are doc-only, so artifacts drop out", async () => {
-    await call(ME, "artifact_create", textArgs({ title: "Ibis", content: "ibis" }));
+    await call(ME, "upload_asset", textArgs({ title: "Ibis", content: "ibis" }));
     const r = await call(ME, "query", { q: "ibis", section: "reference" });
     expect([...r.body.primary, ...r.body.pointers].filter((h: { type: string }) => h.type === "artifact")).toEqual([]);
   });
@@ -354,9 +354,9 @@ describe("query — the artifact type", () => {
 describe("get_ticket — linked artifacts the principal can see", () => {
   it("lists linked pages as {slug, title, kind, status, version}; a private one only for its author", async () => {
     const tid = await seedTicket();
-    await call(ME, "artifact_create", textArgs({ title: "Login diagram", kind: "mermaid", content: "graph TD; A-->B", links: [{ target_type: "ticket", target_ref: String(tid) }] }));
-    await call(ME, "artifact_create", textArgs({ title: "Login scratch", visibility: "private", links: [{ target_type: "ticket", target_ref: `#${tid}` }] }));
-    await call(ME, "artifact_create", textArgs({ title: "Unrelated" }));
+    await call(ME, "upload_asset", textArgs({ title: "Login diagram", kind: "mermaid", content: "graph TD; A-->B", links: [{ target_type: "ticket", target_ref: String(tid) }] }));
+    await call(ME, "upload_asset", textArgs({ title: "Login scratch", visibility: "private", links: [{ target_type: "ticket", target_ref: `#${tid}` }] }));
+    await call(ME, "upload_asset", textArgs({ title: "Unrelated" }));
     const mine = await call(ME, "get_ticket", { id: tid });
     expect(mine.body.artifacts.map((a: { slug: string }) => a.slug).sort()).toEqual(["login-diagram", "login-scratch"]);
     const theirs = await call(YOU, "get_ticket", { id: tid });
@@ -375,8 +375,8 @@ describe("artifact_links on the session batch", () => {
 
   it("record_session links AFTER the batch, as the principal, reporting linked / not_found / error per link", async () => {
     const tid = await seedTicket();
-    await call(ME, "artifact_create", textArgs({ title: "Session output", repo: "SaplingLearn/sapling" }));
-    await call(YOU, "artifact_create", textArgs({ title: "Their secret", visibility: "private" }));
+    await call(ME, "upload_asset", textArgs({ title: "Session output", repo: "SaplingLearn/sapling" }));
+    await call(YOU, "upload_asset", textArgs({ title: "Their secret", visibility: "private" }));
     const r = await call(ME, "record_session", {
       ...payload(crypto.randomUUID(), [
         { slug: "session-output", target_type: "ticket", target_ref: String(tid) },
@@ -403,7 +403,7 @@ describe("artifact_links on the session batch", () => {
 
   it("a replay of the same session re-links nothing new (idempotent) and the key is absent when no links were sent", async () => {
     const tid = await seedTicket();
-    await call(ME, "artifact_create", textArgs({ title: "Replay me" }));
+    await call(ME, "upload_asset", textArgs({ title: "Replay me" }));
     const p = payload(crypto.randomUUID(), [{ slug: "replay-me", target_type: "ticket", target_ref: String(tid) }]);
     await call(ME, "record_session", p);
     const again = await call(ME, "record_session", p);
@@ -415,8 +415,8 @@ describe("artifact_links on the session batch", () => {
 
   it("/ingest applies artifact_links identically, under the session principal", async () => {
     const tid = await seedTicket();
-    await call(ME, "artifact_create", textArgs({ title: "Ingest link" }));
-    await call(ME, "artifact_create", textArgs({ title: "Mine only", visibility: "private" }));
+    await call(ME, "upload_asset", textArgs({ title: "Ingest link" }));
+    await call(ME, "upload_asset", textArgs({ title: "Mine only", visibility: "private" }));
     const res = await app.request("/ingest", {
       method: "POST",
       headers: { "content-type": "application/json", cookie: await cookieFor(YOU) },
