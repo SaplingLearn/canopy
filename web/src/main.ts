@@ -402,7 +402,7 @@ function loadPrompts(): void {
 }
 function openPrompt(slug: string): void {
   state.promptSlug = slug;
-  state.promptDiffV = null; state.promptTagMenu = false; state.promptTagDraft = ""; state.promptCopied = false;
+  state.promptDiffV = null; state.promptTagMenu = false; state.promptTagDraft = ""; state.promptExpanded = false;
   const same = state.promptDetail.data?.prompt.slug === slug;
   state.promptDetail = { status: "loading", data: same ? state.promptDetail.data : null };
   rerender();
@@ -1939,13 +1939,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "promptCopy": {
       const body = state.promptDetail.data?.prompt.body;
       if (!body) return;
-      copyToClipboard(body).then((ok) => {
-        state.promptCopied = ok;
-        flash(ok ? "Prompt copied" : "Couldn't reach the clipboard");
-        setTimeout(() => { state.promptCopied = false; rerender(); }, 1600);
-      });
+      copyToClipboard(body).then((ok) => flash(ok ? "Prompt copied" : "Couldn't reach the clipboard"));
       return;
     }
+    case "promptExpand": state.promptExpanded = true; break;
+    case "promptExpandClose": state.promptExpanded = false; break;
     case "promptTagMenu": state.promptTagMenu = !state.promptTagMenu; state.promptTagDraft = ""; break;
     case "promptTagDraft": state.promptTagDraft = value ?? ""; break;
     case "promptTagAdd":
@@ -2530,6 +2528,7 @@ mount.addEventListener("keydown", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || state.view !== "app") return;
   if (state.handoffPromptOpen) { state.handoffPromptOpen = false; rerender(); }
+  else if (state.promptExpanded) { state.promptExpanded = false; rerender(); }
   else if (state.promptMenu) { state.promptMenu = null; rerender(); }
 });
 

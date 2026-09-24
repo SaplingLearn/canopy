@@ -64,11 +64,26 @@ describe("new doc — the FROM HANDOFF banner", () => {
 describe("prompts", () => {
   const detail: PromptDetail = { slug: "lint", title: "Lint", description: "", tags: ["ui"], author: "Darkest-Teddy", version: 3, status: "staged", updated_at: "2026-09-23T10:00:00Z", body: "Lint {{path}}." };
   const v = (version: number, status: PromptVersion["status"]): PromptVersion => ({ version, status, author: "Darkest-Teddy", created_at: "2026-09-20T10:00:00Z", summary: "s", body: "b" });
-  const props = { status: "ok" as const, prompt: detail, persons, knownTags: [], diffVersion: null, tagMenu: false, tagDraft: "", copied: false };
+  const props = { status: "ok" as const, prompt: detail, persons, knownTags: [], diffVersion: null, tagMenu: false, tagDraft: "" };
 
   it("offers Publish vN only while a staged version exists", () => {
     expect(promptDetailView({ ...props, versions: [v(3, "staged"), v(2, "published")] })).toContain('data-act="promptPublish" data-arg="3"');
     expect(promptDetailView({ ...props, versions: [v(2, "published")] })).not.toContain("promptPublish");
+  });
+
+  it("shows its body in the SAME prompt box a handoff's prompt uses", () => {
+    const page = promptDetailView({ ...props, versions: [v(3, "staged")] });
+    const handoff = handoffDetailView({ status: "ok", handoff: h({ body: "Quiz agent still fails.", prompt: { title: "Fix it", body: "Step 1." } }), me: "AndresL230", persons, expireArm: false });
+    // One component: same class, same copy + expand icon buttons, same raw mono body.
+    for (const html of [page, handoff]) {
+      expect(html).toContain('class="cnpy-promptbox"');
+      expect(html).toContain('title="Copy prompt"');
+      expect(html).toContain('title="Expand"');
+    }
+    expect(page).toContain('data-act="promptCopy"');
+    expect(page).toContain('data-act="promptExpand"');
+    expect(page).toContain("Lint {{path}}."); // the raw body — the old accent-highlighted variables are gone
+    expect(page).not.toContain("background:var(--accent-soft);border-radius:4px;padding:0 3px");
   });
 
   it("filters the library by text and tag without a description field", () => {

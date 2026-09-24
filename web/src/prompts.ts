@@ -13,6 +13,7 @@ import { personChip, handleTag } from "./people";
 import { collapsedLineDiff } from "./diff";
 import { unifiedDiff } from "./review";
 import { primaryStyle } from "./handoffs";
+import { promptBox, promptModal } from "./prompt-box";
 
 const personOf = (persons: PersonSummary[], h: string): PersonSummary | null =>
   persons.find((p) => p.handle.toLowerCase() === h.toLowerCase()) ?? null;
@@ -27,11 +28,6 @@ export function promptBadge(status: PromptStatus): string {
 }
 
 export { detectVars };
-/** The body escaped, with each `{{variable}}` lit in the accent. */
-function highlightVars(body: string): string {
-  return esc(body).replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_w, n: string) =>
-    `<span style="color:var(--accent);font-weight:600;background:var(--accent-soft);border-radius:4px;padding:0 3px">{{${n}}}</span>`);
-}
 /** A slug from a title: lowercase, non-alphanumerics → "-", trimmed, ≤ 60. */
 export const slugify = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 
@@ -153,7 +149,6 @@ export interface PromptDetailProps {
   diffVersion: number | null;
   tagMenu: boolean;
   tagDraft: string;
-  copied: boolean;
 }
 
 const PROP_ROW = "display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px";
@@ -195,13 +190,7 @@ export function promptDetailView(p: PromptDetailProps): string {
       ${unifiedDiff(rows)}
     </div>`;
   } else {
-    main = `<div style="border:1px solid var(--border);border-radius:11px;overflow:hidden;background:color-mix(in srgb, var(--fg) 4%, var(--bg))">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 8px 6px 15px;border-bottom:1px solid var(--border)">
-        <div style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);white-space:nowrap">Prompt</div>
-        <button data-act="promptCopy" class="cnpy-iconbtn" title="Copy prompt" aria-label="Copy prompt" style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:6px;font-size:11.5px;font-weight:500;color:${p.copied ? "var(--accent)" : "var(--fg-55)"};white-space:nowrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>${p.copied ? "Copied" : "Copy"}</button>
-      </div>
-      <pre style="margin:0;padding:18px 20px;overflow:visible"><code style="font-family:var(--mono);font-size:13px;line-height:1.7;color:var(--fg);white-space:pre-wrap">${highlightVars(x.body)}</code></pre>
-    </div>`;
+    main = promptBox({ title: x.title, body: x.body, copyAct: "promptCopy", expandAct: "promptExpand" });
   }
 
   const opts = p.tagMenu ? tagOptions(x.tags, p.knownTags, p.tagDraft) : [];
@@ -241,7 +230,7 @@ export function promptDetailView(p: PromptDetailProps): string {
       </div>
     </div>
 
-    <div style="display:flex;flex-wrap:wrap;gap:32px 40px;margin-top:28px;align-items:flex-start">
+    <div style="display:flex;flex-wrap:wrap;gap:32px 40px;margin-top:28px;align-items:stretch">
       <div style="flex:1 1 480px;min-width:0;display:flex;flex-direction:column">
         ${x.description ? `<div style="${MONO_EYEBROW};margin-bottom:8px">Description</div><div style="font-size:14px;line-height:1.65;color:var(--fg-70);margin-bottom:30px;max-width:760px;text-wrap:pretty">${esc(x.description)}</div>` : ""}
         ${main}
@@ -368,4 +357,9 @@ export function promptEditorView(p: PromptEditorProps): string {
       <button data-act="edSave" class="${can ? "cnpy-accentbtn" : ""}" style="${primaryStyle(can)}">Save v${ed.nextVersion}</button>
     </div>
   </div>`);
+}
+
+/** The prompt page's expanded body — the same modal a handoff's prompt opens. */
+export function promptPageModal(x: PromptDetail): string {
+  return promptModal({ title: x.title, body: x.body, copyAct: "promptCopy", closeAct: "promptExpandClose" });
 }
