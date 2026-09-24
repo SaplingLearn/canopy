@@ -1,0 +1,45 @@
+{
+  "_comment": "Sample artifacts for local screenshots. Not part of `npm run seed` (artifact bodies are hashed and indexed by the repository, so they go in through POST /api/artifacts): scripts/capture-guide.mjs creates them when the local store has none. `versions` are later full-content versions; `status` and `ratify` are applied after them, in that order.",
+  "artifacts": [
+    {
+      "title": "Curriculum planner: lesson duration field",
+      "area": "ui",
+      "kind": "html",
+      "summary": "First pass at the duration input on the lesson card.",
+      "links": [{ "target_type": "ticket", "target_ref": "3" }, { "target_type": "sprint", "target_ref": "3" }],
+      "content": "<!doctype html><html><head><meta charset=\"utf-8\"><style>body{margin:0;font:14px/1.5 system-ui,sans-serif;background:#f7f5ef;color:#1f1d19;padding:32px}h1{font-size:20px;margin:0 0 4px}p.sub{margin:0 0 24px;color:#6d675c}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}.card{background:#fff;border:1px solid #e3dfd5;border-radius:8px;padding:16px}.card h2{font-size:15px;margin:0 0 6px}.meta{color:#6d675c;font-size:12.5px}.dur{display:flex;align-items:center;gap:8px;margin-top:12px}.dur input{width:64px;padding:5px 8px;border:1px solid #cfc9bb;border-radius:6px;font:inherit}.pill{font-size:11px;background:#e8efd9;color:#4c5f22;border-radius:4px;padding:2px 6px}</style></head><body><h1>Unit 4: Fractions</h1><p class=\"sub\">Week of Oct 6 · 5 lessons</p><div class=\"grid\"><div class=\"card\"><h2>Equivalent fractions</h2><div class=\"meta\">Lesson 1 · slides, worksheet</div><div class=\"dur\"><input value=\"45\"> min</div></div><div class=\"card\"><h2>Comparing fractions</h2><div class=\"meta\">Lesson 2 · slides</div><div class=\"dur\"><input value=\"40\"> min</div></div><div class=\"card\"><h2>Adding like denominators</h2><div class=\"meta\">Lesson 3 · worksheet, quiz</div><div class=\"dur\"><input value=\"50\"> min</div></div></div></body></html>",
+      "versions": [
+        {
+          "summary": "Show the unit total and flag lessons over the class period.",
+          "content": "<!doctype html><html><head><meta charset=\"utf-8\"><style>body{margin:0;font:14px/1.5 system-ui,sans-serif;background:#f7f5ef;color:#1f1d19;padding:32px}h1{font-size:20px;margin:0 0 4px}p.sub{margin:0 0 24px;color:#6d675c}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}.card{background:#fff;border:1px solid #e3dfd5;border-radius:8px;padding:16px}.card h2{font-size:15px;margin:0 0 6px}.meta{color:#6d675c;font-size:12.5px}.dur{display:flex;align-items:center;gap:8px;margin-top:12px}.dur input{width:64px;padding:5px 8px;border:1px solid #cfc9bb;border-radius:6px;font:inherit}.warn{font-size:11px;background:#f6e3c9;color:#8a4b0f;border-radius:4px;padding:2px 6px}</style></head><body><h1>Unit 4: Fractions</h1><p class=\"sub\">Week of Oct 6 · 5 lessons · 3 h 5 min planned</p><div class=\"grid\"><div class=\"card\"><h2>Equivalent fractions</h2><div class=\"meta\">Lesson 1 · slides, worksheet</div><div class=\"dur\"><input value=\"45\"> min</div></div><div class=\"card\"><h2>Comparing fractions</h2><div class=\"meta\">Lesson 2 · slides</div><div class=\"dur\"><input value=\"40\"> min</div></div><div class=\"card\"><h2>Adding like denominators</h2><div class=\"meta\">Lesson 3 · worksheet, quiz</div><div class=\"dur\"><input value=\"55\"> min <span class=\"warn\">over the 50 min period</span></div></div></div></body></html>"
+        }
+      ],
+      "status": "published",
+      "ratify": true
+    },
+    {
+      "title": "Quiz agent validation failures",
+      "area": "data",
+      "kind": "markdown",
+      "summary": "Breakdown of the 38 failing quiz generations from last week.",
+      "links": [{ "target_type": "sprint", "target_ref": "3" }],
+      "content": "# Quiz agent validation failures\n\n38 of 912 quiz generations failed schema validation last week (4.2%).\n\n| Cause | Count | Fixed by |\n| --- | ---: | --- |\n| Trailing prose after the JSON | 21 | the new parser |\n| 1-based `correct_index` on multi-select | 11 | prompt change |\n| Empty distractors on short chunks | 6 | prompt change |\n\n## Next steps\n\n1. Add the 17 prompt-side failures to an eval set.\n2. Change the prompt, then rerun the eval before shipping.\n",
+      "status": "published"
+    },
+    {
+      "title": "Sign-in flow",
+      "area": "auth",
+      "kind": "mermaid",
+      "summary": "Who gets a session, who gets onboarding, who is turned away.",
+      "content": "flowchart TD\n  A[Sign in] --> B{Provider}\n  B -->|GitHub| C{Active org member?}\n  B -->|Google| D{Invited?}\n  C -->|yes| E{Known identity?}\n  C -->|no| X[Denied]\n  D -->|yes| E\n  D -->|no| X\n  E -->|yes| S[Session]\n  E -->|no| O[Pick a handle and color]\n  O --> S\n"
+    },
+    {
+      "title": "Enrollment digest pipeline",
+      "area": "architecture",
+      "kind": "svg",
+      "summary": "Where the Monday digest is built and sent.",
+      "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 640 200\" font-family=\"system-ui,sans-serif\" font-size=\"13\"><rect width=\"640\" height=\"200\" fill=\"#f7f5ef\"/><g fill=\"#fff\" stroke=\"#bdb6a6\"><rect x=\"20\" y=\"70\" width=\"130\" height=\"60\" rx=\"6\"/><rect x=\"190\" y=\"70\" width=\"130\" height=\"60\" rx=\"6\"/><rect x=\"360\" y=\"70\" width=\"130\" height=\"60\" rx=\"6\"/><rect x=\"530\" y=\"70\" width=\"90\" height=\"60\" rx=\"6\"/></g><g fill=\"#1f1d19\" text-anchor=\"middle\"><text x=\"85\" y=\"105\">Hourly cron</text><text x=\"255\" y=\"105\">Window + claim</text><text x=\"425\" y=\"105\">Render sections</text><text x=\"575\" y=\"105\">Send</text></g><g stroke=\"#6d675c\" stroke-width=\"1.5\" marker-end=\"url(#a)\"><line x1=\"150\" y1=\"100\" x2=\"186\" y2=\"100\"/><line x1=\"320\" y1=\"100\" x2=\"356\" y2=\"100\"/><line x1=\"490\" y1=\"100\" x2=\"526\" y2=\"100\"/></g><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0,0 L8,4 L0,8 z\" fill=\"#6d675c\"/></marker></defs><text x=\"255\" y=\"160\" fill=\"#6d675c\" text-anchor=\"middle\" font-size=\"11.5\">one outbox row per person and window</text></svg>",
+      "status": "published"
+    }
+  ]
+}

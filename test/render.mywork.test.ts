@@ -555,9 +555,9 @@ describe("render() — the Get Started guide", () => {
     expect(html).not.toContain("closed/total issue counts recomputed from GitHub events");
   });
 
-  it("shows a figure for every screen in the sidebar, the ticket and sprint pages, and the connect modal", () => {
+  it("shows a figure for every screen in the sidebar, the ticket, sprint and artifact pages, and the connect modal", () => {
     const html = render(guideState());
-    for (const name of ["mywork", "tickets", "board", "ticket", "roadmap", "sprint", "repo", "repo-usage", "feed", "docs", "search", "review", "maintenance", "settings", "connect"]) {
+    for (const name of ["mywork", "tickets", "board", "ticket", "roadmap", "sprint", "repo", "repo-usage", "feed", "docs", "search", "review", "maintenance", "settings", "connect", "handoffs", "artifacts", "artifact", "prompts"]) {
       expect(html).toContain(`/guide/${name}-`);
     }
   });
