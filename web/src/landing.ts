@@ -146,8 +146,8 @@ function hero(): string {
       <h1 style="margin:0 auto;max-width:820px;font-size:clamp(38px, 5.4vw, 62px);line-height:1.06;font-weight:650;letter-spacing:-0.032em;text-wrap:balance">${words}</h1>
       <p class="site-st" style="margin:22px auto 0;max-width:620px;font-size:17.5px;line-height:1.6;color:var(--fg-70);text-wrap:pretty;${at(520)}">Agents load what your team already decided, record what actually shipped, and wait for a person to approve anything that becomes official.</p>
       <div class="site-st" style="margin-top:34px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;${at(640)}">
-        <a href="${CANOPY_REPO}" target="_blank" rel="noopener" class="site-btn site-btn-solid">${GH_MARK(15)}Read the code</a>
-        <button data-act="siteJump" data-arg="how" class="site-btn site-btn-outline">How it works</button>
+        <button data-act="siteGuide" class="site-btn site-btn-solid">Get started</button>
+        <a href="${CANOPY_REPO}" target="_blank" rel="noopener" class="site-btn site-btn-outline">${GH_MARK(15)}Read the code</a>
       </div>
     </div>
 
@@ -169,11 +169,13 @@ function hero(): string {
             ${side(`<path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path>`, "Feed")}
             ${side(`<path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path>`, "Roadmap")}
             ${side(`<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"></path><path d="M13 5v2M13 11v2M13 17v2"></path>`, "Tickets")}
+            ${side(`<path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4z"></path>`, "Handoffs")}
           </div>
           ${sideHead("Knowledge", "16px")}
           <div style="display:flex;flex-direction:column;gap:1px">
             ${side(`<path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path>`, "Docs")}
-            ${side(`<circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path>`, "Search")}
+            ${side(`<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M7 13.5h6"></path><path d="M7 16.5h9"></path>`, "Artifacts")}
+            ${side(`<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"></path><path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path>`, "Prompt Library")}
           </div>
           ${sideHead("Triage", "16px")}
           <div style="display:flex;align-items:center;gap:9px;padding:6.5px 8px;border-radius:7px;font-size:12.5px;font-weight:500;background:var(--accent-soft);color:var(--accent)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m9 12.5 2 2 4-5"></path></svg>Review<span class="site-swap" style="margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:10px;font-weight:600;place-items:center;${at(DONE + 150)}"><span>3</span><span>2</span></span></div>
@@ -435,6 +437,48 @@ function tour(): string {
         ${todo(1, "Digest de-dupe on Mondays", "#218", field("Milestone", "Notifications and digests · due Oct 16") + field("Next step", "Key the send ledger on digest window, not day.", true))}
       </div>`;
 
+  const hsec = (label: string, items: string[], start: number) => `<div style="margin-top:12px">
+        <div style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">${label}</div>
+        ${items.map((t, i) => `<div class="site-st st-l" style="margin-top:5px;display:flex;gap:8px;font-size:11.5px;line-height:1.5;color:var(--fg-70);${at(start + i * 90)}"><span style="color:var(--fg-40)">·</span>${t}</div>`).join("")}
+      </div>`;
+  const handoffs = `
+      <div style="display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--fg-40)">#17</span>
+        <span style="font-size:12.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Retry-After is wired, the tests aren't</span>
+        <span class="site-swap" style="margin-left:auto;${at(S + 1500)}">${pill("pending", "blue")}${pill("claimed", "green")}</span>
+      </div>
+      <div style="padding:12px 16px 16px">
+        <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--fg-55);flex-wrap:wrap">${initials("LP", 20, "8px")}Leo Park → Maya Chen<span style="font-family:var(--mono);font-size:10px;color:var(--fg-40);margin-left:auto">feat/retry-after</span></div>
+        ${hsec("Done", ["429s carry Retry-After from the bucket's reset time"], S + 150)}
+        ${hsec("Next", ["Add limiter tests for the reset edge", "Note the header in the API doc"], S + 330)}
+        <div class="site-st" style="margin-top:14px;border-radius:8px;background:var(--term);color:var(--term-fg);padding:10px 12px;font-family:var(--mono);font-size:10.5px;line-height:1.75;${at(S + 800)}">
+          <div style="color:#9aab65">⏺ canopy · load-context</div>
+          <div style="color:rgba(237,233,226,0.85)">1 handoff waiting: #17 from @leo. Claim it?</div>
+          <div class="site-st" style="color:rgba(237,233,226,0.6);${at(S + 1350)}">&gt; yes</div>
+        </div>
+      </div>`;
+
+  const kindTag = (k: string) => `<span style="font-family:var(--mono);font-size:9px;color:var(--fg-40);border:1px solid var(--border);border-radius:4px;padding:1px 5px">${k}</span>`;
+  const bars = (ws: number[]) => ws.map((w) => `<span style="display:block;height:5px;width:${w}%;border-radius:3px;background:var(--border-strong);margin-top:5px"></span>`).join("");
+  const artCard = (i: number, preview: string, title: string, kind: string, badge: string) => `<div class="site-st st-pop" style="border:1px solid var(--border);border-radius:9px;overflow:hidden;${at(S + 150 + i * 110)}">
+      <div style="height:62px;padding:10px 12px;background:var(--hover)">${preview}</div>
+      <div style="padding:9px 12px 11px">
+        <div style="font-size:11.5px;font-weight:600;line-height:1.35">${title}</div>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:6px">${kindTag(kind)}<span style="margin-left:auto">${badge}</span></div>
+      </div>
+    </div>`;
+  const flow = `<div style="display:flex;align-items:center;gap:5px;height:100%">${["Cron", "Render", "Send"].map((t) => `<span style="font-size:8.5px;border:1px solid var(--border-strong);border-radius:4px;padding:3px 5px;background:var(--bg);color:var(--fg-55)">${t}</span>`).join(`<span style="color:var(--fg-40);font-size:9px">→</span>`)}</div>`;
+  const artifacts = `
+      <div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px;font-weight:600">Artifacts</span>
+        <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--fg-40)">ticket #212 · 3 pages</span>
+      </div>
+      <div style="padding:14px 16px 16px;display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:10px">
+        ${artCard(0, bars([70, 45, 88, 30]), "Rate limit headers: design", "html", `<span class="site-swap" style="${at(S + 1300)}">${pill("published", "blue")}${pill("ratified", "green")}</span>`)}
+        ${artCard(1, flow, "Digest pipeline", "svg", pill("published", "blue"))}
+        ${artCard(2, bars([55, 80, 62]), "429 rates by org, last 7 days", "markdown", pill("draft", "fg-55"))}
+      </div>`;
+
   return `<section id="site-tour" style="${section()}">
     ${heading("tour-head", "One place for what the team knows.")}
     <div style="margin-top:64px;display:flex;flex-direction:column;gap:96px">
@@ -443,6 +487,8 @@ function tour(): string {
       ${tourRow("tickets", "Tickets", "A queue the whole team files into", "Triage, In progress, Done, Declined. Assignees, comments with @mentions, and sub-tickets one level deep.", MOCK, tickets)}
       ${tourRow("roadmap", "Roadmap", "Sprints with a narrative", "A narrative view and a timeline view of sprints, each with a progress bar over its tickets.", MOCK, roadmap, true)}
       ${tourRow("mywork", "My Work", "Your day on one page", "Your assigned issues, recent PRs, and open tickets, projected from captured GitHub events.", `${MOCK};padding:20px 22px 22px`, mywork)}
+      ${tourRow("handoffs", "Handoffs", "Pick up where the last session stopped", "An agent leaves a note for the next session or a teammate: what's done, what's next, and the branch. The next session offers it and claims it only when you say so.", MOCK, handoffs, true)}
+      ${tourRow("artifacts", "Artifacts", "Designs and reports, versioned", "HTML pages, markdown reports, diagrams, images, and PDFs, linked to the ticket or sprint they came from. Agents publish them. Only a person can ratify one.", MOCK, artifacts)}
     </div>
   </section>`;
 }
@@ -456,11 +502,13 @@ function extras(): string {
   const t = (text: string) => `<div style="font-size:14.5px;font-weight:650">${text}</div>`;
   const swatch = (bg: string, i: number) => `<span class="site-st st-pop" style="width:14px;height:14px;border-radius:50%;background:${bg};border:1px solid var(--border-strong);${at(420 + i * 80)}"></span>`;
   return `<section style="max-width:1120px;margin:0 auto;padding:130px 24px 0">
-    <div ${rv("extras", "rv-static")} style="display:grid;grid-template-columns:repeat(auto-fit, minmax(230px, 1fr));gap:16px">
+    <div ${rv("extras", "rv-static")} style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(300px, 100%), 1fr));gap:16px">
       ${card(0, t("Decisions"), "ADRs drafted by agents, ratified by people.")}
-      ${card(1, t("Full-text search"), "Every result labeled settled or pending, so you know what to trust.")}
-      ${card(2, t("Email digests"), "Daily or weekly, per section, so nobody has to poll the feed.")}
-      ${card(3, `<div style="display:flex;align-items:center;gap:8px"><span style="font-size:14.5px;font-weight:650">Three themes</span><span style="display:flex;gap:4px;margin-left:auto">${swatch("#faf8f3", 0)}${swatch("#1c1a16", 1)}${swatch("#000000", 2)}</span></div>`, "Light, Dark, and Midnight.")}
+      ${card(1, t("Full-text search"), "People see settled content. Agents see pending proposals too, each one labeled.")}
+      ${card(2, t("Prompt Library"), "Reusable prompts with variables. Agents stage new ones, people publish them.")}
+      ${card(3, t("Repo dashboard"), "Deploys, CI, drift, and usage from captured data. Unknown reads as unknown, never zero.")}
+      ${card(4, t("Email digests"), "Daily or weekly, per section, so nobody has to poll the feed.")}
+      ${card(5,`<div style="display:flex;align-items:center;gap:8px"><span style="font-size:14.5px;font-weight:650">Three themes</span><span style="display:flex;gap:4px;margin-left:auto">${swatch("#faf8f3", 0)}${swatch("#1c1a16", 1)}${swatch("#000000", 2)}</span></div>`, "Light, Dark, and Midnight.")}
     </div>
   </section>`;
 }
@@ -483,9 +531,10 @@ function agents(): string {
           ${group("Read", ["query", "get_doc", "list_docs", "get_feed", "get_roadmap", "get_my_work", "get_events", "get_repo_dashboard"])}
           ${group("Contribute", ["append_feed", "propose_doc_update", "record_session"])}
           ${group("Tickets", ["list_tickets", "get_ticket", "create_ticket", "transition_ticket", "add_ticket_comment", "add_ticket_link", "set_ticket_sprint", "set_ticket_parent", "list_sprints", "get_sprint"])}
+          ${group("Handoffs, prompts, artifacts", ["send_handoff", "list_handoffs", "get_handoff", "claim_handoff", "expire_handoff", "search_prompts", "get_prompt", "save_prompt", "artifact_list", "artifact_get", "artifact_create", "artifact_update"])}
           ${group("Admin", ["update_plan", "create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource"], true)}`;
   n = 0;
-  const skills = chips(["canopy", "load-context", "record-session", "my-work", "tickets", "read-plan", "update-plan"]);
+  const skills = chips(["canopy", "load-context", "record-session", "my-work", "tickets", "handoff", "prompts", "artifacts", "read-plan", "update-plan"]);
   const [cmd1, cmd1End] = typed("/plugin marketplace add SaplingLearn/canopy", 700, 28);
   const [cmd2, cmd2End] = typed("/plugin install canopy@canopy", cmd1End + 300, 28);
   const prompt = `<span style="color:rgba(237,233,226,0.45)">$</span> `;
@@ -496,7 +545,7 @@ function agents(): string {
       <div ${rv("agents-mcp")} style="border:1px solid var(--border);border-radius:13px;padding:26px 28px">
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
           <span style="font-size:17px;font-weight:650">MCP server</span>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">21 tools, plus 5 admin-only</span>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">33 tools, plus 5 admin-only</span>
         </div>
         <div style="margin-top:20px;display:flex;flex-direction:column;gap:16px">${tools}
         </div>
@@ -504,7 +553,7 @@ function agents(): string {
       <div ${rv("agents-plugin")} style="border:1px solid var(--border);border-radius:13px;padding:26px 28px;display:flex;flex-direction:column;${at(120)}">
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
           <span style="font-size:17px;font-weight:650">Claude Code plugin</span>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">7 skills, installed in two commands</span>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">10 skills, installed in two commands</span>
         </div>
         <div style="margin-top:12px">${skills}</div>
         <div style="margin-top:auto;padding-top:22px">
@@ -512,7 +561,8 @@ function agents(): string {
             <div style="white-space:nowrap">${prompt}${cmd1}</div>
             <div style="white-space:nowrap">${prompt}${cmd2}<span class="site-caret" style="${at(cmd2End + 150)}"></span></div>
           </div>
-          <p style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-55)">Wires the MCP server and loads all seven skills. Your personal token rides in <span style="font-family:var(--mono);font-size:11.5px">$CANOPY_MCP_TOKEN</span>.</p>
+          <p style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-55)">Wires the MCP server and loads all ten skills. Your personal token rides in <span style="font-family:var(--mono);font-size:11.5px">$CANOPY_MCP_TOKEN</span>.</p>
+          <button data-act="siteGuide" class="site-btn site-btn-outline" style="margin-top:16px">Setup steps in Get Started</button>
         </div>
       </div>
     </div>
@@ -530,7 +580,9 @@ function security(): string {
       ${row(2, "Agents write as their person and can't claim another author.")}
       ${row(3, "Agents can only change tickets assigned to their person.")}
       ${row(4, "Tickets and sprints are never closed automatically.")}
-      ${row(5, "GitHub webhooks are signature-verified.")}
+      ${row(5, "Only a person can ratify an artifact or publish a prompt.")}
+      ${row(6, "Artifact pages run in a sandbox, cut off from your session.")}
+      ${row(7, "GitHub webhooks are signature-verified.")}
     </div>
   </section>`;
 }

@@ -5,7 +5,8 @@
 // a sub-page to open, a query to type, a section to scroll to).
 //
 //   1. seed + run the app:   npm run seed && npm run dev   (DEV_LOGIN=AndresL230 in .dev.vars)
-//   2. capture every figure:  node scripts/capture-guide.mjs
+//   2. capture every figure:  node scripts/capture-guide.mjs  (first creates the sample
+//      artifacts in fixtures/dev/artifacts.json when the local store has none)
 //
 // Writes web/public/guide/<name>-<theme>.png for each surface × theme (dark/light/midnight),
 // so the guide can show the variant matching the viewer's active theme. Override the target
@@ -53,10 +54,22 @@ const SHOTS = [
   // screen's own "Preview with sample data" fills it client-side (labelled on screen).
   { name: "repo", hash: "#repo", step: (p) => click(p, "[data-act=repoSampleOn]") },
   { name: "repo-usage", hash: "#repo/usage", step: (p) => click(p, "[data-act=repoSampleOn]") },
+  { name: "handoffs", hash: "#handoffs" },
   { name: "feed", hash: "#feed" },
   // Docs opens on the Technical space and auto-selects the first doc (sapling-architecture)
   // with its heading outline expanded and the "proposal awaiting review" banner.
   { name: "docs", hash: "#docs", settle: 1900 },
+  // Artifacts come from fixtures/dev/artifacts.json via prepareArtifacts() below.
+  { name: "artifacts", hash: "#artifacts" },
+  // The viewer's address strip shows the page's own origin; show production's instead.
+  { name: "artifact", hash: "#artifacts/curriculum-planner-lesson-duration-field", settle: 1900,
+    dress: (p) => p.evaluate(() => {
+      const walk = document.createTreeWalker(document.querySelector("main") ?? document.body, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        n.nodeValue = n.nodeValue.replace(/(https?:\/\/)?localhost:\d+/g, "canopy.saplinglearn.com");
+      }
+    }) },
+  { name: "prompts", hash: "#prompts" },
   { name: "search", hash: "#search",
     step: async (p) => { await p.locator("input[data-act=setSearch]").first().fill("gate"); } },
   { name: "review", hash: "#review" },
@@ -85,12 +98,49 @@ const SHOTS = [
     }) },
 ];
 
+// `npm run seed` has no artifacts (their bodies are hashed and indexed by the repository),
+// so create the sample set through the real API, once: skipped when any artifact exists.
+async function prepareArtifacts(context) {
+  const { artifacts: samples } = JSON.parse(readFileSync(join(HERE, "..", "fixtures", "dev", "artifacts.json"), "utf8"));
+  const page = await context.newPage();
+  await page.goto(`${BASE}/`);
+  const made = await page.evaluate(async (samples) => {
+    const call = async (method, path, body) => {
+      const res = await fetch(path, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
+      if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    if ((await call("GET", "/api/artifacts")).artifacts.length) return 0;
+    for (const a of samples) {
+      const { slug } = await call("POST", "/api/artifacts", {
+        title: a.title, area: a.area, kind: a.kind, content: a.content, summary: a.summary, links: a.links,
+      });
+      let version = 1;
+      for (const v of a.versions ?? []) {
+        await call("POST", `/api/artifacts/${slug}/versions`, { content: v.content, summary: v.summary });
+        version++;
+      }
+      if (a.status) await call("PATCH", `/api/artifacts/${slug}`, { status: a.status });
+      if (a.ratify) await call("POST", `/api/artifacts/${slug}/ratify`, { version });
+    }
+    return samples.length;
+  }, samples);
+  if (made) process.stdout.write(`created ${made} sample artifacts\n`);
+  await page.close();
+}
+
 const only = process.argv.slice(2);
 const shots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
 
 mkdirSync(OUT_DIR, { recursive: true });
 const browser = await chromium.launch();
 const cookie = await forgeCookie();
+{
+  const context = await browser.newContext();
+  await context.addCookies([{ name: "session", value: cookie, url: BASE }]);
+  await prepareArtifacts(context);
+  await context.close();
+}
 
 for (const theme of THEMES) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
