@@ -730,15 +730,16 @@ describe("ticketDetailView — the status control (design call #7)", () => {
     const grid = html.indexOf('class="cnpy-td-grid"');
     expect(grid).toBeGreaterThan(-1);
     expect(html.indexOf("<h2")).toBeGreaterThan(grid); // the title sits INSIDE the grid
-    expect(html).toContain(">opened ");
   });
 
-  it("names the requester in the rail, not under the title", () => {
+  it("puts who filed it and when in the rail — nothing under the title", () => {
     const html = ticketDetailView(props("submitted"));
-    const title = html.indexOf("<h2"), rail = html.indexOf(">REQUESTER<");
-    expect(rail).toBeGreaterThan(-1);
-    // Between the title and the body there is no person chip any more.
-    expect(html.slice(title, html.indexOf(">opened ")).includes("cnpy-av")).toBe(false);
+    expect(html).toContain(">REQUESTER<");
+    expect(html).toContain(">OPENED<");
+    expect(html).not.toContain(">opened ");
+    // The left column goes straight from the title to the body: no chip, no meta line.
+    const left = html.slice(html.indexOf("<h2"), html.indexOf(">Properties<"));
+    expect(left.includes("cnpy-av")).toBe(false);
   });
 });
 

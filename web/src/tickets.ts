@@ -825,12 +825,12 @@ export function ticketDetailView(p: TicketDetailProps): string {
   const t = p.ticket;
   // Laid out like the sprint page: the title heads the LEFT column and the rail
   // starts at the top beside it. Status is set in ONE place (the rail's STATUS
-  // row), and who filed it is the rail's REQUESTER row, not a line under the title.
+  // row), and who filed it and when are the rail's REQUESTER and OPENED rows —
+  // nothing sits under the title.
   return `<div style="${DETAIL_SHELL}">
     <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;min-height:${CARD_MIN_H}">
       <div style="min-width:0;display:flex;flex-direction:column">
-        <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
-        <div style="margin:9px 0 22px;font-size:12px;color:var(--fg-40);white-space:nowrap">opened ${esc(relTime(t.created_at))}</div>
+        <h2 style="margin:0 0 22px;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
         ${ticketBody(t.body)}
         ${linkedWorkBlock(p)}
         ${threadBlock(p)}
@@ -842,6 +842,7 @@ export function ticketDetailView(p: TicketDetailProps): string {
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">CATEGORY</div><div>${categoryChip(t.category)}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">PRIORITY</div><div>${priorityChip(t.priority)}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">REQUESTER</div><div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(p.persons, t.requester), 20, t.requester)}<span style="font-size:12.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nameOf(p.persons, t.requester))}</span></div></div>
+          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">OPENED</div><div style="font-size:12.5px;color:var(--fg-70);white-space:nowrap">${esc(relTime(t.created_at))}</div></div>
         </div>
         ${assigneeRail(p)}
         ${sprintRail(p)}
