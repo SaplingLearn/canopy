@@ -70,7 +70,9 @@ async function consentSession(c: Context<AppEnv>): Promise<{ id: string; handle:
   return handle ? { id, handle } : null;
 }
 
-const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'";
+// Geist comes from Google Fonts, like the SPA's index.html; nothing else loads.
+// form-action stays LAST: the consent page appends the app's redirect origin to it.
+const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-ancestors 'none'; form-action 'self'";
 
 export interface OAuthDeps { now?: () => number }
 
