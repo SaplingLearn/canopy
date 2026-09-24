@@ -7,7 +7,7 @@ import {
   oauthOrigin, mcpResource, protectedResourceMetadata, authorizationServerMetadata,
   isAllowedRedirectUri, redirectMatches, validateRegistration, registerClient, getClient, OAuthError,
   checkAuthorizeRequest, issueAuthorization, exchangeAuthorizationCode, resolveOAuthAccessToken,
-  canonicalAuthorizeQuery, type RegisteredClient,
+  canonicalAuthorizeQuery, type RegisteredClient, refreshAccessToken, revokeOAuthToken, listGrants, revokeGrant, pruneOAuth, mcpUnauthorized,
 } from "../src/auth/oauth";
 
 const NOW = Date.parse("2026-09-24T12:00:00.000Z");
@@ -236,5 +236,104 @@ describe("resolveOAuthAccessToken", () => {
     expect(await resolveOAuthAccessToken(env.DB, t.access_token, NOW + 2000)).toBeNull();
     expect(await resolveOAuthAccessToken(env.DB, t.refresh_token, NOW + 2000)).toBeNull(); // a refresh token is never a bearer
     expect(await resolveOAuthAccessToken(env.DB, "canopy_oat_unknown", NOW)).toBeNull();
+  });
+});
+
+async function connected(person = "real-user") {
+  const a = await authorized(person);
+  const t = await exchangeAuthorizationCode(env.DB, { code: a.code, code_verifier: a.verifier, redirect_uri: REDIRECT, client_id: a.c.client_id, resource: null }, ORIGIN, NOW);
+  return { ...a, t };
+}
+const grantRow = (id: number) => first<{ revoked_at: string | null; revoked_reason: string | null }>(env.DB, `SELECT revoked_at, revoked_reason FROM oauth_grants WHERE id = ?`, id);
+
+describe("refresh", () => {
+  it("rotates: a new pair, the old access token keeps working until it expires, the idle window moves", async () => {
+    const a = await connected();
+    const r = await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 10 * 86_400_000);
+    expect(r.refresh_token).not.toBe(a.t.refresh_token);
+    expect(await resolveOAuthAccessToken(env.DB, r.access_token, NOW + 10 * 86_400_000 + 1)).toEqual({ handle: "real-user" });
+    const exp = await first<{ expires_at: string }>(env.DB, `SELECT expires_at FROM oauth_tokens WHERE kind = 'refresh' AND rotated_at IS NULL`);
+    expect(exp?.expires_at).toBe(new Date(NOW + 100 * 86_400_000).toISOString());
+  });
+  it("reuse within 60 s (concurrent sessions) → another fresh pair, grant untouched", async () => {
+    const a = await connected();
+    await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 1000);
+    const again = await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 30_000);
+    expect(await resolveOAuthAccessToken(env.DB, again.access_token, NOW + 31_000)).toEqual({ handle: "real-user" });
+    expect((await grantRow(a.grantId))?.revoked_at).toBeNull();
+  });
+  it("reuse after 60 s → the whole grant is revoked (reason 'reuse') and its tokens stop", async () => {
+    const a = await connected();
+    const fresh = await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 1000);
+    await expect(refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 62_000)).rejects.toMatchObject({ code: "invalid_grant" });
+    expect((await grantRow(a.grantId))?.revoked_reason).toBe("reuse");
+    expect(await resolveOAuthAccessToken(env.DB, fresh.access_token, NOW + 63_000)).toBeNull();
+    await expect(refreshAccessToken(env.DB, { refresh_token: fresh.refresh_token, client_id: a.c.client_id }, NOW + 64_000)).rejects.toMatchObject({ code: "invalid_grant" });
+  });
+  it("revoked grant's refresh token → invalid_grant, reason stays 'user'", async () => {
+    const a = await connected();
+    expect(await revokeGrant(env.DB, "real-user", a.grantId, NOW + 1000)).toBe(true);
+    await expect(refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 2000)).rejects.toMatchObject({ code: "invalid_grant" });
+    expect((await grantRow(a.grantId))?.revoked_reason).toBe("user");
+  });
+  it("rejects an expired refresh token, a wrong client_id, an access token, and an unknown token; client_id may be omitted", async () => {
+    const a = await connected();
+    await expect(refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: "other" }, NOW + 1000)).rejects.toMatchObject({ code: "invalid_grant" });
+    await expect(refreshAccessToken(env.DB, { refresh_token: a.t.access_token, client_id: null }, NOW + 1000)).rejects.toMatchObject({ code: "invalid_grant" });
+    await expect(refreshAccessToken(env.DB, { refresh_token: "canopy_ort_nope", client_id: null }, NOW + 1000)).rejects.toMatchObject({ code: "invalid_grant" });
+    await expect(refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: null }, NOW + 91 * 86_400_000)).rejects.toMatchObject({ code: "invalid_grant" });
+    const b = await connected("p-omit");
+    expect((await refreshAccessToken(env.DB, { refresh_token: b.t.refresh_token, client_id: null }, NOW + 1000)).token_type).toBe("Bearer");
+  });
+});
+
+describe("revocation", () => {
+  it("revoking a refresh token revokes the grant; revoking an access token expires just it; unknown is a no-op", async () => {
+    const a = await connected();
+    await revokeOAuthToken(env.DB, a.t.access_token, NOW + 1000);
+    expect(await resolveOAuthAccessToken(env.DB, a.t.access_token, NOW + 2000)).toBeNull();
+    expect((await grantRow(a.grantId))?.revoked_at).toBeNull();
+    await revokeOAuthToken(env.DB, a.t.refresh_token, NOW + 3000);
+    expect((await grantRow(a.grantId))?.revoked_reason).toBe("user");
+    await revokeOAuthToken(env.DB, "canopy_ort_unknown", NOW); // no throw
+  });
+  it("listGrants shows only the caller's live grants, newest first; revokeGrant is own-only and idempotent", async () => {
+    const a = await connected("real-user");
+    const b = await connected("other-user");
+    const later = await authorized("real-user");
+    await env.DB.prepare(`UPDATE oauth_grants SET created_at = '2026-09-25T00:00:00.000Z' WHERE id = ?`).bind(later.grantId).run();
+    expect((await listGrants(env.DB, "real-user")).map((g) => g.id)).toEqual([later.grantId, a.grantId]);
+    expect(Object.keys((await listGrants(env.DB, "real-user"))[0]).sort()).toEqual(["client_name", "created_at", "id", "last_used_at"]);
+    expect(await revokeGrant(env.DB, "real-user", b.grantId, NOW)).toBe(false);
+    expect((await grantRow(b.grantId))?.revoked_at).toBeNull();
+    expect(await revokeGrant(env.DB, "real-user", a.grantId, NOW)).toBe(true);
+    expect(await revokeGrant(env.DB, "real-user", a.grantId, NOW + 5)).toBe(true);
+    expect((await listGrants(env.DB, "real-user")).map((g) => g.id)).toEqual([later.grantId]);
+  });
+});
+
+describe("pruneOAuth", () => {
+  it("drops spent codes, dead tokens and orphan clients; keeps grants and live rows", async () => {
+    const a = await connected();
+    await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 1000);
+    const orphan = await registerClient(env.DB, { client_name: "Orphan", redirect_uris: [REDIRECT] }, NOW);
+    await pruneOAuth(env.DB, NOW + 2 * 86_400_000);
+    expect(await all(env.DB, `SELECT code_hash FROM oauth_codes`)).toEqual([]);
+    const tokens = await all<{ kind: string }>(env.DB, `SELECT kind FROM oauth_tokens ORDER BY kind`);
+    expect(tokens.map((t) => t.kind)).toEqual(["refresh"]); // the live, unrotated refresh token
+    expect(await getClient(env.DB, orphan.client_id)).toBeNull();
+    expect(await getClient(env.DB, a.c.client_id)).not.toBeNull();
+    expect(await grantRow(a.grantId)).not.toBeNull();
+  });
+});
+
+describe("mcpUnauthorized", () => {
+  it("points at the protected-resource metadata; flags a bad token", async () => {
+    const r = mcpUnauthorized("https://c.test", false);
+    expect(r.status).toBe(401);
+    expect(r.headers.get("www-authenticate")).toBe(`Bearer resource_metadata="https://c.test/.well-known/oauth-protected-resource"`);
+    expect(mcpUnauthorized("https://c.test", true).headers.get("www-authenticate")).toBe(
+      `Bearer resource_metadata="https://c.test/.well-known/oauth-protected-resource", error="invalid_token"`);
+    expect(await r.json()).toEqual({ error: "unauthorized" });
   });
 });

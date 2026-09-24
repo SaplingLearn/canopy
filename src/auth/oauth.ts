@@ -4,8 +4,9 @@
 // `canopy_mcp_` token, so /mcp stays the bearer auth class. D1 only, no fetch,
 // and every clock read is a `nowMs` parameter so tests control time. Raw codes
 // and tokens are returned once and stored only as SHA-256 hashes.
-import { type DB, first, run } from "../db";
+import { type DB, all, first, run } from "../db";
 import { randomToken, sha256Hex, pkceChallenge } from "./crypto";
+import type { OAuthGrantSummary } from "@shared/rows";
 
 export const ACCESS_PREFIX = "canopy_oat_";
 export const REFRESH_PREFIX = "canopy_ort_";
@@ -257,4 +258,84 @@ export async function resolveOAuthAccessToken(db: DB, raw: string, nowMs: number
     await run(db, `UPDATE oauth_grants SET last_used_at = ? WHERE id = ?`, iso(nowMs), row.grant_id);
   }
   return { handle: row.person };
+}
+
+/**
+ * refresh_token grant with rotation. The first presentation rotates (ONE conditional
+ * UPDATE, so concurrent requests have one winner) and mints a pair whose refresh
+ * token expires 90 days out — the idle window. A token presented again within
+ * REUSE_INTERVAL_MS of its rotation gets another pair on the same grant (several
+ * Claude Code sessions share one credential); later than that is treated as theft
+ * and revokes the whole grant.
+ */
+export async function refreshAccessToken(db: DB, r: { refresh_token: string; client_id: string | null }, nowMs: number): Promise<TokenResponse> {
+  const hash = await sha256Hex(r.refresh_token);
+  const row = await first<{ grant_id: number; expires_at: string; rotated_at: string | null; client_id: string; revoked_at: string | null }>(db,
+    `SELECT t.grant_id, t.expires_at, t.rotated_at, g.client_id, g.revoked_at FROM oauth_tokens t
+     JOIN oauth_grants g ON g.id = t.grant_id WHERE t.token_hash = ? AND t.kind = 'refresh'`, hash);
+  if (!row || row.revoked_at !== null || row.expires_at <= iso(nowMs)) throw invalidGrant("the refresh token is unknown, expired, or revoked");
+  if (r.client_id && r.client_id !== row.client_id) throw invalidGrant("client_id does not match the refresh token");
+  let rotatedAt = row.rotated_at;
+  if (rotatedAt === null) {
+    const res = await run(db, `UPDATE oauth_tokens SET rotated_at = ? WHERE token_hash = ? AND rotated_at IS NULL`, iso(nowMs), hash);
+    if (res.meta.changes > 0) return mintPair(db, row.grant_id, nowMs);
+    rotatedAt = (await first<{ rotated_at: string | null }>(db, `SELECT rotated_at FROM oauth_tokens WHERE token_hash = ?`, hash))?.rotated_at ?? null;
+  }
+  if (rotatedAt !== null && nowMs - Date.parse(rotatedAt) <= REUSE_INTERVAL_MS) return mintPair(db, row.grant_id, nowMs);
+  await run(db, `UPDATE oauth_grants SET revoked_at = ?, revoked_reason = 'reuse' WHERE id = ? AND revoked_at IS NULL`, iso(nowMs), row.grant_id);
+  throw invalidGrant("this refresh token was already used; the connection has been revoked");
+}
+
+/** RFC 7009. A refresh token revokes its grant; an access token is expired in place;
+ *  anything else is a no-op (the endpoint always answers 200). */
+export async function revokeOAuthToken(db: DB, raw: string, nowMs: number): Promise<void> {
+  const hash = await sha256Hex(raw);
+  const row = await first<{ grant_id: number; kind: string }>(db, `SELECT grant_id, kind FROM oauth_tokens WHERE token_hash = ?`, hash);
+  if (!row) return;
+  if (row.kind === "refresh") {
+    await run(db, `UPDATE oauth_grants SET revoked_at = ?, revoked_reason = 'user' WHERE id = ? AND revoked_at IS NULL`, iso(nowMs), row.grant_id);
+  } else {
+    await run(db, `UPDATE oauth_tokens SET expires_at = ? WHERE token_hash = ?`, iso(nowMs), hash);
+  }
+}
+
+/** Settings › Connected apps: the caller's live connections, newest first. */
+export function listGrants(db: DB, handle: string): Promise<OAuthGrantSummary[]> {
+  return all<OAuthGrantSummary>(db,
+    `SELECT id, client_name, created_at, last_used_at FROM oauth_grants
+     WHERE person = ? COLLATE NOCASE AND revoked_at IS NULL ORDER BY created_at DESC, id DESC`, handle);
+}
+
+/** Revoke one of the caller's OWN grants. False for an unknown id and someone else's
+ *  alike (never an existence oracle); true again on a repeat, like revokeToken. */
+export async function revokeGrant(db: DB, handle: string, id: number, nowMs: number): Promise<boolean> {
+  const res = await run(db,
+    `UPDATE oauth_grants SET revoked_at = COALESCE(revoked_at, ?), revoked_reason = COALESCE(revoked_reason, 'user')
+     WHERE id = ? AND person = ? COLLATE NOCASE`, iso(nowMs), id, handle);
+  return res.meta.changes > 0;
+}
+
+/** The repo cron's 6-hourly :30 tick. D1 only. Grants are never deleted. */
+export async function pruneOAuth(db: DB, nowMs: number): Promise<void> {
+  const hourAgo = iso(nowMs - 60 * 60 * 1000);
+  const dayAgo = iso(nowMs - 24 * 60 * 60 * 1000);
+  await db.batch([
+    db.prepare(`DELETE FROM oauth_codes WHERE expires_at < ? OR used_at < ?`).bind(hourAgo, hourAgo),
+    db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'access' AND expires_at < ?`).bind(dayAgo),
+    db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'refresh' AND (rotated_at < ? OR expires_at < ?)`).bind(dayAgo, iso(nowMs)),
+    db.prepare(`DELETE FROM oauth_clients WHERE created_at < ?
+      AND client_id NOT IN (SELECT client_id FROM oauth_grants) AND client_id NOT IN (SELECT client_id FROM oauth_codes)`).bind(dayAgo),
+  ]);
+}
+
+/** /mcp's 401: tells an MCP client where to start OAuth (RFC 9728 §5.1). */
+export function mcpUnauthorized(origin: string, invalidToken: boolean): Response {
+  const meta = `${origin}/.well-known/oauth-protected-resource`;
+  return new Response(JSON.stringify({ error: "unauthorized" }), {
+    status: 401,
+    headers: {
+      "content-type": "application/json",
+      "www-authenticate": `Bearer resource_metadata="${meta}"${invalidToken ? `, error="invalid_token"` : ""}`,
+    },
+  });
 }
