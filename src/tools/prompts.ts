@@ -32,7 +32,9 @@ export const PromptSaveInput = z.object({
   slug: Slug,
   base_slug: Slug.nullable().optional(),
   title: z.string().trim().min(1).max(200),
-  tags: z.array(z.string().max(40)).max(20).default([]),
+  // Optional: omitted on an existing prompt keeps its tags (an agent's save_prompt
+  // often leaves them out); omitted on a new prompt is no tags.
+  tags: z.array(z.string().max(40)).max(20).optional(),
   body: z.string().refine((b) => b.trim().length > 0, "body required").refine((b) => b.length <= 64 * 1024, "body over 64KB"),
   status: z.enum(["draft", "staged", "published"]).optional(),
   summary: z.string().max(300).optional(),
@@ -103,21 +105,21 @@ export async function savePrompt(
   const status: PromptStatus = via === "agent" ? "staged" : input.status ?? "draft";
   const summary = input.summary?.trim()
     || (via === "agent" ? (opts.branch ? `Staged by a session on ${opts.branch}` : "Staged by a session") : existing ? "Edited in Canopy" : "Created in Canopy");
-  const tags = JSON.stringify(normalizeTags(input.tags));
+  const tags = input.tags === undefined ? null : JSON.stringify(normalizeTags(input.tags));
   const now = nowIso();
   const version = existing ? existing.current_version + 1 : 1;
 
   const stmts: D1PreparedStatement[] = [];
   if (!existing) {
     stmts.push(db.prepare(`INSERT INTO prompts (slug, title, description, tags, author, current_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(input.slug, input.title, input.description ?? "", tags, writer, version, now, now));
+      .bind(input.slug, input.title, input.description ?? "", tags ?? "[]", writer, version, now, now));
   } else {
     // Rename first (both tables), so the version row below lands under the new slug.
     if (renaming) {
       stmts.push(db.prepare(`UPDATE prompts SET slug = ? WHERE slug = ?`).bind(input.slug, existing.slug));
       stmts.push(db.prepare(`UPDATE prompt_versions SET slug = ? WHERE slug = ?`).bind(input.slug, existing.slug));
     }
-    stmts.push(db.prepare(`UPDATE prompts SET title = ?, description = COALESCE(?, description), tags = ?, current_version = ?, updated_at = ? WHERE slug = ?`)
+    stmts.push(db.prepare(`UPDATE prompts SET title = ?, description = COALESCE(?, description), tags = COALESCE(?, tags), current_version = ?, updated_at = ? WHERE slug = ?`)
       .bind(input.title, input.description ?? null, tags, version, now, input.slug));
   }
   stmts.push(db.prepare(`INSERT INTO prompt_versions (slug, version, status, author, summary, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)

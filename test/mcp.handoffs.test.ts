@@ -119,4 +119,14 @@ describe("prompt tools", () => {
     const fresh = JSON.parse((await call("AndresL230", "save_prompt", { slug: "brand-new", title: "Brand new", body: "b" })).text) as { version: number; status: string };
     expect(fresh).toEqual({ slug: "brand-new", version: 1, status: "staged" });
   });
+
+  it("save_prompt without `tags` keeps the prompt's tags; with them, replaces them (lowercased, deduped)", async () => {
+    // adr-draft is seeded with ["architecture"]; a new version that omits tags must not wipe them.
+    await call("Darkest-Teddy", "save_prompt", { slug: "adr-draft", title: "Draft an ADR", body: "v3 body" });
+    const kept = await first<{ tags: string }>(env.DB, `SELECT tags FROM prompts WHERE slug = 'adr-draft'`);
+    expect(JSON.parse(kept!.tags)).toEqual(["architecture"]);
+    await call("Darkest-Teddy", "save_prompt", { slug: "adr-draft", title: "Draft an ADR", body: "v4 body", tags: ["API", "api", "Infra"] });
+    const replaced = await first<{ tags: string }>(env.DB, `SELECT tags FROM prompts WHERE slug = 'adr-draft'`);
+    expect(JSON.parse(replaced!.tags)).toEqual(["api", "infra"]);
+  });
 });

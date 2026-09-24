@@ -447,7 +447,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
       tags: z.array(z.string()).optional(), summary: z.string().optional(), branch: z.string().optional(),
     },
     async ({ slug, title, body, tags, summary, branch }) => runTool(async () => {
-      const p = await savePrompt(env.DB, principal.handle, PromptSaveInput.parse({ slug, title, body, tags: tags ?? [], summary }), "agent", { branch });
+      const p = await savePrompt(env.DB, principal.handle, PromptSaveInput.parse({ slug, title, body, tags, summary }), "agent", { branch });
       return { slug: p.slug, version: p.version, status: p.status };
     }),
   );
