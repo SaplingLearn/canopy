@@ -617,7 +617,7 @@ function loadNotifPrefs(): void {
       rerender();
     });
 }
-// Settings › MCP access tokens. No rerender of its own on entry: every caller follows
+// Settings › MCP access. No rerender of its own on entry: every caller follows
 // with loadNotifPrefsIfNeeded, which does.
 function loadTokens(): void {
   state.tokens = { status: "loading", data: state.tokens.data };

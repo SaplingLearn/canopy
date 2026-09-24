@@ -148,7 +148,7 @@ export interface AppState {
   /** Which client's setup the modal shows, and its Copy button's state. */
   connectClient: ConnectClient;
   connectCopied: boolean;
-  /** Settings › MCP access tokens: the caller's live tokens (hint only, never the value). */
+  /** Settings › MCP access: the caller's live tokens (hint only, never the value). */
   tokens: Loadable<McpTokenSummary[]>;
   /** The token whose Revoke was clicked once — the second click is the one that revokes. */
   tokenRevokeArm: number | null;
@@ -1339,18 +1339,16 @@ function guideView(s: AppState): string {
 
     <div style="${gEyebrow}">Connect your agent</div>
     <h2 style="${gH2}">Plug in your coding agent</h2>
-    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")} (MCP). Your agent acts as you, so it sees what you see and its writes are recorded as yours. Connecting takes a minute:</p>
+    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")} (MCP). Your agent acts as you, so it sees what you see and its writes are recorded as yours. Using Claude Code? Install the ${gStrong("Canopy plugin")} below, then skip straight to step 2 (${gStrong("Authenticate")}) &mdash; step 1 is only for connecting by hand, without the plugin.</p>
     <ol style="${gList}">
-      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access")}, copy the ${gStrong("Sign in with browser")} command. Paste it into a terminal.</li>
+      <li>Not using the plugin? Open ${gStrong("Settings")} and, under ${gStrong("MCP access")}, copy the ${gStrong("Sign in with browser")} command. Paste it into a terminal.</li>
       <li>In Claude Code, run ${gCode("/mcp")}, pick ${gStrong("canopy")} and choose ${gStrong("Authenticate")}. Your browser opens Canopy: sign in if asked, then click ${gStrong("Allow")}. The connection is listed under ${gStrong("Connected apps")}, where ${gStrong("Revoke")} disconnects it immediately.</li>
       <li>Using ${gStrong("Codex")}, CI or another client that can't open a browser? Under ${gStrong("Access tokens")}, click ${gStrong("Get connection command")} and copy the ready-made setup. The token is shown only once; it stays listed there, where ${gStrong("Revoke")} disconnects it.</li>
     </ol>
     ${gFig("connect", `${gEm("Get connection command")}: pick your client, copy the ready-made setup. (The token is hidden in this screenshot.)`)}
-    <p style="${gP};margin-top:14px">${gStrong("Using Claude Code? Install the Canopy plugin as well.")} It bundles the skills described below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand:</p>
+    <p style="${gP};margin-top:14px">${gStrong("Using Claude Code? Install the Canopy plugin instead of step 1.")} It auto-wires the MCP connection and bundles the skills described below, so there's nothing to add by hand &mdash; just install it, then do step 2 (${gCode("/mcp")} &rarr; ${gStrong("canopy")} &rarr; ${gStrong("Authenticate")}):</p>
     ${gPre(`/plugin marketplace add SaplingLearn/canopy
 /plugin install canopy@canopy`)}
-    <p style="${gP};margin-top:12px">The plugin reads your token from an environment variable, so export it in the shell that launches your agent (add it to your shell profile to make it stick), then restart:</p>
-    ${gPre(`export CANOPY_MCP_TOKEN=canopy_mcp_…`)}
     <p style="${gP};margin-top:14px">Once your agent is connected, this is what it can do:</p>
     <ul style="${gList}">
       <li>${gStrong("Read everything.")} ${gCode("query")} is a ranked search that tags every result with its authority (live or staged), and ${gCode("get_doc")} fetches a single doc. Your agent can also read the roadmap and sprints, the ticket queue, your My Work, and the Repo dashboard (${gCode("get_repo_dashboard")}).</li>
@@ -1469,7 +1467,7 @@ export function accountSection(s: AppState): string {
 const mcpEndpoint = (): string =>
   `${typeof location !== "undefined" && location.origin ? location.origin : "https://canopy.saplinglearn.com"}/mcp`;
 
-/** Settings › MCP access tokens: one hairline row per live token. Only the hint is ever
+/** Settings › MCP access: one hairline row per live token. Only the hint is ever
  *  known here — the server keeps a hash — so a row is `canopy_mcp_ab12…`, when it was
  *  minted and last used, and a two-click Revoke (an agent stops working the moment it lands). */
 export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): string {
@@ -1540,8 +1538,9 @@ export const CONNECT_CLIENTS: readonly { id: ConnectClient; label: string }[] = 
 /**
  * The setup text for one client, with `token` filled in. Pure, so a test pins each
  * shape. Claude Code takes the header on the command line; Codex reads a bearer
- * token from an environment variable (its `--bearer-token-env-var`), which is the
- * SAME `CANOPY_MCP_TOKEN` the Canopy plugin reads.
+ * token from an environment variable via its `--bearer-token-env-var`, spelled
+ * `CANOPY_MCP_TOKEN` here. (The Canopy plugin itself never reads this variable —
+ * it connects by browser sign-in, `/mcp` → Authenticate.)
  */
 export function connectSnippet(client: ConnectClient, token: string, url: string = mcpEndpoint()): string {
   switch (client) {
@@ -1560,7 +1559,7 @@ const CONNECT_NOTE: Record<ConnectClient, string> = {
   claude: `Paste it into a terminal, then restart Claude Code. <code style="font-family:var(--mono);font-size:11px">--scope user</code> makes Canopy available in every project.`,
   codex: `Paste both lines into a terminal, then restart Codex. Codex reads the token from <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--mono);font-size:11px">export</code> line to your shell profile too.`,
   json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--mono);font-size:11px">.mcp.json</code>), then restart it.`,
-  token: `For anything else, send it as a bearer header: <code style="font-family:var(--mono);font-size:11px">Authorization: Bearer &lt;token&gt;</code> to <code style="font-family:var(--mono);font-size:11px">${esc(mcpEndpoint())}</code>. Using the Canopy plugin? Export it as <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code>.`,
+  token: `For anything else, send it as a bearer header: <code style="font-family:var(--mono);font-size:11px">Authorization: Bearer &lt;token&gt;</code> to <code style="font-family:var(--mono);font-size:11px">${esc(mcpEndpoint())}</code>. Using the Canopy plugin? It connects by browser sign-in instead — see <strong>Sign in with browser</strong> above.`,
 };
 
 /** The Settings row a minted token shows up as: `canopy_mcp_` + the first 4 characters. */

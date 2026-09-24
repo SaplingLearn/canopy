@@ -88,16 +88,22 @@ describe("browserConnectCommand", () => {
 });
 
 describe("Get Started guide — Connect your agent", () => {
+  const guideState = () => ({
+    ...initialState(),
+    view: "app" as const,
+    screen: "guide" as const,
+    me: { handle: "alice", name: null, avatar_url: null, color: "moss" as const, identities: [], org: "SaplingLearn", admin: false },
+  });
+
   it("points at Sign in with browser, not the retired MCP access tokens heading", () => {
-    const s = {
-      ...initialState(),
-      view: "app" as const,
-      screen: "guide" as const,
-      me: { handle: "alice", name: null, avatar_url: null, color: "moss" as const, identities: [], org: "SaplingLearn", admin: false },
-    };
-    const html = render(s);
+    const html = render(guideState());
     expect(html).toContain("Sign in with browser");
     expect(html).not.toContain("MCP access tokens");
+  });
+
+  it("never tells the plugin to read CANOPY_MCP_TOKEN — it connects by browser sign-in", () => {
+    const html = render(guideState());
+    expect(html).not.toContain("CANOPY_MCP_TOKEN");
   });
 });
 
