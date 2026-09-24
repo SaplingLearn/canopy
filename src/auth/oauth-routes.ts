@@ -38,8 +38,9 @@ export function buildOAuthApp(deps: OAuthDeps = {}): Hono<AppEnv> {
 
   // ── Registration ──
   o.post("/oauth/register", async (c) => {
-    const text = await c.req.text();
-    if (text.length > MAX_REGISTER_BYTES) return oauthError(c, new OAuthError("invalid_client_metadata", "the registration body is over 8 KB"));
+    const bytes = await c.req.arrayBuffer();
+    if (bytes.byteLength > MAX_REGISTER_BYTES) return oauthError(c, new OAuthError("invalid_client_metadata", "the registration body is over 8 KB"));
+    const text = new TextDecoder().decode(bytes);
     let body: unknown;
     try { body = JSON.parse(text); } catch { return oauthError(c, new OAuthError("invalid_client_metadata", "the body must be JSON")); }
     try {
@@ -50,13 +51,16 @@ export function buildOAuthApp(deps: OAuthDeps = {}): Hono<AppEnv> {
       }, 201);
     } catch (e) {
       if (e instanceof OAuthError) return oauthError(c, e);
-      throw e;
+      console.error("oauth register: unexpected error", e instanceof Error ? e.message : "unknown");
+      return json(c, { error: "temporarily_unavailable" }, 503);
     }
   });
 
-  /** Form-encoded (the standard) or JSON; string values only. */
+  /** Form-encoded (the standard) or JSON; string values only. Reads the body as
+   *  bytes (not .text()) so a form-urlencoded content-type never trips workerd's
+   *  "does not appear to be text" warning. */
   async function params(c: Context<AppEnv>): Promise<URLSearchParams> {
-    const text = await c.req.text();
+    const text = new TextDecoder().decode(await c.req.arrayBuffer());
     if ((c.req.header("content-type") ?? "").includes("application/json")) {
       try {
         const obj = JSON.parse(text) as Record<string, unknown>;
@@ -93,10 +97,15 @@ export function buildOAuthApp(deps: OAuthDeps = {}): Hono<AppEnv> {
     }
   });
 
-  // ── Revocation (RFC 7009): always 200 ──
+  // ── Revocation (RFC 7009): always 200 on success, never a 500 ──
   o.post("/oauth/revoke", async (c) => {
     const token = (await params(c)).get("token");
-    if (token) await revokeOAuthToken(c.env.DB, token, now());
+    try {
+      if (token) await revokeOAuthToken(c.env.DB, token, now());
+    } catch (e) {
+      console.error("oauth revoke: unexpected error", e instanceof Error ? e.message : "unknown");
+      return json(c, { error: "temporarily_unavailable" }, 503);
+    }
     return c.body(null, 200, CORS);
   });
 

@@ -4,6 +4,7 @@ import { pkce } from "../src/auth/crypto";
 import { resolveBearerPrincipal } from "../src/auth/principal";
 import { mintToken } from "../src/auth/tokens";
 import { registerClient, checkAuthorizeRequest, issueAuthorization, exchangeAuthorizationCode } from "../src/auth/oauth";
+import { buildOAuthApp } from "../src/auth/oauth-routes";
 import { seedPerson } from "./helpers/persons";
 import type { Env } from "../src/env";
 
@@ -82,6 +83,13 @@ describe("POST /oauth/register", () => {
     }
     expect((await env.DB.prepare(`SELECT COUNT(*) AS n FROM oauth_clients`).first<{ n: number }>())?.n).toBe(0);
   });
+  it("400 invalid_client_metadata when multi-byte content pushes the body over 8 KB in bytes, under 8 KB in characters", async () => {
+    const body = JSON.stringify({ redirect_uris: [REDIRECT], client_name: "€".repeat(3000) }); // 3000 chars, ~9000 UTF-8 bytes
+    expect(body.length).toBeLessThan(8192);
+    const r = await SELF.fetch("https://example.com/oauth/register", { method: "POST", headers: { "content-type": "application/json" }, body });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe("invalid_client_metadata");
+  });
 });
 
 describe("POST /oauth/token", () => {
@@ -132,5 +140,27 @@ describe("POST /oauth/revoke", () => {
     expect((await SELF.fetch("https://example.com/oauth/revoke", form({ token: oat }))).status).toBe(200);
     expect((await SELF.fetch("https://example.com/oauth/revoke", form({ token: "junk" }))).status).toBe(200);
     expect(await resolveBearerPrincipal(bearer(oat), env as unknown as Env)).toBeNull();
+  });
+});
+
+describe("never a 500", () => {
+  // A DB that throws on every prepare() stands in for an unexpected D1 failure —
+  // register and revoke must both answer 503, never let the throw escape as Hono's
+  // plain-text 500.
+  const throwingEnv = { ...env, DB: { prepare() { throw new Error("d1 down"); } } } as unknown as Env;
+
+  it("register: an unexpected DB throw is a 503 temporarily_unavailable, not a 500", async () => {
+    const r = await buildOAuthApp().request("/oauth/register", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Claude Code", redirect_uris: [REDIRECT] }),
+    }, throwingEnv);
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({ error: "temporarily_unavailable" });
+  });
+
+  it("revoke: an unexpected DB throw is a 503, not a 500", async () => {
+    const r = await buildOAuthApp().request("/oauth/revoke", form({ token: "whatever" }), throwingEnv);
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({ error: "temporarily_unavailable" });
   });
 });
