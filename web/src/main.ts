@@ -254,6 +254,7 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
+  updateGuideToc();
   renderPendingMermaid(mount);
   // Reflect the current route in the URL hash so a reload restores it. The ticket
   // and sprint screens carry an id, so this is hashForRoute, not `#${screen}`.
@@ -310,13 +311,36 @@ function updateActiveHeading(): void {
   }
 }
 
+// Get Started's table of contents: the same spy over the guide's headings. The
+// current row is the last anchor at or above the top of #cnpy-main; a sub-row also
+// lights its section. Direct DOM, like the docs spy.
+function updateGuideToc(): void {
+  if (state.screen !== "guide") return;
+  const pane = document.getElementById("cnpy-main");
+  const heads = [...mount.querySelectorAll<HTMLElement>(".cnpy-guide-anchor[id]")];
+  if (!pane || !heads.length) return;
+  const top = pane.getBoundingClientRect().top;
+  let active = heads[0].id;
+  for (const h of heads) {
+    if (h.getBoundingClientRect().top - top <= 96) active = h.id;
+    else break;
+  }
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 4) active = heads[heads.length - 1].id;
+  const items = [...mount.querySelectorAll<HTMLElement>(".cnpy-guide-toc [data-arg]")];
+  const hit = items.find((b) => b.getAttribute("data-arg") === active);
+  // A sub-row's section is the nearest section row above it.
+  let section: HTMLElement | undefined;
+  if (hit) for (const b of items) { if (b.classList.contains("cnpy-guide-toc-sec")) section = b; if (b === hit) break; }
+  for (const b of items) b.classList.toggle("is-current", b === hit || b === section);
+}
+
 // One capture-phase listener survives every rerender (scroll doesn't bubble, so
 // capture catches the reader pane); rAF-throttled.
 let spyScheduled = false;
 mount.addEventListener("scroll", () => {
   if (spyScheduled) return;
   spyScheduled = true;
-  requestAnimationFrame(() => { spyScheduled = false; updateActiveHeading(); });
+  requestAnimationFrame(() => { spyScheduled = false; updateActiveHeading(); updateGuideToc(); });
 }, true);
 
 function resolvedTheme(): "dark" | "light" | "midnight" {
@@ -2093,6 +2117,18 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         const target = document.getElementById("cnpy-reader")?.querySelector<HTMLElement>(`.cnpy-md [id="${cssEscape(headingId)}"]`);
         if (target) requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
       }
+      return;
+    }
+
+    // Get Started's table of contents: scroll #cnpy-main to the heading, no rerender
+    // (the hash is the route, so these are buttons, not #anchors).
+    case "guideJump": {
+      const pane = document.getElementById("cnpy-main");
+      const target = arg ? document.getElementById(arg) : null;
+      if (!pane || !target) return;
+      const top = target.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop - 24;
+      const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      pane.scrollTo({ top: Math.max(0, top), behavior });
       return;
     }
 

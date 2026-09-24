@@ -562,6 +562,17 @@ describe("render() — the Get Started guide", () => {
     }
   });
 
+  it("has a table of contents whose every entry jumps to a heading on the page, in page order", () => {
+    const html = render(guideState());
+    const targets = [...html.matchAll(/data-act="guideJump" data-arg="([^"]+)"/g)].map((m) => m[1]);
+    const ids = [...html.matchAll(/id="(guide-[^"]+)"/g)].map((m) => m[1]);
+    expect(targets.length).toBeGreaterThan(15);
+    expect(targets).toEqual(ids);
+    expect(new Set(ids).size).toBe(ids.length);
+    // Buttons, never #anchors: the hash is the route.
+    expect(html).not.toMatch(/href="#guide-/);
+  });
+
   it("carries no user-facing 'milestone' string anywhere in the guide", () => {
     expect(render(guideState())).not.toMatch(/milestone/i);
   });

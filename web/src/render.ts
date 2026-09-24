@@ -1254,18 +1254,34 @@ function guideView(s: AppState): string {
   const gStrong = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
   const gEm = (t: string) => `<strong style="color:var(--fg-55)">${t}</strong>`;
   const gCode = (t: string) => `<code style="font-family:var(--mono);font-size:13px">${t}</code>`;
+  // width/height reserve each figure's box (every capture is 2560×1600) so a lazy
+  // image loading mid-jump can't push the table-of-contents target down the page.
   const gFig = (name: string, cap: string) => `<figure style="margin:18px 0 4px">
-      <img src="/guide/${name}-${th}.png" alt="" loading="lazy" style="display:block;width:100%;border:1px solid var(--border);border-radius:12px" />
+      <img src="/guide/${name}-${th}.png" alt="" loading="lazy" width="2560" height="1600" style="display:block;width:100%;height:auto;border:1px solid var(--border);border-radius:12px" />
       <figcaption style="font-size:12px;color:var(--fg-40);margin-top:8px">${cap}</figcaption>
     </figure>`;
+  // The table of contents is built from the headings as they render, so it can
+  // never drift from the page: sec() / sub() emit a heading AND record it.
+  const toc: { id: string; label: string; subs: { id: string; label: string }[] }[] = [];
+  const gid = (t: string) => `guide-${t.toLowerCase().replace(/&amp;/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  const sec = (eyebrow: string, title: string, label: string) => {
+    const id = gid(label);
+    toc.push({ id, label, subs: [] });
+    return `<div id="${id}" class="cnpy-guide-anchor" style="${gEyebrow}">${eyebrow}</div>
+    <h2 style="${gH2}">${title}</h2>`;
+  };
+  const sub = (title: string) => {
+    const id = gid(`${toc[toc.length - 1]?.label ?? ""} ${title}`);
+    toc[toc.length - 1]?.subs.push({ id, label: title });
+    return `<h3 id="${id}" class="cnpy-guide-anchor" style="${gH3}">${title}</h3>`;
+  };
   const gPre = (body: string) => `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">${body}</code></pre>`;
-  return `<div class="cnpy-scroll" style="max-width:860px;margin:0 auto;padding:52px 40px 120px">
-    <h1 style="font-size:30px;font-weight:650;letter-spacing:-0.025em;margin:0 0 14px">Get Started</h1>
+  const body = `<div style="flex:1;min-width:0;max-width:860px">
+    <h1 id="guide-top" class="cnpy-guide-anchor" style="font-size:30px;font-weight:650;letter-spacing:-0.025em;margin:0 0 14px">Get Started</h1>
     <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 14px">Canopy is the team's shared memory: docs, decisions, the roadmap, the ticket queue, and a running record of what shipped, open to people and to their coding agents alike. It has one rule: ${gStrong("agents only ever stage changes, and a person confirms the ones that matter")}. That keeps what Canopy says trustworthy no matter how many agents write to it.</p>
     <p style="${gP}">This page takes you from zero to productive in order: sign in, connect your agent, learn the skills, then the everyday workflows and a tour of every screen. Troubleshooting is at the end.</p>
 
-    <div style="${gEyebrow}">Step 1</div>
-    <h2 style="${gH2}">Sign in</h2>
+    ${sec("Step 1", "Sign in", "Sign in")}
     <ul style="${gList}">
       <li>${gStrong("Engineers sign in with GitHub.")} You need to be an ${gStrong("active")} member of the ${gStrong("SaplingLearn")} GitHub org, so accept the org invite first. A pending invite is not enough.</li>
       <li>${gStrong("Everyone else signs in with Google")}, once an admin has invited that exact address from ${gStrong("Maintenance › People")}.</li>
@@ -1273,11 +1289,10 @@ function guideView(s: AppState): string {
       <li>Want both? ${gStrong("Settings › Account")} links the second provider, and then either one signs you in.</li>
     </ul>
 
-    <div style="${gEyebrow}">Step 2</div>
-    <h2 style="${gH2}">Connect your coding agent</h2>
+    ${sec("Step 2", "Connect your coding agent", "Connect your agent")}
     <p style="${gP}">Your agent talks to Canopy over the ${gStrong("Model Context Protocol")} (MCP), with a personal token. It acts as you: it sees what you see, and what it writes is recorded as yours.</p>
 
-    <h3 style="${gH3}">Claude Code: install the plugin</h3>
+    ${sub("Claude Code: install the plugin")}
     <p style="${gP}">The plugin wires up the MCP server and installs every skill below. Three steps:</p>
     <ol style="${gList}">
       <li>In Canopy, open ${gStrong("Settings")}, click ${gStrong("Get connection command")} under ${gStrong("MCP access tokens")}, pick ${gStrong("Token only")}, and copy the token. It's shown only this once.</li>
@@ -1294,13 +1309,12 @@ set -Ux CANOPY_MCP_TOKEN canopy_mcp_…`)}</li>
     </ol>
     ${gFig("connect", `${gEm("Get connection command")}: pick your client and copy the ready-made setup. (The token is hidden in this screenshot.)`)}
 
-    <h3 style="${gH3}">Other agents</h3>
+    ${sub("Other agents")}
     <p style="${gP}">The same dialog has ready-made setups for ${gStrong("Codex")}, a ${gStrong(".mcp.json")} file (Cursor and other MCP clients), and ${gStrong("Claude Code without the plugin")}. Each one already has a fresh token and this Canopy's address filled in. Paste it and restart the agent. If you use the plugin, you don't need the Claude Code command as well.</p>
     <p style="${gP}">Every token you mint stays listed in Settings by its first few characters. ${gStrong("Revoke")} disconnects that agent immediately.</p>
     ${gFig("settings", `${gEm("Settings")}: profile, sign-in methods, MCP access tokens, appearance, and email digests.`)}
 
-    <div style="${gEyebrow}">Step 3</div>
-    <h2 style="${gH2}">Learn the skills</h2>
+    ${sec("Step 3", "Learn the skills", "Learn the skills")}
     <p style="${gP}">The plugin's skills are how your agent keeps Canopy current. Three of them form a loop you'll use every session, ${gStrong("orient → work → record")}:</p>
     <ul style="${gList}">
       <li>${gStrong("canopy")}: the overview. It explains the whole system and every tool. Ask about it when you're unsure where something lives.</li>
@@ -1317,71 +1331,68 @@ set -Ux CANOPY_MCP_TOKEN canopy_mcp_…`)}</li>
       <li>${gStrong("read-plan")} and ${gStrong("update-plan")} (admins): read the roadmap against what shipped, and push a reshaped plan.</li>
     </ul>
 
-    <div style="${gEyebrow}">How it works</div>
-    <h2 style="${gH2}">Read, propose, confirm</h2>
+    ${sec("How it works", "Read, propose, confirm", "How it works")}
 
-    <h3 style="${gH3}">Reading</h3>
+    ${sub("Reading")}
     <p style="${gP}">The ${gStrong("Docs")} library is split into ${gStrong("Technical")} and ${gStrong("Product")} spaces, each grouped into sections like ${gStrong("Architecture")} and ${gStrong("Decisions")}. Opening a doc expands its heading outline in the tree, and ${gStrong("Version history")} keeps every earlier version. ${gStrong("New doc")} lets you propose one yourself.</p>
     ${gFig("docs", `${gEm("Docs")}: the open doc's outline in the tree, and a banner pointing to a proposal awaiting review.`)}
     <p style="${gP};margin-top:14px">${gStrong("Search")} is the box at the top of the sidebar (${gCode("⌘K")}, or ${gCode("Ctrl K")} on Windows and Linux). It searches docs, decisions, the feed, sprints, tickets, and artifacts, and shows only settled content. Your agent's ${gCode("query")} tool searches the same things plus pending proposals, each labelled, so it can tell settled context from a draft.</p>
     ${gFig("search", `${gEm("Search")}: ranked results across every type, with your query highlighted.`)}
 
-    <h3 style="${gH3}">How agent writes are staged</h3>
+    ${sub("How agent writes are staged")}
     <p style="${gP}">When an agent proposes a doc change or drafts a decision (an ADR), it becomes a ${gStrong("staged")} version. The live doc stays untouched until a person promotes the change. Each proposal is labelled ${gStrong("new")}, ${gStrong("edit")}, or ${gStrong("rewrite")}, and an edit written against an out-of-date version is flagged. Sending the same content twice changes nothing, so re-running a session doesn't pile up noise. No agent tool can promote, ratify, or reject anything. Those buttons only exist here, in the web app.</p>
 
-    <h3 style="${gH3}">Review: promote, ratify, or reject</h3>
+    ${sub("Review: promote, ratify, or reject")}
     <p style="${gP}">${gStrong("Triage › Review")} is one queue for everything awaiting a decision. A doc proposal shows as a diff against the live version (unified, side by side, or rendered). ${gStrong("Promote")} makes it live; ${gStrong("Reject")} sets it aside. A drafted decision shows the proposed record: ${gStrong("Ratify")} or ${gStrong("Reject")} it. Nothing is deleted either way, and the sidebar count shows what's waiting.</p>
     ${gFig("review", `${gEm("Review")}: the queue on the left and the selected proposal's diff on the right.`)}
     <p style="${gP};margin-top:14px">${gStrong("Maintenance")} is occasional housekeeping, and empty is its normal state. ${gStrong("Unplaced")} holds anything an agent couldn't confidently place: route it where it belongs or ${gStrong("Discard")} it. ${gStrong("Identity")} matches unrecognized GitHub logins to people. Admins also see ${gStrong("People")}, for invites and email digest settings.</p>
     ${gFig("maintenance", `${gEm("Maintenance")}: the Unplaced queue, waiting to be routed or discarded.`)}
 
-    <div style="${gEyebrow}">Tour</div>
-    <h2 style="${gH2}">Every screen, top to bottom</h2>
+    ${sec("Tour", "Every screen, top to bottom", "Tour")}
     <p style="${gP}">The sidebar groups screens into ${gStrong("Workspace")}, ${gStrong("Monitor")}, ${gStrong("Knowledge")}, and ${gStrong("Triage")}. A chevron opens a screen's sub-pages, ${gStrong("Collapse")} folds the rail to icons, and every screen has its own address (${gCode("#tickets/7")}, ${gCode("#artifacts")}) you can send to a teammate.</p>
 
-    <h3 style="${gH3}">My Work</h3>
+    ${sub("My Work")}
     <p style="${gP}">Canopy opens here, and it has three lists. ${gStrong("To-Do")}: your open assigned GitHub issues, each with a short summary, its sprint, and a suggested next step. ${gStrong("Previous activity")}: your recently merged and closed PRs, each summarized once. ${gStrong("Tickets assigned to me")}: your open tickets. It reads only what Canopy has already captured, so it loads instantly.</p>
     ${gFig("mywork", `${gEm("My Work")}: your open issues, recent PRs, and tickets.`)}
 
-    <h3 style="${gH3}">Tickets</h3>
+    ${sub("Tickets")}
     <p style="${gP}">The team's request queue. Anyone can file a bug, request, question, or access ask with ${gStrong("New ticket")}. The ${gStrong("Queue")} groups tickets by sprint (no sprint means ${gStrong("Backlog")}); ${gStrong("Board")} shows the same tickets as status columns. A ticket moves ${gStrong("Triage → In progress → Done")}, or ends ${gStrong("Declined")}, and only a person closes one: a merged PR never does.</p>
     ${gFig("tickets", `${gEm("Tickets")}: the queue grouped by sprint.`)}
     ${gFig("board", `${gEm("Board")}: the same queue as status columns.`)}
     <p style="${gP};margin-top:14px">A ticket's page holds its thread (comments with ${gCode("@mentions")}, next to every status change), its assignees and sprint, one level of sub-tickets, and ${gStrong("Linked work")}: paste a GitHub or Figma URL, or a bare ${gCode("#123")}. Artifacts linked to the ticket show here too. Your agent can file tickets, and on tickets ${gStrong("assigned to you")} it can move status, comment, link, set the sprint, or nest. It can't change who a ticket is assigned to.</p>
     ${gFig("ticket", `${gEm("A ticket")}: description, linked work, and thread, with status, assignees, and sprint alongside.`)}
 
-    <h3 style="${gH3}">Roadmap and sprints</h3>
+    ${sub("Roadmap and sprints")}
     <p style="${gP}">${gStrong("Narrative")} reads the plan as a document; ${gStrong("Timeline")} lays out the sprints by date. Each sprint shows its urgency, due date, domain, lead, and a progress bar that counts that sprint's tickets closed (done or declined) out of its total, plus any GitHub issues it tracks. A sprint's own page lists its tickets, assignees, and resources. When everything in it is closed, the page offers to complete it. That's always a person's call.</p>
     ${gFig("roadmap", `${gEm("Roadmap")}: sprints in progress and upcoming, each with its progress.`)}
     ${gFig("sprint", `${gEm("A sprint")}: its tickets, progress, properties, assignees, and resources.`)}
 
-    <h3 style="${gH3}">Handoffs</h3>
+    ${sub("Handoffs")}
     <p style="${gP}">A handoff is a note from one session to the next: the task, what's done, what's next, the files that matter, and optionally a ready-to-run prompt. Your agent leaves one with the ${gStrong("handoff")} skill, addressed to you, a teammate, or anyone. At the start of your next session, load-context lists the ones waiting and claims only the one you pick. Unclaimed handoffs expire after 7 days. The sidebar count is what's waiting for you.</p>
     ${gFig("handoffs", `${gEm("Handoffs")}: pending ones first, then claimed and expired history.`)}
 
-    <h3 style="${gH3}">Repo</h3>
+    ${sub("Repo")}
     <p style="${gP}">A dashboard over the product repo in five tabs: ${gStrong("Overview")} (each environment's deploys, checks, health, and drift), ${gStrong("Code")}, ${gStrong("CI &amp; Deploys")}, ${gStrong("Usage")}, and ${gStrong("Team &amp; Planning")}. It reads only what Canopy has captured from the GitHub webhook and scheduled polls. A section with nothing yet reads ${gStrong("not connected")} and names what it's waiting on, never a made-up zero. ${gStrong("Preview with sample data")} shows the full layout with labelled placeholder numbers. Admins also get ${gStrong("Poll now")}.</p>
     ${gFig("repo", `${gEm("Repo › Overview")} (sample data): both environments with deploys, checks, and health.`)}
     ${gFig("repo-usage", `${gEm("Repo › Usage")} (sample data): traffic, errors, active users, and product metrics.`)}
 
-    <h3 style="${gH3}">Feed</h3>
+    ${sub("Feed")}
     <p style="${gP}">A timeline of everything that shipped, from people and agents alike. Each entry links to its PR, commit, or issue and says whether an agent wrote it. Filter by author, tag, or time.</p>
     ${gFig("feed", `${gEm("Feed")}: every change with its PR, commit, and issue links.`)}
 
-    <h3 style="${gH3}">Artifacts</h3>
+    ${sub("Artifacts")}
     <p style="${gP}">An artifact is a page an agent or person made: an HTML design, a markdown report, an SVG or mermaid diagram, an image, a PDF, or a file. Canopy stores every version and links it to the ticket or sprint it came from. ${gStrong("New artifact")} takes pasted source, an upload, or a URL. A new artifact starts as a ${gStrong("draft")}; ${gStrong("Published")} shares it; ${gStrong("Ratify")} is a person's sign-off on the latest version, and only a person can give it. ${gStrong("Compare versions")} diffs any two. Turn off ${gStrong("Visible to org")} to keep one to yourself.</p>
     ${gFig("artifacts", `${gEm("Artifacts")}: every page with a live preview, its author, and its area.`)}
     ${gFig("artifact", `${gEm("An artifact")}: the latest version, ratified, with its status and version picker.`)}
 
-    <h3 style="${gH3}">Prompt Library</h3>
+    ${sub("Prompt Library")}
     <p style="${gP}">The team's reusable prompts, each with a slug, tags, and ${gCode("{{variables}}")} for the parts that change. Every save is a new version. When your agent saves one, it lands as ${gStrong("staged")}, and a person publishes it from the prompt's page. The sidebar count is the staged ones. Ask your agent to "run the ${gCode("&lt;slug&gt;")} prompt" and the ${gStrong("prompts")} skill fills it in, asking you for anything it can't fill.</p>
     ${gFig("prompts", `${gEm("Prompt Library")}: published, staged, and draft prompts with their tags and versions.`)}
 
-    <h3 style="${gH3}">Settings</h3>
+    ${sub("Settings")}
     <p style="${gP}">Click your name at the bottom of the sidebar. ${gStrong("Profile")} sets your name, handle, and color. ${gStrong("Account")} links GitHub and Google. ${gStrong("MCP access tokens")} is where agents connect. ${gStrong("Appearance")} switches between Light, Dark, Midnight, and System. ${gStrong("Email notifications")} sets each digest (your work, the review queue, roadmap changes, the ticket queue) to daily, weekly, or off.</p>
 
-    <div style="${gEyebrow}">Troubleshooting</div>
-    <h2 style="${gH2}">When something doesn't work</h2>
+    ${sec("Troubleshooting", "When something doesn't work", "Troubleshooting")}
     <ul style="${gList}">
       <li>${gStrong("GitHub sign-in says you're not a member.")} Accept the SaplingLearn org invite on GitHub, then sign in again.</li>
       <li>${gStrong("Google sign-in says you're not invited.")} Ask an admin to invite the exact address you signed in with.</li>
@@ -1393,6 +1404,18 @@ set -Ux CANOPY_MCP_TOKEN canopy_mcp_…`)}</li>
       <li>${gStrong("An agent's change isn't live.")} That's by design: it's waiting in ${gStrong("Review")} for a person to promote it.</li>
       <li>${gStrong("A Repo section reads not connected.")} Nothing has been captured for it yet. The section names what it's waiting on.</li>
     </ul>
+  </div>`;
+  // Buttons, not #anchors: the hash is the route (guideJump scrolls in place).
+  const item = (id: string, label: string, cls: string) =>
+    `<button data-act="guideJump" data-arg="${id}" class="${cls}"><span>${label}</span></button>`;
+  const rail = `<nav class="cnpy-guide-toc" aria-label="On this page">
+      <div class="cnpy-guide-toc-h">On this page</div>
+      ${item("guide-top", "Introduction", "cnpy-guide-toc-sec")}
+      ${toc.map((t) => `${item(t.id, t.label, "cnpy-guide-toc-sec")}${t.subs.length ? `<div class="cnpy-guide-toc-subs">${t.subs.map((x) => item(x.id, x.label, "cnpy-outline-item")).join("")}</div>` : ""}`).join("")}
+    </nav>`;
+  return `<div class="cnpy-guide" style="display:flex;gap:56px;max-width:1180px;margin:0 auto;padding:52px 40px 120px;align-items:flex-start">
+    ${rail}
+    ${body}
   </div>`;
 }
 
