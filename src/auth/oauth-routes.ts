@@ -95,6 +95,10 @@ export function buildOAuthApp(deps: OAuthDeps = {}): Hono<AppEnv> {
 
   // ── Registration ──
   o.post("/oauth/register", async (c) => {
+    const declaredLen = c.req.header("content-length");
+    if (declaredLen !== undefined && Number(declaredLen) > MAX_REGISTER_BYTES) {
+      return oauthError(c, new OAuthError("invalid_client_metadata", "the registration body is over 8 KB"));
+    }
     const bytes = await c.req.arrayBuffer();
     if (bytes.byteLength > MAX_REGISTER_BYTES) return oauthError(c, new OAuthError("invalid_client_metadata", "the registration body is over 8 KB"));
     const text = new TextDecoder().decode(bytes);

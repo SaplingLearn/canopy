@@ -324,7 +324,10 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
   MCP access lists connections (`GET /auth/oauth-grants`, `POST /auth/oauth-grants/:id/revoke` —
   cookie-only, never MCP). `pruneOAuth` rides the repo cron's `:30` tick and deletes spent or expired
   codes, access tokens a day past expiry, refresh tokens past expiry, and client registrations that never
-  got a grant — grants themselves are never deleted. Every OAuth endpoint answers an unexpected error
+  got a grant after 90 days (`UNGRANTED_CLIENT_TTL_MS` — long enough that a person denied at authorize,
+  e.g. not yet invited, still finds their registration on a retry days later) — grants themselves are never
+  deleted. An unknown `client_id` at authorize is an error PAGE naming the Claude Code fix (`/mcp` → canopy
+  → Clear authentication → Authenticate again), never a silent redirect. Every OAuth endpoint answers an unexpected error
   with `503 { error: "temporarily_unavailable" }` (the authorize pages with a 503 error page), never a 500.
 - **GitHub webhook** (`/webhook/github`, `src/webhook.ts`): a delivery authenticates by an HMAC-SHA256
   `X-Hub-Signature-256` over the raw body against `GITHUB_WEBHOOK_SECRET` (NOT `COOKIE_SECRET`). HMAC is

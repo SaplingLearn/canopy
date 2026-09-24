@@ -91,6 +91,15 @@ describe("POST /oauth/register", () => {
     expect(r.status).toBe(400);
     expect(((await r.json()) as { error: string }).error).toBe("invalid_client_metadata");
   });
+  it("400 invalid_client_metadata on a declared content-length over 8 KB, before the body is even read", async () => {
+    const r = await SELF.fetch("https://example.com/oauth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": "100000" },
+      body: JSON.stringify({ client_name: "Claude Code", redirect_uris: [REDIRECT] }),
+    });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe("invalid_client_metadata");
+  });
 });
 
 describe("POST /oauth/token", () => {

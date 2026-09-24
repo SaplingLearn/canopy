@@ -170,7 +170,8 @@ Public, CORS `*`, JSON body. Limits — any breach is `400 invalid_client_metada
 - `grant_types` / `response_types`, if present, must be subsets of the supported ones;
 - `client_name` defaults to `"Unnamed client"`, is trimmed and cut to 80 characters.
 
-No rate limit (Canopy has none anywhere); unused registrations are pruned after 24 h.
+No rate limit (Canopy has none anywhere); unused (grant-less) registrations are pruned after 90 days
+(see Housekeeping).
 
 ### `GET /oauth/authorize`
 
@@ -274,14 +275,12 @@ Session-cookie routes, never MCP tools:
 - `POST /auth/oauth-grants/:id/revoke` → revokes the caller's OWN grant (`revoked_reason = 'user'`);
   someone else's id and an unknown id are the same `404`.
 
-Settings › **Connected apps** card beside the token list: one row per grant — name, "connected <date>",
-"last used <date>", Revoke. Empty state: "No apps connected. Use *Get connection command* → Sign in with
-browser." Any new border radius gets its line in the corners block (`test/render.corners.test.ts`).
-
-**Browser-connect lives in the Settings tile, not the modal.** The Get connection command modal mints on
-open, so the "Sign in with browser" command is shown in the Settings tile (renamed "MCP access") above
-the token list, with a Copy button that mints nothing. The Connected apps list lives in the same tile.
-The modal is unchanged.
+Settings › **MCP access** tile, top to bottom: the **Sign in with browser** command (a copy-only
+`claude mcp add …` line — mints nothing — with a note to run `/mcp` → Authenticate); **Connected apps**,
+one row per grant — name, "connected <date>", "last used <date>", Revoke; empty state: "No apps
+connected. Run the command above, then sign in from the app."; then **Access tokens** (for CI and other
+headless clients), where *Get connection command* still opens the mint-on-open modal unchanged, above the
+token list. Any new border radius gets its line in the corners block (`test/render.corners.test.ts`).
 
 ## Housekeeping
 
@@ -290,7 +289,9 @@ The modal is unchanged.
 - codes whose `expires_at` or `used_at` is more than 1 h old;
 - access tokens more than 24 h past `expires_at`;
 - refresh tokens past `expires_at` (a rotated one is kept until then, so a late reuse is still detected and revokes the grant);
-- clients older than 24 h with no grant.
+- clients older than 90 days with no grant (`UNGRANTED_CLIENT_TTL_MS`) — long enough that a person
+  denied at authorize (e.g. not yet invited) still finds their registration on a retry days later,
+  rather than hitting an unrecognised-app error on every attempt.
 
 Grants are never deleted — a revoked grant is the audit trail (soft, like every other exit in Canopy).
 
@@ -329,7 +330,8 @@ Vitest against real Miniflare D1, no network (`test/oauth.*.test.ts`):
 - revoke endpoint (both kinds, unknown token → 200); Settings revoke of own vs someone else's grant;
 - `canopy_mcp_` tokens resolve unchanged; `last_used_at` throttling;
 - handle rename carries grants and codes; `pruneOAuth` rules;
-- a render test for the Connected apps card and the modal's new option.
+- a render test for the MCP access tile's browser-connect command, its Connected apps list, and the
+  unchanged Get connection command modal.
 
 Plus `npm run typecheck`, and a live check: `/mcp` → Authenticate against `wrangler dev`
 (`http://localhost:8787/mcp`), then against prod after merge.

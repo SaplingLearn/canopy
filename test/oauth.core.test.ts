@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:test";
-import { all, first } from "../src/db";
+import { all, first, type DB } from "../src/db";
 import { pkce } from "../src/auth/crypto";
 import { seedPerson } from "./helpers/persons";
 import {
@@ -145,7 +145,10 @@ describe("checkAuthorizeRequest", () => {
     const c = await client();
     const { challenge } = await pkce();
     const unknown = await checkAuthorizeRequest(env.DB, authQuery({ ...c, client_id: "nope" }, challenge), ORIGIN);
-    expect(unknown).toMatchObject({ ok: false, kind: "page" });
+    expect(unknown).toMatchObject({
+      ok: false, kind: "page",
+      message: "Canopy doesn't recognise this app's registration. In Claude Code, run /mcp, choose canopy → Clear authentication, then Authenticate again.",
+    });
     const q = authQuery(c, challenge); q.set("redirect_uri", "https://evil.example/cb");
     expect(await checkAuthorizeRequest(env.DB, q, ORIGIN)).toMatchObject({ ok: false, kind: "page" });
   });
@@ -237,6 +240,24 @@ describe("resolveOAuthAccessToken", () => {
     expect(await resolveOAuthAccessToken(env.DB, t.refresh_token, NOW + 2000)).toBeNull(); // a refresh token is never a bearer
     expect(await resolveOAuthAccessToken(env.DB, "canopy_oat_unknown", NOW)).toBeNull();
   });
+  it("the throttled last_used_at bump is best-effort — a DB error there still resolves the handle", async () => {
+    const a = await connected();
+    const throwingDB = new Proxy(env.DB, {
+      get(target, prop, receiver) {
+        if (prop === "prepare") {
+          return (sql: string) => {
+            if (sql.trim().startsWith("UPDATE oauth_grants")) throw new Error("d1 down");
+            return Reflect.get(target, prop, receiver).call(target, sql);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as unknown as DB;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await resolveOAuthAccessToken(throwingDB, a.t.access_token, NOW + 1000)).toEqual({ handle: "real-user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("oauth last_used_at"));
+    errSpy.mockRestore();
+  });
 });
 
 async function connected(person = "real-user") {
@@ -313,15 +334,19 @@ describe("revocation", () => {
 });
 
 describe("pruneOAuth", () => {
-  it("drops spent codes, dead tokens and orphan clients; keeps grants and live rows", async () => {
+  it("drops spent codes and dead tokens; keeps grants, live rows, and a grant-less client under 90 days", async () => {
     const a = await connected();
     await refreshAccessToken(env.DB, { refresh_token: a.t.refresh_token, client_id: a.c.client_id }, NOW + 1000);
-    const orphan = await registerClient(env.DB, { client_name: "Orphan", redirect_uris: [REDIRECT] }, NOW);
+    const recentOrphan = await registerClient(env.DB, { client_name: "Recent orphan", redirect_uris: [REDIRECT] }, NOW);
+    const staleOrphan = await registerClient(env.DB, { client_name: "Stale orphan", redirect_uris: [REDIRECT] }, NOW - 91 * 86_400_000);
     await pruneOAuth(env.DB, NOW + 2 * 86_400_000);
     expect(await all(env.DB, `SELECT code_hash FROM oauth_codes`)).toEqual([]);
     const tokens = await all<{ kind: string }>(env.DB, `SELECT kind FROM oauth_tokens ORDER BY kind`);
     expect(tokens.map((t) => t.kind)).toEqual(["refresh", "refresh"]); // the original and rotated refresh tokens
-    expect(await getClient(env.DB, orphan.client_id)).toBeNull();
+    // 2 days old, never granted — a denied/not-yet-invited person retrying keeps their registration.
+    expect(await getClient(env.DB, recentOrphan.client_id)).not.toBeNull();
+    // 91 days old, never granted — truly abandoned.
+    expect(await getClient(env.DB, staleOrphan.client_id)).toBeNull();
     expect(await getClient(env.DB, a.c.client_id)).not.toBeNull();
     expect(await grantRow(a.grantId)).not.toBeNull();
   });

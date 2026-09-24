@@ -21,6 +21,11 @@ export const REUSE_INTERVAL_MS = 60 * 1000;
 export const LAST_USED_THROTTLE_MS = 60 * 1000;
 /** Keeps the sealed `oauth_pending` cookie far below a browser's 4 KB limit. */
 export const MAX_STATE_LENGTH = 1024;
+/** A client registration that never earned a grant (e.g. a person denied at
+ *  authorize — not yet invited — who retries) is kept this long before it's pruned,
+ *  so a retry days later still finds its registration and never hits "this app
+ *  isn't registered" (the SDK forgets `client_id` only on `invalid_client`). */
+export const UNGRANTED_CLIENT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_REDIRECT_URIS = 5;
 const MAX_CLIENT_NAME = 80;
 const GRANT_TYPES = ["authorization_code", "refresh_token"];
@@ -169,7 +174,7 @@ export async function checkAuthorizeRequest(db: DB, q: URLSearchParams, origin: 
   const clientId = q.get("client_id") ?? "";
   const redirect = q.get("redirect_uri") ?? "";
   const client = clientId ? await getClient(db, clientId) : null;
-  if (!client) return { ok: false, kind: "page", message: "This app isn't registered with Canopy. Start the connection again from the app." };
+  if (!client) return { ok: false, kind: "page", message: "Canopy doesn't recognise this app's registration. In Claude Code, run /mcp, choose canopy → Clear authentication, then Authenticate again." };
   if (!redirectMatches(client.redirect_uris, redirect)) {
     return { ok: false, kind: "page", message: "This app asked to return to an address it never registered, so Canopy won't send you there." };
   }
@@ -255,7 +260,13 @@ export async function resolveOAuthAccessToken(db: DB, raw: string, nowMs: number
     await sha256Hex(raw), iso(nowMs));
   if (!row) return null;
   if (!row.last_used_at || Date.parse(row.last_used_at) <= nowMs - LAST_USED_THROTTLE_MS) {
-    await run(db, `UPDATE oauth_grants SET last_used_at = ? WHERE id = ?`, iso(nowMs), row.grant_id);
+    // Best-effort: the bump is a courtesy for the Connected apps list, never load-bearing
+    // for auth, so a failed write here must not cost the caller their resolved principal.
+    try {
+      await run(db, `UPDATE oauth_grants SET last_used_at = ? WHERE id = ?`, iso(nowMs), row.grant_id);
+    } catch (e) {
+      console.error("oauth last_used_at: " + (e instanceof Error ? e.message : String(e)));
+    }
   }
   return { handle: row.person };
 }
@@ -319,12 +330,13 @@ export async function revokeGrant(db: DB, handle: string, id: number, nowMs: num
 export async function pruneOAuth(db: DB, nowMs: number): Promise<void> {
   const hourAgo = iso(nowMs - 60 * 60 * 1000);
   const dayAgo = iso(nowMs - 24 * 60 * 60 * 1000);
+  const ungrantedClientCutoff = iso(nowMs - UNGRANTED_CLIENT_TTL_MS);
   await db.batch([
     db.prepare(`DELETE FROM oauth_codes WHERE expires_at < ? OR used_at < ?`).bind(hourAgo, hourAgo),
     db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'access' AND expires_at < ?`).bind(dayAgo),
     db.prepare(`DELETE FROM oauth_tokens WHERE kind = 'refresh' AND expires_at < ?`).bind(iso(nowMs)),
     db.prepare(`DELETE FROM oauth_clients WHERE created_at < ?
-      AND client_id NOT IN (SELECT client_id FROM oauth_grants) AND client_id NOT IN (SELECT client_id FROM oauth_codes)`).bind(dayAgo),
+      AND client_id NOT IN (SELECT client_id FROM oauth_grants) AND client_id NOT IN (SELECT client_id FROM oauth_codes)`).bind(ungrantedClientCutoff),
   ]);
 }
 
