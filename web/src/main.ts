@@ -108,10 +108,13 @@ function screenSettled(): boolean {
     case "ticketdetail": return ok(state.ticketDetail);
     case "sprint": return ok(state.sprintDetail);
     case "repo": return state.repo.data !== null || state.repo.status === "error";
-    case "handoffs": return ok(state.handoffs);
-    case "handoff": return ok(state.handoffDetail);
-    case "prompts": return ok(state.promptList);
-    case "prompt": return ok(state.promptDetail);
+    // These four refetch on every visit and paint what they already hold meanwhile,
+    // so "landed" means "has something to show" (like the Repo dashboard) — else the
+    // cached paint plays the entrance and the refresh landing plays it a second time.
+    case "handoffs": return ok(state.handoffs) || state.handoffs.data.length > 0;
+    case "handoff": return ok(state.handoffDetail) || state.handoffDetail.data !== null;
+    case "prompts": return ok(state.promptList) || state.promptList.data.length > 0;
+    case "prompt": return ok(state.promptDetail) || state.promptDetail.data !== null;
     default: return true; // search re-queries per keystroke; the rest load nothing
   }
 }
