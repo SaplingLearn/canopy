@@ -171,3 +171,49 @@ subdomain, PDF text extraction for search.
 
 (Any track that changes a file owned by another track, or `shared/artifacts-core.ts`, adds a dated
 line here saying what and why.)
+
+Track A (2026-09-23) — `shared/artifacts-core.ts` is UNCHANGED. Decisions taken beyond this doc:
+
+- 2026-09-23 · **Row types** live in a new `shared/artifacts-rows.ts` (type-only), re-exported by `shared/rows.ts`.
+  `shared/artifacts.ts` adds `ARTIFACT_TITLE_MAX` (200), `ARTIFACT_SUMMARY_MAX` (500), `ARTIFACT_FILENAME_MAX`
+  (255), `ARTIFACT_REPO_RE`, `SHA256_HEX_RE` and the zod request schemas (`CreateTextArtifactSchema`,
+  `AddTextVersionSchema`, `PatchArtifactSchema`, `RatifyArtifactSchema`, `UploadTicketSchema`,
+  `FetchArtifactUrlSchema`, `ArtifactListFiltersSchema`, `ArtifactLinkInputSchema`).
+- 2026-09-23 · **The viewer is a plain handle string**, matched case-insensitively (like `persons.handle`).
+- 2026-09-23 · **`ArtifactError` messages**: every not-found is `new ArtifactError("not_found", "not_found")` —
+  identical for a missing slug, a malformed slug, private-to-someone-else, a version-0 page and a version out
+  of range. Other codes carry a human message; adapters should send `{ error: code }` if they want byte parity.
+- 2026-09-23 · **Link display**: a ticket's `meta` is its raw status KEY (`submitted` / `in_progress` / `done` /
+  `declined`) so the SPA can map label + tint (`TSTATUS`); a sprint's is `dates` + `" · ACTIVE"` when
+  `status = 'in_progress'` (`""` when it has neither). A target deleted later reads `label: null, meta: null`.
+- 2026-09-23 · **Links are idempotent**: `addLink` is INSERT OR IGNORE, `removeLink` of an absent link is a
+  no-op and does not require the target to still exist; duplicate links in one create are deduped.
+- 2026-09-23 · **`file` never stores an active type**: a declared `text/html`, `image/svg+xml`, XML, JS etc. is
+  stored as `application/octet-stream` (defense in depth beside the raw route's CSP/attachment). An `image`
+  with no declared type is inferred from the filename extension; anything outside `ARTIFACT_IMAGE_TYPES` is 400.
+  Filenames keep only the last path segment, drop control chars and `"`, ≤ 255. Text versions store
+  `filename = NULL` and `content_type = ARTIFACT_TEXT_CONTENT_TYPE[kind]`. Empty text content is allowed; an
+  empty binary is 400. No magic-byte sniffing (the streaming PUT cannot; the raw route sends `nosniff`).
+- 2026-09-23 · **Upload tokens**: `mintUploadToken` returns `{ id, slug, token, upload_url, expires_at }` where
+  `upload_url` is RELATIVE (`/api/artifacts/upload/<token>`) — Track B may prefix `PUBLIC_ORIGIN`/the request
+  origin. The token is 32 random bytes, base64url. With `slug`, the page's AUTHOR may also target their own
+  still-pending (version-0) page, so an expired first upload can be retried on the same slug; anyone else
+  gets the one not_found. An abandoned version-0 page keeps its slug forever (no cleanup job — deferred).
+  On a length/hash mismatch (or a null body) the claim is RELEASED so the same token can retry within its
+  TTL; a visibility failure at the PUT keeps the token consumed. R2 itself rejects a wrong-hash body (the
+  `sha256` put option — verified on Miniflare), and the existing object at that key is untouched.
+- 2026-09-23 · **PATCH**: private → org moves only `draft` → `published` (a ratified page stays ratified); an
+  explicit `status` in the same PATCH wins over that rule; a title change keeps the slug and `updated_at`.
+- 2026-09-23 · **`listPages` `q`** = FTS match (`buildMatch`) OR a title/slug substring (`LIKE`, wildcards
+  escaped), still sorted by `updated_at`. `sprint` / `ticket` filters take an id (`#` allowed); garbage → `[]`.
+- 2026-09-23 · **`searchArtifacts(db, q, viewer, limit = 20)`** returns `ArtifactSearchHit[]` (`id, slug, title,
+  kind, status, visibility, author_id, current_version, updated_at, description, rank, snippet`), bm25 ascending
+  (lower = better), limit capped at 100, and `[]` when `q` has nothing matchable — Track C's browse mode should
+  use `listPages`.
+- 2026-09-23 · **Migration extras**: besides status='ratified' ⇔ all ratified_* set, a second CHECK forbids a
+  partially-set ratified_* on a non-ratified row. `artifact_versions.filename` is nullable.
+- 2026-09-23 · **D1 binds JS numbers as REAL**, so `CAST(? AS TEXT)` of a bound id gives `'1.0'`: the FTS
+  `page_id` is always bound as a STRING (the delete trigger's `CAST(old.id AS TEXT)` gives `'1'`).
+- 2026-09-23 · **Tests**: Miniflare resets D1 per test (the harness) but NOT R2 — tests that assert an R2 key is
+  absent must use bytes no other test uploads. `test/rename-handle.test.ts` now seeds every artifact handle
+  column through the real writers.

@@ -8,6 +8,7 @@ import { createSession } from "../src/auth/session";
 import { mintToken } from "../src/auth/tokens";
 import { createInvite, acceptInvite } from "../src/auth/invites";
 import { ingestEvent, ingestFeedEntry } from "../src/consumer";
+import { createPage as createArtifact, setStatus as setArtifactStatus, ratify as ratifyArtifact, mintUploadToken } from "../src/tools/artifacts";
 import { write_plan } from "../src/tools/plan";
 import {
   append_feed, propose_doc_update, stage_adr,
@@ -80,6 +81,17 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     `${handle}:daily:w1`, handle, "daily", "w1", "[]", "pending", nowIso()); // notification_outbox.user_id
   await createInvite(env.DB, { email: "old-me-invite@test.io", name: null, invitedBy: handle }); // invites.invited_by
   await acceptInvite(env.DB, "old-me-invite@test.io", handle); // invites.accepted_by
+  // Artifacts (0029), through the REAL writers (src/tools/artifacts.ts): the create
+  // covers artifact_pages.author_id + artifact_versions.created_by + (with a link)
+  // artifact_links.created_by; publish + ratify covers ratified_by; a minted upload
+  // token covers artifact_upload_tokens.principal.
+  const art = await createArtifact(env.DB, {
+    title: "Rename test artifact", kind: "markdown", area: "ui", content: "# hi",
+    links: [{ target_type: "ticket", target_ref: String(ticketId) }],
+  }, handle);
+  await setArtifactStatus(env.DB, art.slug, "published", handle);
+  await ratifyArtifact(env.DB, art.slug, 1, handle);
+  await mintUploadToken(env.DB, { kind: "file", size_bytes: 1, sha256: "e".repeat(64), title: "Rename test upload", area: "ui" }, handle);
 }
 
 describe("renamePerson", () => {

@@ -110,6 +110,9 @@ export const HANDLE_COLUMNS: ReadonlyArray<readonly [table: string, column: stri
   ["plan", "updated_by"], ["plan_versions", "created_by"],
   ["notification_policy", "updated_by"], ["notification_prefs", "user_id"], ["notification_outbox", "user_id"],
   ["invites", "invited_by"], ["invites", "accepted_by"],
+  // Artifacts (0029): plain TEXT handles, no FK.
+  ["artifact_pages", "author_id"], ["artifact_pages", "ratified_by"], ["artifact_versions", "created_by"],
+  ["artifact_links", "created_by"], ["artifact_upload_tokens", "principal"],
 ];
 
 export type RenameResult = { ok: true } | { ok: false; reason: HandleProblem | "same" | "not_found" };
