@@ -21,7 +21,7 @@ import {
   listMcpTokens, revokeMcpToken, listOAuthGrants, revokeOAuthGrant,
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
-  addTicketLink, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
+  addTicketLink, editTicket, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
   getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
   listArtifacts, getArtifact, getArtifactDiff, createArtifact, patchArtifact, ratifyArtifact, addArtifactLink, fetchArtifactUrl,
@@ -1695,6 +1695,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.ticketId = id;
       state.commentDraft = ""; state.mention = null; state.commentHeight = null; state.linkDraft = "";
       state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null;
+      state.tdEdit = null;
       loadSprintsIfNeeded();
       loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
       loadTicketDetail(id);
@@ -1920,6 +1921,32 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       const seq = claimTicketDetail();
       setTicketParent(id, child)
         .then((t) => applyTicketWrite(t, "Added as sub-ticket — this ticket is now its parent", seq))
+        .catch(ticketErr);
+      return;
+    }
+    // The title/description editor (POST /tickets/:id/edit). A mirrored ticket's
+    // title and body are Canopy's after import, so it edits those too.
+    case "ticketEdit": {
+      const d = state.ticketDetail.data;
+      if (!d) return;
+      state.tdEdit = { title: d.title, body: d.body };
+      break;
+    }
+    case "ticketEditTitle": if (state.tdEdit) state.tdEdit.title = value ?? ""; break;   // rerenders: Save arms on a non-empty title
+    case "ticketEditBody": if (state.tdEdit) state.tdEdit.body = value ?? ""; return;   // echoes live
+    case "ticketEditCancel": state.tdEdit = null; break;
+    case "ticketEditSave": {
+      const id = state.ticketId;
+      const draft = state.tdEdit;
+      const d = state.ticketDetail.data;
+      if (id === null || !draft || !d || !draft.title.trim()) return;
+      const patch: { title?: string; body?: string } = {};
+      if (draft.title.trim() !== d.title) patch.title = draft.title.trim();
+      if (draft.body !== d.body) patch.body = draft.body;
+      if (patch.title === undefined && patch.body === undefined) { state.tdEdit = null; break; }
+      const seq = claimTicketDetail();
+      editTicket(id, patch)
+        .then((t) => { state.tdEdit = null; applyTicketWrite(t, "Ticket updated", seq); })
         .catch(ticketErr);
       return;
     }

@@ -113,7 +113,9 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   "Handoffs & Prompt Library" below], then `0029_oauth` [`oauth_clients` / `oauth_grants` / `oauth_codes` /
   `oauth_tokens` — MCP OAuth, see Auth], then `0030_artifacts` [`artifact_pages` / `artifact_versions` /
   `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below], then `0031_doc_images`
-  [`doc_images` / `doc_image_upload_tokens` — see "Doc images" below]).
+  [`doc_images` / `doc_image_upload_tokens` — see "Doc images" below], then `0032_ticket_source`
+  [`tickets.source` / `source_ref` (partial UNIQUE) / `source_author` / `source_updated_at`,
+  `ticket_links.locked`, and the `github-webhook` system person — see "Tickets mirrored from GitHub issues"]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
   the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
@@ -190,20 +192,22 @@ like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan
 (agent-proposed content), add it to the gate — never a second ingestion surface; authored/computed writes
 stay direct in the promote class.
 
-**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, eleven session-cookie routes in
-`routes.ts`): `create_ticket` (opening `ticket_events` row) / `transition_ticket` / `toggle_assignee` /
+**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, twelve session-cookie routes in
+`routes.ts`): `create_ticket` (opening `ticket_events` row) / `edit_ticket` (title and/or body) / `transition_ticket` / `toggle_assignee` /
 `add_ticket_link` / `remove_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`. There is no vocab
 gate, no confidence, no staged state. Every write bumps `tickets.updated_at` (the queue's sort key); the
 status machine is `canTransition` in `shared/tickets-core.ts` (re-exported by `shared/tickets.ts`) and is
 never re-declared server-side; an illegal move or a nesting-rule break is a 409 that writes nothing;
 tickets nest exactly ONE level (`set_ticket_parent`'s four rejections).
 
-**The writer is a PERSON — over a cookie, or over their own bearer token.** Six of those writers are also
+**The writer is a PERSON — over a cookie, or over their own bearer token.** Seven of those writers are also
 MCP tools (`src/tools/tickets-agent.ts`, the read side below), scoped so an agent writes only inside its
 principal's lane. That is a narrowing of the old "ticket writes are cookie-only" rule, not of the
 invariant underneath it: **nothing INFERS a resolution.** `done` / `declined` are never set by a PR
 merging, an issue closing, the webhook, or `scheduled()` — a person asks for them, and an agent holding
-that person's token asking is that person asking. `toggle_assignee` is the one writer with NO MCP
+that person's token asking is that person asking. ONE carve-out: a ticket MIRRORED from a GitHub issue
+follows its OWN source issue's close and reopen (see "Tickets mirrored from GitHub issues"); a native
+ticket that merely links an issue never does. `toggle_assignee` is the one writer with NO MCP
 counterpart (design D3): assignment is the data the lane rule is built on, so after filing it is
 cookie-only, forever.
 
@@ -247,7 +251,7 @@ degraded, tab, range, sections }`.
 `docs/superpowers/specs/2026-09-17-agent-ticket-writes-design.md`). A ticket write over MCP is permitted
 exactly when the bearer principal is ALREADY an assignee of that ticket, else `TicketError('forbidden')`
 (403) with NOTHING written; an unknown id is `not_found` FIRST, so the check is never an existence
-oracle. Each of the six tools (`create_ticket` / `transition_ticket` / `add_ticket_comment` /
+oracle. Each of the seven tools (`create_ticket` / `edit_ticket` / `transition_ticket` / `add_ticket_comment` /
 `add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent`) asserts, then delegates to the UNTOUCHED
 writer in `tools/tickets.ts` — the transition table, nesting rules and audit rows stay shared with the
 cookie routes, which are NOT assignee-scoped and did not change. `create_ticket` is the one unscoped
@@ -370,10 +374,11 @@ DTO vocabulary; only `src/tools/` speaks columns. `GET /roadmap` and MCP `get_ro
 narrative + `sprints: SprintView[]` in target-date order, each with `progress: {closed, total, pct}`.
 No live GitHub, no per-user token.
 
-**Progress is TICKET-INCLUSIVE**, computed at read time by the ONE function `sprintProgress` in
-`src/tools/sprints.ts`: `total` = the tickets in the sprint + `sprint_progress.total`, `closed` = the
-tickets a person set `done`/`declined` + `sprint_progress.closed`, `pct` rounded; a sprint with neither
-reads `0/0`. The ticket half is a live D1 count; the GitHub half is a stored cache (`sprint_progress`,
+**Progress is TICKETS ONLY**, computed at read time by the ONE function `sprintProgress` in
+`src/tools/sprints.ts`: `total` = the tickets in the sprint (native AND mirrored), `closed` = those set
+`done`/`declined`, `pct` rounded; a sprint with none reads `0/0`. The GitHub issue counts travel
+SEPARATELY as `SprintView.issues` (null without a cache row), so a mirrored ticket and its issue are never
+summed into one number. The ticket half is a live D1 count; the GitHub half is a stored cache (`sprint_progress`,
 keyed `sprint_id`), written as ABSOLUTE `closed`/`total` (so delivery order is irrelevant — the last
 write wins) by two direct writers: the webhook (event-derived, on issue events) and the `scheduled()`
 cron backstop (`recomputeAllProgress`, `GITHUB_SERVICE_TOKEN`, off the render path). `github_ref` is bare
@@ -383,8 +388,8 @@ numbers) resolved against `GITHUB_REPO` — only by those two writers, never at 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events AND over the ticket queue: three separate lists — `previousActivity` (summarized merged/closed PRs
 where the person is the subject, 5 most recent), `todo` (their open assigned issues, 5 most recently
-updated, each carrying its own stored summary), and `tickets` (their OPEN assigned tickets, 5 most recently
-updated, with the sprint label) — built from `events` (+ `pr_summaries`, `issue_summaries`, `persons`,
+updated, each carrying its own stored summary), and `tickets` (their OPEN assigned NATIVE tickets — a
+mirrored ticket is already on the To-do as its issue — 5 most recently updated, with the sprint label) — built from `events` (+ `pr_summaries`, `issue_summaries`, `persons`,
 `identities`) and from `tickets` + `ticket_assignees`, no live GitHub.
 `person` resolves via the github `identities` row (`resolvePersonForLogin`, see Identity above); an
 unmapped login yields an empty EVENT projection (`degraded:false`) — but the ticket list is read BEFORE the
@@ -936,6 +941,46 @@ HOURLY usage metrics (`cf_*` / `rw_*` / `active_users_*`) older than 100 days; a
 older than **7 days, EXCEPT the rows stamped exactly 00:00 UTC, kept 100 days** (the daily totals the trend
 reads — `sap_*` and the usage globs never match each other's names). `pr` / `push` / `deploy` /
 `run` / `review` rows and `coverage` / `bundle_kb` / `todo_count` match no rule and are kept forever.
+
+## Tickets mirrored from GitHub issues — ADR-007, amended (`src/tools/ticket-mirror.ts`, `0032_ticket_source`)
+
+ADR-007 now reads: **a ticket may link to GitHub work, and may be sourced from a GitHub issue, but is never the
+issue itself.** Every issue of `GITHUB_REPO` is mirrored into a ticket (`source = 'github'`, `source_ref`
+`owner/repo#n`, UNIQUE; `source_author` = the raw GitHub login, NOT a handle, so it is not in
+`HANDLE_COLUMNS`). The mirror is a COMPUTED write from a verified delivery — no `consume()`.
+
+- **Where it runs**: `handleGithubWebhook` calls `mirrorIssue` on EVERY verified `issues` delivery (not only
+  when `ingestEvent` wrote — a redelivery heals a half-failed mirror), wrapped so a failure never costs the
+  `events` capture; `runBackfill` calls the SAME function for OPEN issues, and its reconstructed deliveries
+  (and `scripts/backfill-events.mjs`') carry `repository.full_name`. Only an issue whose
+  `repository.full_name === GITHUB_REPO` is mirrored; unset `GITHUB_REPO` mirrors nothing; PRs are skipped.
+- **Mapping** (`ticketFromIssue`, pure): the `[P0]`–`[P3]` title tag (else a `P0`–`P3` label) → high / high /
+  normal / low, none → normal, stripped from the title; label `bug` / `question` → that category, else
+  `other`; the requester is `resolvePersonForLogin(author)` or the system person `github-webhook`; GitHub
+  assignees map through `identities` (unmapped dropped); open → `in_progress` with a mapped assignee, else
+  `submitted`; closed `completed` → `done`, `not_planned` / `duplicate` → `declined`.
+- **Ownership (the owner's ruling)**: title, body, category, priority, requester and assignees are seeded at
+  IMPORT and are Canopy's afterwards — later deliveries never overwrite them, and they are edited like any
+  ticket (`edit_ticket`, `toggle_assignee`, the normal transition table). GitHub drives only CLOSURE: a
+  `closed` delivery forces `done`/`declined`, `deleted` / `transferred` forces `declined`, `reopened` puts a
+  resolved ticket back to `submitted` — through the module-private `forceStatus`, the ONE writer allowed to
+  bypass `TICKET_TRANSITIONS`, writing a `ticket_events` row as `github-webhook`. Canopy never writes back to
+  GitHub, and a sprint is still completed only by a person.
+- **Idempotency / ordering**: creation is ONE guarded D1 batch (ticket, assignees, opening row, locked link —
+  each child keyed by `source_ref`), so a replay writes nothing twice; a delivery older than
+  `source_updated_at` is skipped whole; one already applied (same `updated_at`) forces nothing, so a
+  redelivery cannot undo a later Canopy change.
+- **The lock**: the source link is inserted `locked = 1`; `remove_ticket_link` (the ONLY link delete path —
+  there is deliberately no trigger, the harness truncates `ticket_links`) refuses it with 403 and the UI
+  shows a lock with no Remove row. Everything else stays writable.
+- **No double counting**: `listAssignedTickets` (My Work + the ticketq digest's own half), `ticket_badge`,
+  the digest's unassigned half and the Repo dashboard's Open tickets tile read `source = 'canopy'`; sprint
+  progress counts both. `deleted` / `transferred` are captured issue actions, and every open-issue reader
+  (My Work's To-do, array-ref progress, the Repo dashboard's open issues) treats them as no longer open
+  (`src/tools/issue-gone.ts`).
+- **`github-webhook`** is a reserved handle with a `persons` row (seeded by 0032 AND `reset.mjs`, which
+  truncates persons): `listPersons` never lists a reserved handle and the ticket writers' `requirePerson`
+  refuses one, so it can never be assigned, file, comment or link.
 
 ## Handoffs & Prompt Library — direct writers, NOT the ingestion gate
 

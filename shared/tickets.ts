@@ -3,7 +3,9 @@
 // node built-ins, so it imports cleanly into both builds.
 //
 // Authority: tickets are human authored writes in the promote class. Nothing here
-// is staged and nothing here is inferred — `done` / `declined` are set by a person.
+// is staged and nothing here is inferred — `done` / `declined` are set by a person,
+// with ONE exception: a ticket mirrored from a GitHub issue (`source: 'github'`,
+// ADR-007 as amended in 0032) follows its own source issue's close and reopen.
 // Person-bearing fields (`requester`, assignee `login`, `created_by`, `author`,
 // `actor`) hold a person HANDLE (0023 identity root), never a GitHub login.
 

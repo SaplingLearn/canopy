@@ -4,7 +4,9 @@
 // by a signed-in human through a cookie route, so there is no vocabulary to
 // police, no confidence to weigh, no staged state to confirm. `done` / `declined`
 // are set here only because a person asked for them — never inferred from a PR
-// merging or an issue closing (the brief's fourth invariant).
+// merging or an issue closing (the brief's fourth invariant). The one carve-out
+// lives OUTSIDE this file: a ticket mirrored from a GitHub issue follows that
+// issue's close/reopen through ./ticket-mirror.ts's private writer.
 //
 // Two rules hold across every function in this file:
 //   1. Every write bumps `tickets.updated_at` — the queue is sorted by it, so a

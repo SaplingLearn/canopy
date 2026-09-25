@@ -15,7 +15,8 @@
 
 import {
   legalMoves, isOpenStatus, TICKET_STATUSES, TICKET_STATUS_LABEL, TICKET_CATEGORIES, TICKET_PRIORITIES,
-  type TicketStatus, type TicketCategory, type TicketPriority,
+  sourceIssueNumber,
+  type TicketStatus, type TicketCategory, type TicketPriority, type TicketSource,
 } from "@shared/tickets-core";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
@@ -67,6 +68,17 @@ export function tagChip(
 }
 
 const categoryChip = (c: string) => tagChip(c, { color: "var(--fg-55)", border: "var(--border-strong)" });
+
+/** The system requester of a mirrored ticket whose issue author maps to no person
+ *  (0032). Not in the people directory, so it gets its own display name. */
+const MIRROR_HANDLE = "github-webhook";
+
+/** "GITHUB #214" on a ticket mirrored from a GitHub issue; nothing on a native one. */
+export function sourceChip(t: { source: TicketSource; source_ref: string | null }): string {
+  if (t.source !== "github") return "";
+  const n = sourceIssueNumber(t.source_ref);
+  return tagChip(n !== null ? `GitHub #${n}` : "GitHub", { size: 9.5, pad: "1px 6px" });
+}
 const sprintTag = (label: string) => tagChip(label);
 
 /** Short age from an ISO timestamp: "42m" / "6h" / "3d" (the design's `age()`).
@@ -85,7 +97,8 @@ export function age(iso: string): string {
 function person(persons: PersonSummary[], handle: string): PersonSummary | null {
   return persons.find((p) => p.handle.toLowerCase() === handle.toLowerCase()) ?? null;
 }
-const nameOf = (persons: PersonSummary[], handle: string): string => person(persons, handle)?.name || handle;
+const nameOf = (persons: PersonSummary[], handle: string): string =>
+  person(persons, handle)?.name || (handle === MIRROR_HANDLE ? "GitHub" : handle);
 const firstNameOf = (persons: PersonSummary[], handle: string): string => nameOf(persons, handle).split(" ")[0];
 
 /** Avatar row — the design's `asgAvs` (-7px overlap, ring in the page background). The
@@ -202,7 +215,7 @@ function tableRow(t: TicketListItem, persons: PersonSummary[]): string {
   const asgText = assigneeLabel(t.assignees, persons);
   const asgStyle = t.assignees.length ? "color:var(--fg-70)" : "color:var(--fg-55);font-style:italic";
   return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-trow${attn ? NEEDS_ATTENTION_CLASS : ""}" style="display:grid;grid-template-columns:${TABLE_COLS};gap:12px;align-items:center;width:100%;text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);transition:background .12s ease">
-    <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>${relationChip(t)}</div>
+    <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>${relationChip(t)}${sourceChip(t)}</div>
     <div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(persons, t.requester), 20, t.requester)}<span style="font-size:12.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nameOf(persons, t.requester))}</span></div>
     <div>${categoryChip(t.category)}</div>
     <div>${priorityChip(t.priority)}</div>
@@ -278,7 +291,7 @@ function boardCard(t: TicketListItem, persons: PersonSummary[]): string {
   const asgStyle = t.assignees.length ? "color:var(--fg-70)" : "color:var(--fg-55);font-style:italic";
   return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-card${needsAttention(t) ? NEEDS_ATTENTION_CLASS : ""}" style="display:block;width:100%;text-align:left;padding:12px 13px;border-radius:11px;border:1px solid var(--border);margin-bottom:8px;transition:all .12s ease">
     <div style="font-size:13.5px;font-weight:600;letter-spacing:-0.005em;line-height:1.4;color:var(--fg)">${esc(t.title)}</div>
-    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px">${categoryChip(t.category)}${priorityChip(t.priority)}${t.sprint_label ? sprintTag(t.sprint_label) : ""}</div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px">${categoryChip(t.category)}${priorityChip(t.priority)}${t.sprint_label ? sprintTag(t.sprint_label) : ""}${sourceChip(t)}</div>
     <div style="display:flex;align-items:center;gap:7px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)">
       ${avatarStack(t.assignees, persons)}
       <span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${asgStyle}">${esc(assigneeLabel(t.assignees, persons))}</span>
@@ -436,6 +449,8 @@ export interface TicketDetailProps {
   commentHeight: number | null;
   /** The Artifacts block under Linked work (artifacts.ts), pre-rendered; absent = none. */
   artifactsBlock?: string;
+  /** The title/body editor's drafts while editing; null (or absent) = reading. */
+  edit?: { title: string; body: string } | null;
 }
 
 /**
@@ -573,14 +588,21 @@ function ticketBody(body: string): string {
 /** A linked-work chip's menu: copy the url, or remove the link (the one
  *  destructive row, in red). It pops straight out of the ⋯: top-left corner
  *  4px right of the button (which sits 8px in from the chip's right, 22px
- *  square, vertically centred) and level with its top, growing from there. */
-function linkMenuBox(linkId: number): string {
+ *  square, vertically centred) and level with its top, growing from there.
+ *  A LOCKED link (a mirrored ticket's source issue, 0032) has no Remove row —
+ *  the server refuses it anyway — and says why in its place. */
+function linkMenuBox(linkId: number, locked = false): string {
   const row = "display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap";
-  return `${MENU_BACKDROP}<div role="menu" class="cnpy-lkmenu" style="${MENU_BOX};top:calc(50% - 11px);right:auto;left:calc(100% - 4px);width:170px">
+  const last = locked
+    ? `<div style="${row};color:var(--fg-40);cursor:default">${LOCK_SVG}Source issue — locked</div>`
+    : `<button role="menuitem" data-act="ticketLinkRemove" data-arg="${linkId}" class="${MENU_ROW_CLASS}" style="${row};color:var(--red)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg>Remove link</button>`;
+  return `${MENU_BACKDROP}<div role="menu" class="cnpy-lkmenu" style="${MENU_BOX};top:calc(50% - 11px);right:auto;left:calc(100% - 4px);width:${locked ? 190 : 170}px">
     <button role="menuitem" data-act="ticketLinkCopy" data-arg="${linkId}" class="${MENU_ROW_CLASS}" style="${row};color:var(--fg-70)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy link</button>
-    <button role="menuitem" data-act="ticketLinkRemove" data-arg="${linkId}" class="${MENU_ROW_CLASS}" style="${row};color:var(--red)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg>Remove link</button>
+    ${last}
   </div>`;
 }
+
+const LOCK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>`;
 
 function linkedWorkBlock(p: TicketDetailProps): string {
   const links = p.ticket.links;
@@ -603,11 +625,11 @@ function linkedWorkBlock(p: TicketDetailProps): string {
           <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)">${LINK_ICON[lk.kind] ?? LINK_ICON.plain}</span>
           <span style="min-width:0">
             <span style="display:block;font-size:12.5px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">${esc(lk.label)}</span>
-            <span style="display:block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${esc(lk.meta)}</span>
+            <span style="display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${lk.locked ? `<span title="The issue this ticket mirrors — this link can't be removed" style="display:flex">${LOCK_SVG.replace('width="13" height="13"', 'width="10" height="10"')}</span>` : ""}${esc(lk.locked ? `${lk.meta} · SOURCE` : lk.meta)}</span>
           </span><span class="cnpy-lkarr" style="display:flex">${EXTERNAL_ARROW}</span>
           </a>
           <button data-act="ticketLinkMenu" data-arg="${lk.id}" class="cnpy-lkmore" title="Link actions" aria-label="Actions for ${attr(lk.label)}" aria-haspopup="menu" aria-expanded="${p.lkMenu === lk.id ? "true" : "false"}" style="position:absolute;padding:0;top:50%;right:8px;margin-top:-11px;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-55)"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>
-          ${p.lkMenu === lk.id ? linkMenuBox(lk.id) : ""}
+          ${p.lkMenu === lk.id ? linkMenuBox(lk.id, lk.locked === 1) : ""}
         </span>`).join("")}</div>`
     : "";
   const linkedLine = hasLinks
@@ -823,6 +845,35 @@ function relationsRail(p: TicketDetailProps): string {
   </div>`;
 }
 
+const PENCIL_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"></path><path d="M20 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5"></path></svg>`;
+
+/** The title/description editor. Works the same on a mirrored ticket: its title
+ *  and body were copied from the GitHub issue at import and are Canopy's now. */
+function editBlock(e: { title: string; body: string }): string {
+  const canSave = e.title.trim().length > 0;
+  return `<div style="display:flex;flex-direction:column;gap:10px;margin:0 0 22px">
+    <input data-act="ticketEditTitle" data-field="ticketEditTitle" aria-label="Title" value="${attr(e.title)}" style="height:40px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:17px;font-weight:600;letter-spacing:-0.01em;outline:none" />
+    <textarea data-act="ticketEditBody" data-field="ticketEditBody" aria-label="Description" placeholder="Describe the ticket (markdown)" style="width:100%;min-height:190px;padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;outline:none;resize:vertical">${esc(e.body)}</textarea>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button data-act="ticketEditCancel" class="cnpy-outlinebtn" style="padding:8px 15px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Cancel</button>
+      ${primaryBtn("Save", canSave, "ticketEditSave", "", "padding:8px 16px")}
+    </div>
+  </div>`;
+}
+
+/** The SOURCE property on a mirrored ticket: the issue it came from, and the one
+ *  rule GitHub still holds over it — closing the issue closes the ticket. */
+function sourceRow(t: TicketDetail): string {
+  if (t.source !== "github") return "";
+  const n = sourceIssueNumber(t.source_ref);
+  const url = t.links.find((l) => l.locked === 1)?.url;
+  const label = n !== null ? `GitHub #${n}` : "GitHub";
+  const chip = url
+    ? `<a href="${attr(safeHref(url))}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--fg);font-size:12.5px;font-weight:500">${LINK_ICON.github}${esc(label)}</a>`
+    : `<span style="font-size:12.5px;font-weight:500;color:var(--fg)">${esc(label)}</span>`;
+  return `<div style="${PROP_ROW}" title="Mirrored from a GitHub issue. Closing or reopening the issue closes or reopens this ticket; everything else is edited here."><div style="${PROP_LABEL}">SOURCE</div><div style="min-width:0">${chip}</div></div>`;
+}
+
 export function ticketDetailView(p: TicketDetailProps): string {
   const t = p.ticket;
   // Laid out like the sprint page: the title heads the LEFT column and the rail
@@ -832,8 +883,11 @@ export function ticketDetailView(p: TicketDetailProps): string {
   return `<div style="${DETAIL_SHELL}">
     <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;min-height:${CARD_MIN_H}">
       <div style="min-width:0;display:flex;flex-direction:column">
-        <h2 style="margin:0 0 22px;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
-        ${ticketBody(t.body)}
+        ${p.edit ? editBlock(p.edit) : `<div style="display:flex;align-items:flex-start;gap:10px;margin:0 0 22px">
+          <h2 style="margin:0;flex:1;min-width:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(t.title)}</h2>
+          <button data-act="ticketEdit" title="Edit title and description" aria-label="Edit title and description" class="cnpy-iconbtn" style="${ICON_BTN};flex:none;margin-top:3px">${PENCIL_SVG}</button>
+        </div>
+        ${ticketBody(t.body)}`}
         ${linkedWorkBlock(p)}
         ${p.artifactsBlock ?? ""}
         ${threadBlock(p)}
@@ -844,7 +898,8 @@ export function ticketDetailView(p: TicketDetailProps): string {
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">STATUS</div><div style="min-width:0">${statusControl(t.status, p.stMenu === "rail", "rail")}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">CATEGORY</div><div>${categoryChip(t.category)}</div></div>
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">PRIORITY</div><div>${priorityChip(t.priority)}</div></div>
-          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">REQUESTER</div><div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(p.persons, t.requester), 20, t.requester)}<span style="font-size:12.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nameOf(p.persons, t.requester))}</span></div></div>
+          <div style="${PROP_ROW}"><div style="${PROP_LABEL}">REQUESTER</div><div style="display:flex;align-items:center;gap:7px;min-width:0">${personChip(person(p.persons, t.requester), 20, t.requester)}<span style="font-size:12.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.requester === MIRROR_HANDLE && t.source_author ? `@${t.source_author}` : nameOf(p.persons, t.requester))}</span></div></div>
+          ${sourceRow(t)}
           <div style="${PROP_ROW}"><div style="${PROP_LABEL}">OPENED</div><div style="font-size:12.5px;color:var(--fg-70);white-space:nowrap">${esc(relTime(t.created_at))}</div></div>
         </div>
         ${assigneeRail(p)}

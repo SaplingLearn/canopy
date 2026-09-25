@@ -1026,11 +1026,11 @@ describe("hover classes — menu rows, pick chips, segments", () => {
     const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", assignees: ["meilin"] }), {
       sprints: [s12], allTickets: [ticket({ id: 9, title: "Candidate" })],
     }));
-    for (const act of ["ticketAsgMenu", "ticketSprintMenu", "ticketRelMenu"]) {
+    for (const act of ["ticketEdit", "ticketAsgMenu", "ticketSprintMenu", "ticketRelMenu"]) {
       expect(html).toContain(`data-act="${act}"`);
     }
     expect(html).toContain('data-act="ticketAsgRemove" data-arg="meilin" title="Remove" class="cnpy-iconbtn"');
-    expect(html.match(/class="cnpy-iconbtn"/g)?.length).toBe(4);   // 3 menu openers + the remove
+    expect(html.match(/class="cnpy-iconbtn"/g)?.length).toBe(5);   // the edit pencil + 3 menu openers + the remove
   });
 
   it("marks the queue's segment buttons and its Open sprint link", () => {
@@ -1181,5 +1181,56 @@ describe("render — the ticket screens", () => {
 
   it("paints the new-ticket form", () => {
     expect(render(appState({ screen: "newticket" }))).toContain('data-act="ntSubmit"');
+  });
+});
+
+// ── mirrored tickets (0032): source chip, the locked link, the editor ─────────
+
+describe("mirrored tickets", () => {
+  const SRC = { source: "github" as const, source_ref: "SaplingLearn/sapling#214", source_author: "outsider", source_updated_at: ago(H) };
+
+  it("the queue row and board card carry a GitHub #n chip; a native row carries none", () => {
+    const rows = [ticket({ id: 1, title: "Mirrored", ...SRC }), ticket({ id: 2, title: "Native" })];
+    const table = queueView(queueProps({ tickets: rows }));
+    expect(table.match(/GitHub #214/g)).toHaveLength(1);
+    const board = queueView(queueProps({ tickets: rows, view: "board" } as Partial<QueueProps>));
+    expect(board).toContain("GitHub #214");
+  });
+
+  it("the detail shows a SOURCE row, names an unmapped author, and locks the source link", () => {
+    const d = detail({
+      id: 1, title: "Mirrored", ...SRC, requester: "github-webhook",
+      links: [link({ id: 5, locked: 1 }), link({ id: 6, url: "https://www.figma.com/file/x/Checkout", kind: "figma", label: "Checkout", meta: "FIGMA · DESIGN" })],
+    });
+    const html = ticketDetailView(detailProps(d, { lkMenu: 5 }));
+    expect(html).toContain("SOURCE");
+    expect(html).toContain("GitHub #214");
+    expect(html).toContain("@outsider");
+    expect(html).toContain("GITHUB · ISSUE · SOURCE");
+    // The locked link's menu: Copy only, and the reason in place of Remove.
+    expect(html).not.toContain('data-act="ticketLinkRemove" data-arg="5"');
+    expect(html).toContain("Source issue — locked");
+    // The unlocked extra link still offers Remove.
+    const other = ticketDetailView(detailProps(d, { lkMenu: 6 }));
+    expect(other).toContain('data-act="ticketLinkRemove" data-arg="6"');
+  });
+
+  it("status and assignee controls stay live on a mirrored ticket (only the link is locked)", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "Mirrored", ...SRC })));
+    expect(html).not.toContain("Managed on GitHub");
+    expect(html).toContain('data-act="ticketAsgMenu"');
+  });
+
+  it("the pencil opens the title/description editor; Save arms only on a non-empty title", () => {
+    const d = detail({ id: 1, title: "T", body: "B" });
+    expect(ticketDetailView(detailProps(d))).toContain('data-act="ticketEdit"');
+    const editing = ticketDetailView(detailProps(d, { edit: { title: "New", body: "Body" } }));
+    expect(editing).toContain('data-act="ticketEditTitle"');
+    expect(editing).toContain('data-act="ticketEditBody"');
+    expect(editing).toContain('data-act="ticketEditSave"');
+    // primaryBtn arms by class (main.ts also refuses a blank title on Save).
+    expect(editing).toMatch(/data-act="ticketEditSave"[^>]*class="cnpy-accentbtn"/);
+    const blank = ticketDetailView(detailProps(d, { edit: { title: "  ", body: "" } }));
+    expect(blank).toMatch(/data-act="ticketEditSave"[^>]*class=""/);
   });
 });

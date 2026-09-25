@@ -20,7 +20,8 @@
 // The bearer token IS the person (design D1), so inside that lane the parity with
 // the ticket screen is total — `done` and `declined` included. The fourth tickets
 // invariant is untouched by that: it says nothing INFERS a resolution (not a PR
-// merging, not an issue closing, not the cron), and an agent calling
+// merging, not an issue closing, not the cron — the one carve-out being a
+// MIRRORED ticket following its own source issue, ./ticket-mirror.ts), and an agent calling
 // transition_ticket under a person's token on that person's ticket is the person
 // saying so.
 //

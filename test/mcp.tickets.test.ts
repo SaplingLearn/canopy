@@ -198,8 +198,9 @@ describe("the MCP ticket/sprint surface", () => {
   it("descriptions state the read/write split: reads unscoped, writes scoped to your lane", async () => {
     const desc = await toolDescriptions("andres");
     for (const t of READ_TOOLS) expect(desc.get(t) ?? "").toMatch(/read-only/i);
-    // ADR-007: a ticket is a D1 row, never a GitHub issue.
-    expect(desc.get("list_tickets")!).toMatch(/never GitHub issues/i);
+    // ADR-007, amended: a ticket may be sourced from a GitHub issue, but is never the issue itself.
+    expect(desc.get("list_tickets")!).toMatch(/sourced from a GitHub issue, but is never the issue itself/i);
+    expect(desc.get("list_tickets")!).not.toMatch(/never GitHub issues/i);
     // The stale "there is no MCP write path" claim must be gone from every one.
     for (const t of READ_TOOLS) expect(desc.get(t)!).not.toMatch(/no MCP write path|human-only/i);
 

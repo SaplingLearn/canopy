@@ -173,7 +173,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
   // org's queue is how an agent orients before it does anything.
   server.tool(
     "list_tickets",
-    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into — never GitHub issues (ADR-007); a ticket may LINK to GitHub or Figma work, it never is that work. Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Reading is unscoped: you see the whole org's queue. WRITING is scoped to your own lane — see create_ticket and transition_ticket.",
+    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into (ADR-007, amended): a ticket may LINK to GitHub or Figma work, and may be SOURCED from a GitHub issue, but is never the issue itself. A mirrored ticket has source 'github' and source_ref 'owner/repo#n'; its title/body/assignees were copied at import and are Canopy's since, while closing or reopening the issue on GitHub closes or reopens it. Its source link is locked (never removable). Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Reading is unscoped: you see the whole org's queue. WRITING is scoped to your own lane — see create_ticket and transition_ticket.",
     {
       seg: TicketSeg.optional(),
       assignee: TicketAssigneeFilter.optional(),
@@ -186,7 +186,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { ori
 
   server.tool(
     "get_ticket",
-    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, its sprint, and `artifacts` ([{slug, title, kind, status, version}] — the artifact pages linked to it that you can see; open one with artifact_get). A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
+    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, its sprint, and `artifacts` ([{slug, title, kind, status, version}] — the artifact pages linked to it that you can see; open one with artifact_get). A ticket is a Canopy D1 row that may be sourced from a GitHub issue but is never the issue itself (ADR-007, amended) — `source`, `source_ref` and each link's `locked` say whether it is mirrored and which link is its source. Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {

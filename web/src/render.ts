@@ -209,6 +209,8 @@ export interface AppState {
   commentHeight: number | null;
   linkDraft: string;
   lkOpen: boolean;
+  /** The ticket detail's title/description editor drafts; null = not editing. */
+  tdEdit: { title: string; body: string } | null;
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
@@ -356,7 +358,7 @@ export function initialState(): AppState {
     qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "",
-    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
+    lkOpen: false, tdEdit: null, asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
@@ -1868,8 +1870,9 @@ export function todoCard(t: MyWorkTodo): string {
  * NO NUMERIC ID is shown: a ticket's id is an internal D1 key, not something
  * people refer to a ticket by. The TITLE is the open control
  * (data-act="openTicket") — it NAVIGATES rather than linking out, because a
- * ticket is a D1 row on this origin, never a GitHub issue (ADR-007), so there is
- * no external URL to point at. That is exactly what separates this block from
+ * ticket is a D1 row on this origin, never the GitHub issue itself (ADR-007, as
+ * amended), so there is no external URL to point at — and a ticket MIRRORED from
+ * an issue never reaches this block (listAssignedTickets reads native tickets only). That is exactly what separates this block from
  * the To-do cards above it, which keep their GitHub issue number pill.
  */
 export function ticketCard(t: MyWorkTicket, personOf: (handle: string) => PersonSummary | null): string {
@@ -2031,6 +2034,7 @@ function ticketDetailScreen(s: AppState): string {
     lkMenu: s.lkMenu,
     stMenu: s.stMenu,
     artifactsBlock: ticketArtifactsBlock(s.art.ticketArts[slice.data.id]),
+    edit: s.tdEdit,
   });
 }
 
