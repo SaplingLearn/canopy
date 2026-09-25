@@ -66,7 +66,8 @@ input, select { font-family: inherit; }
 [data-collapsed="1"] .cnpy-search { padding-left:12.5px; padding-right:0; cursor:pointer; }
 
 /* Section header → the collapsed rail's hairline divider, in one element. */
-.cnpy-sec { position:relative; flex:none; height:28px; padding:7px 11px 0; overflow:hidden; font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--fg-40); white-space:nowrap; transition:height var(--side-t) var(--side-e), padding var(--side-t) var(--side-e); }
+/* Sidebar section labels (WORKSPACE, MONITOR…): Archivo Narrow, chosen over the mono treatment 2026-09-25. */
+.cnpy-sec { position:relative; flex:none; height:28px; padding:7px 11px 0; overflow:hidden; font-family:'Archivo Narrow',system-ui,sans-serif; font-size:11.5px; font-weight:500; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-40); white-space:nowrap; transition:height var(--side-t) var(--side-e), padding var(--side-t) var(--side-e); }
 .cnpy-sec.is-first { height:31px; padding-top:10px; }
 .cnpy-sec::after { content:""; position:absolute; left:8px; right:8px; top:7px; height:1px; background:var(--border); opacity:0; transition:opacity var(--side-t) ease; }
 .cnpy-sec.is-first::after { top:4px; }
