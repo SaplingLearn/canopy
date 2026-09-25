@@ -718,7 +718,7 @@ function threadBlock(p: TicketDetailProps): string {
       ts: new Date(ev.created_at).getTime(),
       html: `<div style="display:flex;align-items:center;gap:9px;padding:8px 0 8px 8px;border-bottom:1px solid var(--border)">
         <span style="width:6px;height:6px;border-radius:50%;background:var(--border-strong);flex:none;margin:0 6px"></span>
-        <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--fg-55);white-space:nowrap">${esc(ev.actor)}</span>
+        <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--fg-55);white-space:nowrap">${esc(ev.actor === MIRROR_HANDLE ? "GitHub" : ev.actor)}</span>
         <span style="font-size:12px;color:var(--fg-40);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(move)}</span>
         <span style="font-size:11px;color:var(--fg-40);margin-left:auto;flex:none;white-space:nowrap">${esc(relTime(ev.created_at))}</span>
       </div>`,

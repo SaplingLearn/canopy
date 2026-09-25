@@ -1234,3 +1234,12 @@ describe("mirrored tickets", () => {
     expect(blank).toMatch(/data-act="ticketEditSave"[^>]*class=""/);
   });
 });
+
+describe("mirrored ticket history", () => {
+  it("names the github-webhook actor 'GitHub' in the history", () => {
+    const d = detail({ id: 1, title: "T", events: [{ id: 1, ticket_id: 1, actor: "github-webhook", from_status: null, to_status: "submitted", created_at: ago(H) }] });
+    const html = ticketDetailView(detailProps(d));
+    expect(html).toContain(">GitHub</span>");
+    expect(html).not.toContain(">github-webhook</span>");
+  });
+});
