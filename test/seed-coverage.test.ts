@@ -92,7 +92,9 @@ describe("dev seed lights up every surface", () => {
   });
 
   it("People: the four engineers plus the two non-engineer requesters", async () => {
-    const persons = await all<{ handle: string }>(env.DB, `SELECT handle FROM persons ORDER BY handle`);
+    // `github-webhook` (0032) is a system principal, not a person: the GitHub
+    // mirror's fallback requester. It is never listed or assignable.
+    const persons = await all<{ handle: string }>(env.DB, `SELECT handle FROM persons WHERE handle != 'github-webhook' ORDER BY handle`);
     expect(persons.map((p) => p.handle)).toEqual(
       ["AndresL230", "Darkest-Teddy", "Jose-Gael-Cruz-Lopez", "lpcooper-arch", "meilin", "sanaok"].sort()
     );

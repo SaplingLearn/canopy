@@ -21,7 +21,7 @@ import type { TicketCreate, TicketStatus } from "@shared/tickets";
 import { canTransition, parseTicketLink } from "@shared/tickets";
 import type { TicketRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "../db";
-import { getPerson } from "../auth/persons";
+import { getPerson, RESERVED_HANDLES } from "../auth/persons";
 
 /**
  * A typed failure the routes map onto an HTTP status:
@@ -55,10 +55,13 @@ const getTicketRow = async (db: DB, id: number): Promise<TicketRow> => {
 /** Bump `updated_at` on a ticket. Called by EVERY writer below — the queue's sort key. */
 const touch = (db: DB, id: number, at: string) => run(db, `UPDATE tickets SET updated_at = ? WHERE id = ?`, at, id);
 
-/** Resolve a handle to its canonical `persons.handle` spelling, or 400. */
+/** Resolve a handle to its canonical `persons.handle` spelling, or 400. A RESERVED
+ *  handle (`github-webhook`, 0032) has a persons row but is not a person: it can
+ *  never be assigned, file, comment or link through these writers — only the
+ *  GitHub mirror (./ticket-mirror.ts) writes as it. */
 async function requirePerson(db: DB, handle: string): Promise<string> {
   const p = await getPerson(db, handle);
-  if (!p) throw new TicketError("bad_request", `no such person: ${handle}`);
+  if (!p || RESERVED_HANDLES.includes(p.handle)) throw new TicketError("bad_request", `no such person: ${handle}`);
   return p.handle;
 }
 
