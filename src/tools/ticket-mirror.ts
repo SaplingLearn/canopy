@@ -139,12 +139,18 @@ interface MirrorTicketRow {
 /**
  * Apply one `issues` delivery to its mirrored ticket. `repo` is env.GITHUB_REPO:
  * unset mirrors nothing, and only an issue whose repository.full_name equals it
- * is mirrored. Throws only on a D1 failure — the webhook wraps it so the `events`
+ * (ignoring case) is mirrored. Throws only on a D1 failure — the webhook wraps it so the `events`
  * capture never pays for a mirror failure.
  */
 export async function mirrorIssue(db: DB, repo: string | undefined, payload: unknown): Promise<MirrorOutcome> {
-  const m = ticketFromIssue(payload);
-  if (!m || !repo || m.repo !== repo) return "out_of_scope";
+  const parsed = ticketFromIssue(payload);
+  // GitHub treats owner/repo names case-INsensitively, and its deliveries carry
+  // the repo's canonical spelling ("SaplingLearn/Sapling") while GITHUB_REPO may
+  // not ("SaplingLearn/sapling"). So scope compares without case, and the key is
+  // ALWAYS built from the configured spelling — else the webhook and a backfill
+  // (which reconstructs full_name FROM GITHUB_REPO) would key one issue twice.
+  if (!parsed || !repo || parsed.repo.toLowerCase() !== repo.toLowerCase()) return "out_of_scope";
+  const m: IssueMirror = { ...parsed, repo, sourceRef: `${repo}#${parsed.number}` };
 
   const existing = await first<MirrorTicketRow>(
     db, `SELECT id, status, source_updated_at FROM tickets WHERE source_ref = ?`, m.sourceRef);

@@ -258,6 +258,13 @@ describe("capture changes for deleted / transferred", () => {
 });
 
 describe("mirrorIssue directly", () => {
+  it("matches GITHUB_REPO without case, and keys the webhook's and a backfill's spelling to ONE ticket", async () => {
+    // GitHub's own full_name for this repo is "SaplingLearn/Sapling"; wrangler.toml says "SaplingLearn/sapling".
+    expect(await mirrorIssue(env.DB, REPO, issuePayload("opened", { repo: "SaplingLearn/Sapling" }))).toBe("created");
+    expect(await mirrorIssue(env.DB, REPO, issuePayload("opened", { repo: REPO }))).toBe("unchanged");
+    expect((await tickets()).map((t) => t.source_ref)).toEqual([`${REPO}#214`]);
+  });
+
   it("is out of scope for an unset repo and a foreign one", async () => {
     expect(await mirrorIssue(env.DB, undefined, issuePayload("opened"))).toBe("out_of_scope");
     expect(await mirrorIssue(env.DB, "o/r", issuePayload("opened"))).toBe("out_of_scope");
