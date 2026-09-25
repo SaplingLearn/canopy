@@ -125,12 +125,17 @@ function issueDelivery(issue) {
   const action = assignee ? "assigned" : "opened";
   return {
     action,
+    // The ticket mirror scopes on repository.full_name (== GITHUB_REPO); a list
+    // item carries no repository object, so the reconstruction adds it.
+    repository: { full_name: REPO },
     ...(assignee ? { assignee: { login: assignee.login } } : {}),
     issue: {
       number: issue.number,
       title: issue.title,
+      body: issue.body ?? null,
       html_url: issue.html_url,
       state: issue.state,
+      state_reason: issue.state_reason ?? null,
       updated_at: issue.updated_at,
       user: { login: issue.user.login },
       assignees: (issue.assignees ?? []).map((a) => ({ login: a.login })),

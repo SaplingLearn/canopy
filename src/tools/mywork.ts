@@ -2,6 +2,7 @@ import type { DashboardData, MyWorkPr, MyWorkTodo, MyWorkTicket } from "@shared/
 import type { EventRow, PersonRow } from "@shared/rows";
 import { type DB, all, first } from "../db";
 import { getPerson, listIdentities } from "../auth/persons";
+import { isIssueGone } from "./issue-gone";
 
 // My Work: a D1-only projection over captured GitHub events (Task 6). No live
 // GitHub reads — this is deliberately the "what already happened + what's
@@ -20,11 +21,11 @@ const EMPTY = (degraded: boolean): MyWork => ({ person: null, previousActivity: 
 
 // Priority is parsed from a leading "[P0]"–"[P3]" tag on the issue title; the
 // tag is stripped from the displayed title.
-function priorityOf(title: string): "P0" | "P1" | "P2" | "P3" | null {
+export function priorityOf(title: string): "P0" | "P1" | "P2" | "P3" | null {
   const m = title.match(/^\s*\[(P[0-3])\]/);
   return m ? (m[1] as "P0" | "P1" | "P2" | "P3") : null;
 }
-function stripPriority(title: string): string {
+export function stripPriority(title: string): string {
   return title.replace(/^\s*\[P[0-3]\]\s*/, "").trim();
 }
 
@@ -46,6 +47,7 @@ interface RawPr {
 }
 
 interface RawIssue {
+  action?: string;
   issue: {
     number: number;
     title: string;
@@ -132,6 +134,7 @@ export async function listOpenAssignedIssues(db: DB, logins: string[]): Promise<
     const parsed = JSON.parse(row.raw) as RawIssue;
     const issue = parsed.issue;
     if (issue.state !== "open") continue;
+    if (isIssueGone(parsed.action)) continue; // deleted / transferred: the snapshot still says open
     if (!issue.assignees.some((a) => logins.includes(a.login))) continue;
     const group = issue.milestone; // GitHub's own key — not Canopy vocabulary
     const claimed = typeof group?.number === "number" ? sprintByGroup.get(group.number) ?? null : null;

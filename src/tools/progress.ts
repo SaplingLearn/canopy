@@ -1,6 +1,7 @@
 import type { SprintRow, SprintProgressRow } from "@shared/rows";
 import { type DB, all, run, nowIso } from "../db";
 import { progressFromIssueEvent } from "../webhook";
+import { isIssueGone } from "./issue-gone";
 
 const GH_API = "application/vnd.github+json";
 const USER_AGENT = "canopy";
@@ -154,8 +155,10 @@ export async function applyEventProgress(db: DB, payload: unknown): Promise<void
     let closed = 0;
     for (const row of rows) {
       try {
-        const parsed = JSON.parse(row.raw) as { issue?: { state?: string } };
-        if (parsed.issue?.state === "closed") closed++;
+        const parsed = JSON.parse(row.raw) as { action?: string; issue?: { state?: string } };
+        // A deleted / transferred issue has left the repo — resolved, for the
+        // sprint's purposes, even though its snapshot still reads "open".
+        if (parsed.issue?.state === "closed" || isIssueGone(parsed.action)) closed++;
       } catch {
         // malformed snapshot — treat as not-closed rather than throw
       }
