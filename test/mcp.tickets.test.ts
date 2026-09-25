@@ -28,6 +28,7 @@ const READ_TOOLS = ["list_tickets", "get_ticket", "list_sprints", "get_sprint"] 
 // the ticket, which a listing cannot know). Behavior: test/mcp.tickets.writes.test.ts.
 const WRITE_TOOLS = [
   "create_ticket",
+  "edit_ticket",
   "transition_ticket",
   "add_ticket_comment",
   "add_ticket_link",
@@ -163,7 +164,7 @@ async function seedQueue(): Promise<Queue> {
 }
 
 describe("the MCP ticket/sprint surface", () => {
-  it("tools/list carries exactly the reads + the six scoped ticket writes, and NOT toggle_assignee", async () => {
+  it("tools/list carries exactly the reads + the seven scoped ticket writes, and NOT toggle_assignee", async () => {
     const names = await toolNames("andres");
     for (const t of READ_TOOLS) expect(names).toContain(t);
     for (const t of WRITE_TOOLS) expect(names).toContain(t);
@@ -197,8 +198,9 @@ describe("the MCP ticket/sprint surface", () => {
   it("descriptions state the read/write split: reads unscoped, writes scoped to your lane", async () => {
     const desc = await toolDescriptions("andres");
     for (const t of READ_TOOLS) expect(desc.get(t) ?? "").toMatch(/read-only/i);
-    // ADR-007: a ticket is a D1 row, never a GitHub issue.
-    expect(desc.get("list_tickets")!).toMatch(/never GitHub issues/i);
+    // ADR-007, amended: a ticket may be sourced from a GitHub issue, but is never the issue itself.
+    expect(desc.get("list_tickets")!).toMatch(/sourced from a GitHub issue, but is never the issue itself/i);
+    expect(desc.get("list_tickets")!).not.toMatch(/never GitHub issues/i);
     // The stale "there is no MCP write path" claim must be gone from every one.
     for (const t of READ_TOOLS) expect(desc.get(t)!).not.toMatch(/no MCP write path|human-only/i);
 

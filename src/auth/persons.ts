@@ -88,8 +88,13 @@ export async function updateProfile(db: DB, handle: string, patch: { name?: stri
   return getPerson(db, handle);
 }
 
+/** The people directory (pickers, avatars). A RESERVED handle is a system principal,
+ *  not a person — `github-webhook` has a row only because the GitHub mirror files
+ *  tickets as it (0032) — so it is never listed and never offered as an assignee. */
 export function listPersons(db: DB): Promise<Pick<PersonRow, "handle" | "name" | "color" | "avatar_url">[]> {
-  return all(db, `SELECT handle, name, color, avatar_url FROM persons ORDER BY handle COLLATE NOCASE ASC`);
+  return all(db, `SELECT handle, name, color, avatar_url FROM persons
+                   WHERE handle NOT IN (${RESERVED_HANDLES.map(() => "?").join(", ")})
+                   ORDER BY handle COLLATE NOCASE ASC`, ...RESERVED_HANDLES);
 }
 
 /** Every (table, column) that stores a person handle. A rename rewrites all of them. */

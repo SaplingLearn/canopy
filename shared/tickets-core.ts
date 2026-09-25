@@ -20,11 +20,20 @@ export const TICKET_CATEGORIES = ["bug", "request", "question", "access", "other
 export const TICKET_PRIORITIES = ["low", "normal", "high"] as const;
 export const TICKET_STATUSES = ["submitted", "in_progress", "done", "declined"] as const;
 export const TICKET_LINK_KINDS = ["github", "figma", "plain"] as const;
+/** Where a ticket came from (0032): filed in Canopy, or mirrored from a GitHub issue. */
+export const TICKET_SOURCES = ["canopy", "github"] as const;
 
 export type TicketCategory = (typeof TICKET_CATEGORIES)[number];
 export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 export type TicketStatus = (typeof TICKET_STATUSES)[number];
 export type TicketLinkKind = (typeof TICKET_LINK_KINDS)[number];
+export type TicketSource = (typeof TICKET_SOURCES)[number];
+
+/** The issue number of a mirrored ticket's `source_ref` ("owner/repo#214" → 214), else null. */
+export function sourceIssueNumber(sourceRef: string | null | undefined): number | null {
+  const m = sourceRef?.match(/#(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
 
 // ── the status machine (ONE definition, enforced everywhere) ─────────────────
 // A status is SET by a person, from the status control itself — there are no

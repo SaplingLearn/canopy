@@ -309,12 +309,14 @@ export async function get_ticket(db: DB, id: number): Promise<TicketDetail | nul
   };
 }
 
-/** The sidebar badge: active tickets nobody has picked up (unassigned + open). */
+/** The sidebar badge: active tickets nobody has picked up (unassigned + open).
+ *  NATIVE tickets only — an unassigned mirrored ticket is an unassigned GitHub
+ *  issue, triaged on GitHub, and would otherwise flood the badge (0032). */
 export async function ticket_badge(db: DB): Promise<number> {
   const row = await first<{ n: number }>(
     db,
     `SELECT COUNT(*) AS n FROM tickets t
-      WHERE t.status IN ('submitted', 'in_progress')
+      WHERE t.status IN ('submitted', 'in_progress') AND t.source = 'canopy'
         AND NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`
   );
   return row?.n ?? 0;

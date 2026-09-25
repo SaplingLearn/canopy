@@ -255,8 +255,10 @@ describe("ticket payload schemas", () => {
       id: 1, title: "t", body: "b", category: "bug", priority: "high", status: "in_progress",
       requester: "meilin", parent_id: null, sprint_id: null,
       created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-02T00:00:00Z",
+      source: "canopy", source_ref: null, source_author: null, source_updated_at: null,
     };
     expect(TicketRow.parse(row)).toEqual(row);
+    expect(TicketRow.safeParse({ ...row, source: "jira" }).success).toBe(false);
     expect(TicketRow.safeParse({ ...row, status: "closed" }).success).toBe(false);
     expect(TicketRow.safeParse({ ...row, parent_id: undefined }).success).toBe(false);
 

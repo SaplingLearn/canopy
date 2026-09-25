@@ -20,7 +20,8 @@
 // The bearer token IS the person (design D1), so inside that lane the parity with
 // the ticket screen is total — `done` and `declined` included. The fourth tickets
 // invariant is untouched by that: it says nothing INFERS a resolution (not a PR
-// merging, not an issue closing, not the cron), and an agent calling
+// merging, not an issue closing, not the cron — the one carve-out being a
+// MIRRORED ticket following its own source issue, ./ticket-mirror.ts), and an agent calling
 // transition_ticket under a person's token on that person's ticket is the person
 // saying so.
 //
@@ -35,13 +36,14 @@ import { isAdmin } from "../auth/principal";
 import { type DB, first } from "../db";
 import {
   TicketError,
-  create_ticket, transition_ticket, add_ticket_comment, add_ticket_link,
+  create_ticket, edit_ticket, transition_ticket, add_ticket_comment, add_ticket_link,
   set_ticket_sprint, set_ticket_parent,
 } from "./tickets";
-import type { TicketCreate, TicketStatus } from "@shared/tickets";
+import type { TicketCreate, TicketEdit, TicketStatus } from "@shared/tickets";
 
 /** The scoped verbs. `create_ticket` is absent on purpose — it is the unscoped write. */
 export type AgentVerb =
+  | "edit_ticket"
   | "transition_ticket"
   | "add_ticket_comment"
   | "add_ticket_link"
@@ -89,7 +91,7 @@ export async function assertTicketWritable(
   }
 }
 
-// ── the six wrappers: assert, then delegate ──────────────────────────────────
+// ── the seven wrappers: assert, then delegate ──────────────────────────────────
 //
 // Each is one line of scope and one line of work. `src/mcp.ts` imports ONLY from
 // this module for ticket writes, so a verb cannot reach the MCP surface without
@@ -107,6 +109,13 @@ export async function assertTicketWritable(
  */
 export function agentCreateTicket(db: DB, input: TicketCreate, requester: string): Promise<number> {
   return create_ticket(db, input, requester);
+}
+
+/** Edit a ticket's title and/or body, inside the lane. A mirrored ticket's title
+ *  and body are Canopy's after import, so this works on those too. */
+export async function agentEditTicket(db: DB, env: Env, id: number, patch: TicketEdit, actor: string): Promise<void> {
+  await assertTicketWritable(db, env, id, actor, "edit_ticket");
+  await edit_ticket(db, id, patch, actor);
 }
 
 /**

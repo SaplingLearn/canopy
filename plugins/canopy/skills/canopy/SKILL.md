@@ -138,7 +138,7 @@ triage step — a ticket write is org-visible immediately. What bounds them is s
 - **`create_ticket`** — file a ticket. The requester is you. Its `assignees` is the **only**
   agent-reachable assignment in Canopy: there is no `toggle_assignee` tool and never will be, because
   assignment is the data the lane rule is built on. After filing, assigning is web-only.
-- **`transition_ticket` / `add_ticket_comment` / `add_ticket_link` / `set_ticket_sprint` /
+- **`edit_ticket` / `transition_ticket` / `add_ticket_comment` / `add_ticket_link` / `set_ticket_sprint` /
   `set_ticket_parent`** — scoped. Outside your lane you get `{"code": "forbidden"}` and nothing is
   written. `set_ticket_parent` needs the lane on both tickets.
 - **Sprint writes are ADMIN-ONLY**: `create_sprint`, `set_sprint_active`, `complete_sprint`,
@@ -148,7 +148,9 @@ triage step — a ticket write is org-visible immediately. What bounds them is s
 
 **`done` / `declined` on a ticket, and `done` on a sprint, are still never INFERRED** — not from a PR
 merging, an issue closing, the cron, or every ticket in a sprint resolving. A person asks for them,
-through their own token. The **`tickets`** skill is the explicit-only wrapper for all of this.
+through their own token. ONE exception: a ticket MIRRORED from a GitHub issue (`source: "github"`,
+ADR-007 as amended — sourced from the issue, never the issue itself) follows that issue's close and
+reopen; everything else about it is edited in Canopy, and its source link is locked. The **`tickets`** skill is the explicit-only wrapper for all of this.
 
 ### Handoffs and prompts
 

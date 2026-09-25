@@ -8,6 +8,7 @@ import { repoEventsFromDelivery, metricsFromStatus } from "./repo/capture";
 import { repoEnvironments } from "./repo/config";
 import { putMetric } from "./repo/store";
 import { fillFailedJob, refreshDrift } from "./repo/github";
+import { mirrorIssue } from "./tools/ticket-mirror";
 
 // The GitHub webhook is Canopy's THIRD auth class. Unlike the session cookie
 // (humans) and the bearer token (agents), a delivery authenticates itself by an
@@ -86,6 +87,7 @@ interface GhIssue {
   body: string | null;
   html_url: string;
   state: string;
+  state_reason?: string | null; // completed / not_planned / duplicate / reopened — GitHub's own values
   updated_at: string;
   user: GhUser;
   assignees?: GhUser[];
@@ -101,6 +103,7 @@ interface IssuePayload {
   action?: string;
   issue?: GhIssue;
   assignee?: GhUser;
+  repository?: { full_name?: string } | null; // scopes the ticket mirror to GITHUB_REPO
 }
 
 const ISSUE_ACTIONS = [
@@ -113,6 +116,10 @@ const ISSUE_ACTIONS = [
   // GitHub's own action names — not Canopy vocabulary.
   "milestoned",
   "demilestoned",
+  // The issue LEFT the repo. Its snapshot still reads state "open", so every
+  // open-issue reader checks the action too (src/tools/issue-gone.ts).
+  "deleted",
+  "transferred",
 ];
 
 // ---------------------------------------------------------------------------
@@ -192,6 +199,7 @@ export function eventsFromDelivery(eventName: string, payload: unknown): Capture
         body: issue.body,
         html_url: issue.html_url,
         state: issue.state,
+        state_reason: issue.state_reason ?? null,
         updated_at: updatedAt,
         user: { login: issue.user.login },
         assignees: assignees.map((a) => ({ login: a.login })),
@@ -318,6 +326,8 @@ export async function handleGithubWebhook(
     // snapshot refresh on a push to an environment branch.
     fetchImpl?: typeof fetch;
     waitUntil?: (p: Promise<unknown>) => void;
+    /** The ticket mirror (injectable so a test can make it throw). */
+    mirror?: typeof mirrorIssue;
   }
 ): Promise<Response> {
   const rawBody = await request.text();
@@ -362,6 +372,20 @@ export async function handleGithubWebhook(
           ? opts.issueSummarizer
           : env.GEMINI_API_KEY ? geminiIssueSummarizer(env.GEMINI_API_KEY) : null;
         await summarizeIssueSeam(env.DB, issueSummarizer, ev);
+      }
+    }
+
+    // The ticket mirror (src/tools/ticket-mirror.ts): every GitHub issue of
+    // GITHUB_REPO is a ticket. It runs on EVERY verified `issues` delivery, not
+    // only when ingestEvent wrote — a redelivery is how a half-failed mirror
+    // heals, and the mirror is idempotent on its own (source_ref + the
+    // updated_at ordering guard). A computed write from a verified delivery, so
+    // no consume(); and a failure here must never cost the events capture above.
+    if (eventName === "issues") {
+      try {
+        await (opts?.mirror ?? mirrorIssue)(env.DB, env.GITHUB_REPO, payload);
+      } catch (e) {
+        console.error("ticket mirror failed", e instanceof Error ? e.message : String(e));
       }
     }
   }

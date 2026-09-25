@@ -70,4 +70,7 @@ export const RESET_STATEMENTS = [
   // are the queue's requesters — the people filing tickets who don't ship code.
   "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('meilin', 'Meilin Zhao', 'rose', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('sanaok', 'Sana Okafor', 'ochre', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
   "INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('google', 'google-sub-meilin', 'meilin@saplinglearn.org', 'meilin', '2026-01-01T00:00:00Z', 'seed'), ('google', 'google-sub-sanaok', 'sanaok@saplinglearn.org', 'sanaok', '2026-01-01T00:00:00Z', 'seed')",
+  // …and the system person 0032 seeds: the GitHub mirror's fallback requester.
+  // The DELETE FROM persons above wipes the migration's row, so it is re-seeded here.
+  "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('github-webhook', 'GitHub', 'stone', '2026-09-24T00:00:00Z', '2026-09-24T00:00:00Z')",
 ];
