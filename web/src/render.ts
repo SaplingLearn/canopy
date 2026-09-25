@@ -8,7 +8,7 @@ import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColo
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, SprintDetail, PlanView } from "./api";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory } from "./api";
 import type { TicketPriority } from "@shared/tickets";
-import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip, type StatusMenuAnchor } from "./tickets";
+import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip, type StatusMenuAnchor, type QueueMenu } from "./tickets";
 import { sprintCard, newSprintPanel, newSprintToggle, sprintScreen } from "./sprints";
 import type { SprintUrgency, SprintDomain } from "@shared/sprints";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
@@ -184,6 +184,8 @@ export interface AppState {
   qAssignee: TicketAssigneeFilter;
   qCategory: TicketCategory | "all";
   qView: "table" | "board";
+  /** The queue's open filter dropdown (null = none). */
+  qMenu: QueueMenu | null;
   // New-ticket form fields (the design's f* state).
   fTitle: string;
   /** null = nothing picked, which files as `other`. */
@@ -355,7 +357,7 @@ export function initialState(): AppState {
     ticketDetail: { status: "idle", data: null },
     ticketId: null,
     ticketBadge: 0,
-    qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
+    qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table", qMenu: null,
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "",
     lkOpen: false, tdEdit: null, asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
@@ -1995,6 +1997,7 @@ function ticketsScreen(s: AppState): string {
     category: s.qCategory,
     view: s.qView,
     unassignedCount: s.ticketBadge,
+    menu: s.qMenu,
   });
 }
 

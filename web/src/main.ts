@@ -202,6 +202,8 @@ function rerender(): void {
   // then dropped on arrival (runRepoPoll checks it is still the one polling).
   // Switching between the Repo TABS keeps it — the strip renders on all five.
   state.repoPoll = repoPollFor(state.repoPoll, state.view === "app" && state.screen === "repo");
+  // A queue filter dropdown left open never survives leaving the queue.
+  if (state.screen !== "tickets") state.qMenu = null;
   // Entering a group's pages opens its sub-page list, and leaving folds it again —
   // unless the person opened or closed it by hand, which sticks (and is what persists).
   const group = state.view === "app" ? navGroupOf(state.screen) : null;
@@ -1797,15 +1799,24 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "queueSeg":
       if (arg === "open" || arg === "closed" || arg === "all") { state.qSeg = arg; loadTickets(); }
       return;
-    case "queueAssignee":
-      if (value === "anyone" || value === "me" || value === "unassigned") { state.qAssignee = value; loadTickets(); }
-      return;
+    // The queue's two filter dropdowns (tickets.ts `queueDropdown`): the trigger
+    // toggles its menu, a row picks by data-arg.
+    case "queueMenu":
+      state.qMenu = (arg === "assignee" || arg === "category") && state.qMenu !== arg ? arg : null;
+      break;
+    case "queueAssignee": {
+      const v = arg ?? value;
+      state.qMenu = null;
+      if (v === "anyone" || v === "me" || v === "unassigned") { state.qAssignee = v; loadTickets(); }
+      break;
+    }
     case "queueCategory": {
-      const v = value ?? "all";
-      if (v !== "all" && !(TICKET_CATEGORIES as readonly string[]).includes(v)) return;
+      const v = arg ?? value ?? "all";
+      state.qMenu = null;
+      if (v !== "all" && !(TICKET_CATEGORIES as readonly string[]).includes(v)) break;
       state.qCategory = v as TicketCategory | "all";
       loadTickets();
-      return;
+      break;
     }
     case "queueTable": state.qView = "table"; break;
     case "queueBoard": state.qView = "board"; break;
@@ -1883,7 +1894,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
     case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
     case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; state.lkMenu = null; state.stMenu = null; break;
-    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; state.qMenu = null; break;
     // Assignment is immediate and reversible — no confirm step (design call #7).
     case "ticketAsgAdd": {
       const id = state.ticketId;
@@ -2890,9 +2901,10 @@ mount.addEventListener("pointerout", (e) => {
   cancelHoverClose();
   hoverCloseTimer = setTimeout(() => { hoverCloseTimer = null; closeFilterMenu(id); }, 200);
 });
-// Escape closes an open filter menu.
+// Escape closes an open filter menu (and the ticket queue's filter dropdowns).
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (state.qMenu) { state.qMenu = null; rerender(); }
   for (const [id, spec] of Object.entries(FILTER_MENUS)) if (spec.isOpen()) closeFilterMenu(id);
 });
 

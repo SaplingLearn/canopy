@@ -170,7 +170,11 @@ export interface QueueProps {
   view: "table" | "board";
   /** Unassigned + open across the WHOLE queue (= the sidebar badge), not this page. */
   unassignedCount: number;
+  /** Which filter dropdown is open (null / absent = neither). */
+  menu?: QueueMenu | null;
 }
+
+export type QueueMenu = "assignee" | "category";
 
 const ASSIGNEE_OPTIONS: [TicketAssigneeFilter, string][] = [
   ["anyone", "Any assignee"],
@@ -178,16 +182,34 @@ const ASSIGNEE_OPTIONS: [TicketAssigneeFilter, string][] = [
   ["unassigned", "Unassigned"],
 ];
 
+/**
+ * A queue filter dropdown. NOT a native <select>: its option list is the browser's
+ * own popup, which ignores the theme (a light OS list over a dark app). The trigger
+ * keeps `.cnpy-select`'s look (border, chevron); the list is the same menu the
+ * ticket screens already use for status / assignee / sprint (MENU_BOX, a check on
+ * the current row), closed by its backdrop, Escape, or a pick.
+ */
+function queueDropdown(id: QueueMenu, act: string, label: string, options: readonly (readonly [string, string])[], value: string, open: boolean): string {
+  const current = options.find(([v]) => v === value)?.[1] ?? options[0][1];
+  const row = "display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap";
+  const menu = open
+    ? `${MENU_BACKDROP}<div role="listbox" aria-label="${attr(label)}" style="${MENU_BOX};left:0;right:auto;min-width:100%;width:max-content">${options.map(([v, l]) =>
+        `<button role="option" aria-selected="${v === value}" data-act="${act}" data-arg="${attr(v)}" class="${MENU_ROW_CLASS}" style="${row};color:${v === value ? "var(--fg)" : "var(--fg-70)"}">${checkMark(v === value)}${esc(l)}</button>`).join("")}</div>`
+    : "";
+  return `<div style="position:relative;display:inline-flex">
+    <button data-act="queueMenu" data-arg="${id}" aria-haspopup="listbox" aria-expanded="${open}" aria-label="${attr(label)}: ${attr(current)}" class="cnpy-select" style="text-align:left;white-space:nowrap${open ? ";border-color:var(--border-strong);color:var(--fg)" : ""}">${esc(current)}</button>${menu}
+  </div>`;
+}
+
 function filterRow(p: QueueProps): string {
   const segs: [TicketSeg, string][] = [["open", "Open"], ["closed", "Closed"], ["all", "All"]];
   const segment = `<div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">${segs.map(([k, label]) =>
     `<button data-act="queueSeg" data-arg="${k}" class="${segClass(p.seg === k)}" style="${segBtnStyle(p.seg === k)}">${label}</button>`).join("")}</div>`;
 
-  const assigneeSelect = `<select data-act="queueAssignee" class="cnpy-select">${ASSIGNEE_OPTIONS.map(([k, label]) =>
-    `<option value="${k}"${p.assignee === k ? " selected" : ""}>${label}</option>`).join("")}</select>`;
-
-  const categorySelect = `<select data-act="queueCategory" class="cnpy-select"><option value="all"${p.category === "all" ? " selected" : ""}>All categories</option>${TICKET_CATEGORIES.map((c) =>
-    `<option value="${c}"${p.category === c ? " selected" : ""}>${c}</option>`).join("")}</select>`;
+  const assigneeSelect = queueDropdown("assignee", "queueAssignee", "Assignee", ASSIGNEE_OPTIONS, p.assignee, p.menu === "assignee");
+  const categorySelect = queueDropdown("category", "queueCategory", "Category",
+    [["all", "All categories"], ...TICKET_CATEGORIES.map((c): [string, string] => [c, c.charAt(0).toUpperCase() + c.slice(1)])],
+    p.category, p.menu === "category");
 
   // "N shown · M unassigned" — M is the org-wide unassigned+open count (the same
   // number as the sidebar badge), NOT the filtered page's.
