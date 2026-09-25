@@ -17,7 +17,7 @@
 // The status machine is NOT re-declared here: `canTransition` in shared/tickets.ts
 // is the one table, shared with the SPA.
 
-import type { TicketCreate, TicketStatus } from "@shared/tickets";
+import type { TicketCreate, TicketEdit, TicketStatus } from "@shared/tickets";
 import { canTransition, parseTicketLink } from "@shared/tickets";
 import type { TicketRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "../db";
@@ -31,11 +31,11 @@ import { getPerson, RESERVED_HANDLES } from "../auth/persons";
  *   forbidden   → 403 (the write is outside the writer's lane — see tickets-agent.ts)
  * Everything else is a real 500.
  *
- * `forbidden` is raised ONLY by the MCP write surface (`tickets-agent.ts`), which
- * scopes an agent to the tickets its principal is already assigned to. The cookie
- * routes never pass a scope and so can never produce it — a signed-in human on the
- * web is not assignee-scoped and never was. The status mapping is here anyway so a
- * future cookie caller gets the right code for free.
+ * `forbidden` has two sources: the MCP write surface (`tickets-agent.ts`), which
+ * scopes an agent to the tickets its principal is already assigned to (the cookie
+ * routes never pass a scope — a signed-in human on the web is not assignee-scoped
+ * and never was); and `remove_ticket_link` on a LOCKED link — a mirrored ticket's
+ * source link (0032), which nobody may remove, on any surface.
  */
 export class TicketError extends Error {
   constructor(readonly code: "not_found" | "conflict" | "bad_request" | "forbidden", message: string) {
@@ -197,12 +197,39 @@ export async function add_ticket_link(db: DB, id: number, raw: string, by: strin
  * record, and `ticket_events` audits status moves only (adding one writes no
  * event either). The link must belong to THIS ticket — a link id from another
  * ticket is the same 404 as an unknown one, so the route cannot reach across.
+ *
+ * THE LOCK (0032): a `locked` link — the GitHub issue a mirrored ticket was
+ * sourced from — is refused with `forbidden` and left in place. This function is
+ * the ONLY delete path for ticket links (there is deliberately no DB trigger:
+ * the test harness truncates ticket_links), so keep it the only one. The DELETE
+ * repeats `locked = 0`, so even a lock set between the read and the write holds.
  */
 export async function remove_ticket_link(db: DB, id: number, linkId: number): Promise<void> {
   await getTicketRow(db, id);
-  const res = await run(db, `DELETE FROM ticket_links WHERE id = ? AND ticket_id = ?`, linkId, id);
-  if (!res.meta.changes) throw new TicketError("not_found", `no such link on ticket ${id}: ${linkId}`);
+  const link = await first<{ locked: number }>(db, `SELECT locked FROM ticket_links WHERE id = ? AND ticket_id = ?`, linkId, id);
+  if (!link) throw new TicketError("not_found", `no such link on ticket ${id}: ${linkId}`);
+  if (link.locked) throw new TicketError("forbidden", "this is the GitHub issue the ticket mirrors — its link cannot be removed");
+  const res = await run(db, `DELETE FROM ticket_links WHERE id = ? AND ticket_id = ? AND locked = 0`, linkId, id);
+  if (!res.meta.changes) throw new TicketError("forbidden", "this link is locked");
   await touch(db, id, nowIso());
+}
+
+/**
+ * Edit a ticket's title and/or body — native AND mirrored tickets alike: a
+ * mirrored ticket's title and body are seeded from the issue at import and are
+ * Canopy's from then on (the mirror never writes them again). A patch that
+ * changes neither is `bad_request`; a title must survive trimming. No history
+ * row — `ticket_events` audits status moves only. The tickets_fts_au trigger
+ * re-indexes the new text.
+ */
+export async function edit_ticket(db: DB, id: number, patch: TicketEdit, actor: string): Promise<void> {
+  const t = await getTicketRow(db, id);
+  await requirePerson(db, actor);
+  const title = patch.title !== undefined ? patch.title.trim() : undefined;
+  if (title !== undefined && !title) throw new TicketError("bad_request", "title is empty");
+  if (title === undefined && patch.body === undefined) throw new TicketError("bad_request", "nothing to edit: pass title and/or body");
+  await run(db, `UPDATE tickets SET title = ?, body = ?, updated_at = ? WHERE id = ?`,
+    title ?? t.title, patch.body ?? t.body, nowIso(), id);
 }
 
 /** Move a ticket into a sprint, or back to the backlog (`null`). */

@@ -68,6 +68,7 @@ function ticket(o: Partial<TicketListItem> & { id: number; title: string }): Tic
   return {
     body: "", category: "bug", priority: "normal", status: "submitted", requester: "meilin",
     parent_id: null, sprint_id: null, created_at: ago(2 * H), updated_at: ago(1 * H),
+    source: "canopy", source_ref: null, source_author: null, source_updated_at: null,
     assignees: [], link_count: 0, sub_count: 0, sprint_label: null,
     ...o,
   };
@@ -78,6 +79,7 @@ function detail(o: Partial<TicketDetail> & { id: number; title: string }): Ticke
     body: "Something is broken.", category: "bug", priority: "normal", status: "submitted",
     requester: "meilin", parent_id: null, sprint_id: null,
     created_at: ago(2 * H), updated_at: ago(1 * H),
+    source: "canopy", source_ref: null, source_author: null, source_updated_at: null,
     assignees: [], links: [], comments: [], events: [], parent: null, children: [], sprint: null,
     ...o,
   };
@@ -86,7 +88,7 @@ function detail(o: Partial<TicketDetail> & { id: number; title: string }): Ticke
 const link = (o: Partial<TicketLinkRow> = {}): TicketLinkRow => ({
   id: 1, ticket_id: 1, url: "https://github.com/SaplingLearn/sapling/issues/214",
   kind: "github", label: "sapling #214", meta: "GITHUB · ISSUE",
-  created_by: "jose-a", created_at: ago(1 * H), ...o,
+  created_by: "jose-a", created_at: ago(1 * H), locked: 0, ...o,
 });
 const comment = (o: Partial<TicketCommentRow> = {}): TicketCommentRow => ({
   id: 1, ticket_id: 1, author: "jose-a", body: "On it.", created_at: ago(1 * H), ...o,

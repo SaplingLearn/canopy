@@ -28,6 +28,7 @@ const READ_TOOLS = ["list_tickets", "get_ticket", "list_sprints", "get_sprint"] 
 // the ticket, which a listing cannot know). Behavior: test/mcp.tickets.writes.test.ts.
 const WRITE_TOOLS = [
   "create_ticket",
+  "edit_ticket",
   "transition_ticket",
   "add_ticket_comment",
   "add_ticket_link",
@@ -163,7 +164,7 @@ async function seedQueue(): Promise<Queue> {
 }
 
 describe("the MCP ticket/sprint surface", () => {
-  it("tools/list carries exactly the reads + the six scoped ticket writes, and NOT toggle_assignee", async () => {
+  it("tools/list carries exactly the reads + the seven scoped ticket writes, and NOT toggle_assignee", async () => {
     const names = await toolNames("andres");
     for (const t of READ_TOOLS) expect(names).toContain(t);
     for (const t of WRITE_TOOLS) expect(names).toContain(t);

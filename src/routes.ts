@@ -13,12 +13,12 @@ import { ingestDocProposal, recordBatch } from "./consumer";
 import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
-  create_ticket, transition_ticket, toggle_assignee, add_ticket_link, remove_ticket_link,
+  create_ticket, edit_ticket, transition_ticket, toggle_assignee, add_ticket_link, remove_ticket_link,
   set_ticket_sprint, set_ticket_parent, add_ticket_comment,
   TicketError, TICKET_ERROR_STATUS,
 } from "./tools/tickets";
 import {
-  TicketCreate, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
+  TicketCreate, TicketEdit, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
   TicketSprintSet, TicketParentSet, TicketCommentAdd, TicketSeg, TicketAssigneeFilter, TicketCategory,
 } from "@shared/tickets";
 import { promote_doc, ratify_adr, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
@@ -618,6 +618,21 @@ app.get("/tickets/:id", async (c) => {
   return c.json(ticket);
 });
 
+// Edit the title and/or body — a mirrored ticket's too (seeded from the issue at
+// import, Canopy's afterwards). A patch that changes neither is a 400.
+app.post("/tickets/:id/edit", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketEdit.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await edit_ticket(c.env.DB, id, parsed.data, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
 // A status move. Legality is decided by the ONE shared transition table; an
 // illegal move is a 409 and writes nothing at all (not even a history row).
 app.post("/tickets/:id/status", async (c) => {
@@ -661,6 +676,7 @@ app.post("/tickets/:id/links", async (c) => {
 });
 
 // Detach one link. The link must be on :id — another ticket's link id is a 404.
+// A LOCKED link (a mirrored ticket's GitHub issue, 0032) is a 403, left in place.
 app.post("/tickets/:id/links/:linkId/remove", async (c) => {
   const id = ticketId(c);
   const linkId = Number(c.req.param("linkId"));
