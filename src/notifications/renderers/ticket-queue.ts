@@ -44,7 +44,8 @@ interface UnassignedRow {
  * Part one of the section: what nobody has picked up. `submitted` with zero
  * assignee rows, org-wide and NOT window-scoped — the queue is state, like
  * review_queue, not a log of what happened since yesterday. Newest first, so
- * the top of the list is the thing filed most recently.
+ * the top of the list is the thing filed most recently. NATIVE tickets only: a
+ * mirrored ticket (0032) is a GitHub issue, and GitHub's own triage covers it.
  */
 async function unassignedTickets(db: DB): Promise<UnassignedRow[]> {
   return all<UnassignedRow>(
@@ -53,7 +54,7 @@ async function unassignedTickets(db: DB): Promise<UnassignedRow[]> {
             COALESCE(NULLIF(p.name, ''), t.requester) AS requester_name
        FROM tickets t
        LEFT JOIN persons p ON p.handle = t.requester
-      WHERE t.status = 'submitted'
+      WHERE t.status = 'submitted' AND t.source = 'canopy'
         AND NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)
       ORDER BY t.created_at DESC, t.id DESC`
   );

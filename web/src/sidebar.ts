@@ -14,18 +14,22 @@ import type { PersonColor } from "@shared/rows";
 import { esc, attr } from "./ui";
 import { personChip, handleTag } from "./people";
 
-/** The four nav entries that own a sub-page list. */
-export const NAV_GROUPS = ["tickets", "roadmap", "repo", "docs"] as const;
+/** The nav entries that own a sub-page list. */
+export const NAV_GROUPS = ["tickets", "roadmap", "repo", "docs", "maintenance"] as const;
 export type NavGroup = (typeof NAV_GROUPS)[number];
 export type NavOpen = Record<NavGroup, boolean>;
-export const NAV_CLOSED: NavOpen = { tickets: false, roadmap: false, repo: false, docs: false };
+export const NAV_CLOSED: NavOpen = { tickets: false, roadmap: false, repo: false, docs: false, maintenance: false };
 
 /** The nav entry a screen lights up (a ticket lights Tickets, a sprint lights Roadmap). */
-export type NavKey = "mywork" | "tickets" | "roadmap" | "repo" | "feed" | "docs" | "review" | "maintenance" | "guide";
+export type NavKey = "mywork" | "tickets" | "roadmap" | "handoffs" | "repo" | "feed" | "docs" | "artifacts" | "prompts" | "review" | "maintenance" | "guide";
 const NAV_OF: Record<string, NavKey> = {
   mywork: "mywork", feed: "feed", docs: "docs", roadmap: "roadmap", sprint: "roadmap", repo: "repo",
   review: "review", maintenance: "maintenance", guide: "guide",
   tickets: "tickets", ticketdetail: "tickets", newticket: "tickets",
+  artifacts: "artifacts", artifactnew: "artifacts", artifact: "artifacts",
+  handoffs: "handoffs", handoff: "handoffs", newhandoff: "handoffs",
+  prompts: "prompts", prompt: "prompts", promptedit: "prompts",
+  newdoc: "docs",
 };
 export const navKeyOf = (screen: string): NavKey | null => NAV_OF[screen] ?? null;
 /** The group whose sub-pages a screen belongs to, or null. */
@@ -43,7 +47,8 @@ export interface SidebarProps {
   repoTab: RepoTab;
   docSpace: string;
   docSpaces: { key: string; label: string }[];
-  counts: { review: number; maintenance: number; tickets: number };
+  maintTab: "unplaced" | "identity" | "people";
+  counts: { review: number; maintenance: number; tickets: number; handoffs: number; prompts: number };
   me: { handle: string; name: string | null; color: PersonColor; avatar_url?: string | null } | null;
   displayName: string;
   logo: string;
@@ -56,9 +61,12 @@ const ICONS: Record<NavKey | "search" | "collapse", string> = {
   mywork: ICON(`<path d="M3 12 12 3l9 9"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path>`),
   tickets: ICON(`<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"></path><path d="M13 5v2M13 11v2M13 17v2"></path>`),
   roadmap: ICON(`<path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path>`),
+  handoffs: ICON(`<path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4z"></path>`),
+  prompts: ICON(`<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"></path><path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path>`),
   repo: ICON(`<path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path>`),
   feed: ICON(`<path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path>`),
   docs: ICON(`<path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path>`),
+  artifacts: ICON(`<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M7 13.5h6"></path><path d="M7 16.5h9"></path>`),
   review: ICON(`<rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m9 12.5 2 2 4-5"></path>`),
   maintenance: ICON(`<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>`),
   guide: ICON(`<path d="M2 4h7a3 3 0 0 1 3 3v14a2.5 2.5 0 0 0-2.5-2.5H2z"></path><path d="M22 4h-7a3 3 0 0 0-3 3v14a2.5 2.5 0 0 1 2.5-2.5H22z"></path>`),
@@ -82,6 +90,7 @@ function activeSub(p: SidebarProps, g: NavGroup): string | null {
     case "roadmap": return p.screen === "roadmap" ? p.roadmapTab : null;
     case "repo": return p.screen === "repo" ? p.repoTab : null;
     case "docs": return p.screen === "docs" ? p.docSpace : null;
+    case "maintenance": return p.screen === "maintenance" ? p.maintTab : null;
   }
 }
 
@@ -91,6 +100,7 @@ function subPages(p: SidebarProps, g: NavGroup): { key: string; label: string }[
     case "roadmap": return [{ key: "narrative", label: "Narrative" }, { key: "timeline", label: "Timeline" }];
     case "repo": return REPO_TABS.map(([key, label]) => ({ key, label }));
     case "docs": return p.docSpaces;
+    case "maintenance": return [{ key: "unplaced", label: "Unplaced" }, { key: "identity", label: "Identity" }, { key: "people", label: "People" }];
   }
 }
 
@@ -101,13 +111,14 @@ const section = (label: string, first = false): string =>
 export function sidebarView(p: SidebarProps): string {
   const current = navKeyOf(p.screen);
 
-  /** `badge`: "accent" = the nobody-has-this pill (Tickets), "quiet" = a bare queue depth. */
-  const item = (key: NavKey, act: string, label: string, count = 0, badge: "accent" | "quiet" = "quiet"): string => {
+  /** Every count is the SAME badge (one pill style, one collapsed-rail dot): a number
+   *  beside an entry always means "this many things are waiting there". */
+  const item = (key: NavKey, act: string, label: string, count = 0): string => {
     const group = (NAV_GROUPS as readonly string[]).includes(key) ? (key as NavGroup) : null;
     const on = current === key;
     const open = group ? p.navOpen[group] : false;
     // Always emitted; `data-n="0"` hides both the count and the collapsed-rail dot.
-    const marks = `<span class="cnpy-lbl cnpy-badge is-${badge}" data-n="${count}">${count}</span><span class="cnpy-dot" data-n="${count}"></span>`;
+    const marks = `<span class="cnpy-lbl cnpy-badge" data-n="${count}">${count}</span><span class="cnpy-dot" data-n="${count}"></span>`;
     const chevron = group
       ? `<button data-act="navToggle" data-arg="${group}" class="cnpy-chev" aria-label="${open ? "Hide" : "Show"} ${attr(label)} pages" aria-expanded="${open}" tabindex="${p.collapsed ? -1 : 0}">${CHEVRON}</button>`
       : "";
@@ -139,16 +150,19 @@ export function sidebarView(p: SidebarProps): string {
       </div>
       ${section("Workspace", true)}
       ${item("mywork", "goMyWork", "My Work")}
-      ${item("tickets", "goTickets", "Tickets", c.tickets, "accent")}
+      ${item("tickets", "goTickets", "Tickets", c.tickets)}
       ${item("roadmap", "goRoadmap", "Roadmap")}
+      ${item("handoffs", "goHandoffs", "Handoffs", c.handoffs)}
       ${section("Monitor")}
       ${item("repo", "goRepo", "Repo")}
       ${item("feed", "goFeed", "Feed")}
       ${section("Knowledge")}
       ${item("docs", "goDocs", "Docs")}
+      ${item("artifacts", "goArtifacts", "Artifacts")}
+      ${item("prompts", "goPrompts", "Prompt Library", c.prompts)}
       ${section("Triage")}
-      ${item("review", "goReview", "Review", c.review, "quiet")}
-      ${item("maintenance", "goMaintenance", "Maintenance", c.maintenance, "quiet")}
+      ${item("review", "goReview", "Review", c.review)}
+      ${item("maintenance", "goMaintenance", "Maintenance", c.maintenance)}
       ${section("Help")}
       ${item("guide", "goGuide", "Get Started")}
     </nav>

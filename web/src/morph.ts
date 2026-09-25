@@ -1,5 +1,5 @@
-// In-place DOM patching for the ONE region that must outlive a rerender: the
-// sidebar. rerender() swaps the rest of the app wholesale, which is fine for a
+// In-place DOM patching for the regions that must outlive a rerender: the
+// sidebar, and any overlay marked `data-overlay` (the connection modal). rerender() swaps the rest of the app wholesale, which is fine for a
 // screen but fatal for a transition — a width, a rotated chevron or an opening
 // sub-page list can only animate on an element that SURVIVES the state change.
 // So the <aside> is patched, never replaced.
@@ -14,11 +14,28 @@ export function syncAttrs(live: Element, next: Element): void {
   for (const a of Array.from(next.attributes)) if (live.getAttribute(a.name) !== a.value) live.setAttribute(a.name, a.value);
 }
 
+/** A form control's LIVE value is a property, not the attribute morph syncs — so bring
+ *  it along (a cleared search box must clear). The focused control is left alone: the
+ *  person is typing in it, and state already holds what they typed. */
+function syncValue(live: Element, next: Element): void {
+  if (live === document.activeElement) return;
+  if (live instanceof HTMLInputElement && next instanceof HTMLInputElement) {
+    if (live.type === "checkbox" || live.type === "radio") live.checked = next.hasAttribute("checked");
+    else if (live.type !== "file" && live.value !== (next.getAttribute("value") ?? "")) live.value = next.getAttribute("value") ?? "";
+  } else if (live instanceof HTMLTextAreaElement && next instanceof HTMLTextAreaElement) {
+    if (live.value !== next.value) live.value = next.value;
+  } else if (live instanceof HTMLSelectElement && next instanceof HTMLSelectElement) {
+    const want = next.querySelector("option[selected]")?.getAttribute("value");
+    if (want != null && live.value !== want) live.value = want;
+  }
+}
+
 /** Patch `live` (and its subtree) to match `next`. Both must be the same element type.
  *  A `data-keep` element is owned by script (the collapsed-rail tooltip) and left alone. */
 export function morph(live: Element, next: Element): void {
   if (live.hasAttribute("data-keep")) return;
   syncAttrs(live, next);
+  syncValue(live, next);
   const a = Array.from(live.childNodes);
   const b = Array.from(next.childNodes);
   for (let i = 0; i < b.length; i++) {
@@ -52,10 +69,33 @@ export function paint(mount: HTMLElement, html: string): void {
     if (nextRoot && nextShell && liveAside && nextAside && liveMain && nextMain) {
       syncAttrs(liveRoot, nextRoot);
       morph(liveAside, nextAside);
-      liveMain.replaceWith(nextMain);
-      // Overlays (toast, sync modal) sit beside the shell — swap them as before.
-      for (const n of Array.from(liveRoot.childNodes)) if (n !== liveShell) n.remove();
-      for (const n of Array.from(nextRoot.childNodes)) if (n !== nextShell) liveRoot.appendChild(n);
+      // <main> is swapped wholesale — EXCEPT on a screen that opts in with `data-morph`
+      // (the Artifacts screens), which is patched in place while it stays the same screen.
+      // Their previews are iframes, and a replaced iframe RELOADS: every state change
+      // (opening the filter, hovering it, a menu) flickered every thumbnail and the viewer.
+      // Patched, an iframe whose `src` did not change is the same element and stays loaded.
+      const liveKey = liveMain.getAttribute("data-morph");
+      if (liveKey && liveKey === nextMain.getAttribute("data-morph")) morph(liveMain, nextMain);
+      else liveMain.replaceWith(nextMain);
+      // Overlays (toast, sync modal) sit beside the shell and are swapped — EXCEPT a
+      // `data-overlay` one present on both sides, which is morphed in place like the
+      // aside, so an open dialog does not replay its entrance on every state change.
+      const keyOf = (n: Node): string | null => (n instanceof Element ? n.getAttribute("data-overlay") : null);
+      const nextKeys = new Set(Array.from(nextRoot.childNodes).map(keyOf).filter((k): k is string => k !== null));
+      const kept = new Map<string, Element>();
+      for (const n of Array.from(liveRoot.childNodes)) {
+        if (n === liveShell) continue;
+        const k = keyOf(n);
+        if (k !== null && nextKeys.has(k) && !kept.has(k)) kept.set(k, n as Element);
+        else n.remove();
+      }
+      for (const n of Array.from(nextRoot.childNodes)) {
+        if (n === nextShell) continue;
+        const k = keyOf(n);
+        const live = k !== null ? kept.get(k) : undefined;
+        if (live) morph(live, n as Element);
+        else liveRoot.appendChild(n);
+      }
       return;
     }
   }

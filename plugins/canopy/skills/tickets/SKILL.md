@@ -2,15 +2,23 @@
 name: tickets
 description: Use when a person explicitly asks to work the Canopy ticket queue — file a ticket, start or resolve one, comment on it, link work to it, move it into a sprint, nest it under another, or create and manage sprints (triggers — "file a ticket for…", "start that ticket", "mark it done", "comment on ticket 12", "move this to sprint 13", "create a sprint"). Reading the queue needs no skill. Explicit invocation only for writes — must never auto-fire.
 disable-model-invocation: true
-allowed-tools: mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__create_ticket, mcp__canopy__transition_ticket, mcp__canopy__add_ticket_comment, mcp__canopy__add_ticket_link, mcp__canopy__set_ticket_sprint, mcp__canopy__set_ticket_parent, mcp__canopy__create_sprint, mcp__canopy__set_sprint_active, mcp__canopy__complete_sprint, mcp__canopy__add_sprint_resource
+allowed-tools: mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__create_ticket, mcp__canopy__edit_ticket, mcp__canopy__transition_ticket, mcp__canopy__add_ticket_comment, mcp__canopy__add_ticket_link, mcp__canopy__set_ticket_sprint, mcp__canopy__set_ticket_parent, mcp__canopy__create_sprint, mcp__canopy__set_sprint_active, mcp__canopy__complete_sprint, mcp__canopy__add_sprint_resource
 ---
 
 # Tickets → Canopy
 
 ## Overview
 
-Works the org's ticket queue — the one queue the whole team files into. A ticket is a Canopy D1 row,
-**never** a GitHub issue (ADR-007); it may *link* to GitHub or Figma work, it never *is* that work.
+Works the org's ticket queue — the one queue the whole team files into. A ticket is a Canopy D1 row
+(ADR-007, amended): it may *link* to GitHub or Figma work, and may be *sourced from* a GitHub issue,
+but it is never the issue itself.
+
+**Mirrored tickets.** Every GitHub issue of the tracked repo also appears as a ticket (`source:
+"github"`, `source_ref` `owner/repo#n`), linked to its issue by a **locked** link nobody can remove.
+Its title, body, category, priority and assignees were copied from the issue once, at import — after
+that they are Canopy's, and you edit them like any other ticket (`edit_ticket`, inside your lane). The
+one thing GitHub still drives is **closure**: closing the issue sets the ticket `done` (or `declined`
+when closed as not planned, deleted or transferred), and reopening it reopens the ticket.
 
 These are **direct authored writes in the promote class** — the same class the web UI writes in.
 There is no gate, no staging and no triage step: a ticket write **takes effect immediately and is
@@ -51,7 +59,9 @@ something the server will refuse.
 - **Not** for the roadmap narrative or a bulk sprint reshape — that's `update-plan`.
 - **Never infer a resolution.** `done` / `declined` are set because a person said so in this
   conversation. A merged PR, a closed issue, or every sub-ticket resolving is **not** a person saying
-  so. This is Canopy's oldest ticket invariant and this skill is not an exception to it.
+  so. This is Canopy's oldest ticket invariant and this skill is not an exception to it. (The one
+  exception is the Worker's, not yours: a MIRRORED ticket follows its own source issue's close and
+  reopen. A native ticket that merely links an issue never does.)
 
 ## Procedure
 
@@ -136,7 +146,8 @@ progress from tickets, but `done` is a person's statement.
 ## Hard rules
 
 - **Never auto-fire.** Explicit ask only.
-- **Never infer `done` / `declined`**, on a ticket or a sprint.
+- **Never infer `done` / `declined`**, on a ticket or a sprint — a mirrored ticket's closure is the
+  Worker following GitHub, never something you do on its behalf.
 - **Never claim you assigned someone** after filing — you cannot.
 - **Read the ticket back before writing it**, every time.
 - **Your writes are attributed to your principal with nothing marking them agent-made.** If the team

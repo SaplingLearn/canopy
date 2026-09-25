@@ -1,5 +1,7 @@
 import type { DocRow, DocVersionRow, FeedRow, AdrRow, NeedsTriageRow, SprintRow, PlanRow, EventRow, IdentityTaskRow, TicketRow, TicketLinkRow, TicketCommentRow, TicketEventRow } from "@shared/rows";
-import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority } from "@shared/contract";
+import type { QueryRequest, QueryResult, QueryPrimary, QueryPointer, Authority, QueryType as ContractQueryType } from "@shared/contract";
+import type { ArtifactKind, ArtifactStatus } from "@shared/artifacts";
+import { ftsBody, listPages, searchArtifacts } from "./artifacts";
 import type { TicketListItem, TicketDetail, TicketRef, TicketSeg, TicketAssigneeFilter, TicketCategory } from "@shared/tickets";
 import { type DB, first, all, ph, fanOut } from "../db";
 // The sprint read model lives next to the sprint writers; `query()` borrows its
@@ -307,12 +309,14 @@ export async function get_ticket(db: DB, id: number): Promise<TicketDetail | nul
   };
 }
 
-/** The sidebar badge: active tickets nobody has picked up (unassigned + open). */
+/** The sidebar badge: active tickets nobody has picked up (unassigned + open).
+ *  NATIVE tickets only — an unassigned mirrored ticket is an unassigned GitHub
+ *  issue, triaged on GitHub, and would otherwise flood the badge (0032). */
 export async function ticket_badge(db: DB): Promise<number> {
   const row = await first<{ n: number }>(
     db,
     `SELECT COUNT(*) AS n FROM tickets t
-      WHERE t.status IN ('submitted', 'in_progress')
+      WHERE t.status IN ('submitted', 'in_progress') AND t.source = 'canopy'
         AND NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = t.id)`
   );
   return row?.n ?? 0;
@@ -341,7 +345,51 @@ export { list_sprints, get_sprint } from "./sprints";
 // NOTE: `ticket` is deliberately NOT a query type. `tickets_fts` stays populated
 // (0024 keeps the table and its three triggers) but tickets are their own
 // surface — the Tickets screen — and never join the /search fan-out.
-type QueryType = "doc" | "decision" | "feed" | "sprint";
+//
+// `artifact` (issue #52) IS a query type, and in the default list: candidates come
+// from the artifacts repository (`searchArtifacts` — bm25 1.0/5.0/1.0/1.0, title
+// weighted — or `listPages` when browsing), both of which apply the ONE visibility
+// rule with query()'s `viewer`: a private page reaches only its author, and with no
+// viewer no private page reaches anyone. Authority: draft → "draft", published /
+// ratified → "live"; the body's first line says which (`Status: <status> · v<n>`).
+type QueryType = ContractQueryType;
+const DEFAULT_QUERY_TYPES: readonly QueryType[] = ["doc", "decision", "feed", "sprint", "artifact"];
+
+/** One artifact page joined to its CURRENT version, for hydration. */
+interface ArtifactHydrateRow {
+  id: number;
+  slug: string;
+  title: string;
+  kind: ArtifactKind;
+  area: string;
+  repo: string;
+  status: ArtifactStatus;
+  author_id: string;
+  current_version: number;
+  updated_at: string;
+  content: string | null;
+  summary: string;
+  content_type: string;
+  size_bytes: number;
+  created_by: string;
+}
+
+// The hydrated artifact body. First line `Status: <status> · v<n>` (the spec's
+// contract — it is how an agent tells ratified from merely published), then kind /
+// area / repo, the latest version's summary, and the content: markdown / mermaid
+// raw, html / svg as their visible text (`ftsBody` — the raw markup is one
+// artifact_get away), binary kinds a one-line description (no bytes over query).
+function assembleArtifactBody(a: ArtifactHydrateRow): string {
+  const head = [
+    `Status: ${a.status} · v${a.current_version}`,
+    `Kind: ${a.kind} · Area: ${a.area}${a.repo ? ` · Repo: ${a.repo}` : ""}`,
+  ];
+  if (a.summary) head.push(`Summary: ${a.summary}`);
+  const body = a.content !== null
+    ? ftsBody(a.kind, a.content)
+    : `(${a.kind} file · ${a.content_type} · ${a.size_bytes} bytes — read it with artifact_get)`;
+  return `${head.join("\n")}\n\n${body}`;
+}
 
 // Internal assembled record: a superset carrying everything both a primary
 // (full body) and a pointer (snippet) need, so we hydrate once per candidate.
@@ -377,7 +425,7 @@ const SNIPPET = `'', '', '…', 12`; // open, close, ellipsis, tokens — no mar
 // quote each token as a phrase, OR them together. Returns null when nothing is
 // left to match (caller degrades to browse). Quoting every token guarantees we
 // never feed FTS5 its own operator/syntax characters.
-function buildMatch(q: string): string | null {
+export function buildMatch(q: string): string | null {
   const cleaned = q.replace(/[^\p{L}\p{N}_]+/gu, " ").trim();
   if (!cleaned) return null;
   return cleaned.split(/\s+/).map((t) => `"${t}"`).join(" OR ");
@@ -424,8 +472,14 @@ function assembleSprintBody(
   return parts.join("\n");
 }
 
-export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
-  const types: QueryType[] = req.types ?? ["doc", "decision", "feed", "sprint"];
+/**
+ * `viewer` is the principal's handle — it decides which PRIVATE artifacts are
+ * visible (only their author's). Omitted → no private artifact is returned.
+ * Every other type is org-wide and ignores it.
+ */
+export async function query(db: DB, req: QueryRequest, viewer?: string): Promise<QueryResult> {
+  const types: readonly QueryType[] = req.types ?? DEFAULT_QUERY_TYPES;
+  const artifactViewer = viewer ?? "";
   const limit = Math.trunc(Math.min(Math.max(req.limit ?? 6, 0), 50));
   const pointerLimit = Math.trunc(Math.min(Math.max(req.pointer_limit ?? 20, 0), 100));
   const includeStaged = req.include_staged ?? false;
@@ -539,6 +593,18 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
     }
   }
 
+  // Artifacts: the repository's own reads, which apply the visibility rule (and hide
+  // version-0 pages). section/space are doc-only, so artifacts drop out under docsOnly.
+  if (types.includes("artifact") && !docsOnly) {
+    if (match) {
+      const hits = fetchCap > 0 ? await searchArtifacts(db, req.q ?? "", artifactViewer, fetchCap) : [];
+      for (const h of hits) candidates.push({ type: "artifact", key: String(h.id), score: -h.rank, snippet: h.snippet });
+    } else {
+      const pages = (await listPages(db, {}, artifactViewer)).slice(0, fetchCap);
+      for (const p of pages) candidates.push({ type: "artifact", key: String(p.id), score: 0, snippet: "" });
+    }
+  }
+
   // 2. Hydrate base rows in bulk (one round-trip per type per CHUNK — `fetchCap`
   //    reaches 150, so every key list here can outgrow D1's 100-param ceiling),
   //    then assemble.
@@ -580,6 +646,21 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
   // `sprint_progress` cache is deliberately NOT read here.
   const sprintTicketCounts = await ticketCountsBySprint(db, sprintIds);
   const planRow = needPlan ? await first<PlanRow>(db, `SELECT * FROM plan WHERE id = 1`) : null;
+
+  // Artifact hydration: each candidate page joined to its current version. The ids
+  // came from visibility-checked reads; the rule is repeated here as a guard anyway.
+  const artifactKeys = candidates.filter((c) => c.type === "artifact").map((c) => Number(c.key));
+  const artifactMap = new Map<string, ArtifactHydrateRow>();
+  for (const r of await fanOut<ArtifactHydrateRow>(
+    db,
+    artifactKeys,
+    (p) => `SELECT p.id, p.slug, p.title, p.kind, p.area, p.repo, p.status, p.author_id, p.current_version, p.updated_at,
+                   v.content, v.summary, v.content_type, v.size_bytes, v.created_by
+              FROM artifact_pages p
+              JOIN artifact_versions v ON v.page_id = p.id AND v.version_no = p.current_version
+             WHERE (p.visibility = 'org' OR p.author_id = ? COLLATE NOCASE) AND p.id IN (${p})`,
+    [artifactViewer]
+  )) artifactMap.set(String(r.id), r);
 
   // Browse mode carries no per-row score, so order is by the merged recency from
   // step 1; FTS mode already has a normalized score. Sort once by score desc and,
@@ -641,6 +722,18 @@ export async function query(db: DB, req: QueryRequest): Promise<QueryResult> {
         current_version: null, pending_version: null, staged_body: null, confidence: adr.confidence,
         updated_at: adr.created_at, updated_by: adr.created_by,
         score: c.score, snippet: c.snippet || browseSnippet(body),
+      };
+    } else if (c.type === "artifact") {
+      const art = artifactMap.get(c.key);
+      if (!art) continue;
+      const body = assembleArtifactBody(art);
+      // id is the SLUG — what artifact_get and #artifacts/<slug> take.
+      a = {
+        type: "artifact", id: art.slug, title: art.title, section: null, space: null,
+        body, authority: art.status === "draft" ? "draft" : "live",
+        current_version: art.current_version, pending_version: null, staged_body: null, confidence: null,
+        updated_at: art.updated_at, updated_by: art.created_by,
+        score: c.score, snippet: c.snippet || browseSnippet(art.summary || body),
       };
     } else {
       // sprint: either the plan singleton (ref 'plan') or a sprint row.

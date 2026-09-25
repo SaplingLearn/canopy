@@ -7,7 +7,7 @@ import { isAdmin } from "./auth/principal";
 import { get_doc, list_docs, get_feed, query, list_tickets, get_ticket, list_sprints, get_sprint } from "./tools/reads";
 import {
   TicketSeg, TicketAssigneeFilter, TicketCategory,
-  TicketCreate, TicketTransition, TicketCommentAdd, TicketLinkAdd, TicketSprintSet, TicketParentSet,
+  TicketCreate, TicketEdit, TicketTransition, TicketCommentAdd, TicketLinkAdd, TicketSprintSet, TicketParentSet,
 } from "@shared/tickets";
 import { TicketError } from "./tools/tickets";
 import {
@@ -15,17 +15,30 @@ import {
 } from "./tools/sprints";
 import { SprintCreate } from "@shared/sprints";
 import {
-  agentCreateTicket, agentTransitionTicket, agentAddTicketComment,
+  agentCreateTicket, agentEditTicket, agentTransitionTicket, agentAddTicketComment,
   agentAddTicketLink, agentSetTicketSprint, agentSetTicketParent,
 } from "./tools/tickets-agent";
 import { getMyWork, list_events } from "./tools/mywork";
 import { getRepoDashboardForAgent } from "./tools/repo-agent";
 import { repoEnvironments } from "./repo/config";
 import { REPO_RANGES, REPO_TAB_SECTIONS, type RepoTab } from "@shared/repo";
-import { ingestFeedEntry, ingestDocProposal, consume } from "./consumer";
+import { ingestFeedEntry, ingestDocProposal, recordBatch } from "./consumer";
 import { feedEntryFromMcpArgs } from "./mcp-args";
-import { IngestPayload } from "@shared/contract";
+import { IngestPayload, QueryType } from "@shared/contract";
+import { ArtifactError } from "./tools/artifacts";
+import {
+  agentUploadAsset, agentArtifactUpdate, agentArtifactGet, agentArtifactList, artifactsForTicket, artifactOrigin,
+} from "./tools/artifacts-agent";
+import {
+  ARTIFACT_AREAS, ARTIFACT_KINDS, ARTIFACT_STATUSES, ARTIFACT_SUMMARY_MAX, ARTIFACT_TITLE_MAX, ARTIFACT_VISIBILITIES,
+  ArtifactLinkInputSchema,
+} from "@shared/artifacts";
 import { write_plan, get_plan, type PlanWrite } from "./tools/plan";
+import {
+  listHandoffs, getHandoff, createHandoff, claimHandoff, expireHandoff, handoffAsTask, HandoffCreateInput, HandoffError,
+} from "./tools/handoffs";
+import { listPrompts, getPrompt, savePrompt, PromptSaveInput, PromptError } from "./tools/prompts";
+import { detectVars, fillVars, firstLine, type HandoffView } from "@shared/handoffs";
 
 const asText = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -45,7 +58,10 @@ async function runTool(fn: () => Promise<unknown>) {
     // `conflict` means "the shared rule says no" (an illegal move, a nesting break),
     // `bad_request` means "your input is wrong". The cookie routes map the same
     // codes onto HTTP statuses; this is the MCP spelling of it.
-    const code = err instanceof TicketError || err instanceof SprintError ? err.code : undefined;
+    // An ArtifactError travels the same way. Its not_found message IS "not_found", so a
+    // missing slug, a private page and a version-0 page all read exactly
+    // { error: "not_found", code: "not_found" } — the check is never an existence oracle.
+    const code = err instanceof TicketError || err instanceof SprintError || err instanceof ArtifactError || err instanceof HandoffError || err instanceof PromptError ? err.code : undefined;
     return {
       content: [{ type: "text" as const, text: JSON.stringify(code ? { error: message, code } : { error: message }) }],
       isError: true as const,
@@ -61,15 +77,20 @@ async function runTool(fn: () => Promise<unknown>) {
  * A fresh McpServer per request is required (SDK 1.26+ guards against reuse), so
  * this must NOT be hoisted to global scope.
  */
-export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer {
+export function buildCanopyMcpServer(env: Env, principal: Principal, opts: { origin?: string } = {}): McpServer {
   const server = new McpServer({ name: "canopy", version: "1.0.0" });
+  // Absolute links in artifact results: PUBLIC_ORIGIN, else the /mcp request's origin.
+  // COOKIE_SECRET is only the ROOT of the download-URL key (derived with a purpose label).
+  const artifactCtx = {
+    db: env.DB, handle: principal.handle, origin: artifactOrigin(env.PUBLIC_ORIGIN, opts.origin), downloadSecret: env.COOKIE_SECRET,
+  };
 
   server.tool(
     "query",
-    "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest. Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
+    "Retrieve assembled context from the team brain (Canopy): whole authoritative bodies for the top hits plus ranked pointers to the rest, over docs, decisions, feed, sprints and artifacts (an artifact's id is its slug — open it with artifact_get; its body starts `Status: <draft|published|ratified> · v<n>`). Each result is flagged live / staged_pending / unpromoted / draft — treat anything not 'live' as not-yet-settled. Use this to orient before working an existing area and ALWAYS before proposing a doc change. Read-only and safe to call freely.",
     {
       q: z.string().optional(),
-      types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(),
+      types: z.array(QueryType).optional(),
       section: z.string().optional(),
       space: z.enum(["technical", "product"]).optional(),
       include_staged: z.boolean().optional(),
@@ -78,7 +99,8 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     },
     // Agent default include_staged:true — the agent should see staged/unpromoted
     // context (flagged), unlike the human Search which defaults false.
-    async (args) => runTool(() => query(env.DB, { ...args, q: args.q ?? "", include_staged: args.include_staged ?? true })),
+    // The bearer principal is the viewer: a private artifact reaches only its author.
+    async (args) => runTool(() => query(env.DB, { ...args, q: args.q ?? "", include_staged: args.include_staged ?? true }, principal.handle)),
   );
 
   server.tool("get_doc", "Get a doc and all its versions by slug.", { slug: z.string() }, async ({ slug }) =>
@@ -122,7 +144,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "propose_doc_update",
-    "Propose a doc version through the reconciling gate. Out-of-vocab section or low confidence on a NEW slug routes to needs_triage; an unchanged body is dropped; otherwise staged non-destructively (current_version untouched) and classified new/edit/rewrite. Pass base_version (the current_version you read) so a stale edit is flagged, space ('technical' for engineering docs or 'product' for product docs; defaults 'technical') to place a new doc, and force to stage an identical body.",
+    "Propose a doc version through the reconciling gate. Images: embed only uploaded doc images, as `![what it shows](/img/<sha256>)` — upload each first with upload_asset (destination \"doc\"); a body with a not-yet-uploaded /img ref or any other image source (external URL, data: URI) is REFUSED ({ outcome: \"refused\", reason }), nothing staged. Out-of-vocab section or low confidence on a NEW slug routes to needs_triage; an unchanged body is dropped; otherwise staged non-destructively (current_version untouched) and classified new/edit/rewrite. Pass base_version (the current_version you read) so a stale edit is flagged, space ('technical' for engineering docs or 'product' for product docs; defaults 'technical') to place a new doc, and force to stage an identical body.",
     {
       slug: z.string(),
       section: z.string(),
@@ -151,7 +173,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   // org's queue is how an agent orients before it does anything.
   server.tool(
     "list_tickets",
-    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into — never GitHub issues (ADR-007); a ticket may LINK to GitHub or Figma work, it never is that work. Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Reading is unscoped: you see the whole org's queue. WRITING is scoped to your own lane — see create_ticket and transition_ticket.",
+    "Read-only: the org's ticket queue. Tickets are Canopy D1 rows the whole org files into (ADR-007, amended): a ticket may LINK to GitHub or Figma work, and may be SOURCED from a GitHub issue, but is never the issue itself. A mirrored ticket has source 'github' and source_ref 'owner/repo#n'; its title/body/assignees were copied at import and are Canopy's since, while closing or reopening the issue on GitHub closes or reopens it. Its source link is locked (never removable). Filter with seg ('open' = submitted + in_progress, the default / 'closed' = done + declined / 'all'), assignee ('anyone' default, 'me' = you, the bearer principal, 'unassigned') and category. Newest-updated first; each row carries its assignees, link/sub-ticket counts and sprint label. Reading is unscoped: you see the whole org's queue. WRITING is scoped to your own lane — see create_ticket and transition_ticket.",
     {
       seg: TicketSeg.optional(),
       assignee: TicketAssigneeFilter.optional(),
@@ -164,13 +186,13 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "get_ticket",
-    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, and its sprint. A ticket is a Canopy D1 row, never a GitHub issue (ADR-007). Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
+    "Read-only: one whole ticket by id — body, category, priority, status, requester, assignees, linked work, comments, the full status history, its parent and sub-tickets, its sprint, and `artifacts` ([{slug, title, kind, status, version}] — the artifact pages linked to it that you can see; open one with artifact_get). A ticket is a Canopy D1 row that may be sourced from a GitHub issue but is never the issue itself (ADR-007, amended) — `source`, `source_ref` and each link's `locked` say whether it is mirrored and which link is its source. Read this BEFORE any write: its `assignees` tell you whether the ticket is in your lane at all.",
     { id: z.number() },
     async ({ id }) =>
       runTool(async () => {
         const ticket = await get_ticket(env.DB, id);
         if (!ticket) throw new Error(`no such ticket: ${id}`);
-        return ticket;
+        return { ...ticket, artifacts: await artifactsForTicket(env.DB, id, principal.handle) };
       }),
   );
 
@@ -223,6 +245,16 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
     "File a ticket. THE ONE UNSCOPED WRITE — you may file freely; every other ticket write requires the ticket to be assigned to you already. The requester is YOU (the bearer principal); a client-supplied requester is ignored. `assignees` (person handles) is the ONLY place an agent can assign anyone — after filing, assignment is web-only, so there is no tool to add or remove an assignee later. Optional `link` takes a bare issue number ('#214'), a GitHub/Figma URL, or any URL. `sprint_id` omitted = the backlog. Returns the whole ticket. Confirm the exact fields with the person before calling — a ticket is org-visible the moment it exists.",
     TicketCreate.shape,
     async (input) => runTool(async () => ticketDetail(await agentCreateTicket(env.DB, TicketCreate.parse(input), principal.handle))),
+  );
+
+  server.tool(
+    "edit_ticket",
+    "Edit a ticket's title and/or body (markdown). SCOPED: only on a ticket already assigned to you, else `forbidden` and nothing is written. Pass at least one of `title` / `body`; the other is left as it is. A ticket mirrored from a GitHub issue is editable too — its title and body were copied from the issue when it was imported and are Canopy's from then on (GitHub edits never overwrite them). Records no history row (history is status moves). Returns the whole ticket.",
+    { id: z.number(), ...TicketEdit.shape },
+    async ({ id, title, body }) => runTool(async () => {
+      await agentEditTicket(env.DB, env, id, { title, body }, principal.handle);
+      return ticketDetail(id);
+    }),
   );
 
   server.tool(
@@ -315,13 +347,98 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 
   server.tool(
     "record_session",
-    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage). Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. Used by the record-session skill at session end; you only ever stage — humans confirm.",
+    "Record a whole Claude Code session into Canopy in ONE reconciled batch: pass a full IngestPayload (session + feed_entries / doc_proposals / adr_drafts / needs_triage, and optional artifact_links). A doc proposal may embed only uploaded doc images (`![alt](/img/<sha256>)`, uploaded with upload_asset destination \"doc\" BEFORE this call); one that breaks that rule is listed under `refused` with its reason and is not ledgered, so re-sending the same batch after uploading stages it. Routes through the SAME gate as /ingest — drops no-ops, stages real deltas, classifies each doc change, and is replay-safe on session.id. The author is your authenticated bearer principal; session.author is advisory and ignored. Returns per-type outcome counts. `artifact_links` ([{slug, target_type: ticket|sprint|pr|issue, target_ref}], for artifacts this session produced) are NOT staged: after the batch is reconciled each is linked directly, as you, and reported in `artifact_links` as linked / not_found / error (idempotent — a replay re-links nothing). Used by the record-session skill at session end; you only ever stage knowledge — humans confirm.",
     IngestPayload.shape,
     // Same reconciling path as the cookie /ingest route: forward the full payload to
     // consume() under the bearer principal already in scope. Re-parse with the contract
     // so defaults (empty arrays) are applied and the type is exactly IngestPayload —
     // the SDK already validated against IngestPayload.shape, so this never throws.
-    async (payload) => runTool(() => consume(env.DB, IngestPayload.parse(payload), principal)),
+    // recordBatch = consume() (the gate) + the post-batch artifact_links step — the same
+    // function /ingest calls, so the two surfaces cannot drift.
+    async (payload) => runTool(() => recordBatch(env.DB, IngestPayload.parse(payload), principal)),
+  );
+
+  // ── Artifacts: for every principal (issue #52; docs/artifact-contract.md) ─────
+  //
+  // Thin adapters over src/tools/artifacts-agent.ts, which calls the artifacts
+  // repository with the BEARER principal as author and viewer — the same permission
+  // checks as the HTTP API: whoever can read a page can version it; a private page is
+  // its author's alone; missing / private / version-0 are ONE not_found. Direct
+  // authored writes in the promote class, like tickets: no gate, nothing staged.
+  // There is deliberately NO ratify tool — ratifying is a person's act on the web
+  // (a session-cookie route), exactly like promoting a doc or ratifying an ADR.
+
+  const artifactPageShape = {
+    title: z.string().min(1).max(ARTIFACT_TITLE_MAX),
+    kind: z.enum(ARTIFACT_KINDS),
+    area: z.enum(ARTIFACT_AREAS),
+    repo: z.string(),
+    visibility: z.enum(ARTIFACT_VISIBILITIES),
+  };
+  const binaryShape = {
+    // No .max: over the cap is the repository's too_large, not an input-validation error (Track E).
+    size_bytes: z.number().int().min(1).optional(),
+    sha256: z.string().optional(),
+    content_type: z.string().max(255).optional(),
+    filename: z.string().max(255).optional(),
+  };
+
+  server.tool(
+    "upload_asset",
+    "Put something into Canopy: an ARTIFACT page, or an IMAGE for a doc. `destination` picks which (default \"artifact\").\n\n" +
+      "destination \"doc\" — an image a doc embeds. Pass `sha256` (hex, `shasum -a 256 img.png`), `size_bytes` and `content_type` (image/png | image/jpeg | image/gif | image/webp; ≤ 10 MB); `kind` may be omitted (it is always image) and page fields (title, area, …) are refused. → { destination, ref: \"/img/<sha256>\", markdown, sha256, uploaded }. uploaded: true = that exact image is already stored, nothing to PUT. Otherwise also { upload_url, expires_at }: PUT the exact bytes (single use, 5 minutes, e.g. `curl -X PUT --data-binary @img.png -H \"Content-Type: image/png\" \"<upload_url>\"`). THEN reference it in the doc body as `![what it shows](/img/<sha256>)` and propose the doc (propose_doc_update / record_session). The doc gate REFUSES a body whose image is not uploaded yet, and any other image source (an external URL, a data: URI) — upload first, then propose. Images are immutable: a new picture is a new sha256.\n\n" +
+      "destination \"artifact\" (default) — create an artifact page (v1, status draft): a rendered HTML page, markdown doc, SVG, mermaid diagram, image, PDF or file the team keeps and versions. Needs `title`, `kind`, `area`, `repo`, `visibility`. Text kinds (html | markdown | svg | mermaid; ≤ 500 KB): pass `content` → { id, slug, url, version }. Binary kinds (image | pdf | file; ≤ 10 MB): pass `size_bytes` and `sha256`, NOT content → { id, slug, url, upload_url, expires_at }; then PUT the exact bytes to upload_url (single use, 5 minutes) — the page does not exist to anyone until that PUT lands. `area` is one of auth | architecture | infra | api | ui | data; `repo` is owner/repo or \"\"; `visibility` org (the whole org) or private (only you). Optional `links` ([{target_type: ticket|sprint|pr|issue, target_ref}]) and `summary`. You author it; a PERSON ratifies it on the web — there is no ratify tool. Contract: docs/artifact-contract.md.\n\n" +
+      "Every result has `warnings` — non-empty when artifact content calls something only claude.ai has (window.claude, window.storage, api.anthropic.com); the page is still created.",
+    {
+      destination: z.enum(["artifact", "doc"]).optional(),
+      title: artifactPageShape.title.optional(),
+      kind: artifactPageShape.kind.optional(),
+      area: artifactPageShape.area.optional(),
+      repo: artifactPageShape.repo.optional(),
+      visibility: artifactPageShape.visibility.optional(),
+      content: z.string().optional(),
+      links: z.array(ArtifactLinkInputSchema).max(50).optional(),
+      summary: z.string().max(ARTIFACT_SUMMARY_MAX).optional(),
+      ...binaryShape,
+    },
+    async (input) => runTool(() => agentUploadAsset(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_update",
+    "Add a version to an artifact you can see (any org page, or your own private one). A new version is `published` and clears any ratification. Text kinds: pass `content` (the whole new body) OR `old_str` + `new_str` (an exact edit of the latest version — old_str must occur EXACTLY once) → { id, slug, url, version, unchanged } (unchanged: true = identical to the latest, nothing written). Binary kinds: pass `size_bytes` + `sha256` (+ optional content_type / filename) → { id, slug, url, upload_url, expires_at }, then PUT the bytes (single use, 5 minutes). `summary` says what changed. Every result has `warnings` (claude.ai-only calls in the content — a warning, never a rejection). An unknown or private-to-someone-else slug is { error: \"not_found\", code: \"not_found\" }.",
+    {
+      slug: z.string().min(1),
+      summary: z.string().max(ARTIFACT_SUMMARY_MAX),
+      content: z.string().optional(),
+      old_str: z.string().optional(),
+      new_str: z.string().optional(),
+      ...binaryShape,
+    },
+    async (input) => runTool(() => agentArtifactUpdate(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_get",
+    "Read one artifact: metadata (title, kind, area, repo, author, status draft | published | ratified, visibility, versions, links, ratified_version) plus, for text kinds, `content` of the requested version (binary kinds: `content` is null). To get the FILE — any kind, binary included — use `download_url`: absolute, signed for you, reusable for 5 minutes (`download_expires_at`), no header needed: `curl -fsSL \"$download_url\" -o <path>` returns the exact stored bytes as an attachment named `download_filename`. Verify it against `sha256` / `size_bytes` (this version's; `shasum -a 256 <path>`). Expired → HTTP 410: call artifact_get again. `raw_url` is the browser view (signed-in session only — it does not take your bearer). `slug` may name a version (`slug@v3` or `slug/v3`), or pass `version`; default the latest. `url` is the page in the Canopy web app — share that when a person just wants the link. `warnings` flags claude.ai-only calls in the content. Only `ratified` is team-confirmed; draft / published are one person's word. An unknown, private-to-someone-else or not-yet-uploaded slug is { error: \"not_found\", code: \"not_found\" }.",
+    { slug: z.string().min(1), version: z.number().int().min(1).optional() },
+    async (input) => runTool(() => agentArtifactGet(artifactCtx, input)),
+  );
+
+  server.tool(
+    "artifact_list",
+    "Read-only: the artifact pages you can see (every org page, plus your own private ones), newest first — the same filters as the web library. All optional: `q` (full text over title / summary / body, or a title / slug substring), `kind` (html | markdown | svg | mermaid | image | pdf | file), `area` (auth | architecture | infra | api | ui | data), `author` (a handle), `status` (draft | published | ratified), `ticket` / `sprint` (an id — pages linked to it), `limit` (default 25, max 100). → { artifacts: [{ slug, title, kind, status, version, updated_at, url, area, author, visibility }], total, truncated }. Open one with artifact_get (its `download_url` fetches the file). Only `ratified` is team-confirmed.",
+    {
+      q: z.string().max(200).optional(),
+      kind: z.enum(ARTIFACT_KINDS).optional(),
+      area: z.enum(ARTIFACT_AREAS).optional(),
+      author: z.string().max(80).optional(),
+      status: z.enum(ARTIFACT_STATUSES).optional(),
+      ticket: z.union([z.number().int().min(1), z.string().max(20)]).optional(),
+      sprint: z.union([z.number().int().min(1), z.string().max(20)]).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    async (input) => runTool(() => agentArtifactList(artifactCtx, input)),
   );
 
   // ── Sprints: WRITES, open to every principal ─────────────────────────────
@@ -374,6 +491,125 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
   // (conditional registration means it's absent from tools/list and calling it by
   // name errors tool-not-found, since a fresh server is built per request with the
   // principal already in scope).
+  // ── Handoffs (0028): addressed messages between sessions ──────────────────
+  //
+  // Direct writers in src/tools/handoffs.ts, NOT the ingestion gate — a handoff is
+  // not knowledge. The bearer principal is the sender / claimer, never an input.
+  // `session` on send_handoff is the replay key (processed_items, item index 0),
+  // so a retried call returns the first call's handoff instead of a second row.
+  const handoffUrl = (id: number) => `${(env.PUBLIC_ORIGIN ?? "").replace(/\/+$/, "")}/#handoffs/${id}`;
+  const handoffLine = (h: HandoffView) => ({
+    id: h.id, sender: h.sender, recipient: h.recipient, status: h.status, created_at: h.created_at,
+    task: h.context.task, excerpt: firstLine(h.body),
+  });
+
+  server.tool(
+    "send_handoff",
+    "Leave a handoff for the next session: where a task stands when you stop mid-way (context running out, switching person, ending the session). Send exactly ONE per session and tell the person its id as #N. `recipient` is a person handle, or omit it for 'anyone' (the first session to claim it gets it). Keep `body` under 300 words — its first line is the title, the rest says where things stand. ALWAYS fill `context` with the fixed shape { repo, branch, task, done[], next[], files[] }: repo from the git remote (owner/name), branch from HEAD, task as one line, done/next as short items, files from `git diff --name-only` against main. Long step-by-step instructions for the claiming session go in `prompt.body` (with a `prompt.title`), not in body. Pass your session id as `session` so a retry does not send twice. Returns { id, url }.",
+    {
+      body: z.string().min(1),
+      recipient: z.string().optional(),
+      context: z.object({
+        repo: z.string().optional(), branch: z.string().optional(), task: z.string().optional(),
+        done: z.array(z.string()).optional(), next: z.array(z.string()).optional(), files: z.array(z.string()).optional(),
+      }).optional(),
+      prompt: z.object({ title: z.string(), body: z.string() }).optional(),
+      session: z.string().optional(),
+    },
+    async (args) => runTool(async () => {
+      const input = HandoffCreateInput.parse({ body: args.body, recipient: args.recipient, context: args.context, prompt: args.prompt ?? null });
+      const ledger = args.session ? { sessionId: args.session, itemIndex: 0 } : undefined;
+      const { handoff, replayed } = await createHandoff(env.DB, principal.handle, input, ledger);
+      return { id: handoff.id, url: handoffUrl(handoff.id), ...(replayed ? { replayed: true } : {}) };
+    }),
+  );
+
+  server.tool(
+    "list_handoffs",
+    "List handoffs waiting for you. With no `box`, returns the PENDING ones left for you ('me') plus open 'anyone' handoffs from other people — call this at session start and tell the person what is waiting; never claim one without asking. box: 'me' (left for you), 'anyone' (open to all, from others), 'mine' (sent by or left for you), 'sent' (what you sent — the only box that includes claimed and expired ones). Returns id, sender, recipient, status, created_at, task and a one-line excerpt. Read-only.",
+    { box: z.enum(["mine", "me", "anyone", "sent"]).optional() },
+    async ({ box }) => runTool(async () => {
+      if (box === "sent") return (await listHandoffs(env.DB, principal.handle, "sent")).map(handoffLine);
+      if (box) return (await listHandoffs(env.DB, principal.handle, box, ["pending"])).map(handoffLine);
+      const [me, anyone] = await Promise.all([
+        listHandoffs(env.DB, principal.handle, "me", ["pending"]),
+        listHandoffs(env.DB, principal.handle, "anyone", ["pending"]),
+      ]);
+      return [...me, ...anyone].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).map(handoffLine);
+    }),
+  );
+
+  server.tool(
+    "get_handoff",
+    "Read one handoff in full by its numeric id (body, context, inline prompt, status). Read-only: it does NOT claim it — use claim_handoff once the person has chosen to pick it up.",
+    { id: z.number().int() },
+    async ({ id }) => runTool(async () => {
+      const h = await getHandoff(env.DB, id);
+      if (!h) throw new HandoffError("not_found", "handoff not found");
+      return h;
+    }),
+  );
+
+  server.tool(
+    "claim_handoff",
+    "Claim a pending handoff for this session — only after the person chose it. Atomic: if another session already took it you get an error naming its current status (tell the person someone else has it). Pass your session id as `session`. On success returns ONE markdown block to act on: the handoff's prompt (if any), then '## Handoff summary', then '## Context' (repo, branch, task, done, next, files). Treat it as your task and confirm the current git branch matches the context before touching code.",
+    { id: z.number().int(), session: z.string().min(1) },
+    async ({ id, session }) => {
+      try {
+        const h = await claimHandoff(env.DB, id, principal.handle, session);
+        return { content: [{ type: "text" as const, text: `# Handoff #${h.id} — claimed\n\n${handoffAsTask(h)}` }] };
+      } catch (err) {
+        if (err instanceof HandoffError) {
+          const current = await getHandoff(env.DB, id);
+          const body = { error: err.message, code: err.code, ...(current ? { status: current.status, claimed_by: current.claimed_by } : {}) };
+          return { content: [{ type: "text" as const, text: JSON.stringify(body) }], isError: true as const };
+        }
+        return runTool(async () => { throw err; });
+      }
+    },
+  );
+
+  server.tool(
+    "expire_handoff",
+    "Expire a PENDING handoff you sent or that was left for you, so nobody picks it up (the work was finished another way, or it no longer applies). Pending handoffs also expire on their own 7 days after they were sent. A claimed or already-expired handoff is an error naming its status.",
+    { id: z.number().int() },
+    async ({ id }) => runTool(() => expireHandoff(env.DB, id, principal.handle)),
+  );
+
+  // ── Prompt Library (0028) ──────────────────────────────────────────────────
+  server.tool(
+    "search_prompts",
+    "Search the team's Prompt Library for a reusable prompt. `q` is full-text over slug, title, description, body and tags; `tags` must ALL match. Returns summaries (slug, title, tags, author, version, status, updated_at, excerpt) — prefer 'published' ones; 'staged' and 'draft' are not settled yet. Use get_prompt to read one. Read-only.",
+    { q: z.string().optional(), tags: z.array(z.string()).optional() },
+    async ({ q, tags }) => runTool(() => listPrompts(env.DB, { q, tags })),
+  );
+
+  server.tool(
+    "get_prompt",
+    "Read a library prompt by slug, with its {{variables}} filled from `vars`. The response lists `variables` (every one the prompt uses) and `unfilled` (the ones still left as {{placeholders}}) — ASK the person for any unfilled value instead of guessing it. Read-only.",
+    { slug: z.string(), vars: z.record(z.string(), z.string()).optional() },
+    async ({ slug, vars }) => runTool(async () => {
+      const p = await getPrompt(env.DB, slug);
+      if (!p) throw new PromptError("not_found", "prompt not found");
+      const variables = detectVars(p.body);
+      const values = vars ?? {};
+      return { ...p, body: fillVars(p.body, values), variables, unfilled: variables.filter((v) => !values[v]?.trim()) };
+    }),
+  );
+
+  server.tool(
+    "save_prompt",
+    "Stage a prompt in the team's Prompt Library — a new slug creates v1, an existing slug appends the next version. ALWAYS lands as 'staged' (whatever you intend): a human must publish it in Canopy before it is settled, and you cannot rename a slug. Only save instructions you have had to write out twice; the slug is 2–60 chars of a-z, 0-9 and '-'. Write {{name}} for anything the caller fills in. Pass `branch` (your git branch) for the default version note. Returns { slug, version, status }.",
+    {
+      slug: z.string(), title: z.string(), body: z.string(),
+      tags: z.array(z.string()).optional(), summary: z.string().optional(), branch: z.string().optional(),
+    },
+    async ({ slug, title, body, tags, summary, branch }) => runTool(async () => {
+      const p = await savePrompt(env.DB, principal.handle, PromptSaveInput.parse({ slug, title, body, tags, summary }), "agent", { branch });
+      return { slug: p.slug, version: p.version, status: p.status };
+    }),
+  );
+
   if (isAdmin(env, principal.handle)) {
     server.tool(
       "update_plan",
@@ -403,7 +639,7 @@ export function buildCanopyMcpServer(env: Env, principal: Principal): McpServer 
 }
 
 export function handleMcp(request: Request, env: Env, ctx: ExecutionContext, principal: Principal): Promise<Response> {
-  const server = buildCanopyMcpServer(env, principal);
+  const server = buildCanopyMcpServer(env, principal, { origin: new URL(request.url).origin });
   // createMcpHandler wraps @modelcontextprotocol/sdk over Streamable HTTP, stateless (no McpAgent/DO).
   const handler = createMcpHandler(server, { route: "/mcp" });
   return handler(request, env, ctx);

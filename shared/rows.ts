@@ -15,6 +15,10 @@ export type {
   SprintStatus, SprintUrgency, SprintDomain, SprintResourceKind,
 } from "./sprints";
 
+// Artifacts (0030) are defined in shared/artifacts-rows.ts (the vocab unions come
+// from the zod-free core) and re-exported here. Type-only.
+export type { ArtifactPageRow, ArtifactVersionRow, ArtifactLinkRow, ArtifactUploadTokenRow } from "./artifacts-rows";
+
 export interface SectionRow { name: string; description: string | null; }
 export interface TagRow { tag: string; description: string | null; }
 
@@ -158,12 +162,20 @@ export interface McpTokenSummary {
   last_used_at: string | null;
 }
 
+/** Settings › Connected apps: one OAuth connection (a grant). Never a token. */
+export interface OAuthGrantSummary {
+  id: number;
+  client_name: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
 // The replay ledger (0009). One row per (session_id, item_index) the worker has
 // seen; a re-POST of the same payload hits every row and drops as unchanged.
 export interface ProcessedItemRow {
   session_id: string;
   item_index: number;
-  item_type: "feed" | "doc" | "adr" | "triage" | "event";
+  item_type: "feed" | "doc" | "adr" | "triage" | "event" | "handoff";
   outcome: string;        // the gate's verdict (written | staged | triaged | unchanged)
   ref: string | null;     // what it became (e.g. "slug@2", a feed/adr id)
   created_at: string;

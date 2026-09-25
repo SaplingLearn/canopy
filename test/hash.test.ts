@@ -24,9 +24,36 @@ describe("parseHash", () => {
   });
 
   it("still parses every pre-existing plain screen", () => {
-    for (const s of ["mywork", "feed", "docs", "roadmap", "review", "maintenance", "search", "settings", "guide", "unsubscribe"]) {
+    for (const s of ["mywork", "feed", "docs", "roadmap", "review", "search", "settings", "guide", "unsubscribe", "handoffs", "prompts"]) {
       expect(parseHash(`#${s}`)).toEqual({ screen: s, ticketId: null, sprintId: null });
     }
+    // Maintenance now names its sub-page (Unplaced is the bare hash).
+    expect(parseHash("#maintenance")).toEqual({ screen: "maintenance", ticketId: null, sprintId: null, maintTab: "unplaced" });
+  });
+
+  it("parses the handoff, prompt, new-doc and maintenance sub-routes, and round-trips them", () => {
+    const base = { ticketId: null, sprintId: null };
+    const cases: [string, object][] = [
+      ["#handoffs/new", { screen: "newhandoff", ...base }],
+      ["#handoffs/12", { screen: "handoff", ...base, handoffId: 12 }],
+      ["#prompts/new", { screen: "promptedit", ...base, promptMode: "new" }],
+      ["#prompts/adr-draft", { screen: "prompt", ...base, promptSlug: "adr-draft" }],
+      ["#prompts/adr-draft/edit", { screen: "promptedit", ...base, promptSlug: "adr-draft", promptMode: "edit" }],
+      ["#prompts/adr-draft/version", { screen: "promptedit", ...base, promptSlug: "adr-draft", promptMode: "version" }],
+      ["#docs/new", { screen: "newdoc", ...base }],
+      ["#maintenance/identity", { screen: "maintenance", ...base, maintTab: "identity" }],
+      ["#maintenance/people", { screen: "maintenance", ...base, maintTab: "people" }],
+    ];
+    for (const [hash, route] of cases) {
+      expect(parseHash(hash), hash).toEqual(route);
+      expect(hashForRoute(parseHash(hash)), hash).toBe(hash);
+    }
+    const none = { screen: "mywork", ticketId: null, sprintId: null };
+    expect(parseHash("#prompts/adr-draft/delete")).toEqual(none);
+    expect(parseHash("#maintenance/nope")).toEqual(none);
+    expect(parseHash("#handoffs/%E0%A4%A")).toEqual(none); // malformed escape
+    expect(parseHash("#handoffs/h_8d05")).toEqual(none);    // ids are numbers
+    expect(parseHash("#handoffs/0")).toEqual(none);
   });
 
   it("falls back to My Work for junk, empty, and malformed ids", () => {
@@ -81,6 +108,28 @@ describe("hashForRoute", () => {
     // An unknown tab is a junk hash like any other.
     expect(parseHash("#repo/nope").screen).toBe("mywork");
     expect(parseHash("#repo/ci/extra").screen).toBe("mywork");
+  });
+
+  it("routes the Artifacts library, form, viewer, a version and a diff — and round-trips each", () => {
+    const base = { ticketId: null, sprintId: null };
+    expect(parseHash("#artifacts")).toEqual({ screen: "artifacts", ...base });
+    expect(parseHash("#artifacts/new")).toEqual({ screen: "artifactnew", ...base });
+    expect(parseHash("#artifacts/auth-audit")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: null, diff: null } });
+    expect(parseHash("#artifacts/auth-audit/v2")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: 2, diff: null } });
+    expect(parseHash("#artifacts/auth-audit/diff/1..3")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: null, diff: { a: 1, b: 3 } } });
+    for (const h of ["#artifacts", "#artifacts/new", "#artifacts/auth-audit", "#artifacts/auth-audit/v2", "#artifacts/auth-audit/diff/1..3"]) {
+      expect(hashForRoute(parseHash(h)), h).toBe(h);
+    }
+    for (const junk of ["#artifacts/Bad_Slug", "#artifacts/x/v0", "#artifacts/x/vx", "#artifacts/x/diff/1", "#artifacts/x/diff/a..b", "#artifacts/x/y/z/w"]) {
+      expect(parseHash(junk).screen, junk).toBe("mywork");
+    }
+    expect(hashForRoute({ screen: "artifact", ...base })).toBe("#artifacts");
+    // The raw route's `slug@v<n>` spelling is accepted; `/v<n>` is what gets written back.
+    expect(parseHash("#artifacts/auth-audit@v2")).toEqual({ screen: "artifact", ...base, art: { slug: "auth-audit", v: 2, diff: null } });
+    expect(hashForRoute(parseHash("#artifacts/auth-audit@v2"))).toBe("#artifacts/auth-audit/v2");
+    for (const junk of ["#artifacts/auth-audit@v0", "#artifacts/auth-audit@2", "#artifacts/new@v1", "#artifacts/x@v2/diff/1..2"]) {
+      expect(parseHash(junk).screen, junk).toBe("mywork");
+    }
   });
 
   it("degrades to the parent screen when the id is missing", () => {

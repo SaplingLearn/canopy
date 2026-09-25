@@ -7,7 +7,8 @@ import {
   type RepoStat, type RepoTodos, type RepoTone, type RepoTrend, type RepoUsageEnv, type RepoUsageMetric,
 } from "@shared/repo";
 import type { PersonColor } from "@shared/rows";
-import { type DB, all, first, nowIso } from "../db";
+import { type DB, all, first, nowIso, ph } from "../db";
+import { ISSUE_GONE_ACTIONS } from "./issue-gone";
 import { list_sprints } from "./sprints";
 import {
   approvedPrs, branchHeads, checkState, ciDailyRates, ciFailureRows, commitsByDay, deployHistories,
@@ -128,7 +129,8 @@ const personOf = (people: PersonMap, login: string): RepoPerson =>
 // ── issues: the latest snapshot per issue, as of a moment ────────────────────
 interface OpenIssue { number: number; labels: string[] }
 
-/** The issues whose LATEST captured snapshot at `asOf` says `open`. Reads the
+/** The issues whose LATEST captured snapshot at `asOf` says `open` (and is not a
+ *  deleted / transferred delivery, whose snapshot still says open). Reads the
  *  state/labels with json_extract so the (large) issue bodies never leave D1. */
 async function openIssuesAsOf(db: DB, asOf: string): Promise<OpenIssue[]> {
   const rows = await all<{ ref_number: number; state: string | null; labels: string | null }>(
@@ -137,10 +139,11 @@ async function openIssuesAsOf(db: DB, asOf: string): Promise<OpenIssue[]> {
        SELECT ref_number,
               json_extract(raw, '$.issue.state')  AS state,
               json_extract(raw, '$.issue.labels') AS labels,
+              json_extract(raw, '$.action')       AS action,
               ROW_NUMBER() OVER (PARTITION BY ref_number ORDER BY ${AT} DESC, id DESC) AS rn
          FROM events WHERE event_type = 'issue' AND ${AT} <= ?
-     ) WHERE rn = 1 AND state = 'open'`,
-    asOf
+     ) WHERE rn = 1 AND state = 'open' AND (action IS NULL OR action NOT IN (${ph(ISSUE_GONE_ACTIONS.length)}))`,
+    asOf, ...ISSUE_GONE_ACTIONS
   );
   return rows.map((r) => ({ number: r.ref_number, labels: parseLabels(r.labels) }));
 }
@@ -155,15 +158,18 @@ function parseLabels(json: string | null): string[] {
 const isBug = (i: OpenIssue): boolean => i.labels.some((l) => l.toLowerCase() === "bug");
 
 // ── tickets ──────────────────────────────────────────────────────────────────
-/** Open tickets now, and the NET change over the window: filed − resolved + re-opened. */
+/** Open tickets now, and the NET change over the window: filed − resolved + re-opened.
+ *  NATIVE tickets only: the tile sits beside the open-ISSUE tiles, and a ticket
+ *  mirrored from an issue (0032) is already counted there. */
 async function ticketCounts(db: DB, since: string): Promise<{ open: number; delta: number }> {
-  const open = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE status IN ('submitted','in_progress')`);
-  const filed = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE created_at > ?`, since);
+  const open = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE status IN ('submitted','in_progress') AND source = 'canopy'`);
+  const filed = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE created_at > ? AND source = 'canopy'`, since);
   const moves = await first<{ resolved: number | null; reopened: number | null }>(
     db,
-    `SELECT SUM(CASE WHEN to_status IN ('done','declined') AND (from_status IS NULL OR from_status NOT IN ('done','declined')) THEN 1 ELSE 0 END) AS resolved,
-            SUM(CASE WHEN from_status IN ('done','declined') AND to_status NOT IN ('done','declined') THEN 1 ELSE 0 END) AS reopened
-       FROM ticket_events WHERE created_at > ?`,
+    `SELECT SUM(CASE WHEN e.to_status IN ('done','declined') AND (e.from_status IS NULL OR e.from_status NOT IN ('done','declined')) THEN 1 ELSE 0 END) AS resolved,
+            SUM(CASE WHEN e.from_status IN ('done','declined') AND e.to_status NOT IN ('done','declined') THEN 1 ELSE 0 END) AS reopened
+       FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id AND t.source = 'canopy'
+      WHERE e.created_at > ?`,
     since
   );
   return { open: open?.n ?? 0, delta: (filed?.n ?? 0) - (moves?.resolved ?? 0) + (moves?.reopened ?? 0) };

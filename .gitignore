@@ -4,3 +4,4 @@ web/dist/
 .dev.vars
 *.log
 .superpowers/
+.canopy/

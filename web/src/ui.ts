@@ -83,3 +83,7 @@ export function relTime(iso: string | null): string {
  *  sprint description), never by starving the whole frame. */
 export const WORK_SHELL =
   "width:100%;max-width:1440px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px";
+/** A single ticket's or sprint's page: the same shell, narrower, so one item reads
+ *  as a centred document on a wide screen instead of hugging the left edge. */
+export const DETAIL_SHELL =
+  "width:100%;max-width:1120px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px";

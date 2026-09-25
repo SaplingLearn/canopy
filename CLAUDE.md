@@ -109,7 +109,13 @@ Triage. That staging-plus-confirmation loop is what keeps the store trustworthy 
   `0026_token_hint` [`mcp_tokens.token_hint` — the clear-text label Settings lists a token by], then
   `0027_repo_capture` [`repo_events` (append-only, UNIQUE `semantic_key`, kinds push/pr/review/deploy/check/run)
   / `repo_snapshots` / `repo_metrics` — the Repo dashboard's second capture path, deliberately separate from
-  `events`]).
+  `events`], then `0028_handoffs_prompts` [`handoffs` / `prompts` / `prompt_versions` / `prompts_fts` — see
+  "Handoffs & Prompt Library" below], then `0029_oauth` [`oauth_clients` / `oauth_grants` / `oauth_codes` /
+  `oauth_tokens` — MCP OAuth, see Auth], then `0030_artifacts` [`artifact_pages` / `artifact_versions` /
+  `artifact_links` / `artifact_upload_tokens` / `artifacts_fts` — see "Artifacts" below], then `0031_doc_images`
+  [`doc_images` / `doc_image_upload_tokens` — see "Doc images" below], then `0032_ticket_source`
+  [`tickets.source` / `source_ref` (partial UNIQUE) / `source_author` / `source_updated_at`,
+  `ticket_links.locked`, and the `github-webhook` system person — see "Tickets mirrored from GitHub issues"]).
 - `web/` — full TypeScript/Vite single-page app (My Work, Feed, Docs, Roadmap, Triage, Search,
   Settings, Get Started, the four tickets screens — Tickets queue / ticket detail / new ticket / sprint —
   the five-tab Repo dashboard, plus the `#unsubscribe` confirmation screen) served via the ASSETS binding;
@@ -152,6 +158,10 @@ for the Repo dashboard — see below) off the SAME verified delivery. The gate *
 - **Low-confidence nuance**: low-conf on a NEW slug → triage; low-conf on an EXISTING slug → stage and
   flag (`low_confidence = 1`) for human scrutiny. Only low-conf new slugs go directly to triage.
 - Out-of-vocab tag/section → routed to `needs_triage` (nothing is guessed).
+- **Doc images**: a doc body may embed only UPLOADED images (`![alt](/img/<sha256>)`). A `/img/` ref with
+  no `doc_images` row, or any other image source (external URL, `data:` URI), makes the proposal
+  `refused` — checked first, nothing staged or triaged, NOT ledgered (so a resend after the upload
+  stages); a batch lists them under `refused`. Code blocks are not scanned. See "Doc images" below.
 - **Events** carry no vocab/confidence — an event is external fact captured verbatim, deduped by a UNIQUE
   `semantic_key` (`gh:pr:42:merged`, `gh:issue:…`) written `INSERT OR IGNORE` (a redelivery/backfill
   overlap drops as `unchanged`). Its `subject_login` is a SECOND identity (who the event is about),
@@ -182,20 +192,22 @@ like `promote_doc` / `ratify_adr` / `complete_sprint` always have been: the plan
 (agent-proposed content), add it to the gate — never a second ingestion surface; authored/computed writes
 stay direct in the promote class.
 
-**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, ten session-cookie routes in
-`routes.ts`): `create_ticket` (opening `ticket_events` row) / `transition_ticket` / `toggle_assignee` /
-`add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`. There is no vocab
+**Tickets are the largest authored-write surface** (`src/tools/tickets.ts`, twelve session-cookie routes in
+`routes.ts`): `create_ticket` (opening `ticket_events` row) / `edit_ticket` (title and/or body) / `transition_ticket` / `toggle_assignee` /
+`add_ticket_link` / `remove_ticket_link` / `set_ticket_sprint` / `set_ticket_parent` / `add_ticket_comment`. There is no vocab
 gate, no confidence, no staged state. Every write bumps `tickets.updated_at` (the queue's sort key); the
 status machine is `canTransition` in `shared/tickets-core.ts` (re-exported by `shared/tickets.ts`) and is
 never re-declared server-side; an illegal move or a nesting-rule break is a 409 that writes nothing;
 tickets nest exactly ONE level (`set_ticket_parent`'s four rejections).
 
-**The writer is a PERSON — over a cookie, or over their own bearer token.** Six of those writers are also
+**The writer is a PERSON — over a cookie, or over their own bearer token.** Seven of those writers are also
 MCP tools (`src/tools/tickets-agent.ts`, the read side below), scoped so an agent writes only inside its
 principal's lane. That is a narrowing of the old "ticket writes are cookie-only" rule, not of the
 invariant underneath it: **nothing INFERS a resolution.** `done` / `declined` are never set by a PR
 merging, an issue closing, the webhook, or `scheduled()` — a person asks for them, and an agent holding
-that person's token asking is that person asking. `toggle_assignee` is the one writer with NO MCP
+that person's token asking is that person asking. ONE carve-out: a ticket MIRRORED from a GitHub issue
+follows its OWN source issue's close and reopen (see "Tickets mirrored from GitHub issues"); a native
+ticket that merely links an issue never does. `toggle_assignee` is the one writer with NO MCP
 counterpart (design D3): assignment is the data the lane rule is built on, so after filing it is
 cookie-only, forever.
 
@@ -239,7 +251,7 @@ degraded, tab, range, sections }`.
 `docs/superpowers/specs/2026-09-17-agent-ticket-writes-design.md`). A ticket write over MCP is permitted
 exactly when the bearer principal is ALREADY an assignee of that ticket, else `TicketError('forbidden')`
 (403) with NOTHING written; an unknown id is `not_found` FIRST, so the check is never an existence
-oracle. Each of the six tools (`create_ticket` / `transition_ticket` / `add_ticket_comment` /
+oracle. Each of the seven tools (`create_ticket` / `edit_ticket` / `transition_ticket` / `add_ticket_comment` /
 `add_ticket_link` / `set_ticket_sprint` / `set_ticket_parent`) asserts, then delegates to the UNTOUCHED
 writer in `tools/tickets.ts` — the transition table, nesting rules and audit rows stay shared with the
 cookie routes, which are NOT assignee-scoped and did not change. `create_ticket` is the one unscoped
@@ -302,13 +314,33 @@ GitHub OAuth + PKCE, gated to **active members of the `SaplingLearn` org** (`SAP
   onboarding (a sealed 10-minute `onboard` cookie; the person row is created only on `POST /auth/onboard`
   with handle + color); else denied. Link mode (`?link=1` with a session) attaches a second provider in
   Settings; the last identity can't be unlinked.
-- **Bearer token** (agents, `/mcp`): per-person tokens stored hashed (`canopy_mcp_` prefix); the principal
-  is resolved from the bearer. Settings lists a person's live tokens by `token_hint` (the first 4 characters
+- **Bearer token** (agents, `/mcp`): either a pasted per-person `canopy_mcp_` token (stored hashed) or an
+  OAuth access token (`canopy_oat_`) obtained through Canopy's own OAuth server — both resolve to the same
+  person handle in `resolveBearerPrincipal`, so OAuth is how a bearer is OBTAINED, not a fourth class.
+  Settings lists a person's live tokens by `token_hint` (the first 4 characters
   of the random part; the value itself is shown once, at mint) via `GET /auth/mcp-tokens`, and
   `POST /auth/mcp-tokens/:id/revoke` soft-revokes the caller's OWN token — someone else's id is the same
-  404 as an unknown one. Both are session-cookie routes, never MCP tools. `/mcp` is **bearer-only** — on bad/missing creds it returns a bare `401`
-  with NO `WWW-Authenticate` and NO OAuth discovery. A fresh `McpServer` is constructed per request
+  404 as an unknown one. Both are session-cookie routes, never MCP tools. Settings › **Get connection command** (`connectModal` / `connectSnippet` in `web/src/render.ts`) is the ONE place a token's value appears: the click mints, a modal shows the exact setup for Claude Code (`claude mcp add … --header`), Codex (`CANOPY_MCP_TOKEN` + `--bearer-token-env-var`), a `.mcp.json` or the bare token, against the SPA's own origin, and names the Settings row the token now lives under; closing the modal drops the token from the page for good. `/mcp` is **bearer-only**; its `401` carries
+  `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"` (plus
+  `error="invalid_token"` when a token was presented), which is how Claude Code and claude.ai discover
+  sign-in. A fresh `McpServer` is constructed per request
   (SDK ≥1.26 guards against reuse); `createMcpHandler` is stateless (no Durable Object / McpAgent).
+- **MCP OAuth** (`src/auth/oauth.ts` core, `oauth-routes.ts` HTTP, `oauth-pages.ts` pages; spec
+  `docs/superpowers/specs/2026-09-24-mcp-oauth-design.md`; migration `0029_oauth`): RFC 9728/8414 metadata,
+  RFC 7591 registration (public clients, loopback redirects match on any port), authorization code + S256
+  PKCE, a server-rendered consent page shown on EVERY authorization (CSRF = HMAC over session + request),
+  access 1 h; refresh tokens rotate with a 60 s reuse interval — a reuse past that window revokes the
+  whole grant — and a rotated refresh token is kept until its OWN expiry (90 days idle), so a late reuse
+  is still caught. Sign-in from
+  an authorize link survives GitHub/Google and onboarding via the sealed `oauth_pending` cookie. Settings ›
+  MCP access lists connections (`GET /auth/oauth-grants`, `POST /auth/oauth-grants/:id/revoke` —
+  cookie-only, never MCP). `pruneOAuth` rides the repo cron's `:30` tick and deletes spent or expired
+  codes, access tokens a day past expiry, refresh tokens past expiry, and client registrations that never
+  got a grant after 90 days (`UNGRANTED_CLIENT_TTL_MS` — long enough that a person denied at authorize,
+  e.g. not yet invited, still finds their registration on a retry days later) — grants themselves are never
+  deleted. An unknown `client_id` at authorize is an error PAGE naming the Claude Code fix (`/mcp` → canopy
+  → Clear authentication → Authenticate again), never a silent redirect. Every OAuth endpoint answers an unexpected error
+  with `503 { error: "temporarily_unavailable" }` (the authorize pages with a 503 error page), never a 500.
 - **GitHub webhook** (`/webhook/github`, `src/webhook.ts`): a delivery authenticates by an HMAC-SHA256
   `X-Hub-Signature-256` over the raw body against `GITHUB_WEBHOOK_SECRET` (NOT `COOKIE_SECRET`). HMAC is
   verified in the branch BEFORE the gate; a bad/absent signature (or unset secret) is a bare `401`. The
@@ -345,10 +377,11 @@ DTO vocabulary; only `src/tools/` speaks columns. `GET /roadmap` and MCP `get_ro
 narrative + `sprints: SprintView[]` in target-date order, each with `progress: {closed, total, pct}`.
 No live GitHub, no per-user token.
 
-**Progress is TICKET-INCLUSIVE**, computed at read time by the ONE function `sprintProgress` in
-`src/tools/sprints.ts`: `total` = the tickets in the sprint + `sprint_progress.total`, `closed` = the
-tickets a person set `done`/`declined` + `sprint_progress.closed`, `pct` rounded; a sprint with neither
-reads `0/0`. The ticket half is a live D1 count; the GitHub half is a stored cache (`sprint_progress`,
+**Progress is TICKETS ONLY**, computed at read time by the ONE function `sprintProgress` in
+`src/tools/sprints.ts`: `total` = the tickets in the sprint (native AND mirrored), `closed` = those set
+`done`/`declined`, `pct` rounded; a sprint with none reads `0/0`. The GitHub issue counts travel
+SEPARATELY as `SprintView.issues` (null without a cache row), so a mirrored ticket and its issue are never
+summed into one number. The ticket half is a live D1 count; the GitHub half is a stored cache (`sprint_progress`,
 keyed `sprint_id`), written as ABSOLUTE `closed`/`total` (so delivery order is irrelevant — the last
 write wins) by two direct writers: the webhook (event-derived, on issue events) and the `scheduled()`
 cron backstop (`recomputeAllProgress`, `GITHUB_SERVICE_TOKEN`, off the render path). `github_ref` is bare
@@ -358,8 +391,8 @@ numbers) resolved against `GITHUB_REPO` — only by those two writers, never at 
 **My Work** (`GET /me/dashboard`, MCP `get_my_work` → `getMyWork`) is a D1-only projection over captured
 events AND over the ticket queue: three separate lists — `previousActivity` (summarized merged/closed PRs
 where the person is the subject, 5 most recent), `todo` (their open assigned issues, 5 most recently
-updated, each carrying its own stored summary), and `tickets` (their OPEN assigned tickets, 5 most recently
-updated, with the sprint label) — built from `events` (+ `pr_summaries`, `issue_summaries`, `persons`,
+updated, each carrying its own stored summary), and `tickets` (their OPEN assigned NATIVE tickets — a
+mirrored ticket is already on the To-do as its issue — 5 most recently updated, with the sprint label) — built from `events` (+ `pr_summaries`, `issue_summaries`, `persons`,
 `identities`) and from `tickets` + `ticket_assignees`, no live GitHub.
 `person` resolves via the github `identities` row (`resolvePersonForLogin`, see Identity above); an
 unmapped login yields an empty EVENT projection (`degraded:false`) — but the ticket list is read BEFORE the
@@ -912,6 +945,165 @@ older than **7 days, EXCEPT the rows stamped exactly 00:00 UTC, kept 100 days** 
 reads — `sap_*` and the usage globs never match each other's names). `pr` / `push` / `deploy` /
 `run` / `review` rows and `coverage` / `bundle_kb` / `todo_count` match no rule and are kept forever.
 
+## Tickets mirrored from GitHub issues — ADR-007, amended (`src/tools/ticket-mirror.ts`, `0032_ticket_source`)
+
+ADR-007 now reads: **a ticket may link to GitHub work, and may be sourced from a GitHub issue, but is never the
+issue itself.** Every issue of `GITHUB_REPO` is mirrored into a ticket (`source = 'github'`, `source_ref`
+`owner/repo#n`, UNIQUE; `source_author` = the raw GitHub login, NOT a handle, so it is not in
+`HANDLE_COLUMNS`). The mirror is a COMPUTED write from a verified delivery — no `consume()`.
+
+- **Where it runs**: `handleGithubWebhook` calls `mirrorIssue` on EVERY verified `issues` delivery (not only
+  when `ingestEvent` wrote — a redelivery heals a half-failed mirror), wrapped so a failure never costs the
+  `events` capture; `runBackfill` calls the SAME function for OPEN issues, and its reconstructed deliveries
+  (and `scripts/backfill-events.mjs`') carry `repository.full_name`. Only an issue whose
+  `repository.full_name === GITHUB_REPO` is mirrored; unset `GITHUB_REPO` mirrors nothing; PRs are skipped.
+- **Mapping** (`ticketFromIssue`, pure): the `[P0]`–`[P3]` title tag (else a `P0`–`P3` label) → high / high /
+  normal / low, none → normal, stripped from the title; label `bug` / `question` → that category, else
+  `other`; the requester is `resolvePersonForLogin(author)` or the system person `github-webhook`; GitHub
+  assignees map through `identities` (unmapped dropped); open → `in_progress` with a mapped assignee, else
+  `submitted`; closed `completed` → `done`, `not_planned` / `duplicate` → `declined`.
+- **Ownership (the owner's ruling)**: title, body, category, priority, requester and assignees are seeded at
+  IMPORT and are Canopy's afterwards — later deliveries never overwrite them, and they are edited like any
+  ticket (`edit_ticket`, `toggle_assignee`, the normal transition table). GitHub drives only CLOSURE: a
+  `closed` delivery forces `done`/`declined`, `deleted` / `transferred` forces `declined`, `reopened` puts a
+  resolved ticket back to `submitted` — through the module-private `forceStatus`, the ONE writer allowed to
+  bypass `TICKET_TRANSITIONS`, writing a `ticket_events` row as `github-webhook`. Canopy never writes back to
+  GitHub, and a sprint is still completed only by a person.
+- **Idempotency / ordering**: creation is ONE guarded D1 batch (ticket, assignees, opening row, locked link —
+  each child keyed by `source_ref`), so a replay writes nothing twice; a delivery older than
+  `source_updated_at` is skipped whole; one already applied (same `updated_at`) forces nothing, so a
+  redelivery cannot undo a later Canopy change.
+- **The lock**: the source link is inserted `locked = 1`; `remove_ticket_link` (the ONLY link delete path —
+  there is deliberately no trigger, the harness truncates `ticket_links`) refuses it with 403 and the UI
+  shows a lock with no Remove row. Everything else stays writable.
+- **No double counting**: `listAssignedTickets` (My Work + the ticketq digest's own half), `ticket_badge`,
+  the digest's unassigned half and the Repo dashboard's Open tickets tile read `source = 'canopy'`; sprint
+  progress counts both. `deleted` / `transferred` are captured issue actions, and every open-issue reader
+  (My Work's To-do, array-ref progress, the Repo dashboard's open issues) treats them as no longer open
+  (`src/tools/issue-gone.ts`).
+- **`github-webhook`** is a reserved handle with a `persons` row (seeded by 0032 AND `reset.mjs`, which
+  truncates persons): `listPersons` never lists a reserved handle and the ticket writers' `requirePerson`
+  refuses one, so it can never be assigned, file, comment or link.
+
+## Handoffs & Prompt Library — direct writers, NOT the ingestion gate
+
+Ported from the Claude Design project `2c8cfa50`: **Handoffs** (Workspace; `#handoffs`, `#handoffs/new`,
+`#handoffs/<id>` — `web/src/handoffs.ts`), **Prompt Library** (Knowledge; `#prompts`, `#prompts/new`,
+`#prompts/<slug>`, `#prompts/<slug>/edit|version` — `web/src/prompts.ts`), **Docs › New doc** (`#docs/new`) and
+the tabbed **Maintenance** (Unplaced / Identity / People; the admin email-notification sections sit under People).
+Storage is `0028_handoffs_prompts` (`handoffs` with an INTEGER id rendered `#12`, `context` JSON
+`{ repo, branch, task, done[], next[], files[] }`, an inline prompt that is both-or-neither, `expires_at` =
+created + 7 days; `prompts` / `prompt_versions`; standalone `prompts_fts` over slug/title/description/body/tags
+kept at the LATEST version by triggers on BOTH tables). DTOs + helpers: `shared/handoffs.ts`.
+
+- **A handoff is an addressed message, not knowledge** — `src/tools/handoffs.ts` writes it directly (no vocab,
+  no confidence, never staged). The sender is always the principal. A create carrying a session id is
+  replay-safe through `processed_items` (item_type `handoff`, same session-id + item-index key as `/ingest`).
+  **Claim is ONE conditional UPDATE** (`… WHERE status = 'pending' AND (recipient = 'anyone' OR recipient = me OR
+  sender = me)`); on 0 changes it re-reads for 404 / 403 / 409 `handoff is <status>`, so a race has one winner.
+  Expire: sender or named recipient, pending only. Create writes a feed row through `append_feed` (no tags).
+  The repo cron expires overdue pending handoffs on EVERY tick (`expireDueHandoffs`, D1 only, before the `:00`
+  early return).
+- **Prompts** (`src/tools/prompts.ts`): every save appends a version; the latest version's status/body ARE the
+  prompt's. `savePrompt(…, via)` — a person (`via: "human"`, the cookie route) saves draft/staged/published and
+  may rename the slug (both tables, one batch); an agent (`via: "agent"`, MCP `save_prompt`) is FORCED to
+  `staged` and may not rename. Publishing a staged version and retagging are session-cookie only.
+- **Routes** (session cookie, `{ error }` on failure): `GET /api/handoffs?box=mine|me|anyone|sent`,
+  `GET /api/handoffs/:id`, `POST /api/handoffs`, `POST /api/handoffs/:id/claim`, `POST /api/handoffs/:id/expire`,
+  `GET /api/prompts?q&tags&sort`, `GET /api/prompts/:slug`, `GET /api/prompts/:slug/versions`, `POST /api/prompts`,
+  `POST /api/prompts/:slug/tags`, `POST /api/prompts/:slug/publish`, and `POST /api/docs/propose` (a person stages
+  a NEW doc through `ingestDocProposal`; an existing slug is a 409). The Hono app stays cookie-only — agents
+  reach these through MCP, not a bearer on `/api/*` (no new auth class).
+- **MCP** (every principal): `send_handoff`, `list_handoffs` (pending `me` + `anyone` by default; only `sent`
+  shows claimed/expired), `get_handoff`, `claim_handoff` (returns one markdown block: prompt, `## Handoff
+  summary`, `## Context`), `expire_handoff`, `search_prompts`, `get_prompt` (fills `{{vars}}`, lists `unfilled`),
+  `save_prompt` (always staged). There is no per-token rate limit in Canopy today.
+- Skills: `handoff`, `prompts`, and `load-context` (lists waiting handoffs at session start; never auto-claims).
+
+## Artifacts — stored, versioned pages; direct writers, human ratify (spec: `docs/superpowers/specs/2026-09-24-artifacts-implementation.md`, issue #52)
+
+An artifact is one self-contained page an agent or person produced (a design page, spec, report, diagram, image,
+PDF, file), stored and versioned in Canopy and linked to the work it came from. Knowledge › **Artifacts** in the
+SPA (`#artifacts`, `#artifacts/new`, `#artifacts/<slug>[/v<n>|@v<n>]`, `#artifacts/<slug>/diff/<a>..<b>` —
+`web/src/artifacts.ts`, ported from the Claude Design `Canopy Artifacts.dc.html`, decoded copy in
+`docs/superpowers/specs/artifacts-prototype/`), plus an Artifacts block on the ticket detail. The contract for
+agents is `docs/artifact-contract.md` (referenced by `AGENTS.md` and the `canopy` / `artifacts` skills).
+
+- **Kinds and storage**: text kinds `html` / `markdown` / `svg` / `mermaid` (≤ 500 KB of UTF-8, the `content`
+  column in D1) and binary kinds `image` (png/jpeg/gif/webp only) / `pdf` / `file` (≤ 10 MB, R2 bucket
+  `ARTIFACTS_BUCKET` at `artifacts/<sha256>`, put with R2's own `sha256` check). `0030_artifacts`:
+  `artifact_pages` / `artifact_versions` (exactly one of `content` / `r2_key`) / `artifact_links` /
+  `artifact_upload_tokens` / `artifacts_fts` (kept in sync by the repository, not triggers; bm25 like docs).
+  The vocabulary, caps, status rules and wire DTOs live ONCE in `shared/artifacts-core.ts` (zod-free — the SPA
+  imports it); `shared/artifacts.ts` adds the zod request schemas. The repository is `src/tools/artifacts.ts`
+  (`ArtifactError` codes → 404/403/400/409/413/410); every surface calls it, none re-implements a rule.
+- **Rules**: create = v1 `draft`; draft ⇄ published by anyone who can READ the page; a later version →
+  `published` and clears `ratified_*`; → draft clears `ratified_*`; an identical sha256 to the current version is
+  a no-op (`unchanged`). Only the AUTHOR may set `private`; a private page is readable (and writable) only by its
+  author; a binary page whose upload has not landed (`current_version = 0`) exists to NO reader. Those three and
+  a missing slug are ONE byte-identical not-found on every surface (HTTP, raw, MCP, query, list) — pinned by
+  `test/artifacts.security-access.test.ts`. Slugs are one namespace, so allocating `<slug>-2` does reveal that a
+  hidden page with that title exists (never its content or author) — a known, accepted leak.
+- **Ratify is the human confirm gate**: `POST /api/artifacts/:slug/ratify {version}`, session cookie only, only
+  the LATEST version of a `published` page, and it refuses any request carrying an `Authorization` header. There
+  is NO MCP ratify tool.
+- **HTTP** (`src/artifacts/routes.ts`, mounted at `/api/artifacts`, session cookie): list (filters area, kind,
+  author, status, sprint, ticket, q), get `?v=`, create (JSON text / multipart binary), PATCH, add version
+  (content or `old_str`/`new_str`, which must match exactly once; multipart for binary), links add/remove,
+  diff, ratify, `upload-url`, and `POST /api/artifacts/fetch` (the From-URL tab: `src/artifacts/fetch-url.ts`,
+  https only, private/loopback/link-local literals refused, every redirect hop re-checked, 5 s, 500 KB, text
+  only, nothing stored — a Worker cannot resolve DNS first, so rebinding is out of its reach).
+- **Two token-authenticated routes sit in `src/index.ts` BEFORE the session-gated app** (like `/u/`): the upload
+  `PUT /api/artifacts/upload/:token` (`src/artifacts/upload.ts`: single use, 5 minutes, bound to principal /
+  page / kind / size / sha256; stored only as a hash; a length or hash mismatch leaves it retryable) and the
+  agent download `GET /api/artifacts/download/:token` (`src/artifacts/download.ts`: stateless HMAC over
+  {handle, page, version, exp} keyed from COOKIE_SECRET with its own purpose label, 5 minutes, reusable, the
+  page's visibility RE-CHECKED at download, exact stored bytes as an attachment with `sandbox` CSP).
+- **Raw route** `GET /raw/a/:slug[@v<n>|/v<n>]` (`src/artifacts/raw.ts`, session cookie) is what the SPA frames:
+  html/svg get the active CSP (inline scripts + the two CDNs, `connect-src 'none'`) PLUS `sandbox allow-scripts`,
+  so an artifact opened in its own tab still runs at an opaque origin; image/pdf/file get
+  `default-src 'none'; frame-ancestors 'self'`; always nosniff, `X-Frame-Options: SAMEORIGIN`,
+  `Cache-Control: private`; html alone gets the injected `canopy:height` postMessage script (never on
+  `?download=1`). The SPA frames html as `<iframe src="/raw/…" sandbox="allow-scripts">` — never `srcdoc`, never
+  `allow-same-origin` — and inlines svg ONLY through `sanitizeSvg` (DOMPurify, `web/src/markdown.ts`).
+- **MCP** (every principal, `src/tools/artifacts-agent.ts`): `artifact_list`, `artifact_get` (text content inline;
+  for every kind a `download_url` + `sha256` + `size_bytes` to verify), `upload_asset` / `artifact_update`
+  (text inline; binary returns an absolute `upload_url` the agent PUTs to). All carry `warnings` (never a
+  rejection) for `window.claude` / `window.storage` / `api.anthropic.com`. `query` has an `artifact` type
+  (draft → `draft`, published/ratified → `live`; private only to the author — `query()` takes a viewer);
+  `get_ticket` lists the ticket's visible artifacts; `record_session` and `/ingest` accept `artifact_links`,
+  applied after the batch as direct writes (`recordBatch` in `src/consumer.ts`).
+- **Skills**: `artifacts` (find / pull into `.canopy/artifacts/<slug>/v<n>.<ext>` and verify the sha256 / serve an
+  html one locally / link / publish), plus `canopy`, `load-context` and `record-session`. `.canopy/` is gitignored.
+  End-to-end check against a live `wrangler dev`: `scripts/e2e/artifacts-agent.mjs` (start dev with
+  `--var PUBLIC_ORIGIN:<its URL>`, or the script refuses the production-origin upload/download URLs).
+- **Deferred on purpose**: external share links, per-person sharing, a raw-content subdomain, PDF text extraction
+  for search, a UI for uploading a new version of an existing artifact (the API supports it).
+
+## Doc images — uploaded, content-addressed, gate-checked (spec: `docs/superpowers/specs/2026-09-24-doc-images-design.md`)
+
+A doc embeds an image as `![alt](/img/<sha256>)`. `0031_doc_images`: one `doc_images` row per sha256 (png /
+jpeg / gif / webp, ≤ 10 MB), bytes in R2 (`ARTIFACTS_BUCKET`) at `doc-images/<sha256>` — immutable, never
+deleted, so a promoted version renders the same forever. The reference format and the body scan live ONCE
+in `shared/doc-images.ts` (`scanDocImages`, zod-free); the repository is `src/tools/doc-images.ts`.
+
+- **Upload is the artifact upload's twin, through ONE tool**: MCP `upload_asset` (was `artifact_create`)
+  takes `destination: "artifact"` (default, unchanged) or `"doc"` → `{ ref, markdown, sha256, uploaded }`
+  plus `upload_url` / `expires_at` when the bytes are not stored yet (`uploaded: true` = no PUT, no token).
+  The PUT is the SAME route, `PUT /api/artifacts/upload/<token>`: `consumeDocImageToken` claims a
+  `doc_image_upload_tokens` token (single use, 5 minutes, hash-only, bound to principal + sha + size + type)
+  and returns `null` for any other token, which then goes to artifacts. R2's own sha256 check; a mismatch
+  releases the claim for a retry.
+- **The gate** (`docImageProblems`, first in `ingestDocProposal`) — see Core invariant. `/api/docs/propose`
+  answers a refusal with 400; triage assign throws it.
+- **Serving**: `GET /img/<sha>` on the session-gated app — `nosniff`, `default-src 'none'; sandbox`,
+  `Cache-Control: private, max-age=31536000, immutable`; 404 unknown. Agents cannot read it with a bearer
+  (deferred: a signed download like `artifact_get`'s).
+- **Web**: `markdown.ts` `enhance()` wraps each `/img/` image in a `.cnpy-md-img` zoom button (`docImgZoom`
+  → `web/src/lightbox.ts`, the lightbox the guide uses); Review's Rendered view (`renderedPreview`) shows a
+  line's images outlined green (added) / red and dimmed (removed); unified and split diffs show the text.
+- There is no web upload yet (agents only, by decision) and no garbage collection.
+
 ## Sidebar & motion — the `<aside>` outlives rerenders
 
 `rerender()` swaps the app wholesale, which is fatal for a transition: a width, a rotating chevron or an
@@ -1006,7 +1198,7 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   `scripts/seed/reset.mjs` (add new tables — `events`, `repo_events`, `repo_snapshots`, `repo_metrics`,
   `pr_summaries`, `sprints`, `sprint_progress`,
   `sprint_resources`, `tickets` + `ticket_*`, `persons`, `identities`, `invites`, `plan`,
-  `plan_versions`, `notification_*` — there). That file is also the canonical person seed: the four
+  `plan_versions`, `notification_*`, `oauth_*` — there). That file is also the canonical person seed: the four
   engineers (github identities) plus two Google-only non-engineers, `meilin` / `sanaok`.
   GitHub I/O and the PR summarizer are dependency-injected (`fetchImpl?: typeof fetch`, `summarizer`)
   because the vitest pool exports no fetch/AI mock — stub at the `Response`/`Summarizer` level, never hit
@@ -1016,7 +1208,7 @@ Digests are assembled from D1 and sent via Resend; the pipeline never writes to 
   `RESEND_API_KEY`, `CF_ANALYTICS_TOKEN`, `CF_ANALYTICS_ACCOUNT_ID`, `RAILWAY_TOKEN_STAGING` /
   `_PRODUCTION`, `SAPLING_METRICS_TOKEN`) — a test that needs one passes its own value in a per-test env
   object, and the suite is fully green with no carve-out.
-- **Deferred seams — do NOT activate:** Cloudflare Queue, Vectorize, the GitHub OAuth provider for MCP.
+- **Deferred seams — do NOT activate:** Cloudflare Queue, Vectorize.
   They exist as `// SEAM:` comments only.
 
 ## Env / bindings
@@ -1071,7 +1263,9 @@ drift (it needs two environments), no pings and no polls, and `environments` / `
 `usage` / `cloudflare` / `hosting` stay `not_connected` — but the **branches arm still runs**
 (`computeBranches` degrades correctly with `envs: []`), and `ciFailures` never consults it.
 
-Bindings: `DB` (D1), `ASSETS` (static). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`),
+Bindings: `DB` (D1), `ASSETS` (static), `ARTIFACTS_BUCKET` (R2, bucket `canopy-artifacts` — binary artifact
+bodies at `artifacts/<sha256>`; **the bucket must exist before the first deploy that carries this binding**:
+`wrangler r2 bucket create canopy-artifacts`). Capture-time summaries call Gemini over REST (`GEMINI_API_KEY`),
 never at render — not a Cloudflare binding, so there is no `[ai]` block. `[triggers] crons` is three
 expressions: `*/10 * * * *` is the repo cron — its per-tick schedule and subrequest arithmetic are described
 ONCE, under "The repo cron" in the Repo dashboard section — plus the two hourly digest candidates (see Email

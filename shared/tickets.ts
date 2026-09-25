@@ -3,13 +3,15 @@
 // node built-ins, so it imports cleanly into both builds.
 //
 // Authority: tickets are human authored writes in the promote class. Nothing here
-// is staged and nothing here is inferred — `done` / `declined` are set by a person.
+// is staged and nothing here is inferred — `done` / `declined` are set by a person,
+// with ONE exception: a ticket mirrored from a GitHub issue (`source: 'github'`,
+// ADR-007 as amended in 0032) follows its own source issue's close and reopen.
 // Person-bearing fields (`requester`, assignee `login`, `created_by`, `author`,
 // `actor`) hold a person HANDLE (0023 identity root), never a GitHub login.
 
 import { z } from "zod";
 import {
-  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_LINK_KINDS,
+  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_LINK_KINDS, TICKET_SOURCES,
 } from "./tickets-core";
 
 // ── controlled vocabulary + the status machine ───────────────────────────────
@@ -18,19 +20,21 @@ import {
 // verbatim: `@shared/tickets` stays the one import path for the whole contract.
 
 export {
-  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_LINK_KINDS,
-  TICKET_TRANSITIONS, canTransition, legalMoves, TICKET_STATUS_LABEL, isOpenStatus,
+  TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_LINK_KINDS, TICKET_SOURCES,
+  TICKET_TRANSITIONS, sourceIssueNumber, canTransition, legalMoves, TICKET_STATUS_LABEL, isOpenStatus,
 } from "./tickets-core";
 
 export const TicketCategory = z.enum(TICKET_CATEGORIES);
 export const TicketPriority = z.enum(TICKET_PRIORITIES);
 export const TicketStatus = z.enum(TICKET_STATUSES);
 export const TicketLinkKind = z.enum(TICKET_LINK_KINDS);
+export const TicketSource = z.enum(TICKET_SOURCES);
 
 export type TicketCategory = z.infer<typeof TicketCategory>;
 export type TicketPriority = z.infer<typeof TicketPriority>;
 export type TicketStatus = z.infer<typeof TicketStatus>;
 export type TicketLinkKind = z.infer<typeof TicketLinkKind>;
+export type TicketSource = z.infer<typeof TicketSource>;
 
 // ── rows (one schema per D1 table in 0024_tickets.sql) ───────────────────────
 
@@ -46,6 +50,13 @@ export const TicketRow = z.object({
   sprint_id: z.number().nullable(),   // NULL = backlog
   created_at: z.string(),
   updated_at: z.string(),
+  // 0032 — where the ticket came from. 'github' = mirrored from an issue of
+  // GITHUB_REPO (src/tools/ticket-mirror.ts); ADR-007, amended: a ticket may be
+  // SOURCED from a GitHub issue, but is never the issue itself.
+  source: TicketSource,
+  source_ref: z.string().nullable(),         // "owner/repo#n"
+  source_author: z.string().nullable(),      // raw GitHub login — NOT a handle
+  source_updated_at: z.string().nullable(),  // issue.updated_at of the last applied delivery
 });
 
 export const TicketAssigneeRow = z.object({
@@ -62,6 +73,7 @@ export const TicketLinkRow = z.object({
   meta: z.string(),
   created_by: z.string(),             // person handle
   created_at: z.string(),
+  locked: z.number(),                 // 1 = a mirrored ticket's source link: never removable (0032)
 });
 
 export const TicketCommentRow = z.object({
@@ -127,6 +139,12 @@ export const TicketCreate = z.object({
 });
 
 export const TicketTransition = z.object({ to: TicketStatus });
+/** Edit the title and/or body. Both optional here (the MCP tool spreads `.shape`);
+ *  the writer refuses a patch that changes neither. */
+export const TicketEdit = z.object({
+  title: z.string().trim().min(1).optional(),
+  body: z.string().optional(),
+});
 export const TicketAssigneeToggle = z.object({ login: z.string().min(1), on: z.boolean() });
 export const TicketLinkAdd = z.object({ raw: z.string().min(1) });
 export const TicketSprintSet = z.object({ sprint_id: z.number().nullable() });
@@ -135,6 +153,7 @@ export const TicketCommentAdd = z.object({ body: z.string().trim().min(1) });
 
 export type TicketCreate = z.infer<typeof TicketCreate>;
 export type TicketTransition = z.infer<typeof TicketTransition>;
+export type TicketEdit = z.infer<typeof TicketEdit>;
 export type TicketAssigneeToggle = z.infer<typeof TicketAssigneeToggle>;
 export type TicketLinkAdd = z.infer<typeof TicketLinkAdd>;
 export type TicketSprintSet = z.infer<typeof TicketSprintSet>;

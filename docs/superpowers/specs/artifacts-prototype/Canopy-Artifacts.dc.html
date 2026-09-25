@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<title>Canopy · Artifacts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;650;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, select, textarea { font-family: inherit; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 2px; }
+::selection { background: var(--accent, #2BFF88); color: var(--accent-fg, #000); }
+@keyframes cnpy-spin { to { transform: rotate(360deg); } }
+@keyframes cnpy-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes cnpy-drop { from { opacity:0; transform:translateY(-4px) scale(.985); } to { opacity:1; transform:none; } }
+@keyframes cnpy-optin { from { opacity:0; transform:translateX(-3px); } to { opacity:1; transform:none; } }
+.art-fopt { animation:cnpy-optin .16s ease both; }
+@keyframes cnpy-pop { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+[data-cnpy-theme="dark"] { --bg:#1c1a16; --fg:#ede9e2; --fg-70:rgba(237,233,226,0.72); --fg-55:rgba(237,233,226,0.55); --fg-40:rgba(237,233,226,0.40); --border:rgba(237,233,226,0.11); --border-strong:rgba(237,233,226,0.20); --hover:rgba(237,233,226,0.07); --accent:#9aab65; --accent-fg:#131a07; --accent-soft:rgba(154,171,101,0.14); --green:#5ab86c; --amber:#d98a52; --blue:#6aa8c4; --red:#cc6262; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; --p-moss:#9aab65; --p-fern:#5ab88a; --p-sky:#6aa8c4; --p-slate:#8d9bc0; --p-plum:#b48ac8; --p-rose:#d47a97; --p-rust:#d98a52; --p-ochre:#d4a84a; --p-clay:#c2895f; --p-stone:#9a958d; }
+[data-cnpy-theme="light"] { --bg:#faf8f3; --fg:#1a1814; --fg-70:rgba(26,24,20,0.72); --fg-55:rgba(26,24,20,0.55); --fg-40:rgba(26,24,20,0.40); --border:rgba(42,39,31,0.10); --border-strong:rgba(42,39,31,0.18); --hover:rgba(42,39,31,0.06); --accent:#8a9a5b; --accent-fg:#ffffff; --accent-soft:rgba(138,154,91,0.12); --green:#1b6c42; --amber:#b4562c; --blue:#3e6f8a; --red:#a83a3a; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; --p-moss:#6f8a3a; --p-fern:#2f7d57; --p-sky:#3e6f8a; --p-slate:#5b6b8c; --p-plum:#7a4f8f; --p-rose:#a84a68; --p-rust:#b4562c; --p-ochre:#a8791e; --p-clay:#8c5a3c; --p-stone:#6b665e; }
+[data-cnpy-theme="midnight"] { --bg:#000000; --fg:#ffffff; --fg-70:rgba(255,255,255,0.70); --fg-55:rgba(255,255,255,0.55); --fg-40:rgba(255,255,255,0.40); --border:rgba(255,255,255,0.11); --border-strong:rgba(255,255,255,0.20); --hover:rgba(255,255,255,0.055); --accent:#2BFF88; --accent-fg:#00130a; --accent-soft:rgba(43,255,136,0.13); --green:#2BFF88; --amber:#FFB454; --blue:#74A9FF; --red:#FF6B6B; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; --p-moss:#9aab65; --p-fern:#5ab88a; --p-sky:#6aa8c4; --p-slate:#8d9bc0; --p-plum:#b48ac8; --p-rose:#d47a97; --p-rust:#d98a52; --p-ochre:#d4a84a; --p-clay:#c2895f; --p-stone:#9a958d; }
+.cnpy-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.cnpy-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3.2px; border: 3px solid transparent; background-clip: content-box; }
+.cnpy-aside { --side-t:.24s; --side-e:cubic-bezier(.4,0,.2,1); width:244px; flex:none; display:flex; flex-direction:column; border-right:1px solid var(--border); background:var(--bg); transition:width var(--side-t) var(--side-e); position:relative; z-index:2; }
+[data-collapsed="1"] .cnpy-aside { width:64px; }
+.cnpy-lbl { transition:opacity .16s ease .1s; }
+[data-collapsed="1"] .cnpy-lbl { opacity:0; pointer-events:none; transition:opacity .09s ease; }
+.cnpy-logo { display:flex; align-items:center; padding:16px 14px 12px 17.5px; min-height:56px; transition:padding var(--side-t) var(--side-e); }
+[data-collapsed="1"] .cnpy-logo { padding-left:20px; padding-right:0; }
+.cnpy-logo-b { display:flex; align-items:center; gap:10px; overflow:hidden; padding:0; color:inherit; border-radius:2.8px; min-width:0; }
+.cnpy-logo-t { font-size:18px; font-weight:600; letter-spacing:-0.02em; white-space:nowrap; }
+.cnpy-navlist { display:flex; flex-direction:column; gap:3px; padding:0 10px 6px; flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.cnpy-searchwrap { padding:6px 1px 4px; }
+.cnpy-search { display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--border); border-radius:3.2px; color:var(--fg-40); cursor:text; overflow:hidden; transition:border-color .12s ease, padding var(--side-t) var(--side-e); }
+.cnpy-search:hover { border-color:var(--border-strong); }
+.cnpy-search-in { flex:1; min-width:0; background:none; border:none; outline:none; color:var(--fg); font-size:13px; font-family:inherit; padding:0; }
+.cnpy-search-in::placeholder { color:var(--fg-40); }
+.cnpy-kbd { font-family:var(--mono); font-size:10.5px; border:1px solid var(--border); border-radius:1.6px; padding:0 5px; color:var(--fg-40); flex:none; white-space:nowrap; }
+[data-collapsed="1"] .cnpy-search { padding-left:12.5px; padding-right:0; }
+.cnpy-sec { position:relative; flex:none; height:28px; padding:7px 11px 0; overflow:hidden; font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--fg-40); white-space:nowrap; transition:height var(--side-t) var(--side-e), padding var(--side-t) var(--side-e); }
+.cnpy-sec.is-first { height:31px; padding-top:10px; }
+.cnpy-sec::after { content:""; position:absolute; left:8px; right:8px; top:7px; height:1px; background:var(--border); opacity:0; transition:opacity var(--side-t) ease; }
+[data-collapsed="1"] .cnpy-sec { height:10px; }
+[data-collapsed="1"] .cnpy-sec.is-first { height:7px; }
+[data-collapsed="1"] .cnpy-sec::after { opacity:1; }
+.cnpy-navrow { display:flex; align-items:center; flex:none; border-radius:3.2px; transition:background .15s ease; }
+.cnpy-navrow:hover, .cnpy-navrow.is-active { background:var(--hover); }
+.cnpy-nav-i { position:relative; display:flex; align-items:center; gap:11px; flex:1; min-width:0; width:100%; padding:8px 11px; border-radius:3.2px; font-size:13.5px; font-weight:500; color:var(--fg-55); text-align:left; overflow:hidden; transition:color .12s ease, padding var(--side-t) var(--side-e); }
+.cnpy-navrow:hover .cnpy-nav-i { color:var(--fg-70); }
+.cnpy-navrow.is-active .cnpy-nav-i { color:var(--fg); }
+.cnpy-nav-ic { flex:none; }
+.cnpy-nav-t { white-space:nowrap; flex:1; min-width:0; text-align:left; }
+[data-collapsed="1"] .cnpy-nav-i { padding:9px 0 9px 13.5px; }
+.cnpy-badge { font-family:var(--mono); font-size:11px; font-weight:600; flex:none; color:var(--fg-40); }
+.cnpy-badge.is-accent { height:18px; line-height:18px; padding:0 7px; border-radius:4.8px; color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); background:var(--accent-soft); }
+.cnpy-dot { position:absolute; left:27px; top:6px; width:7px; height:7px; border-radius:1.75px; background:var(--accent); opacity:0; transform:scale(.4); transition:opacity .16s ease, transform .2s ease; pointer-events:none; }
+[data-collapsed="1"] .cnpy-dot { opacity:1; transform:none; transition-delay:.12s; }
+.cnpy-chev { flex:none; width:24px; height:30px; margin-right:6px; padding:0; display:grid; place-items:center; color:var(--fg-40); opacity:.8; border-radius:2.4px; overflow:hidden; transition:opacity .16s ease .1s, color .12s ease, width var(--side-t) var(--side-e), margin var(--side-t) var(--side-e); }
+.cnpy-chev:hover { opacity:1; color:var(--fg-70); }
+.cnpy-chev svg { transition:transform .2s var(--side-e); }
+.cnpy-chev[aria-expanded="true"] svg { transform:rotate(90deg); }
+[data-collapsed="1"] .cnpy-chev { width:0; margin-right:0; opacity:0; pointer-events:none; }
+.cnpy-sub { display:grid; grid-template-rows:0fr; flex:none; transition:grid-template-rows var(--side-t) var(--side-e); }
+.cnpy-sub[data-open="1"] { grid-template-rows:1fr; }
+[data-collapsed="1"] .cnpy-sub { grid-template-rows:0fr; }
+.cnpy-sub-clip { overflow:hidden; min-height:0; }
+.cnpy-sub-list { display:flex; flex-direction:column; gap:1px; padding:2px 0 4px 10px; margin-left:19px; border-left:1px solid var(--border); opacity:0; transform:translateY(-4px); transition:opacity .16s ease, transform var(--side-t) var(--side-e); }
+.cnpy-sub[data-open="1"] .cnpy-sub-list { opacity:1; transform:none; transition-delay:.04s; }
+.cnpy-sub-i { position:relative; display:block; width:100%; text-align:left; padding:5px 8px 5px 10px; border-radius:2.4px; font-size:12.5px; color:var(--fg-55); white-space:nowrap; transition:color .12s ease; }
+.cnpy-sub-i:hover { color:var(--fg); }
+.cnpy-sub-i.is-active { color:var(--fg); font-weight:500; }
+.cnpy-sub-i::before { content:""; position:absolute; left:-11px; top:50%; width:1px; height:0; background:var(--fg-70); transform:translateY(-50%); transition:height .2s var(--side-e); }
+.cnpy-sub-i.is-active::before { height:16px; }
+.cnpy-collapse { padding:0 10px 6px; flex:none; }
+.cnpy-collapse .cnpy-nav-i { font-size:12.5px; color:var(--fg-40); border-radius:2.8px; }
+.cnpy-collapse .cnpy-nav-i:hover { color:var(--fg-70); background:var(--hover); }
+.cnpy-collapse .cnpy-nav-ic { transition:transform .32s var(--side-e); }
+[data-collapsed="1"] .cnpy-collapse .cnpy-nav-ic { transform:scaleX(-1); }
+[data-narrow="1"] .cnpy-collapse { display:none; }
+.cnpy-ghost { padding:0 21px 9px; font-size:11.5px; color:var(--fg-40); white-space:nowrap; overflow:hidden; flex:none; }
+.cnpy-foot { padding:10px; border-top:1px solid var(--border); flex:none; }
+.cnpy-chip { display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border-radius:3.6px; text-align:left; overflow:hidden; transition:background .15s ease, padding var(--side-t) var(--side-e); }
+.cnpy-chip:hover { background:var(--hover); }
+.cnpy-chip-t { overflow:hidden; flex:1; min-width:0; }
+.cnpy-chip-n { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+[data-collapsed="1"] .cnpy-chip { padding-left:8px; padding-right:0; }
+.cnpy-select { appearance:none; -webkit-appearance:none; padding:5px 28px 5px 11px; border-radius:2.8px; font-size:12.5px; font-weight:500; border:1px solid var(--border); color:var(--fg-70); cursor:pointer; background:var(--bg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23888' stroke-width='2'><path d='M2 4l4 4 4-4'/></svg>") no-repeat right 9px center; }
+.cnpy-select.is-on { border-color:var(--accent); color:var(--accent); }
+.cnpy-trow { transition:background .12s ease; cursor:pointer; }
+.cnpy-trow:hover { background:var(--hover); }
+.cnpy-card { transition:border-color .14s ease; }
+.cnpy-card:hover { border-color:var(--border-strong) !important; }
+.cnpy-accentbtn { transition:filter .12s ease, transform .12s ease; }
+.cnpy-accentbtn:hover { filter:brightness(1.06); }
+.cnpy-accentbtn:active, .cnpy-outlinebtn:active, .cnpy-iconbtn:active { transform:scale(.96); }
+.cnpy-outlinebtn { transition:all .12s ease; }
+.cnpy-outlinebtn:hover { background:var(--hover); color:var(--fg); }
+.cnpy-ghostbtn { transition:all .12s ease; }
+.cnpy-ghostbtn:hover { border-color:var(--border-strong) !important; color:var(--fg) !important; }
+.cnpy-iconbtn { transition:background .12s ease, color .12s ease; }
+.cnpy-iconbtn:hover { background:var(--hover); color:var(--fg-70); }
+.cnpy-link:hover { text-decoration:underline; text-underline-offset:2px; }
+.cnpy-mutelink:hover { color:var(--fg-70) !important; }
+.cnpy-input:focus { border-color:var(--accent) !important; }
+.cnpy-menurow { transition:background .12s ease; }
+.cnpy-menurow:hover { background:var(--hover); }
+.cnpy-pickchip { transition:border-color .12s ease, color .12s ease; }
+.cnpy-pickchip:not(.is-on):hover { border-color:var(--border-strong) !important; color:var(--fg-70) !important; }
+.cnpy-segbtn:not(.is-on):hover { color:var(--fg) !important; }
+.cnpy-xbtn:hover { color:var(--fg) !important; }
+.cnpy-md { font-size:15px; line-height:1.75; color:color-mix(in srgb, var(--fg) 82%, transparent); }
+.cnpy-md > :first-child { margin-top:0 !important; }
+.cnpy-md > :last-child { margin-bottom:0; }
+.cnpy-md h1, .cnpy-md h2, .cnpy-md h3, .cnpy-md h4 { color:var(--fg); }
+.cnpy-md h1 { font-size:23px; font-weight:650; letter-spacing:-0.02em; line-height:1.2; margin:42px 0 15px; }
+.cnpy-md h2 { font-size:18.5px; font-weight:640; letter-spacing:-0.012em; line-height:1.25; margin:36px 0 14px; padding-bottom:7px; border-bottom:1px solid var(--border); }
+.cnpy-md h3 { font-size:16px; font-weight:640; letter-spacing:-0.006em; margin:28px 0 9px; }
+.cnpy-md p { margin:0 0 15px; }
+.cnpy-md a { color:var(--accent); text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--accent) 34%, transparent); text-underline-offset:2px; }
+.cnpy-md strong { color:var(--fg); font-weight:650; }
+.cnpy-md ul, .cnpy-md ol { margin:0 0 15px; padding-left:24px; }
+.cnpy-md li { margin:6px 0; padding-left:3px; }
+.cnpy-md li::marker { color:var(--fg-40); }
+.cnpy-md ol > li::marker { font-family:var(--mono); font-size:.9em; font-weight:600; color:var(--accent); }
+.cnpy-md code { font-family:var(--mono); font-size:.86em; color:var(--fg); background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); border-radius:2px; padding:1.5px 5px; }
+.cnpy-md pre { background:color-mix(in srgb, var(--fg) 4%, var(--bg)); border:1px solid var(--border); border-radius:4.4px; padding:15px 16px; overflow-x:auto; margin:0 0 18px; }
+.cnpy-md pre code { font-size:12.5px; line-height:1.65; background:none; border:none; padding:0; white-space:pre; }
+.cnpy-md blockquote { background:var(--accent-soft); padding:12px 16px; margin:0 0 16px; border-radius:3.2px; color:color-mix(in srgb, var(--fg) 78%, transparent); }
+.cnpy-md blockquote > :last-child { margin-bottom:0; }
+.cnpy-md hr { border:none; border-top:1px solid var(--border); margin:30px 0; }
+.cnpy-md-tablewrap { overflow-x:auto; margin:0 0 18px; }
+.cnpy-md table { border-collapse:collapse; width:100%; font-size:13.5px; margin:0; }
+.cnpy-md th, .cnpy-md td { text-align:left; padding:9px 13px; vertical-align:top; }
+.cnpy-md th { font-family:var(--mono); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--fg-55); border-bottom:1.5px solid var(--border-strong); white-space:nowrap; }
+.cnpy-md td { border-bottom:1px solid var(--border); }
+.cnpy-md tbody tr:last-child td { border-bottom:none; }
+.cnpy-md th:first-child, .cnpy-md td:first-child { padding-left:2px; }
+.art-mermaid svg { max-width:100%; height:auto; }
+.art-cols { grid-template-columns:minmax(0,2.6fr) .7fr .8fr 1.1fr .9fr .6fr; }
+.art-show-md { display:none; }
+.art-bento { grid-template-columns:repeat(12,minmax(0,1fr)); }
+.art-b-props { grid-column:span 5; }
+.art-b-links { grid-column:span 7; }
+@media (max-width:1150px) { .art-b-props, .art-b-links { grid-column:span 6; } }
+@media (max-width:860px) { .art-b-props, .art-b-links { grid-column:1 / -1; } }
+@media (max-width:1000px) {
+  .art-cols { grid-template-columns:minmax(0,2.4fr) .8fr .9fr .6fr; }
+  .art-hide-md { display:none !important; }
+  .art-show-md { display:inline; }
+}
+@media (max-width:860px) {
+  .cnpy-td-grid, .cnpy-nt-grid { grid-template-columns:1fr !important; }
+  .cnpy-td-grid > div + div, .cnpy-nt-grid > div + div { border-left:none !important; padding-left:0 !important; }
+}
+@media (prefers-reduced-motion: reduce) { .cnpy-aside, .cnpy-aside * { transition:none !important; } }
+</style>
+</helmet>
+<div data-cnpy-theme="{{ theme }}" data-collapsed="{{ collapsedAttr }}" data-narrow="{{ narrowAttr }}" style="background:var(--bg);color:var(--fg);min-height:100vh;font-family:'Geist',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased">
+<div style="display:flex;height:100vh;overflow:hidden">
+  <aside class="cnpy-aside" data-screen-label="Sidebar">
+    <div class="cnpy-logo">
+      <button class="cnpy-logo-b" aria-label="About Canopy"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" style="flex:none"><rect x="2" y="4.5" width="20" height="3.4" rx="1.7" fill="var(--accent)"></rect><rect x="5" y="10.3" width="14" height="3.4" rx="1.7" fill="currentColor"></rect><rect x="8" y="16.1" width="8" height="3.4" rx="1.7" fill="currentColor" opacity="0.5"></rect></svg><span class="cnpy-lbl cnpy-logo-t">Canopy</span></button>
+    </div>
+    <nav class="cnpy-navlist" aria-label="Primary">
+      <div class="cnpy-searchwrap">
+        <div class="cnpy-search">
+          <svg class="cnpy-nav-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
+          <input class="cnpy-lbl cnpy-search-in" placeholder="Search Canopy" aria-label="Search Canopy">
+          <kbd class="cnpy-lbl cnpy-kbd">⌘K</kbd>
+        </div>
+      </div>
+      <div class="cnpy-sec is-first"><span class="cnpy-lbl">Workspace</span></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12 12 3l9 9"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg><span class="cnpy-lbl cnpy-nav-t">My Work</span></button></div>
+      <div class="{{ nav.ticketsCls }}"><button class="cnpy-nav-i" onClick="{{ goTickets }}"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"></path><path d="M13 5v2M13 11v2M13 17v2"></path></svg><span class="cnpy-lbl cnpy-nav-t">Tickets</span><span class="cnpy-lbl cnpy-badge is-accent">2</span><span class="cnpy-dot"></span></button><button class="cnpy-chev" aria-expanded="false" aria-label="Show Tickets pages"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"></path></svg></button></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg><span class="cnpy-lbl cnpy-nav-t">Roadmap</span></button><button class="cnpy-chev" aria-expanded="false" aria-label="Show Roadmap pages"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"></path></svg></button></div>
+      <div class="cnpy-sec"><span class="cnpy-lbl">Monitor</span></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg><span class="cnpy-lbl cnpy-nav-t">Repo</span></button><button class="cnpy-chev" aria-expanded="false" aria-label="Show Repo pages"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"></path></svg></button></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h10"></path></svg><span class="cnpy-lbl cnpy-nav-t">Feed</span></button></div>
+      <div class="cnpy-sec"><span class="cnpy-lbl">Knowledge</span></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h6"></path></svg><span class="cnpy-lbl cnpy-nav-t">Docs</span></button><button class="cnpy-chev" aria-expanded="false" aria-label="Show Docs pages"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"></path></svg></button></div>
+      <div class="{{ nav.artCls }}"><button class="cnpy-nav-i" onClick="{{ goLibrary }}" aria-label="Artifacts"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M7 13.5h6"></path><path d="M7 16.5h9"></path></svg><span class="cnpy-lbl cnpy-nav-t">Artifacts</span></button></div>
+      
+      <div class="cnpy-sec"><span class="cnpy-lbl">Triage</span></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m9 12.5 2 2 4-5"></path></svg><span class="cnpy-lbl cnpy-nav-t">Review</span><span class="cnpy-lbl cnpy-badge">3</span><span class="cnpy-dot"></span></button></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg><span class="cnpy-lbl cnpy-nav-t">Maintenance</span><span class="cnpy-lbl cnpy-badge">1</span><span class="cnpy-dot"></span></button></div>
+      <div class="cnpy-sec"><span class="cnpy-lbl">Help</span></div>
+      <div class="cnpy-navrow"><button class="cnpy-nav-i"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 4h7a3 3 0 0 1 3 3v14a2.5 2.5 0 0 0-2.5-2.5H2z"></path><path d="M22 4h-7a3 3 0 0 0-3 3v14a2.5 2.5 0 0 1 2.5-2.5H22z"></path></svg><span class="cnpy-lbl cnpy-nav-t">Get Started</span></button></div>
+    </nav>
+    <div class="cnpy-collapse">
+      <button class="cnpy-nav-i" onClick="{{ toggleCollapse }}" aria-label="Collapse sidebar"><svg class="cnpy-nav-ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path><path d="M14.5 9.5 12 12l2.5 2.5"></path></svg><span class="cnpy-lbl cnpy-nav-t">Collapse</span></button>
+    </div>
+    <div class="cnpy-ghost cnpy-lbl">agents produce · humans confirm</div>
+    <div class="cnpy-foot">
+      <button class="cnpy-chip" aria-label="Settings">
+        <div style="width:28px;height:28px;border-radius:4.8px;background:{{ me.colorCss }};display:grid;place-items:center;font-size:10px;font-weight:600;color:#fff;flex:none">{{ me.ini }}</div>
+        <div class="cnpy-lbl cnpy-chip-t"><div class="cnpy-chip-n">{{ me.name }}</div><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;font-family:var(--mono);font-size:11px;font-weight:500;color:{{ me.colorCss }}">@{{ me.handle }}</div></div>
+        <svg class="cnpy-lbl" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--fg-40)"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
+    <header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;min-height:57px;border-bottom:1px solid var(--border);flex:none">
+      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+        <sc-if value="{{ hdr.top }}" hint-placeholder-val="{{ true }}">
+          <h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">{{ hdr.title }}</h1>
+        </sc-if>
+        <sc-if value="{{ hdr.child }}" hint-placeholder-val="{{ false }}">
+          <h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button onClick="{{ hdr.back }}" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">{{ hdr.title }}</button></h1>
+          <sc-for list="{{ hdr.crumbs }}" as="cb" hint-placeholder-count="1">
+            <span style="display:inline-flex;align-items:center;gap:10px;min-width:0"><span style="color:var(--fg-40);font-size:13px">›</span><button onClick="{{ cb.go }}" style="{{ cb.st }}">{{ cb.label }}</button></span>
+          </sc-for>
+        </sc-if>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex:none">
+        <sc-if value="{{ isLibrary }}"><button onClick="{{ goNew }}" class="cnpy-accentbtn" style="display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:3.2px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>New artifact</button></sc-if>
+        <button onClick="{{ cycleTheme }}" title="Toggle theme" class="cnpy-iconbtn" style="width:32px;height:32px;border-radius:3.2px;border:1px solid var(--border);display:grid;place-items:center;color:var(--fg-55)">
+          <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path></svg></sc-if>
+          <sc-if value="{{ isLight }}" hint-placeholder-val="{{ true }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"></path></svg></sc-if>
+        </button>
+      </div>
+    </header>
+
+    <div id="cnpy-main" class="cnpy-scroll" ref="{{ mainRef }}" style="flex:1;overflow-y:auto;min-height:0">
+
+      <!-- 1 · Library -->
+      <sc-if value="{{ isLibrary }}" hint-placeholder-val="{{ true }}">
+        <div data-screen-label="Library" style="width:100%;max-width:1440px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 4px">
+                        <div style="position:relative;display:flex;align-items:stretch;flex:1 1 260px;max-width:480px;min-width:0;height:34px">
+            <div class="cnpy-search" style="flex:1;min-width:0;padding:0 11px;border-radius:2.8px 0 0 2.8px;border-color:var(--border-strong)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
+              <input class="cnpy-search-in" style="font-size:12.5px" placeholder="Search by title, area, kind or ticket" value="{{ lib.q }}" onChange="{{ lib.setQ }}">
+              <sc-if value="{{ lib.hasQ }}"><button onClick="{{ lib.clearQ }}" aria-label="Clear search" class="cnpy-xbtn" style="width:16px;height:16px;display:grid;place-items:center;color:var(--fg-40);flex:none"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></sc-if>
+            </div>
+            <div style="display:flex" onMouseEnter="{{ lib.filterEnter }}" onMouseLeave="{{ lib.filterLeave }}">
+              <button onClick="{{ lib.toggleFilter }}" aria-haspopup="dialog" class="cnpy-ghostbtn" style="{{ lib.filterBtnSt }}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
+                Filter
+                <sc-if value="{{ lib.hasActive }}"><span style="font-family:var(--mono);font-size:10.5px;font-weight:600;min-width:18px;height:18px;line-height:18px;padding:0 5px;border-radius:2.4px;text-align:center;color:var(--accent-fg);background:var(--accent)">{{ lib.activeCount }}</span></sc-if>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" style="opacity:.7"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <sc-if value="{{ lib.filterOpen }}">
+                                <div role="dialog" aria-label="Filter artifacts" style="position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:4.4px;box-shadow:0 14px 38px rgba(0,0,0,.3);transform-origin:top left;animation:cnpy-drop .18s cubic-bezier(.2,.8,.2,1) both;display:flex;flex-direction:column;overflow:hidden">
+                  <div style="display:grid;grid-template-columns:136px minmax(0,1fr);height:188px">
+                    <div style="border-right:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:1px">
+                      <sc-for list="{{ lib.groups }}" as="g" hint-placeholder-count="6">
+                        <button onClick="{{ g.select }}" onMouseEnter="{{ g.select }}" onFocus="{{ g.select }}" class="cnpy-menurow" style="{{ g.st }}">
+                          <span style="flex:1;min-width:0">{{ g.label }}</span>
+                          <sc-if value="{{ g.active }}"><span style="width:6px;height:6px;border-radius:1.5px;background:var(--accent);flex:none"></span></sc-if>
+                        </button>
+                      </sc-for>
+                    </div>
+                    <div class="cnpy-scroll" style="overflow-y:auto;padding:6px;min-width:0">
+                      <sc-for list="{{ lib.catOpts }}" as="o" hint-placeholder-count="5">
+                        <button onClick="{{ o.pick }}" class="cnpy-menurow art-fopt" style="{{ o.st }}">
+                          <span style="width:14px;flex:none;display:grid;place-items:center"><sc-if value="{{ o.on }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.6"><path d="M20 6 9 17l-5-5"></path></svg></sc-if></span>
+                          <sc-if value="{{ o.hasAvatar }}"><span style="{{ o.avatarSt }}">{{ o.ini }}</span></sc-if>
+                          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ o.l }}</span>
+                          <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);flex:none">{{ o.n }}</span>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-top:1px solid var(--border)">
+                    <button onClick="{{ lib.clear }}" class="cnpy-mutelink" style="{{ lib.clearSt }}">Clear all</button>
+                    <button onClick="{{ lib.closeFilter }}" class="cnpy-accentbtn" style="padding:6px 14px;border-radius:3.2px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap">Show {{ lib.shownCount }}</button>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+            </div>
+            
+            <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;margin-left:auto;flex:none">{{ lib.count }}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;margin-top:18px">
+            <sc-for list="{{ lib.rows }}" as="r" hint-placeholder-count="6">
+              <button onClick="{{ r.open }}" class="cnpy-card" style="border:1px solid var(--border);border-radius:5.6px;padding:0;background:color-mix(in srgb,var(--fg) 2.5%,transparent);display:flex;flex-direction:column;height:100%;width:100%;text-align:left;cursor:pointer;overflow:hidden">
+                <div style="position:relative;height:160px;border-bottom:1px solid var(--border);overflow:hidden;background:var(--bg);flex:none">
+                  <sc-if value="{{ r.pvFrame }}">
+                    <iframe title="{{ r.title }} preview" srcDoc="{{ r.pvDoc }}" sandbox="" tabindex="-1" loading="lazy" style="position:absolute;top:0;left:0;width:400%;height:400%;border:0;transform:scale(.25);transform-origin:0 0;pointer-events:none;background:#fff"></iframe>
+                  </sc-if>
+                  <sc-if value="{{ r.pvText }}">
+                    <div style="padding:16px 20px;font-size:11.5px;line-height:1.6;color:var(--fg-55);white-space:pre-wrap;{{ r.pvFont }}">{{ r.pvExcerpt }}</div>
+                  </sc-if>
+                  <div style="position:absolute;left:0;right:0;bottom:0;height:36px;background:linear-gradient(to bottom,transparent,var(--bg));pointer-events:none"></div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:12px;padding:14px 16px 14px;flex:1">
+                  <div style="font-size:15px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:var(--fg);text-wrap:pretty;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ r.title }}</div>
+                  <div style="display:flex;align-items:center;gap:8px;margin-top:auto;min-width:0">
+                    <div style="width:20px;height:20px;border-radius:4.8px;background:{{ r.authorColorCss }};display:grid;place-items:center;font-size:9px;font-weight:600;color:#fff;flex:none">{{ r.authorIni }}</div>
+                    <span style="font-size:12.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:48px;flex:0 1 auto">{{ r.authorName }}</span>
+                    <span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border);border-radius:2px;padding:2px 6px;white-space:nowrap;flex:none">{{ r.area }}</span>
+                    <span style="font-size:11.5px;color:var(--fg-40);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">{{ r.updated }}</span>
+                  </div>
+                </div>
+              </button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ lib.empty }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;justify-content:center;padding:56px 0">
+              <div style="border:1px dashed var(--border-strong);border-radius:5.2px;padding:36px 44px;text-align:center;max-width:380px">
+                <div style="font-size:15px;font-weight:600;color:var(--fg-70)">No artifacts match these filters.</div>
+                <div style="font-size:12.5px;color:var(--fg-40);margin-top:6px">{{ lib.emptySub }}</div>
+                <button onClick="{{ lib.clear }}" class="cnpy-outlinebtn" style="margin-top:16px;padding:6px 14px;border-radius:3.2px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Clear filters</button>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- 2 · Viewer -->
+      <sc-if value="{{ isViewer }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Artifact viewer" style="width:100%;max-width:1440px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">
+          <sc-if value="{{ vw.showPrivateBanner }}">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--border);border-radius:3.6px;margin-bottom:22px">
+              <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:2px;padding:3px 7px;flex:none">PRIVATE</span>
+              <div style="flex:1;min-width:220px;font-size:12.5px;color:var(--fg-70);line-height:1.45">Only you can see this artifact. Teammates who open the link get a not-found page until you <strong style="font-weight:600;color:var(--fg)">publish it to the org</strong>.</div>
+              <button onClick="{{ vw.publish }}" class="cnpy-accentbtn" style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:3.2px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap;flex:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"></path><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.6c1.3.7 2.1 2.2 2.5 4.4"></path></svg>Publish to org</button>
+            </div>
+          </sc-if>
+          <sc-if value="{{ vw.showOldBanner }}">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--border);border-radius:3.6px;margin-bottom:22px">
+              <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 45%,transparent);background:color-mix(in srgb,var(--blue) 12%,transparent);border-radius:2px;padding:3px 7px;flex:none">V{{ vw.v }}</span>
+              <div style="flex:1;min-width:220px;font-size:12.5px;color:var(--fg-70);line-height:1.45">You're viewing an <strong style="font-weight:600;color:var(--fg)">older version</strong> from {{ vw.when }}. The latest is v{{ vw.latestV }}.</div>
+              <button onClick="{{ vw.compareWithLatest }}" class="cnpy-link" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--fg-55);white-space:nowrap;flex:none">Compare with v{{ vw.latestV }}</button>
+              <button onClick="{{ vw.openLatest }}" class="cnpy-link" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--accent);white-space:nowrap;flex:none">View latest<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+            </div>
+          </sc-if>
+
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px 24px;flex-wrap:wrap">
+            <div style="min-width:0;flex:1 1 380px">
+              <div style="display:flex;align-items:center;gap:12px;min-width:0"><h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0;text-wrap:pretty">{{ vw.title }}</h1></div>
+            </div>
+            <div style="padding-top:3px"><button onClick="{{ vw.toggleVis }}" role="switch" aria-checked="{{ vw.visChecked }}" title="{{ vw.visTitle }}" class="{{ vw.visCls }}" style="{{ vw.visBtnSt }}">
+              <sc-if value="{{ vw.isPrivNow }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></sc-if>
+              <sc-if value="{{ vw.isOrgNow }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"></path><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.6c1.3.7 2.1 2.2 2.5 4.4"></path></svg></sc-if>
+              <span>{{ vw.visWord }}</span>
+              <span style="{{ vw.visTrackSt }}"><span style="{{ vw.visKnobSt }}"></span></span>
+            </button></div>
+            
+          </div>
+
+          
+
+          <div style="margin-top:22px;border:1px solid var(--border-strong);border-radius:4.4px;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:6px;border-bottom:1px solid var(--border)">
+              <div style="position:relative;flex:none" onMouseEnter="{{ vw.verEnter }}" onMouseLeave="{{ vw.verLeave }}">
+              <button onClick="{{ vw.toggleVerMenu }}" aria-haspopup="menu" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:2.8px;padding:3px 8px 3px 9px;white-space:nowrap">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>
+                <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">v{{ vw.v }}</span>
+                <sc-if value="{{ vw.isLatest }}"><span style="font-family:var(--mono);font-size:9.5px;font-weight:600;color:var(--fg-40)">LATEST</span></sc-if>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" style="opacity:.7"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <sc-if value="{{ verMenu }}">
+                                <div role="menu" style="position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:320px;background:var(--bg);border:1px solid var(--border-strong);border-radius:4.4px;padding:5px;box-shadow:0 14px 38px rgba(0,0,0,.3);animation:cnpy-pop .14s ease both">
+                  <div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);padding:6px 10px 4px">VERSIONS</div>
+                  <sc-for list="{{ vw.menuVersions }}" as="mv" hint-placeholder-count="3">
+                    <button onClick="{{ mv.open }}" class="cnpy-menurow" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:2.8px">
+                      <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:22px;flex:none">v{{ mv.v }}</span>
+                      <span style="flex:1;min-width:0"><span style="display:block;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ mv.summary }}</span><span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px">@{{ mv.handle }} · {{ mv.when }}</span></span>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="{{ mv.checkSt }}"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </button>
+                  </sc-for>
+                  <div style="height:1px;background:var(--border);margin:5px 4px"></div>
+                  <button onClick="{{ vw.compareFromMenu }}" class="cnpy-menurow" style="{{ vw.compareRowSt }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v12M16 21V9"></path><path d="m5 6 3-3 3 3M13 18l3 3 3-3"></path></svg>{{ vw.compareLabel }}</button>
+                </div>
+              </sc-if>
+            </div>
+              <span style="flex:1 1 120px;min-width:0;padding-left:4px;font-family:var(--mono);font-size:11px;color:var(--fg-55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">canopy.saplinglearn.com/a/{{ vw.slug }}@v{{ vw.v }}</span>
+              <div role="group" aria-label="Status" style="display:inline-flex;align-items:center;gap:1px;border:1px solid var(--border);border-radius:3.2px;padding:2px;background:var(--bg);flex:none">
+              <sc-for list="{{ vw.statusOpts }}" as="so" hint-placeholder-count="3"><button onClick="{{ so.pick }}" title="{{ so.title }}" aria-pressed="{{ so.pressed }}" class="{{ so.cls }}" style="{{ so.st }}"><sc-if value="{{ so.isRat }}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.3 7.5 9.5 4.3-1.2 7.5-4.9 7.5-9.5V6z"></path><path d="m9 12 2.2 2.2L15.5 10"></path></svg></sc-if>{{ so.label }}</button></sc-for>
+            </div>
+            
+              <span style="width:1px;height:18px;background:var(--border);flex:none"></span>
+              <button onClick="{{ vw.openTab }}" title="Open in new tab" aria-label="Open in new tab" class="cnpy-iconbtn" style="width:28px;height:28px;border-radius:2.8px;display:grid;place-items:center;color:var(--fg-55);flex:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6"></path><path d="M20 4 11 13"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
+              <div style="position:relative;flex:none">
+                <button onClick="{{ vw.toggleDotMenu }}" title="More" aria-label="More actions" aria-haspopup="menu" class="cnpy-iconbtn" style="width:28px;height:28px;border-radius:2.8px;display:grid;place-items:center;color:var(--fg-55)"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg></button>
+                <sc-if value="{{ dotMenu }}">
+                  <div onClick="{{ closeMenus }}" style="position:fixed;inset:0;z-index:29"></div>
+                  <div role="menu" style="position:absolute;top:calc(100% + 6px);right:0;z-index:30;width:210px;background:var(--bg);border:1px solid var(--border-strong);border-radius:4.4px;padding:5px;box-shadow:0 14px 38px rgba(0,0,0,.3);animation:cnpy-pop .14s ease both">
+                    <button onClick="{{ vw.copyLink }}" class="cnpy-menurow" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:2.8px;font-size:12.5px;font-weight:500;color:var(--fg-70)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path></svg>Copy link</button>
+                    <button onClick="{{ vw.download }}" class="cnpy-menurow" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:2.8px;font-size:12.5px;font-weight:500;color:var(--fg-70)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v11"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path></svg>Download raw</button>
+                    <button onClick="{{ vw.openTab }}" class="cnpy-menurow" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:2.8px;font-size:12.5px;font-weight:500;color:var(--fg-70)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6"></path><path d="M20 4 11 13"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>Open in new tab</button>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+            <div style="border-radius:0 0 4.4px 4.4px;overflow:hidden">
+              <sc-if value="{{ vw.isHtml }}">
+                    <div ref="{{ frameWrapRef }}" style="{{ vw.frameBoxSt }}"><iframe ref="{{ vw.frameRef }}" title="{{ vw.title }}" srcDoc="{{ vw.src }}" sandbox="allow-same-origin" style="{{ vw.frameSt }}"></iframe></div>
+                  </sc-if>
+              <sc-if value="{{ vw.isSvg }}">
+                    <div ref="{{ contentRef }}" style="display:grid;place-items:center;padding:40px 24px;min-height:320px;color:var(--fg);overflow-x:auto"></div>
+                  </sc-if>
+              <sc-if value="{{ vw.isMd }}">
+                <div style="background:var(--bg);padding:36px clamp(20px,4vw,56px) 44px"><div ref="{{ contentRef }}" class="cnpy-md" style="max-width:760px;margin:0 auto"></div></div>
+              </sc-if>
+              <sc-if value="{{ vw.isMermaid }}">
+                <div ref="{{ contentRef }}" class="art-mermaid" style="display:grid;place-items:center;padding:36px 24px;min-height:300px;background:var(--bg);color:var(--fg-40);font-size:12.5px;overflow-x:auto"></div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div data-screen-label="Artifact details" class="art-bento" style="display:grid;gap:14px;margin-top:18px">
+            <div class="art-b-props" style="border:1px solid var(--border);border-radius:5.6px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);padding:16px 18px;min-width:0">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;height:24px;margin-bottom:8px"><div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">Properties</div></div>
+              <sc-for list="{{ vw.props }}" as="pp" hint-placeholder-count="6">
+                <div style="display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;align-items:center;min-height:36px;border-top:1px solid var(--border)">
+                  <div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">{{ pp.k }}</div>
+                  <div style="min-width:0;display:flex;align-items:center;gap:8px"><sc-if value="{{ pp.hasAv }}"><span style="{{ pp.avSt }}">{{ pp.ini }}</span></sc-if><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;{{ pp.st }}">{{ pp.v }}</span></div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div class="art-b-links" style="border:1px solid var(--border);border-radius:5.6px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);padding:16px 18px;min-width:0">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;height:24px;margin-bottom:8px"><div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">Linked work</div><button onClick="{{ openAttach }}" title="Attach to ticket" class="cnpy-iconbtn" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:2.4px;font-size:11.5px;font-weight:500;color:var(--fg-55)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Attach ticket</button></div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+                <sc-for list="{{ vw.tickets }}" as="lt" hint-placeholder-count="1">
+                  <button onClick="{{ lt.open }}" class="cnpy-card" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;border:1px solid var(--border);border-radius:3.6px;background:var(--bg);min-width:0">
+                    <span style="width:26px;height:26px;border-radius:2.4px;background:var(--hover);display:grid;place-items:center;color:var(--fg-55);flex:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"></path></svg></span>
+                    <span style="min-width:0;flex:1"><span style="display:block;font-size:13px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ lt.title }}</span><span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);white-space:nowrap;margin-top:2px">TICKET #{{ lt.id }} · {{ lt.statusLabel }}</span></span>
+                  </button>
+                </sc-for>
+                <sc-for list="{{ vw.sprints }}" as="ls" hint-placeholder-count="1">
+                  <div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:3.6px;background:var(--bg);min-width:0">
+                    <span style="width:26px;height:26px;border-radius:2.4px;background:var(--hover);display:grid;place-items:center;color:var(--fg-55);flex:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg></span>
+                    <span style="min-width:0"><span style="display:block;font-size:13px;font-weight:500;color:var(--fg)">{{ ls.label }}</span><span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);white-space:nowrap;margin-top:2px">{{ ls.meta }}</span></span>
+                  </div>
+                </sc-for>
+                <sc-for list="{{ vw.gh }}" as="g" hint-placeholder-count="1">
+                  <a href="{{ g.href }}" target="_blank" rel="noopener" class="cnpy-card" style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border);border-radius:3.6px;background:var(--bg);text-decoration:none;min-width:0">
+                    <span style="width:26px;height:26px;border-radius:2.4px;background:var(--hover);display:grid;place-items:center;color:var(--fg-70);flex:none"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg></span>
+                    <span style="min-width:0"><span style="display:block;font-size:13px;font-weight:500;color:var(--fg);font-family:var(--mono)">{{ g.label }}</span><span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);white-space:nowrap;margin-top:2px">{{ g.meta }}</span></span>
+                  </a>
+                </sc-for>
+              </div>
+              <sc-if value="{{ vw.noLinks }}"><div style="font-size:12.5px;color:var(--fg-40);padding:10px 0 4px">Nothing linked yet.</div></sc-if>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- 3 · Version diff -->
+      <sc-if value="{{ isDiff }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Version diff" style="width:100%;max-width:1120px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">
+          <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">Compare versions <span style="color:var(--border-strong);margin:0 2px">/</span> {{ df.kindLabel }}</div>
+          <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">{{ df.title }}</h2>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:16px">
+            <select class="cnpy-select" value="{{ df.a }}" onChange="{{ df.setA }}" aria-label="Base version"><sc-for list="{{ df.options }}" as="o"><option value="{{ o.v }}">{{ o.l }}</option></sc-for></select>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--fg-40)"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            <select class="cnpy-select" value="{{ df.b }}" onChange="{{ df.setB }}" aria-label="Compared version"><sc-for list="{{ df.options }}" as="o"><option value="{{ o.v }}">{{ o.l }}</option></sc-for></select>
+            <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--green);margin-left:6px">+{{ df.adds }}</span>
+            <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--red)">−{{ df.dels }}</span>
+            <span style="flex:1"></span>
+            <button onClick="{{ df.openB }}" class="cnpy-ghostbtn" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:2.8px;padding:5px 11px;white-space:nowrap">Open v{{ df.b }}</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:18px">
+            <sc-for list="{{ df.sides }}" as="sd" hint-placeholder-count="2">
+              <div style="border:1px solid var(--border);border-radius:4.4px;padding:12px 14px;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+                <div style="display:flex;align-items:center;gap:8px"><span style="{{ sd.tagSt }}">{{ sd.tag }}</span><span style="font-family:var(--mono);font-size:12px;font-weight:600">v{{ sd.v }}</span></div>
+                <div style="font-size:13px;color:var(--fg-70);margin-top:7px">{{ sd.summary }}</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11.5px;color:var(--fg-40)"><span style="width:16px;height:16px;border-radius:4px;background:{{ sd.colorCss }};display:grid;place-items:center;font-size:8px;font-weight:600;color:#fff;flex:none">{{ sd.ini }}</span><span style="font-family:var(--mono);font-size:11px;font-weight:500;color:{{ sd.colorCss }}">@{{ sd.handle }}</span> · {{ sd.when }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <sc-if value="{{ df.same }}"><div style="text-align:center;padding:60px;color:var(--fg-40);font-size:13px">Pick two different versions to compare.</div></sc-if>
+          <sc-if value="{{ df.hasRows }}">
+            <div style="border:1px solid var(--border);border-radius:4px;overflow:hidden;padding:8px 0;margin-top:18px">
+              <sc-for list="{{ df.rows }}" as="l" hint-placeholder-count="10">
+                <div style="display:flex;{{ l.st }}"><span style="display:inline-block;width:18px;flex:none;{{ l.preSt }}">{{ l.pre }}</span><span style="min-width:0">{{ l.txt }}</span></div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- 4 · Create / upload -->
+      <sc-if value="{{ isNew }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="New artifact" style="width:100%;max-width:1440px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">
+          <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">New artifact</h2>
+          <div style="font-size:13px;color:var(--fg-55);margin-top:6px">One self-contained page, stored and versioned in Canopy. Agents upload over MCP; this form is for people.</div>
+          <div class="cnpy-nt-grid" style="display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.2fr);gap:34px;margin-top:24px">
+            <div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+              <div>
+                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Title</label>
+                <input class="cnpy-input" value="{{ cr.title }}" onChange="{{ cr.setTitle }}" placeholder="e.g. Google sign-in design page" style="width:100%;height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:3.6px;background:transparent;color:var(--fg);font-size:14px;outline:none">
+                <div style="font-family:var(--mono);font-size:11px;color:var(--fg-40);margin-top:7px">canopy.saplinglearn.com/a/{{ cr.slug }}</div>
+              </div>
+              <div>
+                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Kind</label>
+                <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:3.6px;padding:2px">
+                  <sc-for list="{{ cr.kinds }}" as="k" hint-placeholder-count="4"><button onClick="{{ k.pick }}" class="{{ k.cls }}" style="{{ k.st }}">{{ k.label }}</button></sc-for>
+                </div>
+              </div>
+              <div>
+                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Area</label>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <sc-for list="{{ cr.areas }}" as="ar" hint-placeholder-count="6"><button onClick="{{ ar.pick }}" class="{{ ar.cls }}" style="{{ ar.st }}">{{ ar.label }}</button></sc-for>
+                </div>
+              </div>
+              <div>
+                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Repo</label>
+                <select class="cnpy-select" value="{{ cr.repo }}" onChange="{{ cr.setRepo }}" style="width:100%;height:40px;font-size:13.5px;border-color:var(--border-strong);color:var(--fg);border-radius:3.6px"><sc-for list="{{ cr.repos }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select>
+              </div>
+              <div>
+                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Visibility</label>
+                <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:3.6px;padding:2px">
+                  <sc-for list="{{ cr.visOpts }}" as="vo" hint-placeholder-count="2"><button onClick="{{ vo.pick }}" class="{{ vo.cls }}" style="{{ vo.st }}">{{ vo.label }}</button></sc-for>
+                </div>
+                <div style="font-size:12px;color:var(--fg-40);margin-top:7px;line-height:1.5">{{ cr.visHelp }}</div>
+              </div>
+              <div>
+                <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Links</label>
+                <div style="display:flex;gap:8px">
+                  <input class="cnpy-input" value="{{ cr.linkDraft }}" onChange="{{ cr.setLinkDraft }}" onKeyDown="{{ cr.linkKey }}" placeholder="#10, Sprint 14, or a GitHub PR / issue URL" style="flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:3.2px;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--mono);outline:none">
+                  <button onClick="{{ cr.addLink }}" class="cnpy-outlinebtn" style="padding:0 14px;border-radius:3.2px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Link</button>
+                </div>
+                <sc-if value="{{ cr.hasLinks }}">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+                    <sc-for list="{{ cr.links }}" as="lk"><span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:2.4px;padding:3px 4px 3px 8px;color:var(--fg-70)"><span style="color:var(--fg-40)">{{ lk.kind }}</span><span style="font-family:var(--mono);font-weight:500">{{ lk.label }}</span><button onClick="{{ lk.remove }}" aria-label="Remove link" class="cnpy-xbtn" style="width:16px;height:16px;display:grid;place-items:center;color:var(--fg-40)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></span></sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ cr.linkErr }}"><div style="font-size:12px;color:var(--red);margin-top:7px">Not a ticket, sprint, PR or issue reference.</div></sc-if>
+              </div>
+            </div>
+
+            <div style="border-left:1px solid var(--border);padding-left:34px;min-width:0;display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+                <label style="font-size:13px;font-weight:500">Content</label>
+                <div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:3.6px">
+                  <sc-for list="{{ cr.tabs }}" as="tb" hint-placeholder-count="3"><button onClick="{{ tb.pick }}" style="{{ tb.st }}">{{ tb.label }}</button></sc-for>
+                </div>
+              </div>
+
+              <sc-if value="{{ cr.tabPaste }}" hint-placeholder-val="{{ true }}">
+                <textarea class="cnpy-input cnpy-scroll" value="{{ cr.paste }}" onChange="{{ cr.setPaste }}" spellcheck="false" placeholder="Paste the page's full source: HTML, markdown, SVG or a mermaid diagram." style="width:100%;min-height:360px;flex:1;resize:vertical;padding:12px 13px;border:1px solid var(--border-strong);border-radius:3.6px;background:transparent;color:var(--fg);font-family:var(--mono);font-size:12px;line-height:1.6;outline:none;white-space:pre"></textarea>
+              </sc-if>
+              <sc-if value="{{ cr.tabFile }}">
+                <sc-if value="{{ cr.noFile }}">
+                  <div onDragOver="{{ cr.dragOver }}" onDrop="{{ cr.drop }}" style="border:1px dashed var(--border-strong);border-radius:4.4px;padding:56px 24px;text-align:center;min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="color:var(--fg-40);margin-bottom:6px"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg>
+                    <div style="font-size:14px;font-weight:600;color:var(--fg-70)">Drop one file here</div>
+                    <div style="font-size:12.5px;color:var(--fg-40)">.html, .md, .svg or .mmd · a single file · 500 KB max</div>
+                    <label class="cnpy-outlinebtn" style="margin-top:12px;padding:6px 14px;border-radius:3.2px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);cursor:pointer">Choose file<input type="file" accept=".html,.htm,.md,.markdown,.svg,.mmd,.mermaid" onChange="{{ cr.pickFile }}" style="display:none"></label>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ cr.hasFile }}">
+                  <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:4.4px;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+                    <span style="width:30px;height:30px;border-radius:2.4px;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55);flex:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h7l5 5v13H6z"></path><path d="M13 3v5h5"></path></svg></span>
+                    <span style="flex:1;min-width:0"><span style="display:block;font-family:var(--mono);font-size:12.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ cr.fileName }}</span><span style="display:block;font-size:11.5px;color:var(--fg-40);margin-top:1px">{{ cr.sizeText }}</span></span>
+                    <button onClick="{{ cr.removeFile }}" class="cnpy-mutelink" style="font-size:12px;font-weight:500;color:var(--fg-40)">Remove</button>
+                  </div>
+                  <pre class="cnpy-scroll" style="margin:10px 0 0;flex:1;min-height:280px;max-height:420px;overflow:auto;padding:12px 13px;border:1px solid var(--border);border-radius:3.6px;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--fg-55);white-space:pre">{{ cr.previewText }}</pre>
+                </sc-if>
+              </sc-if>
+              <sc-if value="{{ cr.tabUrl }}">
+                <div style="display:flex;gap:8px">
+                  <input class="cnpy-input" value="{{ cr.url }}" onChange="{{ cr.setUrl }}" placeholder="https://…/page.html" style="flex:1;min-width:0;height:40px;padding:0 12px;border:1px solid var(--border-strong);border-radius:3.6px;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--mono);outline:none">
+                  <button onClick="{{ cr.fetchUrl }}" class="cnpy-outlinebtn" style="padding:0 16px;border-radius:3.6px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">{{ cr.fetchLabel }}</button>
+                </div>
+                <div style="font-size:12px;color:var(--fg-40);margin-top:7px">Canopy fetches the page once and stores a copy. Later changes at the URL don't update the artifact.</div>
+                <sc-if value="{{ cr.urlFetched }}">
+                  <pre class="cnpy-scroll" style="margin:12px 0 0;flex:1;min-height:280px;max-height:420px;overflow:auto;padding:12px 13px;border:1px solid var(--border);border-radius:3.6px;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--fg-55);white-space:pre">{{ cr.previewText }}</pre>
+                </sc-if>
+              </sc-if>
+
+              <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+                <div style="flex:1;height:4px;border-radius:1.6px;background:var(--hover);overflow:hidden"><div style="height:100%;width:{{ cr.barPct }};background:{{ cr.barColor }};transition:width .3s ease"></div></div>
+                <span style="font-family:var(--mono);font-size:11px;font-weight:600;white-space:nowrap;color:{{ cr.counterColor }}">{{ cr.counter }}</span>
+              </div>
+              <sc-if value="{{ cr.over }}">
+                <div style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:11px 14px;border:1px solid color-mix(in srgb,var(--red) 40%,transparent);background:color-mix(in srgb,var(--red) 8%,transparent);border-radius:3.6px;font-size:12.5px;color:var(--fg-70);line-height:1.5">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5v5.5M12 16.5v.01"></path></svg>
+                  <div><strong style="font-weight:600;color:var(--red)">Over the 500 KB cap.</strong> This content is {{ cr.sizeKB }}. Split it into smaller pages or strip inlined assets, then try again.</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ cr.hasClaude }}">
+                <div style="display:flex;align-items:flex-start;gap:14px;margin-top:12px;padding:12px 14px;border:1px solid var(--border);border-radius:3.6px">
+                  <span style="font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:2px;padding:3px 7px;flex:none">CLAUDE.AI ONLY</span>
+                  <div style="flex:1;font-size:12.5px;color:var(--fg-70);line-height:1.55">
+                    This page calls features that only exist inside claude.ai. Canopy renders artifacts in a sandbox with no network, so these calls will fail and parts of the page may render empty. You can still upload it.
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><sc-for list="{{ cr.claudeHits }}" as="ch"><code style="font-family:var(--mono);font-size:11px;color:var(--fg);background:color-mix(in srgb,var(--fg) 6%,transparent);border:1px solid var(--border);border-radius:2px;padding:1.5px 6px">{{ ch }}</code></sc-for></div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:22px">
+                <span style="flex:1;font-size:12px;color:var(--fg-40)">Uploads as v1, {{ cr.statusNote }}</span>
+                <button onClick="{{ goLibrary }}" class="cnpy-outlinebtn" style="padding:7px 15px;border-radius:3.2px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Cancel</button>
+                <button onClick="{{ cr.submit }}" class="{{ cr.submitCls }}" style="{{ cr.submitSt }}">Upload artifact</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- 5b · Ticket detail with attached artifacts -->
+      <sc-if value="{{ isTicket }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Ticket detail" style="width:100%;max-width:1120px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
+            <div style="flex:1;min-width:0">
+              <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">{{ tk.title }}</h2>
+              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:9px;font-size:12px;color:var(--fg-55)">
+                <div style="display:flex;align-items:center;gap:6px"><div style="width:20px;height:20px;border-radius:4.8px;background:{{ tk.req.colorCss }};display:grid;place-items:center;font-size:9px;font-weight:600;color:#fff;flex:none">{{ tk.req.ini }}</div><span style="font-weight:500;color:var(--fg-70);white-space:nowrap">{{ tk.req.name }}</span></div>
+                <span style="color:var(--fg-40);white-space:nowrap">· opened {{ tk.opened }}</span>
+              </div>
+            </div>
+            <div style="flex:none;padding-top:2px"><span style="{{ tk.pillSt }}">{{ tk.pillLabel }}</span></div>
+          </div>
+          <div class="cnpy-td-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:34px;margin-top:24px">
+            <div style="min-width:0;display:flex;flex-direction:column">
+              <div class="cnpy-md" style="font-size:13.5px;line-height:1.65;color:var(--fg-70);max-width:640px">
+                <sc-for list="{{ tk.body }}" as="para"><p>{{ para }}</p></sc-for>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:10px;margin-top:26px">
+                <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);flex:none">Linked work</div>
+              </div>
+              <sc-if value="{{ tk.hasLinks }}">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                  <sc-for list="{{ tk.links }}" as="lw">
+                    <a href="{{ lw.href }}" target="_blank" rel="noopener" class="cnpy-card" style="display:inline-flex;align-items:center;gap:9px;padding:7px 13px 7px 10px;border:1px solid var(--border);border-radius:3.6px;text-decoration:none;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+                      <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:2.4px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg></span>
+                      <span style="min-width:0"><span style="display:block;font-size:12.5px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">{{ lw.label }}</span><span style="display:block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">{{ lw.meta }}</span></span>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="flex:none;color:var(--fg-40);margin-left:2px"><path d="M7 17 17 7"></path><path d="M9 7h8v8"></path></svg>
+                    </a>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ tk.noLinks }}"><div style="font-size:12px;color:var(--fg-40);margin-top:10px">No engineering work linked yet.</div></sc-if>
+
+              <div data-screen-label="Attached artifacts" style="display:flex;align-items:baseline;gap:10px;margin-top:26px">
+                <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);flex:none">Artifacts</div>
+                <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40)">{{ tk.artCount }}</span>
+              </div>
+              <sc-if value="{{ tk.hasArts }}">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                  <sc-for list="{{ tk.arts }}" as="ta">
+                    <button onClick="{{ ta.open }}" class="cnpy-card" style="display:inline-flex;align-items:center;gap:9px;padding:7px 13px 7px 10px;border:1px solid var(--border);border-radius:3.6px;text-align:left;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
+                      <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:2.4px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="{{ ta.iconD }}"></path></svg></span>
+                      <span style="min-width:0"><span style="display:block;font-size:12.5px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">{{ ta.title }}</span><span style="display:block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">{{ ta.meta }}</span></span>
+                      <span style="{{ ta.statusSt }}">{{ ta.statusLabel }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ tk.noArts }}"><div style="font-size:12px;color:var(--fg-40);margin-top:10px">No artifacts attached. Attach one from its page in Artifacts.</div></sc-if>
+            </div>
+            <div style="border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;height:22px;margin-bottom:6px"><div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">Properties</div></div>
+                <div style="display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px"><div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">STATUS</div><div><span style="{{ tk.pillSt }}">{{ tk.pillLabel }}</span></div></div>
+                <div style="display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px"><div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">CATEGORY</div><div><span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:2px;padding:2px 6px;white-space:nowrap">{{ tk.category }}</span></div></div>
+                <div style="display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px"><div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)">PRIORITY</div><div><span style="{{ tk.prioSt }}">{{ tk.priority }}</span></div></div>
+              </div>
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;height:22px;margin-bottom:6px"><div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">Assignees</div></div>
+                <sc-for list="{{ tk.assignees }}" as="asg">
+                  <div style="display:flex;align-items:center;gap:10px;height:38px"><div style="width:24px;height:24px;border-radius:4.8px;background:{{ asg.colorCss }};display:grid;place-items:center;font-size:9px;font-weight:600;color:#fff;flex:none">{{ asg.ini }}</div><span style="min-width:0"><span style="display:block;font-size:13px;font-weight:500;color:var(--fg)">{{ asg.name }}</span><span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:2px">@{{ asg.handle }}</span></span></div>
+                </sc-for>
+                <sc-if value="{{ tk.unassigned }}"><div style="font-size:12.5px;color:var(--fg-55);font-style:italic;padding:6px 0">Unassigned</div></sc-if>
+              </div>
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;height:22px;margin-bottom:6px"><div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">Sprint</div></div>
+                <div style="display:flex;align-items:center;gap:10px;height:38px">
+                  <span style="width:24px;height:24px;border-radius:2.4px;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55);flex:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"></path><path d="M5 4.5C7 3 9 3 12 4.5s5 1.5 7 0V13c-2 1.5-4 1.5-7 0s-5-1.5-7 0"></path></svg></span>
+                  <span style="min-width:0"><span style="display:block;font-size:13px;font-weight:500;color:var(--fg)">{{ tk.sprint }}</span><span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:2px">{{ tk.sprintMeta }}</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- 6b · Not found (private artifact seen by a teammate) -->
+      <sc-if value="{{ isNotFound }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="Artifact not found" style="display:flex;justify-content:center;padding:80px 24px">
+          <div style="width:420px;max-width:100%;border:1px solid var(--border);border-radius:5.6px;padding:34px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center">
+            <div style="width:52px;height:52px;border-radius:5.6px;background:var(--hover);display:grid;place-items:center;color:var(--fg-55)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="m9.5 12.5 5 5M14.5 12.5l-5 5"></path></svg></div>
+            <div>
+              <div style="font-size:18px;font-weight:600;letter-spacing:-0.01em">This artifact isn't available.</div>
+              <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55;text-wrap:pretty">It doesn't exist, or it's private to its author. If someone sent you this link, ask them to publish it to the org.</div>
+            </div>
+            <div style="font-family:var(--mono);font-size:12px;color:var(--fg-55);padding:7px 12px;border:1px solid var(--border);border-radius:3.6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">canopy.saplinglearn.com/a/{{ nf.slug }}</div>
+            <button onClick="{{ goLibrary }}" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:3.6px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Back to Artifacts</button>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </main>
+</div>
+
+<!-- Ratify confirm -->
+<sc-if value="{{ ratifyOpen }}" hint-placeholder-val="{{ false }}">
+  <div onClick="{{ closeDialogs }}" style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);animation:cnpy-fade .14s ease"></div>
+  <div style="position:fixed;inset:0;z-index:61;display:grid;place-items:center;padding:16px;pointer-events:none">
+    <div role="dialog" aria-modal="true" data-screen-label="Ratify dialog" style="pointer-events:auto;width:min(460px,100%);border:1px solid var(--border-strong);border-radius:5.6px;padding:24px 26px;background:var(--bg);box-shadow:0 20px 60px rgba(0,0,0,.45);animation:cnpy-pop .2s ease both">
+      <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);margin-bottom:10px">Ratify · v{{ vw.v }}</div>
+      <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">Ratify “{{ vw.title }}”?</div>
+      <div style="font-size:13.5px;color:var(--fg-70);margin-top:8px;line-height:1.55">Ratifying marks v{{ vw.v }} as the version the team agreed on. Agents reading this artifact are told it's ratified. A newer upload starts as published again and needs its own ratification.</div>
+      <div style="display:flex;align-items:center;gap:9px;margin-top:16px;padding:10px 12px;border:1px solid var(--border);border-radius:3.6px;font-size:12.5px;color:var(--fg-55)">
+        <div style="width:20px;height:20px;border-radius:4.8px;background:{{ me.colorCss }};display:grid;place-items:center;font-size:9px;font-weight:600;color:#fff;flex:none">{{ me.ini }}</div>
+        <span>Recorded as <span style="font-family:var(--mono);font-size:12px;font-weight:500;color:{{ me.colorCss }}">@{{ me.handle }}</span>, just now</span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+        <button onClick="{{ closeDialogs }}" class="cnpy-outlinebtn" style="padding:7px 15px;border-radius:3.2px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Cancel</button>
+        <button onClick="{{ confirmRatify }}" class="cnpy-accentbtn" style="padding:7px 15px;border-radius:3.2px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600">Ratify v{{ vw.v }}</button>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<!-- 5a · Attach to ticket -->
+<sc-if value="{{ attachOpen }}" hint-placeholder-val="{{ false }}">
+  <div onClick="{{ closeDialogs }}" style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);animation:cnpy-fade .14s ease"></div>
+  <div style="position:fixed;inset:0;z-index:61;display:grid;place-items:center;padding:16px;pointer-events:none">
+    <div role="dialog" aria-modal="true" data-screen-label="Attach dialog" style="pointer-events:auto;width:min(540px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column;border:1px solid var(--border-strong);border-radius:5.6px;background:var(--bg);box-shadow:0 20px 60px rgba(0,0,0,.45);animation:cnpy-pop .2s ease both">
+      <div style="padding:22px 24px 14px">
+        <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">Attach to a ticket</div>
+        <div style="font-size:12.5px;color:var(--fg-55);margin-top:4px">{{ vw.title }} · v{{ vw.v }}</div>
+        <div class="cnpy-search" style="margin-top:14px;padding:8px 11px;border-color:var(--border-strong)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
+          <input class="cnpy-search-in" value="{{ at.q }}" onChange="{{ at.setQ }}" placeholder="Search tickets by title or #number" autofocus="">
+        </div>
+      </div>
+      <div class="cnpy-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:0 24px;display:flex;flex-direction:column;gap:6px;max-height:320px">
+        <sc-for list="{{ at.rows }}" as="tr" hint-placeholder-count="5">
+          <button onClick="{{ tr.pick }}" style="{{ tr.st }}">
+            <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-55);width:28px;flex:none">#{{ tr.id }}</span>
+            <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ tr.title }}</span>
+            <sc-if value="{{ tr.attached }}"><span style="font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);flex:none">ATTACHED</span></sc-if>
+            <span style="{{ tr.pillSt }}">{{ tr.pillLabel }}</span>
+          </button>
+        </sc-for>
+        <sc-if value="{{ at.empty }}"><div style="text-align:center;padding:30px;color:var(--fg-40);font-size:13px">No tickets match “{{ at.q }}”.</div></sc-if>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:16px 24px 20px;border-top:1px solid var(--border);margin-top:14px">
+        <button onClick="{{ closeDialogs }}" class="cnpy-outlinebtn" style="padding:7px 15px;border-radius:3.2px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Cancel</button>
+        <button onClick="{{ at.confirm }}" class="{{ at.cls }}" style="{{ at.st }}">{{ at.label }}</button>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:80;display:flex;align-items:center;gap:9px;padding:10px 16px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg);box-shadow:0 8px 30px rgba(0,0,0,.35);font-size:13px;animation:cnpy-pop .25s ease both;white-space:nowrap">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>{{ toast }}
+  </div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;,&quot;midnight&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;signedInAs&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;AndresL230&quot;,&quot;Jose-Gael-Cruz-Lopez&quot;],&quot;default&quot;:&quot;AndresL230&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;createSample&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;none&quot;,&quot;claude-features&quot;,&quot;over-cap&quot;],&quot;default&quot;:&quot;none&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+const CHIP = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:2px;padding:2px 6px;white-space:nowrap;flex:none;";
+const tint = (c) => `${CHIP}color:${c};border:1px solid color-mix(in srgb,${c} 45%,transparent);background:color-mix(in srgb,${c} 12%,transparent)`;
+const STATUS = { draft: ["DRAFT", tint("var(--amber)")], published: ["PUBLISHED", tint("var(--blue)")], ratified: ["RATIFIED", tint("var(--accent)")] };
+const TSTATUS = {
+  submitted: ["SUBMITTED", tint("var(--blue)")], in_progress: ["IN PROGRESS", tint("var(--accent)")],
+  done: ["DONE", CHIP + "color:var(--fg-55);border:1px solid var(--border-strong)"],
+  declined: ["DECLINED", CHIP + "color:var(--red);border:1px solid color-mix(in srgb,var(--red) 35%,transparent);opacity:.75"],
+};
+const PRIO = { high: CHIP + "color:var(--fg);border:1px solid var(--border-strong)", normal: CHIP + "color:var(--fg-55);border:1px solid var(--border)", low: CHIP + "color:var(--fg-40);border:1px solid var(--border)" };
+const NEUTRAL = CHIP + "color:var(--fg-55);border:1px solid var(--border-strong)";
+const PLAIN = "font-size:12.5px;color:var(--fg-70)";
+const MONO_VAL = "font-family:var(--mono);font-size:11.5px;color:var(--fg-70)";
+const ICON = {
+  html: "M8 7 3 12l5 5M16 7l5 5-5 5",
+  markdown: "M6 3h7l5 5v13H6zM13 3v5h5M9 13h6M9 17h6",
+  svg: "M12 3 21 12 12 21 3 12z",
+  mermaid: "M4 4h6v6H4zM14 14h6v6h-6zM10 7h4.5a2.5 2.5 0 0 1 2.5 2.5V14",
+};
+const EXT = { html: "html", markdown: "md", svg: "svg", mermaid: "mmd" };
+const CAP = 500 * 1024;
+const REPO_URL = "https://github.com/SaplingLearn/canopy";
+const CLAUDE_MARKERS = ["window.claude", "window.storage", "api.anthropic.com"];
+const TICKET_BODY = {
+  10: ["Meilin, Sana and the rest of the curriculum team need to file and follow tickets without making a GitHub account.", "Let them sign in with their school Google account. Invite-only, same as GitHub: an account that isn't on the invite list should land on a clear \"not invited\" page, not a generic error."],
+  9: ["Before we open sign-in to Google accounts, review how Canopy handles sessions and MCP tokens today.", "Write the findings up somewhere the team can read and agree on."],
+  8: ["A one-page snapshot of Sprint 14 for Friday's review: tickets done, PRs merged, deploys, and what's still open."],
+  7: ["One staff account loops back to the sign-in page after choosing Google. Other accounts are fine."],
+};
+const TICKET_LINKS = {
+  10: [{ label: "feat(auth): Google sign-in provider", meta: "PR · SAPLINGLEARN/CANOPY#212", href: REPO_URL + "/pull/212" }, { label: "Google sign-in for non-engineers", meta: "ISSUE · SAPLINGLEARN/CANOPY#198", href: REPO_URL + "/issues/198" }],
+  9: [{ label: "Show last_used_at on MCP tokens", meta: "PR · SAPLINGLEARN/CANOPY#205", href: REPO_URL + "/pull/205" }],
+};
+
+function ageMins(w) {
+  if (!w || w === "just now") return 0;
+  const m = String(w).match(/(\d+)\s*([mhd])/);
+  if (!m) return 0;
+  return Number(m[1]) * (m[2] === "m" ? 1 : m[2] === "h" ? 60 : 1440);
+}
+function lineDiff(oldText, newText) {
+  const a = oldText.split("\n"), b = newText.split("\n");
+  const n = a.length, m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({ t: "ctx", text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "del", text: a[i] }); i++; }
+    else { out.push({ t: "add", text: b[j] }); j++; }
+  }
+  while (i < n) out.push({ t: "del", text: a[i++] });
+  while (j < m) out.push({ t: "add", text: b[j++] });
+  return out;
+}
+function collapsedLineDiff(oldText, newText, ctx = 3) {
+  const rows = lineDiff(oldText, newText);
+  const changed = new Set(); rows.forEach((r, i) => { if (r.t !== "ctx") changed.add(i); });
+  if (!changed.size) return rows;
+  const visible = new Set();
+  changed.forEach((idx) => { for (let j = Math.max(0, idx - ctx); j <= Math.min(rows.length - 1, idx + ctx); j++) visible.add(j); });
+  const out = []; let i = 0;
+  while (i < rows.length) {
+    if (visible.has(i)) { out.push(rows[i]); i++; }
+    else { let j = i; while (j < rows.length && !visible.has(j)) j++; out.push({ t: "ellipsis", text: `${j - i} unchanged line${j - i !== 1 ? "s" : ""}` }); i = j; }
+  }
+  return out;
+}
+const fmtKB = (b) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(2)} MB` : `${(b / 1024).toFixed(1)} KB`);
+const slugify = (t) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+const segSt = (on) => `padding:4px 14px;border-radius:2.8px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;${on ? "color:var(--fg);background:var(--hover)" : "color:var(--fg-55);background:transparent"}`;
+const chipSt = (on) => `padding:5px 12px;border-radius:2.8px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}`;
+const primarySt = (on) => (on ? "background:var(--accent);color:var(--accent-fg);border:1px solid transparent;cursor:pointer" : "background:transparent;color:var(--fg-40);border:1px solid var(--border);cursor:default") + ";border-radius:3.2px;padding:7px 15px;font-size:12.5px;font-weight:600;transition:all .12s ease;display:inline-flex;align-items:center;gap:7px;white-space:nowrap";
+
+class Component extends DCLogic {
+  state = {
+    D: null, arts: null, theme: null, collapsed: false, narrow: false, artOpen: true,
+    route: { screen: "library" }, q: "", f: { area: "all", kind: "all", author: "all", status: "all", sprint: "all", ticket: "all" },
+    frameBoxW: 900, frameDoc: null, dotMenu: false, verMenu: false, ratifyOpen: false, attachOpen: false, attachQ: "", attachPick: null, toast: null,
+    c: { title: "", kind: "html", area: "ui", repo: "SaplingLearn/canopy", vis: "org", links: [], linkDraft: "", linkErr: false, tab: "paste", paste: "", file: null, url: "", urlFetched: null, fetching: false },
+  };
+  mainRef = React.createRef();
+  frameWrapRef = (el) => {
+    if (el === this.frameWrapEl) return;
+    if (this.ro) { this.ro.disconnect(); this.ro = null; }
+    this.frameWrapEl = el;
+    if (!el) return;
+    const sync = () => { const w = Math.round(el.getBoundingClientRect().width); if (w && w !== this.state.frameBoxW) this.setState({ frameBoxW: w }); };
+    this.ro = new ResizeObserver(sync);
+    this.ro.observe(el);
+    sync(); requestAnimationFrame(sync);
+  };
+  contentRef = (el) => { this.contentEl = el; if (el) this.paint(); };
+
+  componentDidMount() {
+    import("./artifacts-data.js").then((D) => {
+      const arts = D.ARTIFACTS.map((a) => ({ ...a, links: { ...a.links, tickets: [...a.links.tickets] }, versions: [...a.versions],
+        ratified: a.status === "ratified" ? { v: a.versions[a.versions.length - 1].v, by: "AndresL230", when: "5d ago" } : null }));
+      this.setState({ D, arts }, () => this.applySample());
+    });
+    this.onHash = () => this.setState({ route: this.parse(), frameDoc: null, dotMenu: false, verMenu: false, ratifyOpen: false, attachOpen: false }, () => { if (this.mainRef.current) this.mainRef.current.scrollTop = 0; });
+    window.addEventListener("hashchange", this.onHash);
+    this.setState({ route: this.parse() });
+    this.onResize = () => { const n = window.innerWidth < 900; if (n !== this.state.narrow) this.setState({ narrow: n }); };
+    window.addEventListener("resize", this.onResize); this.onResize();
+  }
+  componentWillUnmount() { if (this.ro) this.ro.disconnect(); window.removeEventListener("hashchange", this.onHash); window.removeEventListener("resize", this.onResize); clearTimeout(this.toastT); }
+  componentDidUpdate(pp) {
+    if (pp.createSample !== this.props.createSample) this.applySample();
+    if (pp.theme !== this.props.theme) this.setState({ theme: null });
+    this.paint();
+  }
+
+  parse() {
+    const h = (location.hash || "").replace(/^#/, "");
+    let m;
+    if (h === "/artifacts/new") return { screen: "new" };
+    if ((m = h.match(/^\/a\/([\w-]+)\/diff\/(\d+)\.\.(\d+)$/))) return { screen: "diff", slug: m[1], a: +m[2], b: +m[3] };
+    if ((m = h.match(/^\/a\/([\w-]+)\/v(\d+)$/))) return { screen: "viewer", slug: m[1], v: +m[2] };
+    if ((m = h.match(/^\/a\/([\w-]+)$/))) return { screen: "viewer", slug: m[1], v: null };
+    if ((m = h.match(/^\/t\/(\d+)$/))) return { screen: "ticket", id: +m[1] };
+    return { screen: "library" };
+  }
+  go(h) { if (location.hash === "#" + h) this.onHash(); else location.hash = h; }
+  flash(msg) { clearTimeout(this.toastT); this.setState({ toast: msg }); this.toastT = setTimeout(() => this.setState({ toast: null }), 2400); }
+  me() { return this.props.signedInAs || "AndresL230"; }
+  P(h) { const p = (this.state.D && this.state.D.PEOPLE[h]) || { name: h, color: "stone", ini: h.slice(0, 2).toUpperCase() }; return { ...p, handle: h, first: p.name.split(" ")[0], colorCss: `var(--p-${p.color})`, email: p.email || p.name.toLowerCase().replace(/\s+/g, ".") + "@saplinglearn.com" }; }
+  themeNow() { return this.state.theme || this.props.theme || "light"; }
+  canSee(a) { return a.visibility === "org" || a.author === this.me(); }
+  updArt(slug, fn) { this.setState((s) => ({ arts: s.arts.map((a) => (a.slug === slug ? fn(a) : a)) })); }
+
+  applySample() {
+    const D = this.state.D; if (!D) return;
+    const s = this.props.createSample;
+    if (s === "claude-features") this.setState((st) => ({ c: { ...st.c, tab: "paste", paste: D.CLAUDE_SAMPLE, title: st.c.title || "Retro board" } }));
+    else if (s === "over-cap") this.setState((st) => ({ c: { ...st.c, tab: "paste", paste: D.oversizedSample(), title: st.c.title || "Deploy log, September" } }));
+  }
+
+  paint() {
+    const el = this.contentEl; const a = this.curArt; const ver = this.curVer;
+    if (!el || !a || !ver) return;
+    const key = `${a.slug}|${ver.v}|${a.kind}|${this.themeNow()}`;
+    if (el === this.paintedEl && key === this.paintedKey) return;
+    this.paintedEl = el; this.paintedKey = key;
+    if (a.kind === "svg") { el.innerHTML = ver.src; return; }
+    if (a.kind === "markdown") {
+      const done = (html) => { if (this.paintedKey === key) el.innerHTML = html.replace(/<table>/g, '<div class="cnpy-md-tablewrap"><table>').replace(/<\/table>/g, "</table></div>"); };
+      if (this.marked) done(this.marked.parse(ver.src));
+      else { el.innerHTML = '<div style="color:var(--fg-40);font-size:13px">Loading…</div>'; import("https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.esm.js").then((m) => { this.marked = m.marked; done(m.marked.parse(ver.src)); }); }
+      return;
+    }
+    if (a.kind === "mermaid") {
+      el.textContent = "Rendering diagram…";
+      const run = async (mermaid) => {
+        const cs = getComputedStyle(el.closest("[data-cnpy-theme]"));
+        const v = (n) => cs.getPropertyValue(n).trim();
+        mermaid.initialize({ startOnLoad: false, theme: "base", fontFamily: "Geist, system-ui, sans-serif",
+          themeVariables: { background: v("--bg"), primaryColor: v("--bg"), primaryTextColor: v("--fg"), primaryBorderColor: v("--fg-40"), lineColor: v("--fg-55"), secondaryColor: v("--bg"), tertiaryColor: v("--bg"), edgeLabelBackground: v("--bg"), fontSize: "14px" },
+          flowchart: { curve: "basis", padding: 14 } });
+        try { const { svg } = await mermaid.render("mm" + Math.random().toString(36).slice(2), ver.src); if (this.paintedKey === key) el.innerHTML = svg; }
+        catch (e) { el.textContent = "Couldn't render this diagram."; }
+      };
+      if (this.mermaid) run(this.mermaid);
+      else import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs").then((m) => { this.mermaid = m.default; run(m.default); });
+    }
+  }
+
+  contentOf(c) {
+    if (c.tab === "paste") return c.paste;
+    if (c.tab === "file") return c.file ? c.file.text : "";
+    return c.urlFetched ? c.urlFetched.text : "";
+  }
+  bytesOf(c) {
+    if (c.tab === "file" && c.file) return c.file.size;
+    const t = this.contentOf(c);
+    if (t !== this._bt) { this._bt = t; this._bn = new TextEncoder().encode(t).length; }
+    return this._bn;
+  }
+  parseLink(raw) {
+    const s = raw.trim(); let m;
+    if (!s) return null;
+    if ((m = s.match(/^#?(\d+)$/))) return { kind: "ticket", label: "#" + m[1], id: +m[1] };
+    if ((m = s.match(/\/pull\/(\d+)/)) || (m = s.match(/^pr\s*#?(\d+)$/i))) return { kind: "PR", label: "#" + m[1], n: +m[1] };
+    if ((m = s.match(/\/issues\/(\d+)/)) || (m = s.match(/^issue\s*#?(\d+)$/i))) return { kind: "issue", label: "#" + m[1], n: +m[1] };
+    if ((m = s.match(/^sprint\s*(\d+)$/i))) return { kind: "sprint", label: "Sprint " + m[1] };
+    return null;
+  }
+  setC(patch) { this.setState((s) => ({ c: { ...s.c, ...patch } })); }
+  readFile(file) {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => this.setC({ file: { name: file.name, size: file.size, text: String(r.result) } });
+    r.readAsText(file.size > 3 * 1024 * 1024 ? file.slice(0, 200 * 1024) : file);
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const kind = { html: "html", htm: "html", md: "markdown", markdown: "markdown", svg: "svg", mmd: "mermaid", mermaid: "mermaid" }[ext];
+    if (kind) this.setC({ kind });
+    if (!this.state.c.title) this.setC({ title: file.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ") });
+  }
+
+  renderVals() {
+    const s = this.state, D = s.D, r = s.route, me = this.me(), theme = this.themeNow();
+    const meP = this.P(me);
+    const screen = !D ? "loading" : r.screen;
+    const base = {
+      theme, collapsedAttr: s.collapsed || s.narrow ? "1" : "0", narrowAttr: s.narrow ? "1" : "0",
+      isDark: theme !== "light", isLight: theme === "light", me: meP, mainRef: this.mainRef, contentRef: this.contentRef, frameWrapRef: this.frameWrapRef,
+      toast: s.toast, hasToast: !!s.toast, verMenu: s.verMenu, dotMenu: s.dotMenu, ratifyOpen: s.ratifyOpen, attachOpen: s.attachOpen,
+      goLibrary: () => this.go("/artifacts"), goNew: () => this.go("/artifacts/new"), goTickets: () => this.go("/t/10"),
+      toggleArtNav: (e) => { e.stopPropagation(); this.setState({ artOpen: !s.artOpen }); },
+      toggleCollapse: () => this.setState({ collapsed: !s.collapsed }),
+      cycleTheme: () => this.setState({ theme: { light: "dark", dark: "midnight", midnight: "light" }[theme] }),
+      closeMenus: () => this.setState({ verMenu: false, dotMenu: false }),
+      closeDialogs: () => this.setState({ ratifyOpen: false, attachOpen: false }),
+      openAttach: () => this.setState({ attachOpen: true, attachQ: "", attachPick: null }),
+      vw: { author: {}, props: [], tickets: [], sprints: [], gh: [], history: [], menuVersions: [], statusOpts: [], visOpts: [] }, df: { options: [], rows: [], sides: [] }, cr: { kinds: [], areas: [], repos: [], visOpts: [], links: [], tabs: [], claudeHits: [] }, tk: { req: {}, body: [], links: [], arts: [], assignees: [] }, at: { rows: [] }, lib: { rows: [], filters: [], groups: [], catOpts: [], active: [] }, nf: {},
+    };
+    const artScreen = ["library", "viewer", "diff", "new", "notfound"].includes(screen);
+    base.nav = {
+      artCls: "cnpy-navrow" + (artScreen ? " is-active" : ""), ticketsCls: "cnpy-navrow" + (screen === "ticket" ? " is-active" : ""),
+      artOpenAttr: s.artOpen ? "true" : "false", artOpenData: s.artOpen ? "1" : "0",
+      subLibCls: "cnpy-sub-i" + (screen === "library" ? " is-active" : ""), subNewCls: "cnpy-sub-i" + (screen === "new" ? " is-active" : ""),
+    };
+    if (!D) return { ...base, hdr: { top: true, child: false, title: "Artifacts", crumbs: [] }, isLibrary: false, lib: { rows: [], filters: [] } };
+
+    let art = null, eff = screen;
+    if (screen === "viewer" || screen === "diff") {
+      art = s.arts.find((a) => a.slug === r.slug);
+      if (!art || !this.canSee(art)) eff = "notfound";
+    }
+    const crumbSt = (last) => `font-size:13px;font-weight:500;color:${last ? "var(--fg-70)" : "var(--fg-55)"};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;padding:0;cursor:${last ? "default" : "pointer"}`;
+    const crumb = (label, go, last) => ({ label, go: go || (() => {}), st: crumbSt(last) });
+    let hdr = { top: true, child: false, title: "Artifacts", crumbs: [], back: base.goLibrary };
+    if (eff === "new") hdr = { ...hdr, top: false, child: true, crumbs: [crumb("New artifact", null, true)] };
+    if (eff === "viewer") hdr = { ...hdr, top: false, child: true, crumbs: [crumb(art.title, null, true)] };
+    if (eff === "diff") hdr = { ...hdr, top: false, child: true, crumbs: [crumb(art.title, () => this.go("/a/" + art.slug)), crumb("Compare", null, true)] };
+    if (eff === "notfound") hdr = { ...hdr, top: false, child: true, crumbs: [crumb("Not found", null, true)] };
+    if (eff === "ticket") { const t = D.TICKETS.find((x) => x.id === r.id) || D.TICKETS[0]; hdr = { top: false, child: true, title: "Tickets", back: () => history.back(), crumbs: [crumb(t.title, null, true)] }; }
+
+    const out = { ...base, hdr, isLibrary: eff === "library", notLibrary: eff !== "library", isViewer: eff === "viewer", isDiff: eff === "diff", isNew: eff === "new", isTicket: eff === "ticket", isNotFound: eff === "notfound", nf: { slug: r.slug || "" } };
+    const latestOf = (a) => a.versions[a.versions.length - 1];
+
+    // ── library
+    if (eff === "library") {
+      const f = s.f, q = s.q.trim().toLowerCase();
+      const visible = s.arts.filter((a) => this.canSee(a));
+      const rows = visible.filter((a) =>
+        (f.area === "all" || a.area === f.area) && (f.kind === "all" || a.kind === f.kind) && (f.author === "all" || a.author === f.author) &&
+        (f.status === "all" || a.status === f.status) && (f.sprint === "all" || a.links.sprints.includes(f.sprint)) &&
+        
+        (!q || (a.title + " " + a.slug + " " + a.area + " " + a.kind + " " + a.links.tickets.map((id) => { const t = D.TICKETS.find((x) => x.id === id); return "#" + id + " ticket " + id + " " + (t ? t.title : ""); }).join(" ")).toLowerCase().includes(q))
+      ).sort((x, y) => ageMins(latestOf(x).when) - ageMins(latestOf(y).when)).map((a) => {
+        const p = this.P(a.author), L = latestOf(a);
+        return { slug: a.slug, title: a.title, v: L.v, iconD: ICON[a.kind], kindLabel: a.kind.toUpperCase(), area: a.area, private: a.visibility === "private",
+          authorName: p.name, authorColor: p.color, authorColorCss: `var(--p-${p.color})`, authorIni: p.ini, statusLabel: STATUS[a.status][0], statusSt: STATUS[a.status][1], updated: L.when, open: () => this.go("/a/" + a.slug),
+          pvFrame: a.kind === "html" || a.kind === "svg", pvText: a.kind === "markdown" || a.kind === "mermaid",
+          pvDoc: a.kind === "svg" ? `<body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#fff">${L.src.replace("<svg", '<svg style="max-width:90%;max-height:90vh"')}</body>` : a.kind === "html" ? L.src : "",
+          pvFont: a.kind === "mermaid" ? "font-family:var(--mono)" : "",
+          pvExcerpt: a.kind === "markdown" ? L.src.split("\n").map((l) => l.replace(/^#+\s*|^>\s*|[*_`|]/g, "").trim()).filter((l) => l && !/^-+$/.test(l)).slice(0, 7).join("\n") : a.kind === "mermaid" ? L.src.split("\n").slice(0, 9).join("\n") : "" };
+      });
+      const setF = (k) => (e) => this.setState({ f: { ...s.f, [k]: e.target.value } });
+      const authors = [...new Set(visible.map((a) => a.author))];
+      const tix = [...new Set(visible.flatMap((a) => a.links.tickets))].sort((a, b) => b - a);
+      const mk = (k, aria, allLabel, opts) => ({ value: f[k], onChange: setF(k), aria, cls: "cnpy-select" + (f[k] !== "all" ? " is-on" : ""), options: [{ v: "all", l: allLabel }, ...opts] });
+      const anyFilter = q !== "" || Object.values(f).some((v) => v !== "all");
+      out.lib = {
+        q: s.q, setQ: (e) => this.setState({ q: e.target.value }), rows, empty: rows.length === 0, anyFilter,
+        count: `${rows.length} shown · ${visible.length} total`,
+        emptySub: q ? `Nothing matches “${s.q.trim()}” with the current filters.` : "Try another area or status, or clear the filters.",
+        clear: () => this.setState({ q: "", f: { area: "all", kind: "all", author: "all", status: "all", sprint: "all", ticket: "all" } }),
+        filters: [
+          mk("area", "Area", "All areas", D.AREAS.map((x) => ({ v: x, l: x }))),
+          mk("kind", "Kind", "All kinds", D.KINDS.map((x) => ({ v: x, l: x }))),
+          mk("author", "Author", "Any author", authors.map((h) => ({ v: h, l: this.P(h).name }))),
+          mk("status", "Status", "Any status", ["draft", "published", "ratified"].map((x) => ({ v: x, l: x[0].toUpperCase() + x.slice(1) }))),
+          mk("sprint", "Sprint", "Any sprint", D.SPRINTS.map((x) => ({ v: x.label, l: x.label }))),
+        ],
+      };
+    }
+
+    if (eff === "library") {
+      const keys = ["area", "kind", "author", "status", "sprint"], f = s.f;
+      const vis = s.arts.filter((a) => this.canSee(a));
+      const cntFor = { area: (v) => vis.filter((a) => a.area === v).length, kind: (v) => vis.filter((a) => a.kind === v).length, author: (v) => vis.filter((a) => a.author === v).length,
+        status: (v) => vis.filter((a) => a.status === v).length, sprint: (v) => vis.filter((a) => a.links.sprints.includes(v)).length, ticket: (v) => vis.filter((a) => a.links.tickets.includes(+v)).length };
+      const cat = s.filterCat || "area", ci = Math.max(0, keys.indexOf(cat));
+      const rowBase = "display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:2.8px;font-size:12.5px;font-weight:500;";
+      out.lib.groups = out.lib.filters.map((fl, i) => { const k = keys[i], on = k === cat; return { label: fl.aria, active: f[k] !== "all", select: () => this.setState({ filterCat: k }), st: rowBase + (on ? "color:var(--fg);background:var(--hover)" : "color:var(--fg-55)") }; });
+      out.lib.catLabel = out.lib.filters[ci].aria;
+      out.lib.catOpts = out.lib.filters[ci].options.map((o) => { const on = f[cat] === o.v, isAll = o.v === "all", p = cat === "author" && !isAll ? this.P(o.v) : null;
+        return { key: cat + ":" + o.v, l: o.l, n: isAll ? String(vis.length) : String(cntFor[cat](o.v)), on, hasAvatar: !!p, ini: p ? p.ini : "", avatarSt: "width:18px;height:18px;border-radius:4.4px;display:grid;place-items:center;font-size:8px;font-weight:600;color:#fff;flex:none;background:" + (p ? p.colorCss : "transparent"),
+          st: rowBase + (on ? "color:var(--fg)" : "color:var(--fg-70)"), pick: () => this.setState((st) => ({ f: { ...st.f, [cat]: o.v } })) }; });
+      out.lib.clearSt = "font-size:12px;font-weight:500;padding:2px 0;color:" + (out.lib.anyFilter ? "var(--fg-55)" : "var(--fg-40);opacity:.5");
+      out.lib.active = out.lib.filters.map((fl, i) => ({ fl, k: keys[i] })).filter(({ k }) => f[k] !== "all").map(({ fl, k }) => ({ k: fl.aria, v: (fl.options.find((o) => o.v === f[k]) || {}).l, remove: () => this.setState((st) => ({ f: { ...st.f, [k]: "all" } })) }));
+      out.lib.activeCount = String(out.lib.active.length); out.lib.hasActive = out.lib.active.length > 0;
+      out.lib.shownCount = out.lib.rows.length + (out.lib.rows.length === 1 ? " artifact" : " artifacts");
+      out.lib.filterOpen = !!s.filterOpen;
+      out.lib.toggleFilter = () => { clearTimeout(this.filterT); this.setState({ filterOpen: !s.filterOpen }); };
+      out.lib.filterEnter = () => { clearTimeout(this.filterT); if (!this.state.filterOpen) this.setState({ filterOpen: true }); };
+      out.lib.filterLeave = () => { clearTimeout(this.filterT); this.filterT = setTimeout(() => this.setState({ filterOpen: false }), 200); };
+      out.lib.closeFilter = () => { clearTimeout(this.filterT); this.setState({ filterOpen: false }); };
+      out.lib.filterBtnSt = "display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;border-radius:0 2.8px 2.8px 0;margin-left:-1px;height:100%;padding:0 11px 0 12px;white-space:nowrap;border:1px solid var(--border-strong);" + (s.filterOpen ? "color:var(--fg);background:var(--hover)" : "color:var(--fg-70)");
+      out.lib.hasQ = s.q.length > 0; out.lib.clearQ = () => this.setState({ q: "" });
+    }
+    // ── viewer (also feeds dialogs)
+    this.curArt = null; this.curVer = null;
+    if (eff === "viewer" || eff === "diff") {
+      const L = latestOf(art);
+      const ver = (eff === "viewer" && r.v && art.versions.find((x) => x.v === r.v)) || L;
+      if (eff === "viewer") { this.curArt = art; this.curVer = ver; }
+      const isLatest = ver.v === L.v, author = this.P(art.author);
+      const isPriv = art.visibility === "private";
+      const canRatify = art.status === "published" && isLatest;
+      let hint = "";
+      if (art.status === "draft") hint = "Publish before ratifying";
+      else if (art.status === "ratified" && art.ratified) hint = `Ratified v${art.ratified.v} by ${this.P(art.ratified.by).first} · ${art.ratified.when}`;
+      else if (!isLatest) hint = "Only the latest version can be ratified";
+      const openV = (v) => () => this.go(v === L.v ? "/a/" + art.slug : `/a/${art.slug}/v${v}`);
+      const many = art.versions.length > 1;
+      const cmpBase = isLatest ? art.versions[art.versions.length - 2] : ver;
+      out.vw = {
+        slug: art.slug, title: art.title, area: art.area, repo: art.repo, v: ver.v, latestV: L.v, when: ver.when, author, isLatest,
+        kindLabel: art.kind.toUpperCase(), statusLabel: STATUS[art.status][0], statusSt: STATUS[art.status][1],
+        visLabel: isPriv ? "PRIVATE" : "ORG", visSt: isPriv ? tint("var(--amber)") : NEUTRAL,
+        showPrivateBanner: isPriv && art.author === me, showOldBanner: !isLatest,
+        isFramed: art.kind === "html" || art.kind === "svg", isHtml: art.kind === "html", isSvg: art.kind === "svg", isMd: art.kind === "markdown", isMermaid: art.kind === "mermaid",
+        src: ver.src, ...(() => {
+          const key = art.slug + "@" + ver.v, boxW = s.frameBoxW, vW = Math.max(1280, boxW), sc = boxW / vW;
+          const docH = s.frameDoc && s.frameDoc.key === key ? s.frameDoc.h : 800;
+          const measure = (ifr) => {
+            if (!ifr) return;
+            const tryIt = (n) => { try { const d = ifr.contentDocument;
+              if (d && d.readyState === "complete" && d.body && d.body.childNodes.length) { const hh = Math.max(d.documentElement.scrollHeight, d.body.scrollHeight); if (hh && !(this.state.frameDoc && this.state.frameDoc.key === key && this.state.frameDoc.h === Math.max(480, hh))) this.setState({ frameDoc: { key, h: Math.max(480, hh) } }); return; }
+            } catch (err) { return; } if (n > 0) setTimeout(() => tryIt(n - 1), 120); };
+            tryIt(25);
+          };
+          return { frameBoxSt: `position:relative;overflow:hidden;background:#fff;height:${Math.round(docH * sc)}px`, frameSt: `position:absolute;top:0;left:0;border:0;background:#fff;transform-origin:0 0;width:${vW}px;height:${docH}px;transform:scale(${sc.toFixed(4)})`,
+            frameRef: (el) => { if (!el) return; if (!el._artLoad) { el._artLoad = true; el.addEventListener("load", () => el._measure && el._measure()); } el._measure = () => measure(el); if (this._measuredKey !== key) { this._measuredKey = key; measure(el); } },
+            frameLoad: (e) => measure(e.target) };
+        })(),
+        openTab: () => { this.setState({ dotMenu: false });
+          let body = ver.src, type = "text/html";
+          if (art.kind === "svg") type = "image/svg+xml";
+          else if (art.kind !== "html") body = `<!doctype html><meta charset="utf-8"><title>${art.title}</title><body style="margin:0 auto;max-width:760px;padding:48px 24px;font:15px/1.7 system-ui,sans-serif;color:#1a1814;background:#faf8f3">${this.contentEl ? this.contentEl.innerHTML : ""}</body>`;
+          const u = URL.createObjectURL(new Blob([body], { type })); window.open(u, "_blank", "noopener"); setTimeout(() => URL.revokeObjectURL(u), 60000);
+        },
+        publish: () => { this.updArt(art.slug, (a) => ({ ...a, visibility: "org", status: a.status === "draft" ? "published" : a.status })); this.flash("Published to the org"); },
+        toggleVerMenu: () => { clearTimeout(this.verT); this.setState({ verMenu: !s.verMenu, dotMenu: false }); },
+        verEnter: () => { clearTimeout(this.verT); if (!this.state.verMenu) this.setState({ verMenu: true, dotMenu: false }); },
+        verLeave: () => { clearTimeout(this.verT); this.verT = setTimeout(() => this.setState({ verMenu: false }), 200); },
+        toggleDotMenu: () => this.setState({ dotMenu: !s.dotMenu }),
+        menuVersions: [...art.versions].reverse().map((x) => ({ v: x.v, summary: x.summary, handle: x.by, when: x.when, open: openV(x.v), checkSt: "flex:none;" + (x.v === ver.v ? "color:var(--accent)" : "visibility:hidden") })),
+        compareLabel: many ? (isLatest ? `Compare v${cmpBase.v} → v${L.v}` : `Compare v${ver.v} → v${L.v}`) : "Only one version",
+        compareRowSt: `display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:2.8px;font-size:12.5px;font-weight:500;color:${many ? "var(--fg-70)" : "var(--fg-40)"};cursor:${many ? "pointer" : "default"}`,
+        compareFromMenu: () => { if (many) this.go(`/a/${art.slug}/diff/${cmpBase.v}..${L.v}`); },
+        compareWithLatest: () => this.go(`/a/${art.slug}/diff/${ver.v}..${L.v}`),
+        openLatest: openV(L.v),
+        copyLink: () => { this.setState({ dotMenu: false }); const u = `https://canopy.saplinglearn.com/a/${art.slug}`; try { navigator.clipboard.writeText(u); } catch (e) {} this.flash(isPriv ? "Link copied. Teammates can't open it until you publish." : "Link copied"); },
+        download: () => { this.setState({ dotMenu: false }); const b = new Blob([ver.src], { type: "text/plain" }); const u = URL.createObjectURL(b); const el = document.createElement("a"); el.href = u; el.download = `${art.slug}-v${ver.v}.${EXT[art.kind]}`; document.body.appendChild(el); el.click(); el.remove(); setTimeout(() => URL.revokeObjectURL(u), 1000); },
+        ratifyHint: hint, hasRatifyHint: !!hint, ...(() => {
+          const gated = !isPriv && art.author !== me;
+          return { isPrivNow: isPriv, isOrgNow: !isPriv, visWord: isPriv ? "Private" : "Visible to org", visChecked: isPriv ? "true" : "false",
+            visTitle: gated ? "Only the author can make this private" : isPriv ? "Publish to the org" : "Make private",
+            visCls: gated ? "" : "cnpy-ghostbtn",
+            visBtnSt: `display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 11px;border-radius:15px;font-size:12.5px;font-weight:500;white-space:nowrap;border:1px solid ${isPriv ? "color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,transparent)" : "var(--border);color:var(--fg-70)"};${gated ? "opacity:.6;cursor:not-allowed" : ""}`,
+            visTrackSt: `position:relative;width:30px;height:18px;border-radius:9px;flex:none;transition:background .18s ease;background:${isPriv ? "var(--amber)" : "var(--border-strong)"}`,
+            visKnobSt: `position:absolute;top:2px;left:${isPriv ? 14 : 2}px;width:14px;height:14px;border-radius:7px;background:var(--bg);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .18s cubic-bezier(.4,0,.2,1)`,
+            toggleVis: () => { if (gated) return; const next = isPriv ? "org" : "private"; this.updArt(art.slug, (a) => ({ ...a, visibility: next })); this.flash(next === "org" ? "Published to the org" : "Now private to you"); } };
+        })(), titleAvSt: `width:28px;height:28px;border-radius:5.6px;display:grid;place-items:center;font-size:10.5px;font-weight:600;color:#fff;flex:none;background:var(--p-${author.color})`, visText: isPriv ? "Private to " + author.email : "Everyone in the SaplingLearn org", repoHref: "https://github.com/" + art.repo,
+        authorAvSt: `width:40px;height:40px;border-radius:6px;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;background:var(--p-${author.color})`, ratifyTitle: canRatify ? `Ratify v${ver.v}` : hint,
+        ratifyLabel: art.status === "ratified" ? "Ratified" : `Ratify v${ver.v}`,
+        ratifyCls: canRatify ? "cnpy-accentbtn" : "", ratifySt: primarySt(canRatify),
+        ratifyClick: () => { if (canRatify) this.setState({ ratifyOpen: true }); },
+        statusOpts: ["draft", "published", "ratified"].map((k) => {
+          const on = art.status === k, gated = k === "ratified" && !on && !canRatify;
+          const st = `display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:2.2px;font-size:12px;font-weight:500;white-space:nowrap;transition:all .12s ease;${on ? (k === "ratified" ? "color:var(--accent);background:var(--accent-soft)" : "color:var(--fg);background:var(--hover)") : gated ? "color:var(--fg-40);opacity:.55;cursor:not-allowed" : "color:var(--fg-55)"}`;
+          return { label: k[0].toUpperCase() + k.slice(1), isRat: k === "ratified", pressed: on ? "true" : "false", cls: on || gated ? "" : "cnpy-segbtn", st,
+            title: gated ? hint || "Publish before ratifying" : k === "ratified" && !on ? `Ratify v${ver.v}` : "",
+            pick: () => { if (on || gated) return; if (k === "ratified") { this.setState({ ratifyOpen: true }); return; }
+              this.updArt(art.slug, (a) => ({ ...a, status: k, ratified: null })); this.flash(k === "draft" ? "Moved back to draft" : "Published"); } };
+        }),
+        visOpts: [["org", "Org"], ["private", "Private"]].map(([k, l]) => {
+          const on = art.visibility === k, gated = k === "private" && art.author !== me;
+          const st = `display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:2.2px;font-size:12px;font-weight:500;white-space:nowrap;transition:all .12s ease;${on ? (k === "private" ? "color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent)" : "color:var(--fg);background:var(--hover)") : gated ? "color:var(--fg-40);opacity:.55;cursor:not-allowed" : "color:var(--fg-55)"}`;
+          return { label: l, pressed: on ? "true" : "false", cls: on || gated ? "" : "cnpy-segbtn", st, title: gated ? "Only the author can make this private" : "",
+            pick: () => { if (on || gated) return; this.updArt(art.slug, (a) => ({ ...a, visibility: k })); this.flash(k === "org" ? "Published to the org" : "Now private to you"); } };
+        }),
+        props: [
+          { k: "KIND", v: art.kind.toUpperCase(), st: NEUTRAL }, { k: "AREA", v: art.area, st: CHIP + "color:var(--fg-40);border:1px solid var(--border)" },
+          { k: "REPO", v: art.repo, st: MONO_VAL },
+          { k: "AUTHOR", v: author.email, st: MONO_VAL, hasAv: true, ini: author.ini, avSt: `width:20px;height:20px;border-radius:4.8px;display:grid;place-items:center;font-size:9px;font-weight:600;color:#fff;flex:none;background:var(--p-${author.color})` },
+        ],
+        tickets: art.links.tickets.map((id) => { const t = D.TICKETS.find((x) => x.id === id) || { title: "Ticket", status: "submitted" }; return { id, title: t.title, statusLabel: TSTATUS[t.status][0], open: () => this.go("/t/" + id) }; }),
+        sprints: art.links.sprints.map((l) => { const sp = D.SPRINTS.find((x) => x.label === l); return { label: l, meta: sp ? sp.dates + (sp.active ? " · ACTIVE" : "") : "" }; }),
+        gh: [...art.links.prs.map((n) => ({ kind: "PR", label: "#" + n, meta: "PULL REQUEST · CANOPY", href: `${REPO_URL}/pull/${n}` })), ...art.links.issues.map((n) => ({ kind: "issue", label: "#" + n, meta: "ISSUE · CANOPY", href: `${REPO_URL}/issues/${n}` }))],
+        history: [...art.versions].reverse().map((x, i, arr) => {
+          const p = this.P(x.by), cur = x.v === ver.v;
+          return { v: x.v, summary: x.summary, handle: x.by, color: p.color, colorCss: `var(--p-${p.color})`, ini: p.ini, when: x.when, isLatest: x.v === L.v, open: openV(x.v),
+            canCompare: x.v > 1, prev: x.v - 1, compare: () => this.go(`/a/${art.slug}/diff/${x.v - 1}..${x.v}`),
+            showCompare: x.v > 1, avSt: `width:16px;height:16px;border-radius:4px;display:grid;place-items:center;font-size:8px;font-weight:600;color:#fff;flex:none;background:var(--p-${p.color})`,
+            rowSt: `display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 10px;margin:0 -10px;border-top:1px solid var(--border);border-radius:2.8px;${cur ? "background:var(--hover)" : ""}` };
+        }),
+      };
+      out.vw.hasGh = out.vw.gh.length > 0;
+      out.vw.noLinks = !out.vw.tickets.length && !out.vw.sprints.length && !out.vw.hasGh;
+      out.confirmRatify = () => { this.updArt(art.slug, (a) => ({ ...a, status: "ratified", ratified: { v: ver.v, by: me, when: "just now" } })); this.setState({ ratifyOpen: false }); this.flash(`Ratified v${ver.v}`); };
+
+      const q = s.attachQ.trim().toLowerCase().replace(/^#/, "");
+      const rows = D.TICKETS.filter((t) => !q || String(t.id) === q || t.title.toLowerCase().includes(q)).map((t) => {
+        const attached = art.links.tickets.includes(t.id), on = s.attachPick === t.id;
+        return { id: t.id, title: t.title, attached, pillLabel: TSTATUS[t.status][0], pillSt: TSTATUS[t.status][1],
+          pick: () => { if (!attached) this.setState({ attachPick: t.id }); },
+          st: `display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:2.8px;font-size:13px;font-weight:500;text-align:left;width:100%;transition:all .12s ease;border:1px solid ${on ? "var(--accent)" : "var(--border)"};color:${on ? "var(--accent)" : attached ? "var(--fg-40)" : "var(--fg-70)"};background:${on ? "var(--accent-soft)" : "transparent"};cursor:${attached ? "default" : "pointer"}` };
+      });
+      const pick = s.attachPick;
+      out.at = { q: s.attachQ, setQ: (e) => this.setState({ attachQ: e.target.value }), rows, empty: rows.length === 0,
+        label: pick ? `Attach to #${pick}` : "Attach", cls: pick ? "cnpy-accentbtn" : "", st: primarySt(!!pick),
+        confirm: () => { if (!pick) return; this.updArt(art.slug, (a) => ({ ...a, links: { ...a.links, tickets: [...a.links.tickets, pick] } })); this.setState({ attachOpen: false, attachPick: null }); this.flash(`Attached to ticket #${pick}`); } };
+
+      if (eff === "diff") {
+        const va = art.versions.find((x) => x.v === r.a) || art.versions[0], vb = art.versions.find((x) => x.v === r.b) || L;
+        const rows = va.v === vb.v ? [] : collapsedLineDiff(va.src, vb.src);
+        const base = "font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;white-space:pre-wrap;word-break:break-word;color:var(--fg-55)";
+        const st = (t) => t === "del" ? base + ";background:color-mix(in srgb,var(--red) 7%,transparent)"
+          : t === "add" ? base + ";background:color-mix(in srgb,var(--green) 7%,transparent);color:var(--fg-70)"
+          : t === "ellipsis" ? base + ";color:var(--fg-40);background:var(--hover);font-size:11.5px" : base;
+        const side = (x, tag, tagSt) => { const p = this.P(x.by); return { v: x.v, tag, tagSt, summary: x.summary, handle: x.by, color: p.color, colorCss: `var(--p-${p.color})`, ini: p.ini, when: x.when }; };
+        out.df = {
+          title: art.title, kindLabel: art.kind.toUpperCase(), a: String(va.v), b: String(vb.v),
+          options: art.versions.map((x) => ({ v: String(x.v), l: `v${x.v} · ${x.when}` })),
+          setA: (e) => this.go(`/a/${art.slug}/diff/${e.target.value}..${vb.v}`), setB: (e) => this.go(`/a/${art.slug}/diff/${va.v}..${e.target.value}`),
+          adds: rows.filter((x) => x.t === "add").length, dels: rows.filter((x) => x.t === "del").length,
+          rows: rows.map((x) => ({ txt: x.t === "ellipsis" ? "⋯ " + x.text : x.text || " ", st: st(x.t), pre: x.t === "del" ? "−" : x.t === "add" ? "+" : "", preSt: "color:" + (x.t === "del" ? "var(--red)" : x.t === "add" ? "var(--green)" : "var(--fg-40)") })),
+          hasRows: rows.length > 0, same: va.v === vb.v,
+          sides: [side(va, "BASE", CHIP + "color:var(--red);border:1px solid color-mix(in srgb,var(--red) 35%,transparent)"), side(vb, "COMPARED", CHIP + "color:var(--green);border:1px solid color-mix(in srgb,var(--green) 40%,transparent)")],
+          openB: openV(vb.v),
+        };
+      }
+    }
+
+    // ── create
+    if (eff === "new") {
+      const c = s.c, bytes = this.bytesOf(c), text = this.contentOf(c), over = bytes > CAP;
+      const hits = CLAUDE_MARKERS.filter((m) => text.includes(m));
+      const canSubmit = c.title.trim() && bytes > 0 && !over;
+      out.cr = {
+        title: c.title, setTitle: (e) => this.setC({ title: e.target.value }), slug: slugify(c.title) || "…",
+        kinds: D.KINDS.map((k) => ({ label: k, pick: () => this.setC({ kind: k }), cls: "cnpy-segbtn" + (c.kind === k ? " is-on" : ""), st: segSt(c.kind === k) })),
+        areas: D.AREAS.map((k) => ({ label: k, pick: () => this.setC({ area: k }), cls: "cnpy-pickchip" + (c.area === k ? " is-on" : ""), st: chipSt(c.area === k) })),
+        repo: c.repo, repos: D.REPOS, setRepo: (e) => this.setC({ repo: e.target.value }),
+        visOpts: [["org", "Org"], ["private", "Private"]].map(([k, l]) => ({ label: l, pick: () => this.setC({ vis: k }), cls: "cnpy-segbtn" + (c.vis === k ? " is-on" : ""), st: segSt(c.vis === k) })),
+        visHelp: c.vis === "org" ? "Everyone in SaplingLearn can open it once it's uploaded." : "Only you can open it. Teammates who follow the link see a not-found page until you publish.",
+        linkDraft: c.linkDraft, linkErr: c.linkErr, setLinkDraft: (e) => this.setC({ linkDraft: e.target.value, linkErr: false }),
+        addLink: () => { const l = this.parseLink(c.linkDraft); if (!l) { if (c.linkDraft.trim()) this.setC({ linkErr: true }); return; } this.setC({ links: [...c.links, l], linkDraft: "" }); },
+        linkKey: (e) => { if (e.key === "Enter") { e.preventDefault(); out.cr.addLink(); } },
+        links: c.links.map((l, i) => ({ kind: l.kind, label: l.label, remove: () => this.setC({ links: c.links.filter((_, j) => j !== i) }) })),
+        hasLinks: c.links.length > 0,
+        tabs: [["paste", "Paste"], ["file", "Upload file"], ["url", "From URL"]].map(([k, l]) => ({ label: l, pick: () => this.setC({ tab: k }), st: `display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:2.8px;font-size:12.5px;font-weight:500;color:${c.tab === k ? "var(--fg)" : "var(--fg-55)"};background:${c.tab === k ? "var(--hover)" : "transparent"}` })),
+        tabPaste: c.tab === "paste", tabFile: c.tab === "file", tabUrl: c.tab === "url",
+        paste: c.paste, setPaste: (e) => this.setC({ paste: e.target.value }),
+        noFile: !c.file, hasFile: !!c.file, fileName: c.file ? c.file.name : "", sizeText: c.file ? fmtKB(c.file.size) + (c.file.size > CAP ? " · over the cap" : "") : "",
+        pickFile: (e) => this.readFile(e.target.files && e.target.files[0]),
+        dragOver: (e) => e.preventDefault(), drop: (e) => { e.preventDefault(); this.readFile(e.dataTransfer.files[0]); },
+        removeFile: () => this.setC({ file: null }),
+        previewText: text.length > 6000 ? text.slice(0, 6000) + "\n…" : text,
+        url: c.url, setUrl: (e) => this.setC({ url: e.target.value, urlFetched: null }), urlFetched: !!c.urlFetched,
+        fetchLabel: c.fetching ? "Fetching…" : "Fetch",
+        fetchUrl: () => { if (!c.url.trim()) return; this.setC({ fetching: true }); setTimeout(() => this.setC({ fetching: false, urlFetched: { text: latestOf(s.arts[0]).src } }), 700); },
+        counter: `${fmtKB(bytes)} / 500 KB`, sizeKB: fmtKB(bytes), over,
+        barPct: Math.min(100, (bytes / CAP) * 100).toFixed(1) + "%", barColor: over ? "var(--red)" : "var(--accent)", counterColor: over ? "var(--red)" : "var(--fg-40)",
+        hasClaude: hits.length > 0, claudeHits: hits,
+        statusNote: c.vis === "private" ? "private draft." : "draft, visible to the org.",
+        submitCls: canSubmit ? "cnpy-accentbtn" : "", submitSt: primarySt(canSubmit),
+        submit: () => {
+          if (!canSubmit) return;
+          let slug = slugify(c.title); if (s.arts.some((a) => a.slug === slug)) slug += "-" + (s.arts.length + 1);
+          const links = { tickets: c.links.filter((l) => l.kind === "ticket").map((l) => l.id), sprints: c.links.filter((l) => l.kind === "sprint").map((l) => l.label), prs: c.links.filter((l) => l.kind === "PR").map((l) => l.n), issues: c.links.filter((l) => l.kind === "issue").map((l) => l.n) };
+          const a = { slug, title: c.title.trim(), kind: c.kind, area: c.area, repo: c.repo, author: me, status: "draft", visibility: c.vis, links, ratified: null, versions: [{ v: 1, by: me, when: "just now", summary: "Uploaded from Canopy", src: text }] };
+          this.setState({ arts: [a, ...s.arts], c: { ...s.c, title: "", paste: "", file: null, url: "", urlFetched: null, links: [], linkDraft: "" } }, () => { this.go("/a/" + slug); this.flash("Uploaded v1"); });
+        },
+      };
+    }
+
+    // ── ticket detail
+    if (eff === "ticket") {
+      const t = D.TICKETS.find((x) => x.id === r.id) || D.TICKETS[0];
+      const sp = D.SPRINTS.find((x) => x.label === t.sprint);
+      const arts = s.arts.filter((a) => this.canSee(a) && a.links.tickets.includes(t.id)).map((a) => {
+        const L = latestOf(a);
+        return { title: a.title, iconD: ICON[a.kind], meta: `${a.kind.toUpperCase()} · V${L.v} · @${a.author.toUpperCase()}`, statusLabel: STATUS[a.status][0], statusSt: STATUS[a.status][1], open: () => this.go("/a/" + a.slug) };
+      });
+      const links = TICKET_LINKS[t.id] || [];
+      out.tk = {
+        title: t.title, req: this.P(t.requester), opened: t.opened, pillLabel: TSTATUS[t.status][0], pillSt: TSTATUS[t.status][1],
+        category: t.category, priority: t.priority.toUpperCase(), prioSt: PRIO[t.priority] || PRIO.normal,
+        body: TICKET_BODY[t.id] || [t.title + "."], links, hasLinks: links.length > 0, noLinks: links.length === 0,
+        arts, hasArts: arts.length > 0, noArts: arts.length === 0, artCount: String(arts.length),
+        assignees: t.assignees.map((h) => this.P(h)), unassigned: t.assignees.length === 0,
+        sprint: t.sprint || "Backlog", sprintMeta: sp ? sp.dates + (sp.active ? " · ACTIVE" : "") : "NO SPRINT",
+      };
+    }
+    return out;
+  }
+}
+</script>
+</body>
+</html>
+

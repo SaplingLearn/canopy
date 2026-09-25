@@ -4,7 +4,11 @@
 // still render their Phase-1 mock until their task lands.
 
 import "./canopy.css";
-import { render, initialState, firstDocForSpace, docReaderHtml, type AppState, type Screen } from "./render";
+import { openLightbox, closeLightbox } from "./lightbox";
+import {
+  render, initialState, firstDocForSpace, docReaderHtml, connectSnippet, CONNECT_CLIENTS, browserConnectCommand,
+  type AppState, type Screen, type ConnectClient,
+} from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
   completeSprint, deleteSprint,
@@ -14,16 +18,26 @@ import {
   getOnboardPrefill, checkHandle, submitOnboard,
   getNotificationPrefs, putNotificationPrefs, getNotificationPolicy, putNotificationPolicy,
   getNotificationSettings, putNotificationSettings, listNotificationOutbox, testSendNotification, type PrefsWrite,
-  listMcpTokens, revokeMcpToken,
+  listMcpTokens, revokeMcpToken, listOAuthGrants, revokeOAuthGrant,
   listPersons, listInvites, createInvite, revokeInvite, resendInvite, updateMe, unlinkIdentity, renameHandle,
   listTickets, getTicket, getTicketBadge, createTicket, transitionTicket, toggleTicketAssignee,
-  addTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
+  addTicketLink, editTicket, removeTicketLink, setTicketSprint, setTicketParent, addTicketComment, listSprints,
   getSprint, createSprint, setSprintActive, addSprintResource,
   type TicketDetail,
+  listArtifacts, getArtifact, getArtifactDiff, createArtifact, patchArtifact, ratifyArtifact, addArtifactLink, fetchArtifactUrl,
+  listHandoffs, getHandoff, listPrompts, getPrompt, getPromptVersions,
+  createHandoff, claimHandoff, expireHandoff, savePrompt, setPromptTags, publishPrompt, proposeDoc,
   Unauthorized, NotFound, ApiError,
 } from "./api";
+import { handoffAsPrompt, blankHandoff, docDraftFromHandoff, type NewHandoffDraft } from "./handoffs";
+import { normalizeTags, type HandoffView } from "@shared/handoffs";
+import { selectedUnplacedId } from "./maintenance";
+import { ASSIGN_OPTIONS } from "./triage-map";
+import { draftFromPrompt, blankPromptDraft, slugify, tagOptions } from "./prompts";
+import { blankDoc, defaultSection } from "./newdoc";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS, type SprintUrgency, type SprintDomain } from "@shared/sprints-core";
-import { parseHash, hashForRoute, type Route } from "./hash";
+import type { SprintDetail } from "@shared/sprints";
+import { parseHash, hashForRoute, sameRoute, type Route } from "./hash";
 import { mountLandingMotion, unmountLandingMotion } from "./landing-motion";
 import {
   TICKET_CATEGORIES, TICKET_PRIORITIES, TICKET_STATUS_LABEL, TICKET_STATUSES,
@@ -38,6 +52,11 @@ import { paint } from "./morph";
 import { NAV_GROUPS, navGroupOf, type NavGroup } from "./sidebar";
 import { formatCount, repoPollFor, repoUpdatedLabel } from "./repo";
 import { isRepoTab, REPO_RANGES, type RepoRange } from "@shared/repo";
+import {
+  artifactsAct, artAcceptFile, renderPendingMermaid, setArtFrameHeight, detailKey, diffKey, initialArtCreate, ART_ROUTE_NONE, ART_FILTER_KEYS,
+  type ArtScreen, type ArtEffect, type ArtWrite, type ArtRoute, type ArtFilterKey,
+} from "./artifacts";
+import { kindForFilename, isBinaryKind } from "@shared/artifacts-core";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("Canopy: #app mount point missing");
@@ -49,6 +68,8 @@ const state: AppState = initialState();
 try {
   const t = localStorage.getItem("canopy.theme");
   if (t === "dark" || t === "light" || t === "midnight" || t === "system") state.theme = t;
+  const pv = localStorage.getItem("canopy.promptView");
+  if (pv === "raw" || pv === "rendered") state.promptView = pv;
   const c = localStorage.getItem("canopy.collapsed");
   if (c) state.collapsed = c === "1";
   const open = JSON.parse(localStorage.getItem("canopy.navOpen") ?? "{}") as Record<string, unknown>;
@@ -96,6 +117,21 @@ function screenSettled(): boolean {
     case "ticketdetail": return ok(state.ticketDetail);
     case "sprint": return ok(state.sprintDetail);
     case "repo": return state.repo.data !== null || state.repo.status === "error";
+    // A background refresh (after a write) keeps its data, so it never replays the entrance.
+    case "artifacts": return state.art.list.data !== null || ok(state.art.list);
+    case "artifactnew": return true;
+    case "artifact": {
+      const r = state.artRoute;
+      const d = r.slug ? state.art.details[detailKey(r.slug, r.diff ? null : r.v)] : undefined;
+      return !!d && (d.data !== null || d.status === "ok" || d.status === "error" || d.status === "missing");
+    }
+    // These four refetch on every visit and paint what they already hold meanwhile,
+    // so "landed" means "has something to show" (like the Repo dashboard) — else the
+    // cached paint plays the entrance and the refresh landing plays it a second time.
+    case "handoffs": return ok(state.handoffs) || state.handoffs.data.length > 0;
+    case "handoff": return ok(state.handoffDetail) || state.handoffDetail.data !== null;
+    case "prompts": return ok(state.promptList) || state.promptList.data.length > 0;
+    case "prompt": return ok(state.promptDetail) || state.promptDetail.data !== null;
     default: return true; // search re-queries per keystroke; the rest load nothing
   }
 }
@@ -103,8 +139,18 @@ function screenSettled(): boolean {
 function markEnter(): void {
   const root = mount.firstElementChild as HTMLElement | null;
   if (!root || state.view !== "app") return;
-  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${screenSettled() ? 1 : 0}`;
+  const settled = screenSettled();
+  const key = `${hashForRoute(currentRoute())}|${state.repoSample ? "s" : ""}|${settled ? 1 : 0}`;
   const now = performance.now();
+  // A still-loading paint does not enter: the entrance plays ONCE, when the screen's
+  // read lands. Playing it for the loading paint too made every first visit (and every
+  // visit to an empty list) enter twice — the "double click" flash.
+  if (!settled) {
+    enterKey = key;
+    enterAt = now - ENTER_MS;
+    root.removeAttribute("data-enter");
+    return;
+  }
   if (key !== enterKey) { enterKey = key; enterAt = now; }
   const elapsed = now - enterAt;
   if (elapsed >= ENTER_MS) return;
@@ -156,6 +202,8 @@ function rerender(): void {
   // then dropped on arrival (runRepoPoll checks it is still the one polling).
   // Switching between the Repo TABS keeps it — the strip renders on all five.
   state.repoPoll = repoPollFor(state.repoPoll, state.view === "app" && state.screen === "repo");
+  // A queue filter dropdown left open never survives leaving the queue.
+  if (state.screen !== "tickets") state.qMenu = null;
   // Entering a group's pages opens its sub-page list, and leaving folds it again —
   // unless the person opened or closed it by hand, which sticks (and is what persists).
   const group = state.view === "app" ? navGroupOf(state.screen) : null;
@@ -209,6 +257,8 @@ function rerender(): void {
     }
   }
   updateActiveHeading();
+  updateGuideToc();
+  renderPendingMermaid(mount);
   // Reflect the current route in the URL hash so a reload restores it. The ticket
   // and sprint screens carry an id, so this is hashForRoute, not `#${screen}`.
   if (state.view === "app") {
@@ -219,10 +269,11 @@ function rerender(): void {
 
 // Back/forward or a manually edited hash → switch screens.
 window.addEventListener("hashchange", () => {
+  closeLightbox(); // Back/Forward under an open figure: it belongs to the old route
   if (state.view !== "app") return;
   const r = parseHash(location.hash);
   const cur = currentRoute();
-  if (r.screen === cur.screen && r.ticketId === cur.ticketId && r.sprintId === cur.sprintId && r.repoTab === cur.repoTab) return;
+  if (sameRoute(r, cur)) return;
   applyRoute(r);
   loadForScreen(r.screen);
 });
@@ -264,13 +315,36 @@ function updateActiveHeading(): void {
   }
 }
 
+// Get Started's table of contents: the same spy over the guide's headings. The
+// current row is the last anchor at or above the top of #cnpy-main; a sub-row also
+// lights its section. Direct DOM, like the docs spy.
+function updateGuideToc(): void {
+  if (state.screen !== "guide") return;
+  const pane = document.getElementById("cnpy-main");
+  const heads = [...mount.querySelectorAll<HTMLElement>(".cnpy-guide-anchor[id]")];
+  if (!pane || !heads.length) return;
+  const top = pane.getBoundingClientRect().top;
+  let active = heads[0].id;
+  for (const h of heads) {
+    if (h.getBoundingClientRect().top - top <= 96) active = h.id;
+    else break;
+  }
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 4) active = heads[heads.length - 1].id;
+  const items = [...mount.querySelectorAll<HTMLElement>(".cnpy-guide-toc [data-arg]")];
+  const hit = items.find((b) => b.getAttribute("data-arg") === active);
+  // A sub-row's section is the nearest section row above it.
+  let section: HTMLElement | undefined;
+  if (hit) for (const b of items) { if (b.classList.contains("cnpy-guide-toc-sec")) section = b; if (b === hit) break; }
+  for (const b of items) b.classList.toggle("is-current", b === hit || b === section);
+}
+
 // One capture-phase listener survives every rerender (scroll doesn't bubble, so
 // capture catches the reader pane); rAF-throttled.
 let spyScheduled = false;
 mount.addEventListener("scroll", () => {
   if (spyScheduled) return;
   spyScheduled = true;
-  requestAnimationFrame(() => { spyScheduled = false; updateActiveHeading(); });
+  requestAnimationFrame(() => { spyScheduled = false; updateActiveHeading(); updateGuideToc(); });
 }, true);
 
 function resolvedTheme(): "dark" | "light" | "midnight" {
@@ -290,6 +364,14 @@ function persistNavOpen(): void {
 function currentRoute(): Route {
   const r: Route = { screen: state.screen, ticketId: state.ticketId, sprintId: state.sprintId };
   if (state.screen === "repo") r.repoTab = state.repoTab;
+  if (state.screen === "artifact") r.art = state.artRoute;
+  if (state.screen === "handoff" && state.handoffId) r.handoffId = state.handoffId;
+  if (state.screen === "prompt" && state.promptSlug) r.promptSlug = state.promptSlug;
+  if (state.screen === "promptedit") {
+    r.promptMode = state.promptMode;
+    if (state.promptMode !== "new" && state.promptSlug) r.promptSlug = state.promptSlug;
+  }
+  if (state.screen === "maintenance") r.maintTab = state.maintTab;
   return r;
 }
 function applyRoute(r: Route): void {
@@ -297,6 +379,13 @@ function applyRoute(r: Route): void {
   state.ticketId = r.ticketId;
   state.sprintId = r.sprintId;
   if (r.repoTab) state.repoTab = r.repoTab;
+  state.artRoute = r.art ?? ART_ROUTE_NONE;
+  // A route change closes the artifact viewer's menus and dialogs (the design's onHash).
+  state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false;
+  if (r.handoffId) state.handoffId = r.handoffId;
+  if (r.promptSlug) state.promptSlug = r.promptSlug;
+  if (r.promptMode) state.promptMode = r.promptMode;
+  if (r.maintTab) state.maintTab = r.maintTab;
 }
 
 // Kick off the data load for a screen (mirrors the go* dispatch cases).
@@ -306,10 +395,18 @@ function loadForScreen(screen: Screen): void {
     case "docs": loadDocsIfNeeded(); break;
     case "roadmap": loadRoadmapIfNeeded(); loadFeedIfNeeded(); break;
     case "review": loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); break;
-    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); break;
+    case "maintenance": loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvitesIfAdmin(); break;
+    case "handoffs": loadHandoffs(); break;
+    case "handoff": if (state.handoffId) openHandoff(state.handoffId); else rerender(); break;
+    case "newhandoff": state.nh = blankHandoff(); loadPersons(); break;
+    case "prompts": loadPrompts(); break;
+    case "prompt": if (state.promptSlug) openPrompt(state.promptSlug); else rerender(); break;
+    case "promptedit": openEditor(state.promptMode, state.promptSlug); break;
+    case "newdoc": startNewDoc(); break;
     case "search": loadSearchIfNeeded(); break;
     case "mywork": loadMyWorkIfNeeded(); break;
     case "repo": loadRepoIfNeeded(); break;
+    case "artifacts": case "artifactnew": case "artifact": loadArtifactsIfNeeded(); break;
     case "settings": loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); break;
     case "unsubscribe": runUnsubscribe(); break;
     // The queue's sprint group headers and the form/rail menus all read `sprints`.
@@ -328,6 +425,108 @@ function loadForScreen(screen: Screen): void {
       break;
     default: rerender(); break; // guide — no data load
   }
+}
+
+// ── Handoffs + Prompt Library loaders (reads only; their writes are not built) ──
+function loadHandoffs(): void {
+  state.handoffs = { status: "loading", data: state.handoffs.data };
+  rerender();
+  listHandoffs("mine")
+    .then((data) => { state.handoffs = { status: "ok", data }; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } state.handoffs = { status: "error", data: state.handoffs.data, error: String(e) }; rerender(); });
+}
+function openHandoff(id: number): void {
+  state.handoffId = id;
+  state.handoffExpireArm = false;
+  state.handoffPromptOpen = false;
+  // Keep the row the inbox already holds on screen while the fresh read lands.
+  const known = state.handoffs.data.find((h) => h.id === id) ?? null;
+  state.handoffDetail = { status: "loading", data: known };
+  rerender();
+  getHandoff(id)
+    .then((h) => { if (state.handoffId !== id) return; state.handoffDetail = { status: "ok", data: h }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (state.handoffId !== id) return;
+      const missing = e instanceof ApiError && e.status === 404;
+      state.handoffDetail = { status: missing ? "ok" : "error", data: null, error: String(e) };
+      rerender();
+    });
+}
+function loadPrompts(): void {
+  state.promptList = { status: "loading", data: state.promptList.data };
+  rerender();
+  listPrompts()
+    .then((data) => { state.promptList = { status: "ok", data }; rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } state.promptList = { status: "error", data: state.promptList.data, error: String(e) }; rerender(); });
+}
+function openPrompt(slug: string): void {
+  state.promptSlug = slug;
+  state.promptDiffV = null; state.promptTagMenu = false; state.promptTagDraft = ""; state.promptExpanded = false;
+  const same = state.promptDetail.data?.prompt.slug === slug;
+  state.promptDetail = { status: "loading", data: same ? state.promptDetail.data : null };
+  rerender();
+  Promise.all([getPrompt(slug), getPromptVersions(slug)])
+    .then(([prompt, versions]) => { if (state.promptSlug !== slug) return; state.promptDetail = { status: "ok", data: { prompt, versions } }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (state.promptSlug !== slug) return;
+      const missing = e instanceof ApiError && e.status === 404;
+      state.promptDetail = { status: missing ? "ok" : "error", data: null, error: String(e) };
+      rerender();
+    });
+}
+/** The editor: blank for a new prompt, else seeded from the prompt it edits (or versions). */
+function openEditor(mode: "new" | "edit" | "version", slug: string | null): void {
+  state.promptMode = mode;
+  if (state.promptList.status === "idle") loadPrompts(); // the slug-taken check reads the library
+  if (mode === "new" || !slug) { state.promptMode = "new"; state.promptEd = blankPromptDraft(); rerender(); return; }
+  state.promptSlug = slug;
+  const have = state.promptDetail.data?.prompt.slug === slug ? state.promptDetail.data.prompt : null;
+  if (have) { state.promptEd = draftFromPrompt(have, mode); rerender(); return; }
+  state.promptEd = null;
+  rerender();
+  getPrompt(slug)
+    .then((p) => { if (state.screen !== "promptedit" || state.promptSlug !== slug) return; state.promptEd = draftFromPrompt(p, mode); rerender(); })
+    .catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't load that prompt"); state.screen = "prompts"; loadPrompts(); });
+}
+function startNewDoc(): void {
+  state.nd = blankDoc(state.docSpace, ""); // the view defaults the section once the space's docs are known
+  if (state.docsList.status === "idle") loadDocs(); else rerender();
+}
+function loadInvitesIfAdmin(): void {
+  if (state.me?.admin) loadInvites();
+}
+/** A write's failure as a toast: the server's `{ error }` (a 409's "handoff is claimed"), else a fallback. */
+function writeErr(e: unknown, fallback: string): void {
+  if (e instanceof Unauthorized) { unauth(e); return; }
+  flash(e instanceof ApiError && e.message && !/^\d+$/.test(e.message) ? e.message : fallback);
+}
+/** A handoff write landed: show it, and refresh the inbox (the sidebar badge reads it). */
+function applyHandoff(h: HandoffView, msg: string): void {
+  state.handoffId = h.id;
+  state.handoffDetail = { status: "ok", data: h };
+  state.handoffExpireArm = false;
+  loadHandoffs();
+  flash(msg);
+}
+/** A prompt write landed: reload the detail + versions and the library (the badge reads it). */
+function afterPromptWrite(slug: string, msg: string): void {
+  loadPrompts();
+  state.screen = "prompt";
+  openPrompt(slug);
+  flash(msg);
+}
+/** Replace a prompt's tag list (the detail rail's add / remove). */
+function writePromptTags(tags: string[]): void {
+  const p = state.promptDetail.data?.prompt;
+  if (!p) return;
+  setPromptTags(p.slug, normalizeTags(tags))
+    .then((np) => {
+      if (state.promptDetail.data?.prompt.slug === np.slug) state.promptDetail = { status: "ok", data: { ...state.promptDetail.data, prompt: np } };
+      loadPrompts();
+    })
+    .catch((e) => writeErr(e, "Couldn't change the tags"));
 }
 
 // ── per-screen data loaders ──────────────────────────────────────────────────
@@ -446,7 +645,7 @@ function loadNotifPrefs(): void {
       rerender();
     });
 }
-// Settings › MCP access tokens. No rerender of its own on entry: every caller follows
+// Settings › MCP access. No rerender of its own on entry: every caller follows
 // with loadNotifPrefsIfNeeded, which does.
 function loadTokens(): void {
   state.tokens = { status: "loading", data: state.tokens.data };
@@ -455,6 +654,14 @@ function loadTokens(): void {
     .catch((e) => {
       if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
       state.tokens = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
+      rerender();
+    });
+  state.grants = { status: "loading", data: state.grants.data };
+  listOAuthGrants()
+    .then((data) => { state.grants = { status: "ok", data }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) return; // the tokens load above already sends the person to sign-in
+      state.grants = { status: "error", data: [], error: e instanceof Error ? e.message : String(e) };
       rerender();
     });
 }
@@ -793,6 +1000,7 @@ function loadTicketDetail(id: number): void {
   // Keep the current ticket on screen while it refreshes; clear it when opening a different one.
   const keep = state.ticketDetail.data?.id === id ? state.ticketDetail.data : null;
   state.ticketDetail = { status: "loading", data: keep };
+  loadTicketArtifacts(id);            // the Artifacts block under Linked work
   rerender();
   getTicket(id)
     .then((t) => { if (seq !== ticketDetailSeq) return; state.ticketDetail = { status: "ok", data: t }; rerender(); })
@@ -934,6 +1142,244 @@ function loadInvites(): void {
 function refreshMe(): void {
   getMe().then((me) => { state.me = me; state.displayName = me.name ?? me.handle; rerender(); }).catch(() => undefined);
 }
+
+// ── Artifacts (/api/artifacts; the screens are artifacts.ts) ─────────────────
+// Each read is its own slice: the library list (loaded unfiltered — the filter
+// popover counts every option), one detail per `slug@v`, one diff per pair, the
+// artifacts linked to a ticket, and every ticket for the attach dialog (the queue's
+// `state.tickets` follows the queue's filter, so it can't back that list). A
+// refresh keeps the slice's data on screen; only a first load shows "Loading…".
+const artSeq = new Map<string, number>();
+const nextArtSeq = (k: string): number => { const n = (artSeq.get(k) ?? 0) + 1; artSeq.set(k, n); return n; };
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+function loadArtifactList(force = false): void {
+  const cur = state.art.list;
+  if (!force && (cur.status === "ok" || cur.status === "loading")) return;
+  const seq = nextArtSeq("list");
+  state.art.list = { status: "loading", data: cur.data };
+  listArtifacts()
+    .then((rows) => { if (seq !== artSeq.get("list")) return; state.art.list = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get("list")) return;
+      state.art.list = { status: "error", data: state.art.list.data, error: errMsg(e) };
+      rerender();
+    });
+}
+function loadArtifactDetail(slug: string, v: number | null, force = false): void {
+  const key = detailKey(slug, v);
+  const cur = state.art.details[key];
+  if (!force && cur && cur.status !== "idle" && cur.status !== "error") return;
+  const seq = nextArtSeq(`d:${key}`);
+  state.art.details[key] = { status: "loading", data: cur?.data ?? null };
+  getArtifact(slug, v)
+    .then((d) => { if (seq !== artSeq.get(`d:${key}`)) return; state.art.details[key] = { status: "ok", data: d }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`d:${key}`)) return;
+      state.art.details[key] = e instanceof NotFound ? { status: "missing", data: null } : { status: "error", data: null, error: errMsg(e) };
+      rerender();
+    });
+}
+function loadArtifactDiff(slug: string, a: number, b: number, force = false): void {
+  const key = diffKey(slug, a, b);
+  const cur = state.art.diffs[key];
+  if (!force && cur && cur.status !== "idle" && cur.status !== "error") return;
+  const seq = nextArtSeq(`x:${key}`);
+  state.art.diffs[key] = { status: "loading", data: cur?.data ?? null };
+  getArtifactDiff(slug, a, b)
+    .then((d) => { if (seq !== artSeq.get(`x:${key}`)) return; state.art.diffs[key] = { status: "ok", data: d }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`x:${key}`)) return;
+      state.art.diffs[key] = { status: e instanceof NotFound ? "missing" : "error", data: null, error: errMsg(e) };
+      rerender();
+    });
+}
+/** The ticket detail's Artifacts block: `GET /api/artifacts?ticket=<id>`. */
+function loadTicketArtifacts(id: number): void {
+  const seq = nextArtSeq(`t:${id}`);
+  const cur = state.art.ticketArts[id];
+  state.art.ticketArts[id] = { status: "loading", data: cur?.data ?? null };
+  listArtifacts({ ticket: id })
+    .then((rows) => { if (seq !== artSeq.get(`t:${id}`)) return; state.art.ticketArts[id] = { status: "ok", data: rows }; rerender(); })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get(`t:${id}`)) return;
+      state.art.ticketArts[id] = { status: "error", data: state.art.ticketArts[id]?.data ?? null, error: errMsg(e) };
+      rerender();
+    });
+}
+/** Every ticket (seg=all) — the attach dialog's list and the library's ticket search. */
+function loadAttachTickets(): void {
+  const cur = state.art.attachTickets;
+  if (cur.status === "ok" || cur.status === "loading") return;
+  const seq = nextArtSeq("tix");
+  state.art.attachTickets = { status: "loading", data: cur.data };
+  listTickets({ seg: "all" })
+    .then((rows) => {
+      if (seq !== artSeq.get("tix")) return;
+      state.art.attachTickets = { status: "ok", data: rows.map((t) => ({ id: t.id, title: t.title, status: t.status })) };
+      rerender();
+    })
+    .catch((e) => {
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (seq !== artSeq.get("tix")) return;
+      state.art.attachTickets = { status: "error", data: state.art.attachTickets.data, error: errMsg(e) };
+      rerender();
+    });
+}
+/** Load what the current Artifacts screen reads. `fresh` refetches (keeping what is
+ *  on screen) — used on navigation and after a write; a plain rerender never refetches. */
+function loadArtifactsIfNeeded(fresh = false): void {
+  const r = state.artRoute;
+  if (state.screen === "artifacts") { loadArtifactList(fresh); loadSprintsIfNeeded(); loadAttachTickets(); }
+  else if (state.screen === "artifactnew") loadSprintsIfNeeded();
+  else if (state.screen === "artifact" && r.slug) {
+    loadSprintsIfNeeded();
+    loadAttachTickets();
+    if (r.diff) {
+      loadArtifactDetail(r.slug, null, fresh);
+      if (r.diff.a !== r.diff.b) loadArtifactDiff(r.slug, r.diff.a, r.diff.b, fresh);
+    } else loadArtifactDetail(r.slug, r.v, fresh);
+  }
+  rerender();
+}
+function goArt(screen: ArtScreen, route: ArtRoute = ART_ROUTE_NONE): void {
+  state.screen = screen;
+  state.artRoute = route;
+  state.art.verMenu = false; state.art.dotMenu = false; state.art.ratifyOpen = false; state.art.attachOpen = false; state.art.filterOpen = false;
+  loadArtifactsIfNeeded(true);
+  document.getElementById("cnpy-main")?.scrollTo(0, 0);
+}
+/** After a write to `slug`: drop its other cached versions and diffs, refetch what
+ *  is on screen (keeping it visible), and let the list / ticket blocks reload. */
+function refreshArt(slug: string): void {
+  const r = state.artRoute;
+  const keep = r.slug === slug ? detailKey(slug, r.diff ? null : r.v) : null;
+  for (const k of Object.keys(state.art.details)) if (k.startsWith(`${slug}@`) && k !== keep) delete state.art.details[k];
+  for (const k of Object.keys(state.art.diffs)) if (k.startsWith(`${slug}:`)) delete state.art.diffs[k];
+  state.art.ticketArts = {};
+  if (state.art.list.status !== "idle") loadArtifactList(true);
+  if (state.screen === "artifact" && r.slug === slug) loadArtifactsIfNeeded(true);
+  else rerender();
+}
+function runArtWrite(w: ArtWrite): void {
+  const c = state.art.c;
+  if (w.op === "fetchUrl") {
+    fetchArtifactUrl(w.url)
+      .then((dto) => {
+        c.fetching = false;
+        if (c.url.trim() !== w.url) { rerender(); return; } // the URL changed while fetching
+        c.urlFetched = { text: dto.content };
+        if (dto.kind) c.kind = dto.kind;
+        rerender();
+      })
+      .catch((e) => {
+        if (e instanceof Unauthorized) { unauth(e); return; }
+        c.fetching = false;
+        c.urlErr = e instanceof ApiError ? `Couldn't fetch that page (${e.message}).` : "Couldn't fetch that page.";
+        rerender();
+      });
+    rerender();
+    return;
+  }
+  if (w.op === "create") {
+    const body = w.file ? { file: w.file, filename: w.filename ?? "upload" } : { content: w.content ?? "" };
+    createArtifact(w.fields, body)
+      .then(async (d) => {
+        // Links are posted one by one after the page exists; a refused one is named, never fatal.
+        let failed = 0;
+        for (const l of w.links) {
+          try { await addArtifactLink(d.slug, l.target_type, l.target_ref); } catch (e) { if (e instanceof Unauthorized) throw e; failed++; }
+        }
+        state.art.c = { ...initialArtCreate(), repo: c.repo, area: c.area, vis: c.vis };
+        state.art.ticketArts = {};
+        if (state.art.list.status !== "idle") state.art.list = { status: "idle", data: state.art.list.data };
+        goArt("artifact", { slug: d.slug, v: null, diff: null });
+        flash(failed ? `Uploaded v1 · ${failed} link${failed === 1 ? "" : "s"} couldn't be added` : "Uploaded v1");
+      })
+      .catch((e) => {
+        if (e instanceof Unauthorized) { unauth(e); return; }
+        state.art.c.submitting = false;
+        flash(e instanceof ApiError ? `Upload failed: ${e.message}` : "Upload failed");
+      });
+    rerender();
+    return;
+  }
+  state.art.busy = true;
+  rerender();
+  const req = w.op === "patch" ? patchArtifact(w.slug, w.body)
+    : w.op === "ratify" ? ratifyArtifact(w.slug, w.version)
+      : addArtifactLink(w.slug, w.target_type, w.target_ref);
+  req
+    .then(() => {
+      state.art.busy = false;
+      if (w.op === "ratify") state.art.ratifyOpen = false;
+      if (w.op === "link") { state.art.attachOpen = false; state.art.attachPick = null; }
+      refreshArt(w.slug);
+      flash(w.flash);
+    })
+    .catch((e) => {
+      state.art.busy = false;
+      if (e instanceof Unauthorized) { unauth(e); return; }
+      if (e instanceof NotFound) { state.art.ratifyOpen = false; state.art.attachOpen = false; refreshArt(w.slug); flash("This artifact isn't available anymore"); return; }
+      flash(e instanceof ApiError ? `Couldn't update the artifact (${e.message})` : "Couldn't update the artifact");
+    });
+}
+/** Carry out what the Artifacts reducer could not do itself. */
+function runArtEffect(fx: ArtEffect): void {
+  // The attach dialog lists every ticket; fetch them the first time it opens.
+  if (state.art.attachOpen) loadAttachTickets();
+  if (!fx) { rerender(); return; }
+  if ("nav" in fx) { goArt(fx.nav.screen, fx.nav.route); return; }
+  if ("flash" in fx) { flash(fx.flash); return; }
+  if ("write" in fx) { runArtWrite(fx.write); return; }
+  if ("retry" in fx) { loadArtifactsIfNeeded(true); return; }
+  if ("copy" in fx) {
+    navigator.clipboard?.writeText(fx.copy.text).catch(() => undefined);
+    flash(fx.copy.flash);
+    return;
+  }
+  // Open in new tab / Download raw both go to the raw route (it sets the headers).
+  if ("openUrl" in fx) window.open(fx.openUrl, "_blank", "noopener");
+  else if ("download" in fx) {
+    const el = document.createElement("a");
+    el.href = fx.download.url; el.download = fx.download.name; el.rel = "noopener";
+    document.body.appendChild(el); el.click(); el.remove();
+  }
+  rerender();
+}
+/** A picked or dropped file for the new-artifact form. The kind follows the
+ *  extension (kindForFilename): a binary kind keeps the File for the multipart
+ *  upload; a text kind is read as text (past 3 MB only the first 200 KB — enough
+ *  to preview; the cap check uses the file's real size, so it can't be sent). */
+function readArtFile(file: File | undefined | null): void {
+  if (!file) return;
+  if (isBinaryKind(kindForFilename(file.name))) {
+    artAcceptFile(state.art, { name: file.name, size: file.size, text: null, blob: file });
+    rerender();
+    return;
+  }
+  const r = new FileReader();
+  r.onload = () => { artAcceptFile(state.art, { name: file.name, size: file.size, text: String(r.result ?? ""), blob: null }); rerender(); };
+  r.readAsText(file.size > 3 * 1024 * 1024 ? file.slice(0, 200 * 1024) : file);
+}
+// A framed HTML artifact reports its height (the raw route injects the script):
+// ONE listener, matched to the frame by `e.source`, resizes the box directly —
+// no rerender (which would rebuild, and so reload, the frame).
+window.addEventListener("message", (e) => {
+  const data = e.data as { type?: unknown; height?: unknown } | null;
+  if (!data || typeof data !== "object" || data.type !== "canopy:height") return;
+  const h = Number(data.height);
+  if (!Number.isFinite(h) || h <= 0) return;
+  for (const frame of Array.from(mount.querySelectorAll<HTMLIFrameElement>(".art-frame iframe"))) {
+    if (!e.source || e.source !== frame.contentWindow) continue;
+    const box = frame.parentElement;
+    if (box) box.style.height = `${setArtFrameHeight(box.dataset.artKey ?? "", h)}px`;
+  }
+});
 
 function flash(msg: string): void {
   state.toast = msg;
@@ -1083,7 +1529,9 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         // empty on day one, and this is the one moment they are guaranteed to be
         // new. The boot path restores the route from the hash, so #guide is all
         // it takes. Every later sign-in goes wherever their hash points.
-        .then(() => { window.location.href = "/#guide"; })
+        // Signed up from an MCP client's authorize link → back to the consent screen
+        // (a same-origin path the Worker built); otherwise Get Started, as before.
+        .then((r) => { window.location.href = r.redirect?.startsWith("/oauth/authorize?") ? r.redirect : "/#guide"; })
         .catch((e) => {
           o.submitting = false;
           if (e instanceof ApiError && e.message === "handle_taken") { o.check = "taken"; }
@@ -1104,6 +1552,21 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       mount.querySelector<HTMLElement>('[role="dialog"] [data-act="signIn"]')?.focus();
       return;
     case "closeSignIn": state.signInOpen = false; break;
+    // The landing's "Get started": signed in, straight to the guide; signed out, the
+    // guide becomes the sign-in return-to (replaceState: no hashchange, no route) and
+    // the Sign in dialog opens.
+    case "siteGuide":
+      if (state.me) {
+        state.siteReturn = null;
+        const guide = parseHash("#guide");
+        applyRoute(guide);
+        loadForScreen(guide.screen);
+        window.scrollTo(0, 0);
+        return;
+      }
+      history.replaceState(null, "", "/#guide");
+      dispatch("openSignIn", null, null);
+      return;
     case "siteJump": {
       const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
       if (arg === "top") window.scrollTo({ top: 0, behavior });
@@ -1145,6 +1608,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 
     // primary navigation
     case "goMyWork": state.screen = "mywork"; loadMyWorkIfNeeded(); return;
+    case "goArtifacts": goArt("artifacts"); return;
+    case "fmToggle": case "fmClose": case "fmCat": filterMenuAct(act, arg); return;
 
     // ── Repo dashboard ───────────────────────────────────────────────────────
     case "goRepo": state.screen = "repo"; state.repoTab = "overview"; loadRepoIfNeeded(); return;
@@ -1196,6 +1661,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (g === "roadmap") { state.roadmapTab = page === "narrative" ? "narrative" : "timeline"; dispatch("goRoadmap", null, null); return; }
       if (g === "repo") { if (!isRepoTab(page)) return; state.screen = "repo"; state.repoTab = page; loadRepoIfNeeded(); return; }
       if (g === "docs") { state.screen = "docs"; dispatch("setDocSpace", page, null); loadDocsIfNeeded(); return; }
+      if (g === "maintenance") { dispatch("goMaintenance", page, null); return; }
       return;
     }
     case "sideSearch": return; // uncontrolled: the box holds its own text until Enter
@@ -1231,7 +1697,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       state.screen = "ticketdetail";
       state.ticketId = id;
       state.commentDraft = ""; state.mention = null; state.commentHeight = null; state.linkDraft = "";
-      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null;
+      state.lkOpen = false; state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null;
+      state.tdEdit = null;
       loadSprintsIfNeeded();
       loadTicketsIfNeeded();          // backs the sub-ticket candidate menu
       loadTicketDetail(id);
@@ -1334,15 +1801,17 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "sprintResourceDraft": state.linkDraft = value ?? ""; return;   // echoes live
     case "sprintResourceAdd": {
       const id = state.sprintId;
-      const raw = state.linkDraft.trim();
-      if (id === null || !raw) return;
-      addSprintResource(id, raw)
+      const raws = splitLinks(state.linkDraft);
+      if (id === null || !raws.length) return;
+      raws.reduce<Promise<SprintDetail | null>>((prev, raw) => prev.then(() => addSprintResource(id, raw)), Promise.resolve(null))
         .then((sp) => {
+          if (!sp) return;
           state.linkDraft = "";
           state.sprintDetail = { status: "ok", data: sp };
           // The server parses the raw input, so the toast names the STORED label.
-          const added = sp.resources.find((r) => r.url === raw) ?? sp.resources[sp.resources.length - 1];
-          flash(added ? `Resource added: ${added.label}` : "Resource added");
+          const last = raws[raws.length - 1];
+          const added = sp.resources.find((r) => r.url === last) ?? sp.resources[sp.resources.length - 1];
+          flash(raws.length > 1 ? `${raws.length} resources added` : added ? `Resource added: ${added.label}` : "Resource added");
         })
         .catch(sprintErr);
       return;
@@ -1352,15 +1821,24 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "queueSeg":
       if (arg === "open" || arg === "closed" || arg === "all") { state.qSeg = arg; loadTickets(); }
       return;
-    case "queueAssignee":
-      if (value === "anyone" || value === "me" || value === "unassigned") { state.qAssignee = value; loadTickets(); }
-      return;
+    // The queue's two filter dropdowns (tickets.ts `queueDropdown`): the trigger
+    // toggles its menu, a row picks by data-arg.
+    case "queueMenu":
+      state.qMenu = (arg === "assignee" || arg === "category") && state.qMenu !== arg ? arg : null;
+      break;
+    case "queueAssignee": {
+      const v = arg ?? value;
+      state.qMenu = null;
+      if (v === "anyone" || v === "me" || v === "unassigned") { state.qAssignee = v; loadTickets(); }
+      break;
+    }
     case "queueCategory": {
-      const v = value ?? "all";
-      if (v !== "all" && !(TICKET_CATEGORIES as readonly string[]).includes(v)) return;
+      const v = arg ?? value ?? "all";
+      state.qMenu = null;
+      if (v !== "all" && !(TICKET_CATEGORIES as readonly string[]).includes(v)) break;
       state.qCategory = v as TicketCategory | "all";
       loadTickets();
-      return;
+      break;
     }
     case "queueTable": state.qView = "table"; break;
     case "queueBoard": state.qView = "board"; break;
@@ -1419,12 +1897,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Tickets: the detail screen ───────────────────────────────────────────
-    // The status control: the pill opens its menu, a row sets the status. Two
-    // anchors (the header and the rail's STATUS row) share one flag, so opening
-    // either closes the other — and closes the assignee/sprint/relation menus.
+    // The status control (the rail's STATUS row): the pill opens its menu, a row
+    // sets the status. Opening it closes the assignee/sprint/relation menus.
     case "ticketStatusMenu":
-      state.stMenu = state.stMenu === arg ? null : (arg === "rail" ? "rail" : "header");
-      state.asgMenu = false; state.sprMenu = false; state.relMenu = false;
+      state.stMenu = state.stMenu ? null : "rail";
+      state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null;
       break;
     case "ticketStatus": {
       const id = state.ticketId;
@@ -1436,10 +1913,10 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       transitionTicket(id, to).then((t) => applyTicketWrite(t, `Status: ${label}`, seq)).catch(ticketErr);
       return;
     }
-    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; state.stMenu = null; break;
-    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; state.stMenu = null; break;
-    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; state.stMenu = null; break;
-    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null; break;
+    case "ticketAsgMenu": state.asgMenu = !state.asgMenu; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "ticketSprintMenu": state.sprMenu = !state.sprMenu; state.asgMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "ticketRelMenu": state.relMenu = !state.relMenu; state.asgMenu = false; state.sprMenu = false; state.lkMenu = null; state.stMenu = null; break;
+    case "closeTicketMenus": state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.lkMenu = null; state.stMenu = null; state.qMenu = null; break;
     // Assignment is immediate and reversible — no confirm step (design call #7).
     case "ticketAsgAdd": {
       const id = state.ticketId;
@@ -1480,22 +1957,77 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         .catch(ticketErr);
       return;
     }
+    // The title/description editor (POST /tickets/:id/edit). A mirrored ticket's
+    // title and body are Canopy's after import, so it edits those too.
+    case "ticketEdit": {
+      const d = state.ticketDetail.data;
+      if (!d) return;
+      state.tdEdit = { title: d.title, body: d.body };
+      break;
+    }
+    case "ticketEditTitle": if (state.tdEdit) state.tdEdit.title = value ?? ""; break;   // rerenders: Save arms on a non-empty title
+    case "ticketEditBody": if (state.tdEdit) state.tdEdit.body = value ?? ""; return;   // echoes live
+    case "ticketEditCancel": state.tdEdit = null; break;
+    case "ticketEditSave": {
+      const id = state.ticketId;
+      const draft = state.tdEdit;
+      const d = state.ticketDetail.data;
+      if (id === null || !draft || !d || !draft.title.trim()) return;
+      const patch: { title?: string; body?: string } = {};
+      if (draft.title.trim() !== d.title) patch.title = draft.title.trim();
+      if (draft.body !== d.body) patch.body = draft.body;
+      if (patch.title === undefined && patch.body === undefined) { state.tdEdit = null; break; }
+      const seq = claimTicketDetail();
+      editTicket(id, patch)
+        .then((t) => { state.tdEdit = null; applyTicketWrite(t, "Ticket updated", seq); })
+        .catch(ticketErr);
+      return;
+    }
     case "ticketLinkToggle": state.lkOpen = !state.lkOpen; break;
     case "ticketLinkDraft": state.linkDraft = value ?? ""; return;   // echoes live
     case "ticketLinkAdd": {
       const id = state.ticketId;
-      const raw = state.linkDraft.trim();
-      if (id === null || !raw) return;
+      const raws = splitLinks(state.linkDraft);
+      if (id === null || !raws.length) return;
       const seq = claimTicketDetail();
-      addTicketLink(id, raw)
+      // Several links pasted at once go in one after another; the field stays open
+      // (and focused) so the next paste links too.
+      raws.reduce<Promise<TicketDetail | null>>((prev, raw) => prev.then(() => addTicketLink(id, raw)), Promise.resolve(null))
         .then((t) => {
+          if (!t) return;
           state.linkDraft = "";
-          state.lkOpen = false;
+          state.lkOpen = true;
           // The server parses the raw input, so the toast names the STORED label.
           const added = t.links[t.links.length - 1];
-          applyTicketWrite(t, added ? `Linked: ${added.label}` : "Linked", seq);
+          applyTicketWrite(t, raws.length > 1 ? `Linked ${raws.length} items` : added ? `Linked: ${added.label}` : "Linked", seq);
         })
         .catch(ticketErr);
+      return;
+    }
+    // A linked-work chip's ⋯ menu (Linear's pattern): the ⋯ toggles it, a
+    // right-click on the chip opens it; it holds Copy link and Remove link.
+    case "ticketLinkMenu":
+    case "ticketLinkMenuOpen": {
+      const linkId = Number(arg);
+      if (!Number.isInteger(linkId)) return;
+      state.lkMenu = act === "ticketLinkMenu" && state.lkMenu === linkId ? null : linkId;
+      state.asgMenu = false; state.sprMenu = false; state.relMenu = false; state.stMenu = null;
+      break;
+    }
+    case "ticketLinkCopy": {
+      const url = state.ticketDetail.data?.links.find((l) => l.id === Number(arg))?.url;
+      state.lkMenu = null;
+      if (url) copyToClipboard(url).then((ok) => flash(ok ? "Link copied" : "Couldn't copy the link"));
+      break;
+    }
+    case "ticketLinkRemove": {
+      const id = state.ticketId;
+      const linkId = Number(arg);
+      state.lkMenu = null;
+      if (id === null || !Number.isInteger(linkId)) break;
+      const label = state.ticketDetail.data?.links.find((l) => l.id === linkId)?.label;
+      const seq = claimTicketDetail();
+      removeTicketLink(id, linkId).then((t) => applyTicketWrite(t, label ? `Removed link: ${label}` : "Link removed", seq)).catch(ticketErr);
       return;
     }
     case "ticketComment": {
@@ -1546,9 +2078,14 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "roadmapNarrative": state.roadmapTab = "narrative"; break;
     case "roadmapTimeline": state.roadmapTab = "timeline"; break;
     case "goReview": state.screen = "review"; loadProposalsIfNeeded(); loadDraftAdrsIfNeeded(); return;
-    case "goMaintenance": state.screen = "maintenance"; loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvites(); return;
+    case "goMaintenance":
+      state.screen = "maintenance";
+      state.maintTab = arg === "identity" || arg === "people" ? arg : "unplaced";
+      state.maintDiscardArm = false;
+      loadNeedsTriageIfNeeded(); loadIdentityTasksIfNeeded(); loadFeedIfNeeded(); loadNotifAdminIfNeeded(); loadInvitesIfAdmin();
+      return;
     case "goSearch": state.screen = "search"; loadSearchIfNeeded(); return;
-    case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
+    case "goSettings": state.screen = "settings"; state.unsub.preview = false; state.tokenRevokeArm = null; state.grantRevokeArm = null; loadTokensIfNeeded(); loadNotifPrefsIfNeeded(); checkLinkConflict(); return;
     case "goGuide": state.screen = "guide"; break;
 
     // chrome: theme + sidebar
@@ -1655,6 +2192,40 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       return;
     }
 
+    // Get Started's table of contents: scroll #cnpy-main to the heading, no rerender
+    // (the hash is the route, so these are buttons, not #anchors).
+    case "guideJump": {
+      const pane = document.getElementById("cnpy-main");
+      const target = arg ? document.getElementById(arg) : null;
+      if (!pane || !target) return;
+      const top = target.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop - 24;
+      const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      pane.scrollTo({ top: Math.max(0, top), behavior });
+      return;
+    }
+
+    // An uploaded doc image (Docs reader, Review's Rendered view), expanded: its alt
+    // text is the title. arg is the sha256 (DOC_IMAGE_PATH_RE in shared/doc-images).
+    case "docImgZoom": {
+      if (!arg || !/^[0-9a-f]{64}$/.test(arg)) return;
+      const img = mount.querySelector<HTMLImageElement>(`[data-act="docImgZoom"][data-arg="${arg}"] img`);
+      const alt = img?.getAttribute("alt")?.trim() ?? "";
+      openLightbox({ src: `/img/${arg}`, alt: alt || "Image", title: alt || "Image" });
+      return;
+    }
+
+    // A guide figure, expanded: title = its caption's bold lead, caption = the rest.
+    case "guideZoom": {
+      const btn = arg ? mount.querySelector<HTMLElement>(`[data-act="guideZoom"][data-arg="${cssEscape(arg)}"]`) : null;
+      const img = btn?.querySelector("img");
+      if (!btn || !img) return;
+      const cap = btn.closest("figure")?.querySelector("figcaption");
+      const title = cap?.querySelector("strong")?.textContent?.trim() || "Screenshot";
+      const rest = cap ? cap.innerHTML.replace(/^\s*<strong[^>]*>[\s\S]*?<\/strong>\s*:?\s*/, "") : "";
+      openLightbox({ src: img.getAttribute("src") ?? "", alt: cap?.textContent?.trim() ?? title, title, captionHtml: rest });
+      return;
+    }
+
     // search
     case "setSearch":
       state.searchQuery = value ?? "";
@@ -1663,7 +2234,7 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       rerender();
       return;
     case "setSearchType":
-      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision") state.searchType = arg;
+      if (arg === "all" || arg === "doc" || arg === "feed" || arg === "decision" || arg === "artifact") state.searchType = arg;
       break;
 
     // settings — display name echoes live; everything else is Phase 2
@@ -1688,6 +2259,208 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       runAdminBackfillLoop();
       return;
     }
+    // ── Handoffs ─────────────────────────────────────────────────────────────
+    case "goHandoffs": state.screen = "handoffs"; state.handoffId = null; loadHandoffs(); return;
+    case "newHandoff": state.screen = "newhandoff"; state.nh = blankHandoff(); rerender(); return;
+    case "openHandoff": { const id = Number(arg); if (!Number.isInteger(id) || id <= 0) return; state.screen = "handoff"; openHandoff(id); return; }
+    case "handoffCopy": {
+      const h = state.handoffDetail.data;
+      if (!h || h.id !== Number(arg)) return;
+      copyToClipboard(handoffAsPrompt(h)).then((ok) => flash(ok ? "Copied as prompt" : "Couldn't reach the clipboard"));
+      return;
+    }
+    case "handoffClaim": {
+      const h = state.handoffDetail.data;
+      if (!h || h.id !== Number(arg)) return;
+      const session = "sess_web_" + Math.random().toString(36).slice(2, 10).toUpperCase();
+      claimHandoff(h.id, session)
+        .then((nh) => copyToClipboard(handoffAsPrompt(nh)).then((ok) =>
+          applyHandoff(nh, ok ? `Claimed #${nh.id} · copied as prompt` : `Claimed #${nh.id} — couldn't reach the clipboard`)))
+        .catch((e) => { writeErr(e, "Couldn't claim this handoff"); openHandoff(h.id); loadHandoffs(); });
+      return;
+    }
+    case "handoffPromote": {
+      const h = state.handoffDetail.data;
+      if (!h || h.id !== Number(arg)) return;
+      const d = docDraftFromHandoff(h);
+      state.screen = "newdoc";
+      state.nd = { ...blankDoc("technical", "reference"), ...d, from: h.id };
+      if (state.docsList.status === "idle") loadDocs(); else rerender();
+      return;
+    }
+    case "handoffPromptCopy": {
+      const h = state.handoffDetail.data;
+      if (!h?.prompt) return;
+      copyToClipboard(h.prompt.body).then((ok) => flash(ok ? "Prompt copied" : "Couldn't reach the clipboard"));
+      return;
+    }
+    case "handoffPromptOpen": state.handoffPromptOpen = true; break;
+    case "handoffPromptClose": state.handoffPromptOpen = false; break;
+    case "handoffExpire":
+      if (!state.handoffExpireArm) { state.handoffExpireArm = true; break; }
+      state.handoffExpireArm = false;
+      {
+        const id = Number(arg);
+        if (!Number.isInteger(id)) return;
+        expireHandoff(id)
+          .then((nh) => applyHandoff(nh, `Handoff #${nh.id} expired`))
+          .catch((e) => { writeErr(e, "Couldn't expire this handoff"); openHandoff(id); loadHandoffs(); });
+      }
+      return;
+    case "nhField": {
+      const k = arg as keyof NewHandoffDraft | null;
+      if (!k || !(k in state.nh) || k === "ctxOpen") return;
+      (state.nh as unknown as Record<string, string>)[k] = value ?? "";
+      // Only the body drives other markup (the "Shows in the list as" line, Send's state).
+      if (k === "body") rerender();
+      return;
+    }
+    case "nhRecipient": if (arg) state.nh.recipient = arg; break;
+    case "nhCtxToggle": state.nh.ctxOpen = !state.nh.ctxOpen; break;
+    case "nhSend": {
+      const n = state.nh;
+      if (!n.body.trim()) return;
+      const lines = (t: string) => t.split("\n").map((x) => x.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean);
+      createHandoff({
+        recipient: n.recipient,
+        body: n.body,
+        prompt: n.promptBody.trim() ? { title: n.promptTitle.trim() || "Prompt", body: n.promptBody } : null,
+        context: { repo: n.repo.trim(), branch: n.branch.trim(), task: n.task.trim(), done: lines(n.done), next: lines(n.next), files: lines(n.files) },
+      })
+        .then((h) => { state.screen = "handoff"; state.nh = blankHandoff(); applyHandoff(h, `Handoff sent · #${h.id}`); })
+        .catch((e) => writeErr(e, "Couldn't send the handoff"));
+      return;
+    }
+
+    // ── Prompt Library ───────────────────────────────────────────────────────
+    case "goPrompts": state.screen = "prompts"; state.promptFilterOpen = false; loadPrompts(); return;
+    case "newPrompt": state.screen = "promptedit"; openEditor("new", null); return;
+    case "openPrompt": if (!arg) return; state.screen = "prompt"; openPrompt(arg); return;
+    case "promptQuery": state.promptQ = value ?? ""; break;
+    // The filter menu itself (open / close / category) is the shared filter-menu registry.
+    case "promptTag": state.promptTag = arg || null; break;
+    case "promptSort": state.promptSort = arg === "updated_asc" ? "updated_asc" : "updated_desc"; break;
+    case "promptResetFilters": state.promptTag = null; state.promptSort = "updated_desc"; break;
+    case "promptClearFilters": state.promptQ = ""; state.promptTag = null; break;
+    case "promptDiff": {
+      const v = Number(arg);
+      state.promptDiffV = arg && Number.isInteger(v) ? v : null;
+      if (state.promptDiffV !== null) {
+        const m = document.getElementById("cnpy-main");
+        if (m && m.scrollTop > 120) m.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      break;
+    }
+    case "promptCopy": {
+      const body = state.promptDetail.data?.prompt.body;
+      if (!body) return;
+      copyToClipboard(body).then((ok) => flash(ok ? "Prompt copied" : "Couldn't reach the clipboard"));
+      return;
+    }
+    case "promptExpand": state.promptExpanded = true; break;
+    case "promptBoxView":
+      if (arg !== "raw" && arg !== "rendered") return;
+      state.promptView = arg;
+      persist("canopy.promptView", arg);
+      break;
+    case "promptExpandClose": state.promptExpanded = false; break;
+    case "promptTagMenu": state.promptTagMenu = !state.promptTagMenu; state.promptTagDraft = ""; break;
+    case "promptTagDraft": state.promptTagDraft = value ?? ""; break;
+    case "promptTagAdd":
+    case "promptTagRemove": {
+      const p = state.promptDetail.data?.prompt;
+      state.promptTagMenu = false; state.promptTagDraft = "";
+      if (!p || !arg) return;
+      writePromptTags(act === "promptTagAdd" ? [...p.tags, arg] : p.tags.filter((t) => t !== arg));
+      break;
+    }
+    case "promptPublish": {
+      const p = state.promptDetail.data?.prompt;
+      const v = Number(arg);
+      if (!p || !Number.isInteger(v)) return;
+      publishPrompt(p.slug, v)
+        .then((np) => afterPromptWrite(np.slug, `Published v${v}`))
+        .catch((e) => { writeErr(e, "Couldn't publish"); openPrompt(p.slug); });
+      return;
+    }
+    case "promptEdit": if (!arg) return; state.screen = "promptedit"; openEditor("edit", arg); return;
+    case "promptNewVersion": if (!arg) return; state.screen = "promptedit"; openEditor("version", arg); return;
+    // The editor's fields. Title drives the slug until the slug is edited by hand.
+    case "edTitle": {
+      const ed = state.promptEd; if (!ed) return;
+      ed.title = value ?? "";
+      if (!ed.slugTouched) ed.slug = slugify(ed.title);
+      break;
+    }
+    case "edSlug": { const ed = state.promptEd; if (!ed) return; ed.slug = (value ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-"); ed.slugTouched = true; break; }
+    case "edResetSlug": { const ed = state.promptEd; if (!ed) return; ed.slug = slugify(ed.title); ed.slugTouched = false; break; }
+    case "edBody": { const ed = state.promptEd; if (!ed) return; ed.body = value ?? ""; break; }
+    case "edSummary": { const ed = state.promptEd; if (!ed) return; ed.summary = value ?? ""; return; }
+    case "edTagDraft": {
+      const ed = state.promptEd; if (!ed) return;
+      const v = value ?? "";
+      if (/[,\s]$/.test(v)) { addEdTag(v); break; }
+      ed.tagDraft = v;
+      return;
+    }
+    case "edTagAdd": if (arg) addEdTag(arg); break;
+    case "edTagRemove": { const ed = state.promptEd; if (!ed || !arg) return; ed.tags = ed.tags.filter((t) => t !== arg); break; }
+    case "edStatus": { const ed = state.promptEd; if (!ed) return; if (arg === "draft" || arg === "staged" || arg === "published") ed.status = arg; break; }
+    case "edCancel": {
+      const base = state.promptEd?.baseSlug;
+      if (base) { state.screen = "prompt"; openPrompt(base); return; }
+      dispatch("goPrompts", null, null);
+      return;
+    }
+    case "edSave": {
+      const ed = state.promptEd;
+      if (!ed || !ed.title.trim() || !ed.body.trim() || !ed.slug) return;
+      savePrompt({ base_slug: ed.baseSlug, slug: ed.slug, title: ed.title.trim(), tags: normalizeTags(ed.tags), body: ed.body, status: ed.status, summary: ed.summary.trim() || undefined })
+        .then((p) => { state.promptEd = null; afterPromptWrite(p.slug, `Saved v${p.version}`); })
+        .catch((e) => writeErr(e, "Couldn't save the prompt"));
+      return;
+    }
+
+    // ── Docs › New doc — stages a version-1 proposal through the gate ─────────
+    case "newDoc": state.screen = "newdoc"; startNewDoc(); return;
+    case "ndField": {
+      if (arg !== "title" && arg !== "body" && arg !== "summary") return;
+      state.nd[arg] = value ?? "";
+      if (arg !== "summary") rerender(); // title / body arm "Stage for review"
+      return;
+    }
+    case "ndSpace": {
+      if (!arg) return;
+      if (arg === state.nd.space) return;
+      state.nd.space = arg;
+      state.nd.section = ""; // back to the new space's default
+      break;
+    }
+    case "ndSection": if (arg) state.nd.section = arg; break;
+    case "ndSubmit": {
+      const d = state.nd;
+      if (!d.title.trim() || !d.body.trim()) return;
+      const section = d.section || defaultSection(ASSIGN_OPTIONS.sections);
+      proposeDoc({ title: d.title.trim(), section, space: d.space, body: d.body, summary: d.summary.trim() || undefined })
+        .then(() => {
+          state.nd = blankDoc(state.docSpace, "");
+          state.screen = "review";
+          loadProposals();
+          loadDraftAdrsIfNeeded();
+          flash(`Staged for review in ${section}`);
+        })
+        .catch((e) => writeErr(e, "Couldn't stage the doc"));
+      return;
+    }
+
+    // ── Maintenance › Unplaced: the list selects; the picks belong to the item on screen ──
+    case "maintSelect":
+      if (!arg) return;
+      state.assignOpen = arg; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = [];
+      state.maintDiscardArm = false;
+      break;
+    case "identityCancel": state.mapConfirm = null; break;
+
     // ── Maintenance (mock-driven until the backend reads land — no writes) ───
     case "maintAssignToggle": {
       if (!arg) return;
@@ -1700,6 +2473,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
     case "maintAssignKind":
       if (arg === "doc" || arg === "adr" || arg === "feed") {
+        state.assignOpen = selectedUnplacedId(state.needsTriage.data.map((r) => ({ id: String(r.id) })), state.assignOpen);
+        state.maintDiscardArm = false;
         state.assignKind = arg;
         state.assignSection = null;
         state.assignSpace = null;
@@ -1743,6 +2518,8 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
       if (!arg) return;
       const id = Number(arg);
       if (!Number.isInteger(id)) return;
+      if (!state.maintDiscardArm) { state.maintDiscardArm = true; break; } // step 1: arm; the second click discards
+      state.maintDiscardArm = false;
       if (state.assignOpen === arg) { state.assignOpen = null; state.assignKind = null; state.assignSection = null; state.assignSpace = null; state.assignTags = []; }
       discardTriage(id)
         .then(() => { flash("Discarded — parked, nothing changed"); loadNeedsTriage(); })
@@ -1848,27 +2625,39 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────
-    case "mintToken":
+    // "Get connection command": the click mints, the modal shows the setup with the
+    // token in it, and closing the modal drops the token from the page for good.
+    case "connectOpen":
+      if (state.connect) return;                       // a mint is already in flight / open
+      state.connect = { token: null, error: null };
+      state.connectCopied = false;
+      rerender();
       mintMcpToken()
-        .then(({ token }) => { state.revealedToken = token; state.tokenCopied = false; loadTokens(); rerender(); })
+        .then(({ token }) => { if (state.connect) state.connect = { token, error: null }; loadTokens(); rerender(); })
         .catch((e) => {
-          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
-          flash(e instanceof ApiError ? e.message : "Could not mint token");
+          if (e instanceof Unauthorized) { state.connect = null; state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          if (state.connect) state.connect = { token: null, error: e instanceof ApiError ? e.message : "please try again" };
+          rerender();
         });
       return;
-    case "copyToken": {
-      const tk = state.revealedToken;
+    case "connectClient":
+      if (CONNECT_CLIENTS.some((c) => c.id === arg)) { state.connectClient = arg as ConnectClient; state.connectCopied = false; }
+      break;
+    case "connectCopy": {
+      const tk = state.connect?.token;
       if (!tk) return;
-      copyToClipboard(tk).then((ok) => {
-        if (!ok) { flash("Couldn't copy — select the token and copy it manually"); return; }
-        state.tokenCopied = true;
+      copyToClipboard(connectSnippet(state.connectClient, tk)).then((ok) => {
+        if (!ok) { flash("Couldn't copy — select the text and copy it manually"); return; }
+        state.connectCopied = true;
         rerender();
-        flash("Token copied to clipboard");
-        setTimeout(() => { state.tokenCopied = false; rerender(); }, 1800);
+        setTimeout(() => { state.connectCopied = false; rerender(); }, 1800);
       });
       return;
     }
-    case "dismissReveal": state.revealedToken = null; state.tokenCopied = false; break;
+    case "connectClose":
+      if (state.connect && !state.connect.token && !state.connect.error) return;   // mid-mint: let it land
+      state.connect = null; state.connectCopied = false;
+      break;
     // Revoke is two clicks: the first arms the row, the second revokes.
     case "revokeTokenArm": state.tokenRevokeArm = Number(arg); break;
     case "revokeTokenCancel": state.tokenRevokeArm = null; break;
@@ -1887,6 +2676,26 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
         });
       return;
     }
+    case "revokeGrantArm": state.grantRevokeArm = Number(arg); break;
+    case "revokeGrantCancel": state.grantRevokeArm = null; break;
+    case "revokeGrant": {
+      const id = Number(arg);
+      revokeOAuthGrant(id)
+        .then(() => {
+          state.grants = { status: "ok", data: state.grants.data.filter((g) => g.id !== id) };
+          state.grantRevokeArm = null;
+          flash("App disconnected");
+          rerender();
+        })
+        .catch((e) => {
+          if (e instanceof Unauthorized) { state.view = "auth"; state.authStep = "login"; rerender(); return; }
+          flash(e instanceof ApiError ? e.message : "Could not disconnect the app");
+        });
+      return;
+    }
+    case "copyBrowserConnect":
+      copyToClipboard(browserConnectCommand()).then((ok) => flash(ok ? "Command copied" : "Couldn't copy the command"));
+      return;
 
     // ── Settings › Profile (display name, color, link/unlink) ───────────────
     case "saveProfile": {
@@ -1966,6 +2775,11 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
     case "inviteRevoke": { if (!arg) return; revokeInvite(arg).then(() => { flash("Invite revoked"); loadInvites(); }).catch((e) => { if (e instanceof Unauthorized) { unauth(e); return; } flash("Couldn't revoke"); }); return; }
 
     default:
+      // Every Artifacts act goes to the one reducer in artifacts.ts.
+      if (act.startsWith("art")) {
+        const screen = state.screen === "artifacts" || state.screen === "artifactnew" || state.screen === "artifact" ? state.screen : null;
+        runArtEffect(artifactsAct(state.art, { screen, route: state.artRoute, me: state.me?.handle ?? "", host: location.origin, sprints: state.sprints.data.map((x) => ({ id: x.id, label: x.label, dates: x.dates, active: x.active })) }, act, arg, value));
+      }
       return;
   }
   rerender();
@@ -1974,6 +2788,148 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
 // Clicks drive buttons; selects/inputs are handled by change/input so their
 // native interaction (dropdown open, typing) is preserved. Anchors keep their
 // default behavior (open the GitHub link in a new tab).
+// ── filter menus (web/src/filter-menu.ts): hover, animated open/close, in-place category switch ──
+//
+// Each menu is a registry entry over its screen's own state. Open plays the entrance
+// once (`state.fmOpening` is read by the ONE paint that opens it). Close plays a short
+// exit on the live popover, THEN flips the state and rerenders. Switching category
+// never rerenders: every category's options are already in the DOM, so the switch
+// flips `hidden`, slides the highlight and plays the new panel's options in — the
+// popover survives, which is what lets any of that animate.
+interface FilterMenuSpec { isOpen: () => boolean; setOpen: (v: boolean) => void; cat: () => string; setCat: (k: string) => boolean }
+const FILTER_MENUS: Record<string, FilterMenuSpec> = {
+  art: {
+    isOpen: () => state.art.filterOpen, setOpen: (v) => { state.art.filterOpen = v; }, cat: () => state.art.filterCat,
+    setCat: (k) => { if (!(ART_FILTER_KEYS as readonly string[]).includes(k)) return false; state.art.filterCat = k as ArtFilterKey; return true; },
+  },
+  prompt: {
+    isOpen: () => state.promptFilterOpen, setOpen: (v) => { state.promptFilterOpen = v; }, cat: () => state.promptFilterCat,
+    setCat: (k) => { if (k !== "tag" && k !== "sort") return false; state.promptFilterCat = k; return true; },
+  },
+};
+const FM_CLOSE_MS = 130;
+let fmClosing: string | null = null;
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+const HOVER_INTENT_MS = 60;
+let hoverIntentTimer: ReturnType<typeof setTimeout> | null = null;
+/** When a hover last opened a menu — a click on its trigger right after is the same
+ *  intent ("open"), not a toggle that would shut what the hover just opened. */
+let hoverOpenedAt = 0;
+const cancelHoverClose = () => { if (hoverCloseTimer !== null) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; } };
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+const livePopover = (id: string) => mount.querySelector<HTMLElement>(`[data-fm-pop="${id}"]`);
+
+function openFilterMenu(id: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec) return;
+  cancelHoverClose();
+  if (fmClosing === id) {           // re-entered while it was fading out: keep it
+    fmClosing = null;
+    livePopover(id)?.classList.remove("is-closing");
+    return;
+  }
+  if (spec.isOpen()) return;
+  spec.setOpen(true);
+  state.fmOpening = id;
+  rerender();
+  state.fmOpening = null;
+}
+function closeFilterMenu(id: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec || !spec.isOpen() || fmClosing === id) return;
+  cancelHoverClose();
+  const finish = () => { fmClosing = null; spec.setOpen(false); rerender(); };
+  const pop = livePopover(id);
+  if (!pop || reducedMotion()) { finish(); return; }
+  fmClosing = id;
+  pop.classList.remove("is-opening");
+  pop.classList.add("is-closing");
+  setTimeout(() => { if (fmClosing === id) finish(); }, FM_CLOSE_MS);
+}
+function switchFilterCat(id: string, key: string): void {
+  const spec = FILTER_MENUS[id];
+  if (!spec) return;
+  const prev = spec.cat();
+  if (key === prev || !spec.setCat(key)) return;
+  const pop = livePopover(id);
+  if (!pop) { rerender(); return; }
+  const rows = Array.from(pop.querySelectorAll<HTMLElement>("[data-fm-cat]"));
+  const from = rows.findIndex((r) => r.dataset.fmCat === prev);
+  const to = rows.findIndex((r) => r.dataset.fmCat === key);
+  for (const r of rows) r.classList.toggle("is-on", r.dataset.fmCat === key);
+  pop.querySelector<HTMLElement>(".fm-ind")?.style.setProperty("--ci", String(Math.max(0, to)));
+  pop.classList.remove("is-opening");
+  for (const panel of Array.from(pop.querySelectorAll<HTMLElement>("[data-fm-panel]"))) {
+    const on = panel.dataset.fmPanel === key;
+    panel.hidden = !on;
+    panel.classList.remove("is-switching");
+    if (on) {
+      panel.dataset.dir = to < from ? "up" : "down";
+      void panel.offsetWidth;        // restart the options' entrance
+      panel.classList.add("is-switching");
+      if (panel.parentElement) panel.parentElement.scrollTop = 0;
+    }
+  }
+}
+/** The filter menu's acts (clicks, and `data-hover="fmCat"` rows). */
+function filterMenuAct(act: string, arg: string | null): void {
+  if (!arg) return;
+  if (act === "fmToggle") {
+    const spec = FILTER_MENUS[arg];
+    if (!spec) return;
+    if (spec.isOpen() && fmClosing !== arg) {
+      if (performance.now() - hoverOpenedAt < 1000) return;
+      closeFilterMenu(arg);
+    } else openFilterMenu(arg);
+    return;
+  }
+  if (act === "fmClose") { closeFilterMenu(arg); return; }
+  if (act === "fmCat") {
+    const i = arg.indexOf(":");
+    if (i > 0) switchFilterCat(arg.slice(0, i), arg.slice(i + 1));
+  }
+}
+
+// Hover (a MOUSE pointer only — a touch tap must not open, then toggle shut).
+// `data-hover-menu="<id>"` wraps the trigger and its popover: entering opens it,
+// leaving closes it 200 ms later (re-entering cancels) — the design's
+// onMouseEnter / onMouseLeave. `data-hover="<act>"` rows dispatch on hover.
+mount.addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const target = e.target as Element;
+  const menu = target.closest<HTMLElement>("[data-hover-menu]");
+  const id = menu?.dataset.hoverMenu ?? "";
+  if (FILTER_MENUS[id]) {
+    cancelHoverClose();
+    if (!FILTER_MENUS[id].isOpen() || fmClosing === id) { hoverOpenedAt = performance.now(); openFilterMenu(id); }
+  }
+  // Hover intent: a row acts only once the pointer RESTS on it (~60 ms), so sweeping
+  // across the categories toward the options doesn't flip through every one on the way.
+  const row = target.closest<HTMLElement>("[data-hover]");
+  if (hoverIntentTimer !== null) { clearTimeout(hoverIntentTimer); hoverIntentTimer = null; }
+  if (row) {
+    const act = row.dataset.hover ?? "";
+    const arg = row.dataset.arg ?? null;
+    hoverIntentTimer = setTimeout(() => { hoverIntentTimer = null; dispatch(act, arg, null); }, HOVER_INTENT_MS);
+  }
+});
+mount.addEventListener("pointerout", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const menu = (e.target as Element).closest<HTMLElement>("[data-hover-menu]");
+  const id = menu?.dataset.hoverMenu ?? "";
+  if (!FILTER_MENUS[id]) return;
+  const to = e.relatedTarget as Element | null;
+  if (to && to.closest?.(`[data-hover-menu="${id}"]`)) return;   // moving between its own children
+  cancelHoverClose();
+  hoverCloseTimer = setTimeout(() => { hoverCloseTimer = null; closeFilterMenu(id); }, 200);
+});
+// Escape closes an open filter menu (and the ticket queue's filter dropdowns).
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (state.qMenu) { state.qMenu = null; rerender(); }
+  for (const [id, spec] of Object.entries(FILTER_MENUS)) if (spec.isOpen()) closeFilterMenu(id);
+});
+
 mount.addEventListener("click", (e) => {
   const target = e.target as Element;
   // Textareas carry data-act too (the description / comment drafts); clicking
@@ -1982,6 +2938,15 @@ mount.addEventListener("click", (e) => {
   const el = target.closest<HTMLElement>("[data-act]");
   if (!el) return;
   dispatch(el.dataset.act ?? "", el.dataset.arg ?? null, null);
+});
+
+// Right-click on an element that carries `data-ctx` opens ITS menu instead of
+// the browser's (a linked-work chip → its Copy / Remove menu).
+mount.addEventListener("contextmenu", (e) => {
+  const el = (e.target as Element).closest<HTMLElement>("[data-ctx]");
+  if (!el) return;
+  e.preventDefault();
+  dispatch(el.dataset.ctx ?? "", el.dataset.arg ?? null, null);
 });
 
 mount.addEventListener("change", (e) => {
@@ -1993,6 +2958,28 @@ mount.addEventListener("change", (e) => {
   if (el instanceof HTMLInputElement && el.dataset.act && el.dataset.commit) {
     dispatch(`${el.dataset.act}Commit`, el.dataset.arg ?? null, el.value);
   }
+});
+
+// The new-artifact form's file picker and drop zone (a file has no string value to dispatch).
+mount.addEventListener("change", (e) => {
+  const el = e.target as HTMLElement;
+  if (el instanceof HTMLInputElement && el.type === "file" && el.hasAttribute("data-art-file")) readArtFile(el.files?.[0]);
+});
+mount.addEventListener("dragover", (e) => {
+  if ((e.target as Element | null)?.closest?.("[data-art-drop]")) e.preventDefault();
+});
+mount.addEventListener("drop", (e) => {
+  if (!(e.target as Element | null)?.closest?.("[data-art-drop]")) return;
+  e.preventDefault();
+  readArtFile(e.dataTransfer?.files[0]);
+});
+// Enter in an input that names a `data-enter` act dispatches it (the artifact form's Link field).
+mount.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const el = (e.target as Element | null)?.closest?.<HTMLInputElement>("input[data-enter]");
+  if (!el) return;
+  e.preventDefault();
+  dispatch(el.dataset.enter ?? "", null, null);
 });
 
 mount.addEventListener("input", (e) => {
@@ -2088,6 +3075,71 @@ mount.addEventListener("keydown", (e) => {
   }
 });
 
+// ── link fields: Enter adds, and a paste that is a link adds on its own ───────
+// The ticket's Linked work field and the sprint's Resources field. The server
+// parses (and refuses) the raw text; this only decides whether a paste LOOKS like
+// links, so pasting a half-typed note never fires a write.
+const LINK_FIELDS: Record<string, string> = { ticketLinkDraft: "ticketLinkAdd", "sprint-resource": "sprintResourceAdd" };
+/** Whitespace-separated pieces of a link field's text. */
+function splitLinks(text: string): string[] {
+  return text.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+}
+const looksLikeLinks = (text: string): boolean => {
+  const parts = splitLinks(text);
+  return parts.length > 0 && parts.every((x) => /^https?:\/\/\S+$/i.test(x) || /^#?\d+$/.test(x));
+};
+const linkFieldAct = (el: EventTarget | null): { input: HTMLInputElement; act: string } | null => {
+  const input = (el as Element | null)?.closest?.<HTMLInputElement>("input[data-field]");
+  const act = input ? LINK_FIELDS[input.dataset.field ?? ""] : undefined;
+  return input && act ? { input, act } : null;
+};
+mount.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing) return;
+  const f = linkFieldAct(e.target);
+  if (!f || !f.input.value.trim()) return;
+  e.preventDefault();
+  dispatch(f.act, null, null);
+});
+mount.addEventListener("paste", (e) => {
+  const f = linkFieldAct(e.target);
+  if (!f) return;
+  // Let the paste land in the field (and its input event update the draft) first.
+  setTimeout(() => { if (looksLikeLinks(f.input.value)) dispatch(f.act, null, null); }, 0);
+});
+
+/** Add a typed tag to the prompt editor's draft (lowercase, a–z 0–9 and "-"). */
+function addEdTag(raw: string): void {
+  const ed = state.promptEd;
+  if (!ed) return;
+  const t = raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+  if (t && !ed.tags.includes(t)) ed.tags = [...ed.tags, t];
+  ed.tagDraft = "";
+}
+
+// ── prompt tag fields: Enter adds, Backspace on an empty draft drops the last, Escape closes ──
+mount.addEventListener("keydown", (e) => {
+  const field = (e.target as HTMLElement | null)?.dataset?.field;
+  if (field === "edTagDraft" && state.promptEd) {
+    if (e.key === "Enter") { e.preventDefault(); addEdTag(state.promptEd.tagDraft); rerender(); }
+    else if (e.key === "Backspace" && !state.promptEd.tagDraft && state.promptEd.tags.length) { state.promptEd.tags = state.promptEd.tags.slice(0, -1); rerender(); }
+    return;
+  }
+  if (field === "promptTagDraft") {
+    if (e.key === "Escape") { state.promptTagMenu = false; state.promptTagDraft = ""; rerender(); return; }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const p = state.promptDetail.data?.prompt;
+    const first = p ? tagOptions(p.tags, state.promptList.data.flatMap((x) => x.tags), state.promptTagDraft)[0] : undefined;
+    if (first) dispatch("promptTagAdd", first.tag, null);
+  }
+});
+// Escape closes the expanded handoff prompt (the filter menus close in their own listener).
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || state.view !== "app") return;
+  if (state.handoffPromptOpen) { state.handoffPromptOpen = false; rerender(); }
+  else if (state.promptExpanded) { state.promptExpanded = false; rerender(); }
+});
+
 // ── sidebar: ⌘K / Ctrl+K, the search box, and the collapsed-rail tooltip ──────
 document.addEventListener("keydown", (e) => {
   if (state.view !== "app" || e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
@@ -2126,8 +3178,12 @@ mount.addEventListener("focusin", (e) => railTip((e.target as Element | null)?.c
 mount.addEventListener("focusout", () => railTip(null));
 mount.addEventListener("mouseleave", () => railTip(null));
 
-// Escape closes the landing page's sign-in dialog, wherever focus is.
+// Escape closes the landing page's sign-in dialog, wherever focus is — and the
+// Settings connection modal, once its mint has landed.
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.connect && (state.connect.token || state.connect.error)) {
+    state.connect = null; state.connectCopied = false; rerender(); return;
+  }
   if (e.key !== "Escape" || !state.signInOpen || state.view !== "auth") return;
   state.signInOpen = false;
   rerender();
@@ -2196,6 +3252,9 @@ if (params.get("denied") === "1") {
       loadIdentityTasks();
       // The Tickets badge shows on every screen too — unassigned + open, org-wide.
       loadTicketBadge();
+      // Handoffs (pending for me) and the Prompt Library (staged) badges.
+      if (state.handoffs.status === "idle") loadHandoffs();
+      if (state.promptList.status === "idle") loadPrompts();
       // The persons directory backs every colored chip (sidebar, feed, docs,
       // Settings › Profile, Maintenance › People) — load it on every screen too.
       loadPersons();

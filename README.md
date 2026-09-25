@@ -98,17 +98,14 @@ marketplace. Anyone on the team gets both in two commands inside Claude Code:
 /plugin install canopy@canopy
 ```
 
-The plugin's MCP config reads your **personal** bearer from `$CANOPY_MCP_TOKEN`, so export it in the
-shell that launches Claude Code (e.g. add it to your shell profile), then restart:
-
-```bash
-export CANOPY_MCP_TOKEN=canopy_mcp_...   # your token, minted above — per person, never stored in the plugin
-```
+The plugin connects by **browser sign-in** — no token to export. In Claude Code, run `/mcp`, pick
+`canopy`, and choose **Authenticate**; your browser opens Canopy, sign in if asked, then click
+**Allow**.
 
 That auto-wires the `canopy` MCP server (`query` / `get_doc` / `record_session` …) and loads the
 `canopy`, `load-context`, and `record-session` skills — no manual `claude mcp add`, no copying skill
-folders. (The single-server manual path still works:
-`claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp --header "Authorization: Bearer canopy_mcp_..."`.)
+folders. (Not using the plugin, or connecting a headless client like Codex or CI? The pasted-token
+path still works: `claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp --header "Authorization: Bearer canopy_mcp_..."`.)
 
 > **Maintainers:** the plugin is at `plugins/canopy/`; the marketplace manifest at
 > `.claude-plugin/marketplace.json`. Validate either with `claude plugin validate <path>`. The real

@@ -3,6 +3,7 @@ import DOMPurify from "dompurify";
 import { REPO_URL } from "./github";
 import { slugifyHeading } from "./outline";
 import { issueRefStart, matchIssueRef } from "./issue-ref";
+import { DOC_IMAGE_PATH_RE } from "@shared/doc-images";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -56,11 +57,24 @@ export function renderMarkdownInline(text: string): string {
 }
 
 /**
+ * Sanitize an uploaded SVG artifact for inline display in the app origin. An SVG can
+ * carry <script>, event handlers and javascript: links; DOMPurify's svg + svgFilters
+ * profiles keep the drawing and drop all of that. The Artifacts viewer inlines an
+ * SVG ONLY through this (render tests mock this module).
+ */
+export function sanitizeSvg(src: string): string {
+  return DOMPurify.sanitize(src ?? "", { USE_PROFILES: { svg: true, svgFilters: true } }) as string;
+}
+
+/**
  * Progressive-enhancement pass over the already-sanitized HTML, done in a detached
  * <template> (never re-inserts unsanitized markup):
  *  • wrap each fenced code block in a `.cnpy-code` panel, tagged with its language;
  *  • wrap each table in a `.cnpy-md-tablewrap` so wide tables scroll instead of
- *    overflowing the reader column.
+ *    overflowing the reader column;
+ *  • wrap each uploaded doc image (`/img/<sha256>`) in a zoom button that opens the
+ *    lightbox (main.ts `docImgZoom`), lazy-loaded. Any other image source is left as
+ *    sanitized — the doc gate refuses them, so none reach a proposal made since.
  * Browser-only — the reader is the sole caller at runtime; render tests mock this module.
  */
 function enhance(clean: string): string {
@@ -91,6 +105,21 @@ function enhance(clean: string): string {
     }
     pre.replaceWith(wrap);
     wrap.appendChild(pre);
+  });
+
+  tpl.content.querySelectorAll("img").forEach((img) => {
+    const m = DOC_IMAGE_PATH_RE.exec(img.getAttribute("src") ?? "");
+    if (!m) return;
+    img.setAttribute("loading", "lazy");
+    img.setAttribute("decoding", "async");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cnpy-md-img";
+    btn.setAttribute("data-act", "docImgZoom");
+    btn.setAttribute("data-arg", m[1]);
+    btn.setAttribute("aria-label", `Expand image${img.alt ? `: ${img.alt}` : ""}`);
+    img.replaceWith(btn);
+    btn.appendChild(img);
   });
 
   tpl.content.querySelectorAll("table").forEach((table) => {

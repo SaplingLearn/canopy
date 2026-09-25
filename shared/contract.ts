@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ARTIFACT_LINK_TYPES } from "./artifacts-core";
 
 export const Session = z.object({
   id: z.string(),                  // uuid minted by the writer; the replay key with item_index
@@ -60,11 +61,15 @@ export const CapturedEvent = z.object({
 // The stable seam for assembled, authority-flagged retrieval. RRF (Reciprocal
 // Rank Fusion) is the future cross-source merge when Vectorize lands; this
 // envelope does not change when that happens.
+/** The record types `query` searches. */
+export const QueryType = z.enum(["doc", "decision", "feed", "sprint", "artifact"]);
+
 export const QueryRequest = z.object({
   q: z.string().default(""),
   // NOTE: no "ticket" — tickets_fts exists but tickets are NOT in the /search
-  // fan-out; the Tickets screen is their surface.
-  types: z.array(z.enum(["doc", "decision", "feed", "sprint"])).optional(), // default all
+  // fan-out; the Tickets screen is their surface. "artifact" (issue #52) is in:
+  // a private page reaches only its author (query()'s `viewer` argument).
+  types: z.array(QueryType).optional(), // default all
   section: z.string().optional(),
   space: z.enum(["technical", "product"]).optional(),
   include_staged: z.boolean().optional(), // caller sets the default (MCP true, HTTP false)
@@ -75,7 +80,7 @@ export const QueryRequest = z.object({
 export const Authority = z.enum(["live", "staged_pending", "unpromoted", "draft"]);
 
 export const QueryPrimary = z.object({
-  type: z.enum(["doc", "decision", "feed", "sprint"]),
+  type: QueryType,
   id: z.string(),
   title: z.string(),
   section: z.string().nullable(),
@@ -92,7 +97,7 @@ export const QueryPrimary = z.object({
 });
 
 export const QueryPointer = z.object({
-  type: z.enum(["doc", "decision", "feed", "sprint"]),
+  type: QueryType,
   id: z.string(),
   title: z.string(),
   snippet: z.string(),
@@ -106,12 +111,25 @@ export const QueryResult = z.object({
   meta: z.object({ engine: z.literal("fts5"), total: z.number() }),
 });
 
+/** One artifact → ticket / sprint / PR / issue link a session asks for (issue #52). */
+export const ArtifactSessionLink = z.object({
+  slug: z.string().min(1).max(80),
+  target_type: z.enum(ARTIFACT_LINK_TYPES),
+  target_ref: z.string().trim().min(1).max(300),
+});
+
 export const IngestPayload = z.object({
   session: Session,
   feed_entries: z.array(FeedEntry).default([]),
   doc_proposals: z.array(DocProposal).default([]),
   adr_drafts: z.array(AdrDraft).default([]),
   needs_triage: z.array(TriageItem).default([]),
+  // Artifacts this session produced, linked to what they belong to. NOT an ingested
+  // item: applied AFTER the batch is reconciled (`recordBatch` in src/consumer.ts),
+  // each a DIRECT authored write through the artifacts repository's addLink under the
+  // authenticated principal — a page it cannot see is `not_found`. addLink is
+  // idempotent, so a replay links nothing twice. Same on /ingest and record_session.
+  artifact_links: z.array(ArtifactSessionLink).max(50).default([]),
 });
 
 export type Session = z.infer<typeof Session>;
@@ -122,6 +140,8 @@ export type TriageItem = z.infer<typeof TriageItem>;
 export type CapturedEvent = z.infer<typeof CapturedEvent>;
 export type IngestPayload = z.infer<typeof IngestPayload>;
 export type QueryRequest = z.infer<typeof QueryRequest>;
+export type QueryType = z.infer<typeof QueryType>;
+export type ArtifactSessionLink = z.infer<typeof ArtifactSessionLink>;
 export type Authority = z.infer<typeof Authority>;
 export type QueryPrimary = z.infer<typeof QueryPrimary>;
 export type QueryPointer = z.infer<typeof QueryPointer>;

@@ -9,6 +9,7 @@ declare global {
     interface Env {
       DB: D1Database;
       ASSETS: Fetcher;
+      ARTIFACTS_BUCKET: R2Bucket;
       TEST_MIGRATIONS: D1Migration[];
       COOKIE_SECRET: string;
       GITHUB_CLIENT_ID: string;

@@ -20,10 +20,10 @@ import type {
 } from "@shared/sprints";
 import { SPRINT_URGENCIES, SPRINT_DOMAINS } from "@shared/sprints-core";
 import type { PersonSummary } from "./api";
-import { esc, attr, WORK_SHELL } from "./ui";
+import { esc, attr, DETAIL_SHELL } from "./ui";
 import { personChip } from "./people";
 import { renderMarkdown } from "./markdown";
-import { ticketPill, priorityChip, age, avatarStack } from "./tickets";
+import { ticketPill, priorityChip, age, avatarStack, tagChip } from "./tickets";
 
 // ── atoms ────────────────────────────────────────────────────────────────────
 
@@ -287,15 +287,33 @@ function resourceRow(lk: SprintResourceView): string {
 
 /** One ticket row. `depth: 1` = a child under its root: indented 34px with the ↳ chevron.
  *  The assignee avatars sit between the title and the chips (design 514). */
-function sprintTicketRow(t: SprintTicketRow, persons: PersonSummary[]): string {
-  const child = t.depth === 1;
-  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-trow" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);transition:background .12s ease;${child ? "padding-left:34px" : ""}">
-    ${child ? `<span style="color:var(--fg-40);flex:none">↳</span>` : ""}
-    <span style="flex:1;min-width:0;font-size:13.5px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
-    ${avatarStack(t.assignees, persons, 18)}
-    ${priorityChip(t.priority)}
-    ${ticketPill(t.status)}
-    <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);flex:none;width:34px;text-align:right">${esc(age(t.created_at))}</span>
+/**
+ * One ticket on the Sprint screen, as a BOX in a grid (not a table row): number +
+ * category + status across the top, the title (two lines at most), then who has
+ * it, its priority and its age along the bottom. The order is still roots-then-
+ * children, and a sub-ticket names its parent ("↳ sub-ticket of #N") since a grid
+ * cannot show nesting by indent. A closed ticket (done / declined) is dimmed.
+ */
+function sprintTicketCard(t: SprintTicketRow, persons: PersonSummary[]): string {
+  const closed = t.status === "done" || t.status === "declined";
+  const who = t.assignees.length > 0
+    ? avatarStack(t.assignees, persons, 20)
+    : `<span style="font-size:11.5px;font-style:italic;color:var(--fg-40)">Unassigned</span>`;
+  return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-tcard" style="display:flex;flex-direction:column;gap:10px;min-width:0;min-height:132px;text-align:left;padding:14px 15px 13px;border:1px solid var(--border);border-radius:11px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);${closed ? "opacity:.6;" : ""}">
+    <div style="display:flex;align-items:center;gap:8px;width:100%;min-width:0">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--fg-40);flex:none">#${t.id}</span>
+      ${tagChip(t.category)}
+      <span style="margin-left:auto;flex:none">${ticketPill(t.status)}</span>
+    </div>
+    <div style="width:100%;min-width:0">
+      <div style="font-size:13.5px;font-weight:600;line-height:1.4;letter-spacing:-0.005em;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(t.title)}</div>
+      ${t.depth === 1 && t.parent_id !== null ? `<div style="font-size:11.5px;color:var(--fg-40);margin-top:4px">↳ sub-ticket of #${t.parent_id}</div>` : ""}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;width:100%;margin-top:auto">
+      ${who}
+      <span style="margin-left:auto;flex:none">${priorityChip(t.priority)}</span>
+      <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);flex:none">${esc(age(t.created_at))}</span>
+    </div>
   </button>`;
 }
 
@@ -352,7 +370,7 @@ export function sprintScreen(p: SprintScreenProps): string {
     : `<button data-act="sprintActive" data-arg="${sp.active ? "0" : "1"}" class="cnpy-outlinebtn" style="padding:4px 11px;border-radius:7px;border:1px solid var(--border-strong);font-size:11.5px;font-weight:500;color:var(--fg-70);flex:none">${sp.active ? "Mark inactive" : "Mark active"}</button>`;
 
   const tickets = sp.tickets.length > 0
-    ? sp.tickets.map((t) => sprintTicketRow(t, p.persons)).join("")
+    ? `<div class="cnpy-stagger" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-top:14px">${sp.tickets.map((t) => sprintTicketCard(t, p.persons)).join("")}</div>`
     : `<div style="border:1px dashed var(--border-strong);border-radius:11px;padding:20px;text-align:center;font-size:12.5px;color:var(--fg-40);margin-top:12px">No tickets in this sprint yet — move some from the queue's sprint picker.</div>`;
 
   const members = sp.members.length > 0
@@ -367,7 +385,7 @@ export function sprintScreen(p: SprintScreenProps): string {
   const prop = (label: string, cell: string) =>
     `<div style="${PROP_ROW}"><div style="${PROP_LABEL}">${label}</div><div>${cell}</div></div>`;
 
-  return `<div style="${WORK_SHELL}">
+  return `<div style="${DETAIL_SHELL}">
     <div class="cnpy-sprint-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:28px">
       <div style="min-width:0">
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(sp.label)}</h2>

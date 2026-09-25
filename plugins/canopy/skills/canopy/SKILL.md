@@ -1,7 +1,7 @@
 ---
 name: canopy
 description: Overview and entry point for working with Canopy, the team's shared context store ("the team brain"). Use when someone asks how Canopy works, how to use it, how to connect an agent, what can be read or written, or wants the whole orient→work→record loop — and as the map to the load-context (orient before work) and record-session (record at the end) skills. Read-only itself; it explains the loop and points to the right tool/skill.
-allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard
+allowed-tools: mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__list_tickets, mcp__canopy__get_ticket, mcp__canopy__list_sprints, mcp__canopy__get_sprint, mcp__canopy__get_repo_dashboard, mcp__canopy__artifact_list, mcp__canopy__artifact_get
 ---
 
 # Canopy — the team's shared context store
@@ -21,7 +21,7 @@ one you are in:
 
 | | Staged — a human confirms | Direct — takes effect now |
 |---|---|---|
-| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`) |
+| **What** | docs, ADRs, feed entries (`propose_doc_update`, `append_feed`, `record_session`) | tickets, sprints, the roadmap plan (`update_plan`), artifacts (`upload_asset` / `artifact_update`) |
 | **Why** | an agent proposing knowledge can be wrong, and a wrong doc is believed | a request or a plan is an act, not a claim — and it is visibly somebody's |
 | **What bounds it** | the gate: vocab, confidence, content-hash dedupe, then Triage | scope: your own lane, or admin |
 
@@ -42,14 +42,16 @@ orient (load-context)  →   do the work   →   record (record-session)
    so you build on what exists instead of guessing. Read-only.
 2. **Work** as normal.
 3. **Record — the `record-session` skill.** Explicit only ("record this session"). At the end it
-   batches what changed and stages it through the gate in one `/ingest` POST. It must never auto-fire.
+   batches what changed and stages it through the gate in one `record_session` call. It must never auto-fire.
 
 > Why two skills, not one: a skill carries a single trigger setting. `load-context` **must** be
 > model-invocable (auto-orient); `record-session` **must** be explicit-only (never log on its own).
 > They can't share one `SKILL.md`. This `canopy` skill is the umbrella that documents both.
 
 Alongside the loop: **`tickets`** (explicit-only) works the ticket queue and, for an admin, the
-sprints; **`my-work`** reads your own plate; **`read-plan`** / **`update-plan`** read and write the
+sprints; **`handoff`** (explicit-only) leaves one handoff for the next session; **`prompts`** finds,
+fills and stages Prompt Library prompts; **`artifacts`** finds, pulls (verified download), spins up,
+links and — when asked — publishes artifact pages; **`my-work`** reads your own plate; **`read-plan`** / **`update-plan`** read and write the
 roadmap plan. Reading tickets, sprints and the roadmap needs no skill — those tools are registered for
 every principal.
 
@@ -68,7 +70,7 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
 ## Reading
 
 - **`query`** — the rich, ranked, full-text read over five types (`doc` / `decision` / `feed` /
-  `sprint` / `ticket`). Whole authoritative bodies for the top hits plus ranked pointers to the rest,
+  `sprint` / `artifact`; tickets are read with `list_tickets` / `get_ticket`). Whole authoritative bodies for the top hits plus ranked pointers to the rest,
   every result authority-flagged. **See `references/querying.md` for the full parameter set and
   patterns** (filter by type/section/space, browse, fan out via pointers, `include_staged`). This is
   the tool `load-context` wraps; call it directly for ad-hoc exploration.
@@ -102,6 +104,11 @@ Never present `staged_pending` / `unpromoted` / `draft` content as established f
   `ciFailures.rate`, a `null` or empty delta) is unknown / not captured, **never zero**, and
   `usage[].seen` says whether that source has ever reported. Read-only: polling and Sync GitHub are
   admin actions in the web app, never MCP tools.
+- **`list_handoffs` / `get_handoff`** — handoffs left for you (and for `anyone`), pending only by default;
+  `box: "sent"` lists your own. `get_handoff <id>` reads one without claiming it.
+- **`search_prompts` / `get_prompt`** — the Prompt Library: search by text and tags; `get_prompt { slug,
+  vars }` returns the body with `{{vars}}` filled and lists every variable still unfilled — ask for
+  those, never guess (the `prompts` skill).
 
 ## Writing (agents stage, humans confirm)
 
@@ -110,7 +117,11 @@ has a fixed size and one of six typed structures — `Shipped:` / `Decision:` / 
 `Finding:` / `Incident:` — see the `record-session` skill's "Feed entry format"; it applies to
 `append_feed` exactly as it does to `record_session`.) The gate reconciles
 every write — it de-duplicates no-op proposals, tags each doc change `new` / `edit` / `rewrite`, and
-routes out-of-vocab or low-confidence entries to Triage. **Confirming** (promote / ratify / reject /
+routes out-of-vocab or low-confidence entries to Triage. A doc may embed **images**, but only ones
+uploaded to Canopy: `upload_asset { destination: "doc", sha256, size_bytes, content_type }` → PUT the
+bytes to `upload_url` (skip when it says `uploaded: true`) → reference `![alt](/img/<sha256>)`. The gate
+refuses a doc whose image is not uploaded yet, or that points anywhere else (an external URL, a
+`data:` URI) — outcome `refused`, with the reason. **Confirming** (promote / ratify / reject /
 assign / discard) is done by a human in the web Triage desk over session-cookie routes — **never** MCP
 tools. The roadmap plan itself is **admin-authored**, not staged by agents: the `update-plan` skill
 wraps the `update_plan` MCP tool (direct, non-destructively versioned, promote-class) — agents cannot
@@ -127,7 +138,7 @@ triage step — a ticket write is org-visible immediately. What bounds them is s
 - **`create_ticket`** — file a ticket. The requester is you. Its `assignees` is the **only**
   agent-reachable assignment in Canopy: there is no `toggle_assignee` tool and never will be, because
   assignment is the data the lane rule is built on. After filing, assigning is web-only.
-- **`transition_ticket` / `add_ticket_comment` / `add_ticket_link` / `set_ticket_sprint` /
+- **`edit_ticket` / `transition_ticket` / `add_ticket_comment` / `add_ticket_link` / `set_ticket_sprint` /
   `set_ticket_parent`** — scoped. Outside your lane you get `{"code": "forbidden"}` and nothing is
   written. `set_ticket_parent` needs the lane on both tickets.
 - **Sprint writes are open to everyone**: `create_sprint`, `set_sprint_active`, `complete_sprint`,
@@ -138,23 +149,75 @@ triage step — a ticket write is org-visible immediately. What bounds them is s
 
 **`done` / `declined` on a ticket, and `done` on a sprint, are still never INFERRED** — not from a PR
 merging, an issue closing, the cron, or every ticket in a sprint resolving. A person asks for them,
-through their own token. The **`tickets`** skill is the explicit-only wrapper for all of this.
+through their own token. ONE exception: a ticket MIRRORED from a GitHub issue (`source: "github"`,
+ADR-007 as amended — sourced from the issue, never the issue itself) follows that issue's close and
+reopen; everything else about it is edited in Canopy, and its source link is locked. The **`tickets`** skill is the explicit-only wrapper for all of this.
+
+### Handoffs and prompts
+
+- **`send_handoff`** — leave one addressed note for the next session (`recipient`: a handle or `anyone`)
+  with the fixed context `{ repo, branch, task, done[], next[], files[] }`. Direct, not staged — it is a
+  message, not knowledge. One per session; the explicit-only **`handoff`** skill wraps it.
+- **`claim_handoff` / `expire_handoff`** — claiming is atomic and happens once; it returns the handoff as
+  one markdown block to act on. `load-context` lists pending handoffs at session start and claims only
+  the one the person picks — never on its own.
+- **`save_prompt`** — stages a new prompt or a new version of one. Always `staged`, whatever you send; a
+  human publishes it in the Prompt Library. See the **`prompts`** skill.
 
 Note there is **no provenance**: a write made through your token is recorded as *you*, with nothing
 marking it agent-made. Use the `tickets` skill's `comment_prefix` config if your team wants agent
 comments recognizable.
 
+### Artifacts — the artifact contract
+
+Artifacts are versioned pages the team keeps next to its tickets and sprints: `html`, `markdown`,
+`svg`, `mermaid` (text, ≤ 500 KB, sent inline) and `image`, `pdf`, `file` (≤ 10 MB, uploaded). The
+whole contract — kinds, caps, statuses, permissions, the upload flow with a `curl` example, the raw
+route — is **`docs/artifact-contract.md`**; read it before your first artifact write. In short:
+
+- **`upload_asset`** `{ destination?, title, kind, area, repo, visibility, content? | size_bytes + sha256, links?, summary? }`
+  — ONE tool for both stores. `destination: "doc"` (images for docs) takes only `sha256`, `size_bytes`,
+  `content_type` → `{ ref: "/img/<sha256>", markdown, uploaded, upload_url? }` (see Writing above). The
+  default, `"artifact"`, creates an artifact page:
+  — text kinds take `content` → `{ id, slug, url, version }`; binary kinds take `size_bytes` + `sha256`
+  (`shasum -a 256 <file>`) → `{ …, upload_url, expires_at }`, and you then `curl -X PUT --data-binary
+  @<file>` the exact bytes to that URL (**single use, 5 minutes**). The page is invisible until the PUT lands.
+- **`artifact_update`** `{ slug, summary, content | old_str + new_str }` for text (`old_str` must occur
+  exactly once), or `{ slug, summary, size_bytes, sha256 }` for binary. Every new version is `published`.
+- **`artifact_get`** `{ slug, version? }` — `slug@v3` / `slug/v3` name a version. Text kinds return
+  `content`; **every** kind returns a `download_url` (absolute, signed for you, reusable for 5 minutes,
+  no header — `curl -fsSL "$download_url" -o <path>`) plus that version's `sha256` / `size_bytes` to
+  verify the file against, and `download_filename`. `raw_url` is the signed-in browser view only.
+- **`artifact_list`** `{ q?, kind?, area?, author?, status?, ticket?, sprint?, limit? }` — the pages you
+  can see, newest first → `{ artifacts: [{ slug, title, kind, status, version, updated_at, url, … }],
+  total, truncated }`.
+- The **`artifacts`** skill is the procedure: find → pull into `.canopy/artifacts/<slug>/v<n>.<ext>` and
+  verify the hash → spin it up (serve an html page locally) → or just share `url` → publish / update
+  only when asked.
+- Every result carries **`warnings`** — non-empty when content calls something only claude.ai has
+  (`window.claude`, `window.storage`, `api.anthropic.com`). A warning, never a rejection.
+- **Direct, not staged**: a create or update takes effect now, as you. Whoever can see a page can write
+  it; `private` pages are their author's alone, and a private / missing / not-yet-uploaded slug is the
+  same `{ "error": "not_found", "code": "not_found" }`.
+- **Ratifying is human-only.** `draft` → `published` → `ratified`; only `ratified` is team-confirmed,
+  and a person does it on the web. There is no ratify tool. Never describe a `published` artifact as
+  agreed.
+- Artifacts show up in **`query`** (type `artifact`, id = slug; the body's first line is
+  `Status: <status> · v<n>`) and in **`get_ticket`**'s `artifacts`. `record_session`'s
+  `artifact_links` links the artifacts a session produced to their ticket / sprint / PR / issue.
+
 ## Connect an agent over MCP
 
-Mint a personal token first: Canopy web app → Settings → MCP access tokens (shown once).
-
-**Recommended — install the plugin** (bundles all three skills AND auto-wires the MCP server):
+**Recommended — install the plugin** (bundles every skill — canopy, load-context, record-session,
+my-work, tickets, read-plan, update-plan, handoff, prompts, artifacts — AND auto-wires the MCP server):
 
 ```bash
 claude plugin marketplace add SaplingLearn/canopy
 claude plugin install canopy@canopy
-export CANOPY_MCP_TOKEN=canopy_mcp_…        # the plugin's MCP config reads this
 ```
+
+Then run `/mcp` in Claude Code, choose **canopy → Authenticate**, sign in to Canopy in the browser and
+click **Allow**. (Headless clients can still use a token from Settings › MCP access.)
 
 **Manual fallback** — wire the MCP server and copy the skills yourself:
 
@@ -162,7 +225,7 @@ export CANOPY_MCP_TOKEN=canopy_mcp_…        # the plugin's MCP config reads th
 claude mcp add --transport http canopy https://canopy.saplinglearn.com/mcp \
   --header "Authorization: Bearer canopy_mcp_…"
 # then copy the skill folders into another repo / your home dir:
-cp -r .claude/skills/{canopy,load-context,record-session,tickets} ~/.claude/skills/
+cp -r .claude/skills/{canopy,load-context,record-session,my-work,tickets,read-plan,update-plan,handoff,prompts,artifacts} ~/.claude/skills/
 ```
 
 The skills are bundled in this repo under `plugins/canopy/skills/` (the in-repo `.claude/skills/*`

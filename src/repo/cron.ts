@@ -2,8 +2,10 @@
 // fire time (cron expressions are static UTC — the cadence lives in code, not
 // in wrangler.toml). This replaced the old "0 */6 * * *" progress-only
 // trigger, so the trigger count stays at three (Cloudflare bills per Worker).
+import { expireDueHandoffs } from "../tools/handoffs";
 import type { PollOutcome, RepoRefreshResult, UsagePollResult, UsagePollSource } from "@shared/repo";
 import type { Env } from "../env";
+import { pruneOAuth } from "../auth/oauth";
 import { recomputeAllProgress } from "../tools/progress";
 import { repoEnvironments, type RepoEnvConfig } from "./config";
 import { run } from "../db";
@@ -261,7 +263,8 @@ export async function runLockedRepoRefresh(env: Env, by: string, now: number, fe
  * Cloudflare caps a Worker invocation at 50 SUBREQUESTS (outbound `fetch`; D1
  * calls do not count) on the free plan, so the budget, counted from the code:
  *
- *   every tick   health pings — 2 per environment (`pingHealth`), 4 today.
+ *   every tick   health pings — 2 per environment (`pingHealth`), 4 today — and the
+ *                handoff expiry sweep (`expireDueHandoffs`, D1 only, no subrequests).
  *   :00          the hourly-polls slot (`runUsagePolls` above — the same
  *                function the admin's "Poll usage now" runs), and nothing else
  *                may run on this tick. Three pollers, each its own guarded
@@ -295,7 +298,7 @@ export async function runLockedRepoRefresh(env: Env, by: string, now: number, fe
  *                branch pages + 2 drift compares + 2 per environment (head
  *                commit, head checks). With the tick's own pings that is
  *                19 + 4N — 27 today, and N ≤ 7 under the 50.
- *   :30 (h%6)    `pruneRepoCapture` — D1 only, no subrequests.
+ *   :30 (h%6)    `pruneRepoCapture` + `pruneOAuth` — D1 only, no subrequests.
  *
  * Health (4) + the heaviest of those (23) leaves ample headroom; stacking all
  * three on one tick did not, and the reconcile is what died.
@@ -316,6 +319,10 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
   // Every tick: a dead target or a bad token costs one data point, never the
   // cron — pingHealth itself never throws.
   await safely("health", () => pingHealth(env.DB, envs, scheduledTime, fetchImpl));
+  // Every tick: pending handoffs past their expires_at flip to expired. D1 only
+  // (no subrequest), so it adds nothing to any tick's budget, and it runs BEFORE
+  // the :00 early return so no hour is skipped.
+  await safely("handoff expiry", () => expireDueHandoffs(env.DB, scheduledTime));
 
   if (minute === 0) {
     // The hourly polls — and NOTHING else may join this tick: the slot exists
@@ -345,5 +352,10 @@ export async function handleRepoCron(env: Env, scheduledTime: number, fetchImpl?
     });
   }
 
-  if (minute === 30) await safely("prune", () => pruneRepoCapture(env.DB, scheduledTime));
+  if (minute === 30) {
+    await safely("prune", () => pruneRepoCapture(env.DB, scheduledTime));
+    // MCP OAuth housekeeping rides the same D1-only tick: spent codes, dead tokens,
+    // never-used client registrations. Grants are never deleted.
+    await safely("oauth-prune", () => pruneOAuth(env.DB, scheduledTime));
+  }
 }

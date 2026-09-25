@@ -4,7 +4,9 @@
 // by a signed-in human through a cookie route, so there is no vocabulary to
 // police, no confidence to weigh, no staged state to confirm. `done` / `declined`
 // are set here only because a person asked for them — never inferred from a PR
-// merging or an issue closing (the brief's fourth invariant).
+// merging or an issue closing (the brief's fourth invariant). The one carve-out
+// lives OUTSIDE this file: a ticket mirrored from a GitHub issue follows that
+// issue's close/reopen through ./ticket-mirror.ts's private writer.
 //
 // Two rules hold across every function in this file:
 //   1. Every write bumps `tickets.updated_at` — the queue is sorted by it, so a
@@ -17,11 +19,11 @@
 // The status machine is NOT re-declared here: `canTransition` in shared/tickets.ts
 // is the one table, shared with the SPA.
 
-import type { TicketCreate, TicketStatus } from "@shared/tickets";
+import type { TicketCreate, TicketEdit, TicketStatus } from "@shared/tickets";
 import { canTransition, parseTicketLink } from "@shared/tickets";
 import type { TicketRow } from "@shared/rows";
 import { type DB, first, run, nowIso } from "../db";
-import { getPerson } from "../auth/persons";
+import { getPerson, RESERVED_HANDLES } from "../auth/persons";
 
 /**
  * A typed failure the routes map onto an HTTP status:
@@ -31,11 +33,11 @@ import { getPerson } from "../auth/persons";
  *   forbidden   → 403 (the write is outside the writer's lane — see tickets-agent.ts)
  * Everything else is a real 500.
  *
- * `forbidden` is raised ONLY by the MCP write surface (`tickets-agent.ts`), which
- * scopes an agent to the tickets its principal is already assigned to. The cookie
- * routes never pass a scope and so can never produce it — a signed-in human on the
- * web is not assignee-scoped and never was. The status mapping is here anyway so a
- * future cookie caller gets the right code for free.
+ * `forbidden` has two sources: the MCP write surface (`tickets-agent.ts`), which
+ * scopes an agent to the tickets its principal is already assigned to (the cookie
+ * routes never pass a scope — a signed-in human on the web is not assignee-scoped
+ * and never was); and `remove_ticket_link` on a LOCKED link — a mirrored ticket's
+ * source link (0032), which nobody may remove, on any surface.
  */
 export class TicketError extends Error {
   constructor(readonly code: "not_found" | "conflict" | "bad_request" | "forbidden", message: string) {
@@ -55,10 +57,13 @@ const getTicketRow = async (db: DB, id: number): Promise<TicketRow> => {
 /** Bump `updated_at` on a ticket. Called by EVERY writer below — the queue's sort key. */
 const touch = (db: DB, id: number, at: string) => run(db, `UPDATE tickets SET updated_at = ? WHERE id = ?`, at, id);
 
-/** Resolve a handle to its canonical `persons.handle` spelling, or 400. */
+/** Resolve a handle to its canonical `persons.handle` spelling, or 400. A RESERVED
+ *  handle (`github-webhook`, 0032) has a persons row but is not a person: it can
+ *  never be assigned, file, comment or link through these writers — only the
+ *  GitHub mirror (./ticket-mirror.ts) writes as it. */
 async function requirePerson(db: DB, handle: string): Promise<string> {
   const p = await getPerson(db, handle);
-  if (!p) throw new TicketError("bad_request", `no such person: ${handle}`);
+  if (!p || RESERVED_HANDLES.includes(p.handle)) throw new TicketError("bad_request", `no such person: ${handle}`);
   return p.handle;
 }
 
@@ -187,6 +192,46 @@ export async function add_ticket_link(db: DB, id: number, raw: string, by: strin
   );
   await touch(db, id, now);
   return res.meta.last_row_id as number;
+}
+
+/**
+ * Detach one linked-work reference. A hard delete: a link is a pointer, not a
+ * record, and `ticket_events` audits status moves only (adding one writes no
+ * event either). The link must belong to THIS ticket — a link id from another
+ * ticket is the same 404 as an unknown one, so the route cannot reach across.
+ *
+ * THE LOCK (0032): a `locked` link — the GitHub issue a mirrored ticket was
+ * sourced from — is refused with `forbidden` and left in place. This function is
+ * the ONLY delete path for ticket links (there is deliberately no DB trigger:
+ * the test harness truncates ticket_links), so keep it the only one. The DELETE
+ * repeats `locked = 0`, so even a lock set between the read and the write holds.
+ */
+export async function remove_ticket_link(db: DB, id: number, linkId: number): Promise<void> {
+  await getTicketRow(db, id);
+  const link = await first<{ locked: number }>(db, `SELECT locked FROM ticket_links WHERE id = ? AND ticket_id = ?`, linkId, id);
+  if (!link) throw new TicketError("not_found", `no such link on ticket ${id}: ${linkId}`);
+  if (link.locked) throw new TicketError("forbidden", "this is the GitHub issue the ticket mirrors — its link cannot be removed");
+  const res = await run(db, `DELETE FROM ticket_links WHERE id = ? AND ticket_id = ? AND locked = 0`, linkId, id);
+  if (!res.meta.changes) throw new TicketError("forbidden", "this link is locked");
+  await touch(db, id, nowIso());
+}
+
+/**
+ * Edit a ticket's title and/or body — native AND mirrored tickets alike: a
+ * mirrored ticket's title and body are seeded from the issue at import and are
+ * Canopy's from then on (the mirror never writes them again). A patch that
+ * changes neither is `bad_request`; a title must survive trimming. No history
+ * row — `ticket_events` audits status moves only. The tickets_fts_au trigger
+ * re-indexes the new text.
+ */
+export async function edit_ticket(db: DB, id: number, patch: TicketEdit, actor: string): Promise<void> {
+  const t = await getTicketRow(db, id);
+  await requirePerson(db, actor);
+  const title = patch.title !== undefined ? patch.title.trim() : undefined;
+  if (title !== undefined && !title) throw new TicketError("bad_request", "title is empty");
+  if (title === undefined && patch.body === undefined) throw new TicketError("bad_request", "nothing to edit: pass title and/or body");
+  await run(db, `UPDATE tickets SET title = ?, body = ?, updated_at = ? WHERE id = ?`,
+    title ?? t.title, patch.body ?? t.body, nowIso(), id);
 }
 
 /** Move a ticket into a sprint, or back to the backlog (`null`). */

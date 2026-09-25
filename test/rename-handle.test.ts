@@ -8,6 +8,7 @@ import { createSession } from "../src/auth/session";
 import { mintToken } from "../src/auth/tokens";
 import { createInvite, acceptInvite } from "../src/auth/invites";
 import { ingestEvent, ingestFeedEntry } from "../src/consumer";
+import { createPage as createArtifact, setStatus as setArtifactStatus, ratify as ratifyArtifact, mintUploadToken } from "../src/tools/artifacts";
 import { write_plan } from "../src/tools/plan";
 import {
   append_feed, propose_doc_update, stage_adr,
@@ -80,6 +81,30 @@ async function seedEveryHandleColumn(handle: string): Promise<void> {
     `${handle}:daily:w1`, handle, "daily", "w1", "[]", "pending", nowIso()); // notification_outbox.user_id
   await createInvite(env.DB, { email: "old-me-invite@test.io", name: null, invitedBy: handle }); // invites.invited_by
   await acceptInvite(env.DB, "old-me-invite@test.io", handle); // invites.accepted_by
+  // Artifacts (0030), through the REAL writers (src/tools/artifacts.ts): the create
+  // covers artifact_pages.author_id + artifact_versions.created_by + (with a link)
+  // artifact_links.created_by; publish + ratify covers ratified_by; a minted upload
+  // token covers artifact_upload_tokens.principal.
+  const art = await createArtifact(env.DB, {
+    title: "Rename test artifact", kind: "markdown", area: "ui", content: "# hi",
+    links: [{ target_type: "ticket", target_ref: String(ticketId) }],
+  }, handle);
+  await setArtifactStatus(env.DB, art.slug, "published", handle);
+  await ratifyArtifact(env.DB, art.slug, 1, handle);
+  await mintUploadToken(env.DB, { kind: "file", size_bytes: 1, sha256: "e".repeat(64), title: "Rename test upload", area: "ui" }, handle);
+  // Handoffs + Prompt Library (0028): direct inserts for sender / recipient /
+  // claimed_by and the prompt's author plus its version's (the real writers
+  // take the principal from auth, which this seed does not have).
+  await run(env.DB, `INSERT INTO handoffs (sender, recipient, status, body, created_at, claimed_at, claimed_by, expires_at) VALUES (?, ?, 'claimed', 'b', ?, ?, ?, ?)`,
+    handle, handle, nowIso(), nowIso(), handle, nowIso());
+  await run(env.DB, `INSERT INTO prompts (slug, title, author, current_version, created_at, updated_at) VALUES (?, 'T', ?, 1, ?, ?)`, "rename-test", handle, nowIso(), nowIso());
+  await run(env.DB, `INSERT INTO prompt_versions (slug, version, status, author, body, created_at) VALUES (?, 1, 'published', ?, 'b', ?)`, "rename-test", handle, nowIso());
+  // oauth_grants.person + oauth_codes.person (0029) — direct inserts; the writer
+  // (issueAuthorization) needs a registered client, seeded here too.
+  await run(env.DB, `INSERT OR IGNORE INTO oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES ('rename-client', 'C', '["http://localhost/cb"]', ?)`, nowIso());
+  const grant = await run(env.DB, `INSERT INTO oauth_grants (person, client_id, client_name, created_at) VALUES (?, 'rename-client', 'C', ?)`, handle, nowIso());
+  await run(env.DB, `INSERT INTO oauth_codes (code_hash, client_id, person, grant_id, redirect_uri, code_challenge, created_at, expires_at) VALUES (?, 'rename-client', ?, ?, 'http://localhost/cb', 'x', ?, ?)`,
+    `rename-code-${handle}`, handle, grant.meta.last_row_id, nowIso(), nowIso());
 }
 
 describe("renamePerson", () => {

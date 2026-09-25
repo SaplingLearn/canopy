@@ -9,8 +9,8 @@
     {
       "name": "canopy",
       "source": "./plugins/canopy",
-      "description": "orient→work→record skills (canopy, load-context, record-session) + my-work + tickets + the admin plan skills (read-plan, update-plan) + the auto-wired Canopy MCP server. Set $CANOPY_MCP_TOKEN to your personal bearer (minted in Canopy → Settings → MCP access tokens).",
-      "keywords": ["canopy", "context", "mcp", "team-memory", "tickets"]
+      "description": "Skills: canopy, load-context, record-session (orient→work→record), my-work, tickets, read-plan + update-plan (admin), handoff, prompts, artifacts — plus the auto-wired Canopy MCP server. Connects by browser sign-in: run /mcp and choose Authenticate.",
+      "keywords": ["canopy", "context", "mcp", "team-memory", "tickets", "handoffs", "prompts", "artifacts"]
     }
   ]
 }

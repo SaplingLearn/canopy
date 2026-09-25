@@ -1,0 +1,228 @@
+{
+  "handoffs": [
+    {
+      "id": 17,
+      "sender": "Darkest-Teddy",
+      "recipient": "AndresL230",
+      "status": "pending",
+      "body": "Quiz agent still fails validation on ~4% of calls. Parser is fixed; prompt and eval aren't.\n\nTrailing prose after the JSON is handled by the new parser in `quiz_agent.py`. The remaining failures are 1-based `correct_index` on multi-select and empty distractors on short chunks. Both need prompt changes, and we have no eval to prove it.\n\nThe 38 real failures are exported to `fixtures/evals/quiz_failures.jsonl`. Start there.",
+      "prompt": {
+        "title": "Harden the quiz agent prompt and add an eval",
+        "body": "You're picking up the Gemini quiz-agent hardening on `fix/quiz-agent-json`. The previous session fixed the parser but ran out of context before the prompt and eval work. Read this whole prompt before touching code.\n\n## Background\n\n`backend/agents/quiz_agent.py` builds a Pydantic AI agent that returns a `QuizSet` (see `backend/models/quiz.py`). About 4% of production calls in the last week failed validation. The three failure shapes we've seen:\n\n1. **Trailing prose.** The model returns valid JSON followed by \"Let me know if you'd like more questions!\".\n2. **Wrong answer index.** `correct_index` is 1-based on multi-select questions.\n3. **Empty distractors.** `options` contains `\"\"` when the source chunk has fewer than four facts.\n\nThe parser fix for (1) is merged in this branch. (2) and (3) are prompt problems.\n\n## What to do\n\n### 1. Rewrite the system prompt\n\nEdit `SYSTEM_PROMPT` in `backend/agents/quiz_agent.py`. Keep it under 60 lines.\n\n- State that `correct_index` is **0-based** for every question type, and give one example of each type.\n- Tell the model to return fewer questions rather than pad options. `QuizSet.questions` may be shorter than `num_questions`.\n- Remove the \"be encouraging\" line. It's the likely source of the trailing prose.\n\nDo not change the `QuizSet` schema. The frontend in `frontend/src/components/quiz/QuizCard.tsx` depends on it.\n\n### 2. Add two few-shot examples\n\nPut them in `backend/agents/prompts/quiz_examples.py`, not inline. One single-choice, one multi-select. Use chunks from `fixtures/lessons/photosynthesis.md`, not made-up text.\n\n### 3. Build a small eval\n\nCreate `backend/evals/quiz_agent_eval.py`:\n\n```python\nCASES = load_cases(\"fixtures/evals/quiz_failures.jsonl\")  # 38 real failures, already exported\n\ndef test_case(case):\n    result = run_quiz_agent(case.chunk, num_questions=case.n)\n    assert all(q.correct_index < len(q.options) for q in result.questions)\n    assert all(opt.strip() for q in result.questions for opt in q.options)\n```\n\nRun it before and after the prompt change and paste both pass rates into the PR description.\n\n### 4. Route through the service\n\n`quiz_agent.py` still imports `google.genai` directly in one place (`_fallback_generate`). Move that call to `services/gemini_service.py` so it gets the shared retry and quota handling.\n\n## Constraints\n\n- No new dependencies.\n- Don't raise `temperature`. It's pinned at 0.2 for a reason (see ADR-011).\n- If the eval pass rate is below 95% after your changes, stop and leave a handoff instead of shipping.\n\n## Done when\n\n- [ ] Eval passes ≥ 95% on the 38 cases\n- [ ] `pytest backend/tests/test_quiz_agent.py` is green\n- [ ] PR opened against `main` with before/after numbers\n- [ ] Feed entry recorded via `record_session`"
+      },
+      "context": {
+        "repo": "SaplingLearn/sapling",
+        "branch": "fix/quiz-agent-json",
+        "task": "Get quiz agent validation failures under 1%",
+        "done": [
+          "Tolerant JSON parser strips trailing prose",
+          "Exported 38 failing cases to `fixtures/evals/quiz_failures.jsonl`"
+        ],
+        "next": [
+          "Rewrite `SYSTEM_PROMPT` (0-based index, no padding)",
+          "Two few-shot examples in `prompts/quiz_examples.py`",
+          "Eval script with before/after pass rates",
+          "Move `_fallback_generate` onto `gemini_service`"
+        ],
+        "files": [
+          "backend/agents/quiz_agent.py",
+          "backend/agents/prompts/quiz_examples.py",
+          "backend/evals/quiz_agent_eval.py",
+          "backend/services/gemini_service.py",
+          "fixtures/evals/quiz_failures.jsonl"
+        ]
+      },
+      "created_ago_min": 8,
+      "claimed_ago_min": null,
+      "claimed_by": null,
+      "claimed_by_session": null
+    },
+    {
+      "id": 16,
+      "sender": "Jose-Gael-Cruz-Lopez",
+      "recipient": "AndresL230",
+      "status": "pending",
+      "body": "Resume tokens are wired on the backend, but the Next.js reader still drops the stream on reconnect.\n\nThe server now emits `id:` on every chunk and honours `Last-Event-ID`. What's missing is the client: `useDocumentStream` rebuilds the `EventSource` from scratch and never passes the last id.\n\n**Watch out:** Cloudflare closes idle streams at ~100s. The heartbeat is in, but only on the `/stream` route, not `/stream/retry`.",
+      "prompt": {
+        "title": "Finish SSE resume on the client",
+        "body": "Read `frontend/src/hooks/useDocumentStream.ts` and `frontend/src/lib/sse.ts`.\n\n1. Keep the last `id:` you receive in a ref.\n2. On reconnect, open the new `EventSource` with `Last-Event-ID` set to it.\n3. Add the 15s heartbeat to `/stream/retry` in `backend/routes/documents.py`, matching `/stream`.\n4. Write a Playwright test that kills the connection mid-upload and asserts no chunk is lost or duplicated.\n\nDon't touch `stream_service.py`; the server side is done."
+      },
+      "context": {
+        "repo": "SaplingLearn/sapling",
+        "branch": "feat/sse-resume-tokens",
+        "task": "Resume interrupted SSE streams in the document pipeline",
+        "done": [
+          "Emit `id:` per chunk in `stream_service.py`",
+          "Honour `Last-Event-ID` in `/api/documents/{id}/stream`",
+          "15s heartbeat on `/stream`"
+        ],
+        "next": [
+          "Pass the last id from `useDocumentStream` on reconnect",
+          "Add the heartbeat to `/stream/retry`",
+          "Playwright test: kill the connection mid-upload"
+        ],
+        "files": [
+          "backend/routes/documents.py",
+          "backend/services/stream_service.py",
+          "frontend/src/lib/sse.ts",
+          "frontend/src/hooks/useDocumentStream.ts"
+        ]
+      },
+      "created_ago_min": 25,
+      "claimed_ago_min": null,
+      "claimed_by": null,
+      "claimed_by_session": null
+    },
+    {
+      "id": 15,
+      "sender": "Darkest-Teddy",
+      "recipient": "anyone",
+      "status": "pending",
+      "body": "OCR retries exhaust the Gemini quota on large PDFs.\n\nA 180-page syllabus failed at page 140 and the retry loop re-sent every page, not just the failed batch. Two uploads like that burn the daily quota.\n\nThe fix is to checkpoint per batch in the DBOS workflow so a retry resumes from the last good page.",
+      "prompt": null,
+      "context": {
+        "repo": "SaplingLearn/sapling",
+        "branch": "fix/ocr-timeout-retry",
+        "task": "Checkpoint OCR batches so retries don't re-send finished pages",
+        "done": [
+          "Reproduced with `fixtures/pdfs/syllabus-180p.pdf`",
+          "Confirmed the retry decorator wraps the whole loop"
+        ],
+        "next": [
+          "Split `run_ocr` into a DBOS step per 20-page batch",
+          "Skip Gemini calls for batches already in `document_chunks`"
+        ],
+        "files": [
+          "backend/pipeline/ocr.py",
+          "backend/services/gemini_service.py",
+          "backend/workflows/document_workflow.py"
+        ]
+      },
+      "created_ago_min": 120,
+      "claimed_ago_min": null,
+      "claimed_by": null,
+      "claimed_by_session": null
+    },
+    {
+      "id": 14,
+      "sender": "lpcooper-arch",
+      "recipient": "AndresL230",
+      "status": "claimed",
+      "body": "The `quiz_attempts` migration is written but not run. It adds `attempt_no` and a unique index on `(learner_id, quiz_id, attempt_no)`.\n\nThe table has ~2M rows in production, so the index has to go in concurrently, outside the migration transaction.",
+      "prompt": {
+        "title": "Split and review the attempt_no migration",
+        "body": "Split `supabase/migrations/20260918_quiz_attempts_attempt_no.sql` in two:\n\n- The column add + backfill, inside a transaction.\n- `CREATE UNIQUE INDEX CONCURRENTLY` on `(learner_id, quiz_id, attempt_no)`, in its own file with no transaction.\n\nThen check: RLS still has a policy per role, the new column has a default, and nothing takes an `ACCESS EXCLUSIVE` lock for more than a second. Apply to staging before production."
+      },
+      "context": {
+        "repo": "SaplingLearn/sapling",
+        "branch": "chore/quiz-attempts-index",
+        "task": "Ship the quiz_attempts attempt_no migration safely",
+        "done": [
+          "Migration file written",
+          "Backfill script for `attempt_no`"
+        ],
+        "next": [
+          "Move the index into its own non-transactional migration",
+          "Run the review prompt against it",
+          "Apply on staging, then production"
+        ],
+        "files": [
+          "supabase/migrations/20260918_quiz_attempts_attempt_no.sql",
+          "backend/scripts/backfill_attempt_no.py"
+        ]
+      },
+      "created_ago_min": 2016,
+      "claimed_ago_min": 1584,
+      "claimed_by": "AndresL230",
+      "claimed_by_session": "sess_01J8ZK4QX2M7"
+    },
+    {
+      "id": 13,
+      "sender": "AndresL230",
+      "recipient": "Jose-Gael-Cruz-Lopez",
+      "status": "pending",
+      "body": "Handoffs API is half done — the table and the read routes exist, the claim route does not.\n\nClaim has to be atomic: two sessions racing on an `anyone` handoff must not both win. Do it as a single `UPDATE … WHERE status = 'pending'` and check `changes`.",
+      "prompt": {
+        "title": "Atomic claim route",
+        "body": "Add `POST /api/handoffs/:id/claim` in `src/routes.ts`.\n\nDo it as one statement:\n\n```sql\nUPDATE handoffs SET status = 'claimed', claimed_at = ?, claimed_by = ?, claimed_by_session = ?\nWHERE id = ? AND status = 'pending'\n```\n\nIf `changes` is 0, return 409 with the current status. Then expose it as the `claim_handoff` MCP tool in `src/mcp.ts`, using the bearer principal as the claimer."
+      },
+      "context": {
+        "repo": "SaplingLearn/canopy",
+        "branch": "feat/handoffs-api",
+        "task": "Add POST /api/handoffs/:id/claim and the MCP claim_handoff tool",
+        "done": [
+          "`migrations/0028_handoffs.sql`",
+          "`GET /api/handoffs` and `GET /api/handoffs/:id`",
+          "Row type in `shared/rows.ts`"
+        ],
+        "next": [
+          "Atomic claim route",
+          "`claim_handoff` MCP tool (bearer principal = claimer)",
+          "Expire pending handoffs after 7 days in the cron"
+        ],
+        "files": [
+          "migrations/0028_handoffs.sql",
+          "src/routes.ts",
+          "src/mcp.ts",
+          "shared/rows.ts"
+        ]
+      },
+      "created_ago_min": 180,
+      "claimed_ago_min": null,
+      "claimed_by": null,
+      "claimed_by_session": null
+    },
+    {
+      "id": 12,
+      "sender": "AndresL230",
+      "recipient": "anyone",
+      "status": "claimed",
+      "body": "Triage map needs a person picker that can search once the team grows past ten.\n\nKeep the existing `pickRow` look; just add a filter input above the list.",
+      "prompt": null,
+      "context": {
+        "repo": "SaplingLearn/canopy",
+        "branch": "feat/identity-picker-search",
+        "task": "Searchable person picker in Maintenance › Identity",
+        "done": [],
+        "next": [
+          "Filter input above the picker",
+          "Keyboard ↑↓ + Enter like the mention picker"
+        ],
+        "files": [
+          "web/src/maintenance.ts",
+          "web/src/main.ts"
+        ]
+      },
+      "created_ago_min": 3744,
+      "claimed_ago_min": 3168,
+      "claimed_by": "lpcooper-arch",
+      "claimed_by_session": "sess_01J8W1CB7T0F"
+    },
+    {
+      "id": 11,
+      "sender": "lpcooper-arch",
+      "recipient": "AndresL230",
+      "status": "expired",
+      "body": "Streak counters moved to Durable Objects, but the KV fallback is still read on cold start.\n\nRemove the fallback once a week of DO data exists.",
+      "prompt": null,
+      "context": {
+        "repo": "SaplingLearn/sapling",
+        "branch": "feat/streak-durable-objects",
+        "task": "Remove the KV streak fallback",
+        "done": [
+          "DO-backed counter live"
+        ],
+        "next": [
+          "Delete `kv_streak_fallback`"
+        ],
+        "files": [
+          "frontend/src/worker/streaks.ts"
+        ]
+      },
+      "created_ago_min": 12960,
+      "claimed_ago_min": null,
+      "claimed_by": null,
+      "claimed_by_session": null
+    }
+  ]
+}

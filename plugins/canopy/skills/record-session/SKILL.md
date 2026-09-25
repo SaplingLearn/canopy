@@ -2,7 +2,7 @@
 name: record-session
 description: Use when a person explicitly asks to wrap up, record, log, or capture the current Claude Code session into Canopy (triggers — "record this session", "session-end", "log this to Canopy", "save what we did"). Explicit invocation only — must never auto-fire at a natural stopping point.
 disable-model-invocation: true
-allowed-tools: Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(git diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh issue view:*), Bash(uuidgen:*), mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__record_session
+allowed-tools: Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(git diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh issue view:*), Bash(uuidgen:*), mcp__canopy__query, mcp__canopy__get_doc, mcp__canopy__record_session, mcp__canopy__upload_asset, Bash(shasum -a 256:*), Bash(sha256sum:*), Bash(wc -c:*), Bash(curl -X PUT:*)
 ---
 
 # Record Session → Canopy
@@ -79,8 +79,22 @@ Build at most one of each, only for what the session genuinely touched:
 - **Doc** — only when the session durably changed a convention/architecture note that belongs in a doc.
   `{ slug, section, space, title?, body, change_summary, confidence, base_version }` (`base_version`
   from step 2; `space` is `sapling` for product docs, `canopy` for tooling docs).
+  **Images in a doc** — only uploaded ones: for each picture, `upload_asset { destination: "doc",
+  sha256, size_bytes, content_type }` (png / jpeg / gif / webp, ≤ 10 MB), PUT the bytes to its
+  `upload_url` unless it answers `uploaded: true`, then write `![what it shows](/img/<sha256>)` in the
+  body. Do the uploads BEFORE `record_session`: a doc with a not-yet-uploaded `/img/` ref, or any other
+  image source (an external URL, a `data:` URI), comes back under `refused` with the reason and is not
+  staged — upload, then send the same batch again (a refused doc is not ledgered, so it stages).
 - **ADR** — when the session settled a real decision. `{ title, context, decision, rationale,
   confidence }`. (Previously nothing emitted these — now they land typed in the decisions queue.)
+- **Artifact links** — when the session CREATED or VERSIONED artifacts (`upload_asset` /
+  `artifact_update` results earlier in the conversation carry their `slug`; the `artifacts` skill
+  reports each one's `url`), link each to what it belongs to — its ticket above all, and the PR that
+  shipped the work it describes: `{ slug, target_type: "ticket" | "sprint" | "pr" | "issue", target_ref }` — a ticket or
+  sprint id, or a PR / issue as `owner/repo#n` (observed via `gh`, like every other artifact fact).
+  Only slugs a tool call actually returned — never a slug you guess. These are NOT staged: after the
+  batch is reconciled each is linked directly, as you (idempotent; a page you cannot see is
+  `not_found`). Contract: `docs/artifact-contract.md`.
 
 ### 5. Assemble ONE payload and call `record_session` once
 
@@ -94,7 +108,8 @@ nothing new. Assemble a single `IngestPayload` and pass it to the **`record_sess
   "feed_entries":        [ /* step 4 */ ],
   "doc_proposals":       [ /* step 4, with base_version */ ],
   "adr_drafts":          [ /* step 4 */ ],
-  "needs_triage":        [ /* step 4 */ ]
+  "needs_triage":        [ /* step 4 */ ],
+  "artifact_links":      [ /* step 4 — { slug, target_type, target_ref }, only when the session produced artifacts */ ]
 }
 ```
 
@@ -103,7 +118,9 @@ call authenticates as you and routes through the SAME gate as the human `/ingest
 **`session.author` is advisory and ignored — the server stamps the author from your authenticated
 principal.** Then **report the structured counts** the tool returns, e.g.
 `{ "docs": { "staged": 1, "unchanged": 2, "triaged": 0 }, … }` → "3 docs: 1 staged, 2 unchanged."
-`unchanged` means the gate recognised a no-op or a replay and correctly dropped it.
+`unchanged` means the gate recognised a no-op or a replay and correctly dropped it. When you sent
+`artifact_links`, the result also carries `artifact_links` — one `{ slug, target_type, target_ref,
+outcome }` per link, `linked` / `not_found` / `error` (with the reason) — report any that did not link.
 
 ## Feed entry format — pick ONE type; the type fixes the structure
 

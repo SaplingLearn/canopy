@@ -2,11 +2,14 @@ import { app } from "./routes";
 import { handleMcp } from "./mcp";
 import { handleGithubWebhook } from "./webhook";
 import { resolveBearerPrincipal } from "./auth/principal";
+import { mcpUnauthorized, oauthOrigin } from "./auth/oauth";
 import { ensureNotificationPolicySeeded } from "./notifications/policy";
 import { DAILY_CRON, WEEKLY_CRON, handleNotificationCron } from "./notifications/cron";
 import { REPO_CRON, handleRepoCron } from "./repo/cron";
 import { verifyUnsubscribeToken } from "./notifications/unsubscribe";
 import { run } from "./db";
+import { handleArtifactUpload, isUploadRequest } from "./artifacts/upload";
+import { handleArtifactDownload, isDownloadRequest } from "./artifacts/download";
 import type { Env } from "./env";
 
 export default {
@@ -17,14 +20,13 @@ export default {
     const url = new URL(request.url);
     // Static assets are served by the assets binding before this handler runs.
     if (url.pathname === "/mcp") {
-      // Bearer ONLY. On missing/invalid credentials: bare 401, NO WWW-Authenticate,
-      // NO OAuth discovery/metadata — Claude Code must use the configured header.
+      // Bearer class: a pasted `canopy_mcp_` token or an OAuth access token. The 401
+      // points MCP clients at the OAuth metadata (RFC 9728) so Claude Code / claude.ai
+      // can sign the person in; `error="invalid_token"` when a token was presented.
       const principal = await resolveBearerPrincipal(request, env);
       if (!principal) {
-        return new Response(JSON.stringify({ error: "unauthorized" }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        });
+        const presented = /^Bearer\s+\S/i.test(request.headers.get("authorization") ?? "");
+        return mcpUnauthorized(oauthOrigin(request.url), presented);
       }
       return handleMcp(request, env, ctx, principal);
     }
@@ -45,6 +47,15 @@ export default {
       await run(env.DB, `UPDATE persons SET email_unsubscribed = 1 WHERE handle = ?`, login);
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    // Artifact binary upload (issue #52): the single-use token minted by
+    // POST /api/artifacts/upload-url IS the auth — no session, so it is dispatched
+    // here, before the app and its sessionGate (src/artifacts/upload.ts).
+    if (isUploadRequest(request.method, url.pathname)) return handleArtifactUpload(request, env);
+    // Artifact agent download (issue #52 · Track F): the signed, 5-minute URL that
+    // artifact_get mints IS the auth — no session, dispatched here before the app. The
+    // page is re-checked for the token's principal at download time
+    // (src/artifacts/download.ts).
+    if (isDownloadRequest(url.pathname)) return handleArtifactDownload(request, env);
     return app.fetch(request, env, ctx);
   },
 

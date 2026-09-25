@@ -12,7 +12,20 @@ export const RESET_STATEMENTS = [
   "DELETE FROM ticket_links",
   "DELETE FROM ticket_assignees",
   "DELETE FROM tickets",
+  // Artifacts (0030): children first — versions, links and upload tokens all
+  // reference artifact_pages(id). artifacts_fts needs no DELETE: the
+  // artifacts_fts_ad trigger cascades the page DELETE into the index.
+  "DELETE FROM artifact_upload_tokens",
+  "DELETE FROM doc_image_upload_tokens",
+  "DELETE FROM doc_images",
+  "DELETE FROM artifact_links",
+  "DELETE FROM artifact_versions",
+  "DELETE FROM artifact_pages",
   "DELETE FROM processed_items",
+  // Handoffs + Prompt Library (0028): prompt_versions references prompts(slug).
+  "DELETE FROM handoffs",
+  "DELETE FROM prompt_versions",
+  "DELETE FROM prompts",
   "DELETE FROM pr_summaries",
   "DELETE FROM issue_summaries",
   "DELETE FROM events",
@@ -40,6 +53,10 @@ export const RESET_STATEMENTS = [
   "DELETE FROM notification_prefs",
   "DELETE FROM notification_policy",
   "UPDATE notification_settings SET send_hour = 8, timezone = 'America/New_York', from_address = 'Canopy <canopy@canopy.saplinglearn.com>' WHERE id = 1",
+  "DELETE FROM oauth_tokens",
+  "DELETE FROM oauth_codes",
+  "DELETE FROM oauth_grants",
+  "DELETE FROM oauth_clients",
   "DELETE FROM sessions",
   "DELETE FROM mcp_tokens",
   "DELETE FROM identities",
@@ -53,4 +70,7 @@ export const RESET_STATEMENTS = [
   // are the queue's requesters — the people filing tickets who don't ship code.
   "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('meilin', 'Meilin Zhao', 'rose', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), ('sanaok', 'Sana Okafor', 'ochre', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
   "INSERT INTO identities (provider, subject, label, person, linked_at, linked_by) VALUES ('google', 'google-sub-meilin', 'meilin@saplinglearn.org', 'meilin', '2026-01-01T00:00:00Z', 'seed'), ('google', 'google-sub-sanaok', 'sanaok@saplinglearn.org', 'sanaok', '2026-01-01T00:00:00Z', 'seed')",
+  // …and the system person 0032 seeds: the GitHub mirror's fallback requester.
+  // The DELETE FROM persons above wipes the migration's row, so it is re-seeded here.
+  "INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('github-webhook', 'GitHub', 'stone', '2026-09-24T00:00:00Z', '2026-09-24T00:00:00Z')",
 ];

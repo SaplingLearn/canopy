@@ -1,21 +1,24 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { IngestPayload } from "@shared/contract";
+import { IngestPayload, QueryType } from "@shared/contract";
 import type { AppEnv } from "./auth/principal";
 import { sessionGate, isAdmin } from "./auth/principal";
 import { authApp } from "./auth/routes";
+import { oauthApp } from "./auth/oauth-routes";
 import { notificationsApp } from "./notifications/routes";
-import { consume } from "./consumer";
+import { artifactsApp } from "./artifacts/routes";
+import { rawApp, rawHeaders } from "./artifacts/raw";
+import { ingestDocProposal, recordBatch } from "./consumer";
 import { runBackfill, isFinalBackfillBatch } from "./tools/backfill";
 import { get_doc, list_docs, get_feed, query, list_needs_triage, list_adrs, list_proposals, list_identity_tasks, list_tickets, get_ticket, ticket_badge } from "./tools/reads";
 import {
-  create_ticket, transition_ticket, toggle_assignee, add_ticket_link,
+  create_ticket, edit_ticket, transition_ticket, toggle_assignee, add_ticket_link, remove_ticket_link,
   set_ticket_sprint, set_ticket_parent, add_ticket_comment,
   TicketError, TICKET_ERROR_STATUS,
 } from "./tools/tickets";
 import {
-  TicketCreate, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
+  TicketCreate, TicketEdit, TicketTransition, TicketAssigneeToggle, TicketLinkAdd,
   TicketSprintSet, TicketParentSet, TicketCommentAdd, TicketSeg, TicketAssigneeFilter, TicketCategory,
 } from "@shared/tickets";
 import { promote_doc, ratify_adr, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
@@ -25,6 +28,12 @@ import {
 } from "./tools/sprints";
 import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
 import { get_plan } from "./tools/plan";
+import {
+  listHandoffs, getHandoff, createHandoff, claimHandoff, expireHandoff, HandoffCreateInput, HandoffError, HANDOFF_ERROR_STATUS,
+} from "./tools/handoffs";
+import { listPrompts, getPrompt, listPromptVersions, savePrompt, setPromptTags, publishPrompt, PromptSaveInput, PromptError, PROMPT_ERROR_STATUS } from "./tools/prompts";
+import { isSection } from "@shared/vocabulary";
+import { HANDOFF_BOXES, type HandoffBox } from "@shared/handoffs";
 import { getMyWork } from "./tools/mywork";
 import { getRepoDashboard, emptyRepoDashboard } from "./tools/repo";
 import { reconcileRepo, type ReconcileResult } from "./repo/github";
@@ -36,15 +45,48 @@ import { createInvite, revokeInvite, listInvites } from "./auth/invites";
 import { listPersons } from "./auth/persons";
 import { sendInvite } from "./notifications/invite";
 import type { InviteRow } from "@shared/rows";
+import { readDocImage } from "./tools/doc-images";
 
 export const app = new Hono<AppEnv>();
+
+// The raw artifact route's lock-down headers wrap EVERYTHING under /raw/, the gate's
+// own 401 included — so this one middleware runs before the gate.
+app.use("/raw/*", rawHeaders);
 
 // Gate first: everything except /auth/login and /auth/callback requires a session.
 // Fails closed with 401 (no data in the body).
 app.use("*", sessionGate);
 
+// Artifacts (issue #52): the JSON API and the raw bytes, both session-gated. The
+// token-authenticated upload PUT is dispatched in src/index.ts, before this app.
+app.route("/api/artifacts", artifactsApp);
+app.route("/raw/a", rawApp);
+
+// Doc images: the bytes behind `![alt](/img/<sha256>)` in a doc body, session-gated like
+// the docs themselves. Content-addressed and immutable, so the cache can keep them
+// forever; `default-src 'none'` + nosniff so the bytes are only ever an image.
+app.get("/img/:sha", async (c) => {
+  const sha = c.req.param("sha");
+  const lockdown = { "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" };
+  if (!/^[0-9a-f]{64}$/.test(sha)) return c.json({ error: "not_found" }, 404, lockdown);
+  const img = await readDocImage(c.env.DB, c.env.ARTIFACTS_BUCKET, sha);
+  if (!img) return c.json({ error: "not_found" }, 404, lockdown);
+  return new Response(img.body, {
+    headers: {
+      ...lockdown,
+      "content-type": img.content_type,
+      "content-length": String(img.size_bytes),
+      "cache-control": "private, max-age=31536000, immutable",
+    },
+  });
+});
+
 // Auth endpoints (login/callback public via the gate's allowlist; logout/mcp-token gated).
 app.route("/auth", authApp);
+
+// MCP OAuth (/.well-known/oauth-*, /oauth/*): public per the gate's prefix check;
+// /oauth/authorize reads the session itself.
+app.route("/", oauthApp);
 
 // Email notification prefs/policy/settings/outbox (session-gated; admin routes
 // re-check isAdmin inside). The signed one-click unsubscribe POST is NOT here —
@@ -58,7 +100,8 @@ app.post("/ingest", async (c) => {
     return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   }
   // SEAM: a Cloudflare Queue producer.send({ payload, principal }) would slot in here.
-  const result = await consume(c.env.DB, parsed.data, c.get("principal"));
+  // recordBatch = consume() + the post-batch artifact_links step, identical to MCP record_session.
+  const result = await recordBatch(c.env.DB, parsed.data, c.get("principal"));
   return c.json({ ok: true, result });
 });
 
@@ -90,8 +133,7 @@ app.get("/feed", async (c) => {
 app.get("/search", async (c) => {
   const typesCsv = c.req.query("types");
   const types = typesCsv
-    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is "doc" | "decision" | "feed" | "sprint" =>
-        t === "doc" || t === "decision" || t === "feed" || t === "sprint"))
+    ? (typesCsv.split(",").map((t) => t.trim()).filter((t): t is QueryType => QueryType.safeParse(t).success))
     : undefined;
   const spaceRaw = c.req.query("space");
   const space = spaceRaw === "technical" || spaceRaw === "product" ? spaceRaw : undefined;
@@ -103,7 +145,7 @@ app.get("/search", async (c) => {
     space,
     include_staged: false,
     limit: limit ? Number(limit) : undefined,
-  });
+  }, c.get("principal").handle); // the viewer: a private artifact reaches only its author
   return c.json({ result });
 });
 
@@ -121,6 +163,123 @@ app.get("/adrs", async (c) => c.json({ adrs: await list_adrs(c.env.DB, c.req.que
 // not rejected, server-joined with both bodies + reconciler metadata. Kills the
 // old web N+1 (audit G9) and is the data source Phase 4's detail pane renders.
 app.get("/proposals", async (c) => c.json({ proposals: await list_proposals(c.env.DB) }));
+
+// ── Handoffs + Prompt Library (session-cookie; the MCP tools are the agent side) ──
+// A handoff is an addressed message, not knowledge: its writers are direct (NOT
+// the ingestion gate). The prompt writers take `via: "human"` here — a person may
+// save a draft or publish; the MCP save_prompt passes "agent" and is forced to
+// `staged`. Errors are `{ error }` with the writers' own 400/403/404/409.
+const handoffFail = (c: Context<AppEnv>, e: unknown) => {
+  if (e instanceof HandoffError) return c.json({ error: e.message }, HANDOFF_ERROR_STATUS[e.code]);
+  if (e instanceof PromptError) return c.json({ error: e.message }, PROMPT_ERROR_STATUS[e.code]);
+  throw e;
+};
+const handoffId = (raw: string): number | null => (/^\d+$/.test(raw) && Number(raw) > 0 ? Number(raw) : null);
+
+app.get("/api/handoffs", async (c) => {
+  const box = c.req.query("box") ?? "mine";
+  if (!(HANDOFF_BOXES as readonly string[]).includes(box)) return c.json({ error: "unknown box" }, 400);
+  return c.json({ handoffs: await listHandoffs(c.env.DB, c.get("principal").handle, box as HandoffBox) });
+});
+app.get("/api/handoffs/:id", async (c) => {
+  const id = handoffId(c.req.param("id"));
+  const handoff = id === null ? null : await getHandoff(c.env.DB, id);
+  return handoff ? c.json({ handoff }) : c.json({ error: "not found" }, 404);
+});
+app.post("/api/handoffs", async (c) => {
+  const raw = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const parsed = HandoffCreateInput.safeParse(raw);
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "invalid payload" }, 400);
+  // Optional replay key, the /ingest scheme: { session: { id }, item_index }.
+  const sess = raw?.session as { id?: unknown } | undefined;
+  const ledger = sess && typeof sess.id === "string" && sess.id
+    ? { sessionId: sess.id, itemIndex: Number.isInteger(raw?.item_index) ? (raw!.item_index as number) : 0 }
+    : undefined;
+  try {
+    const { handoff } = await createHandoff(c.env.DB, c.get("principal").handle, parsed.data, ledger);
+    return c.json({ ok: true, handoff });
+  } catch (e) { return handoffFail(c, e); }
+});
+app.post("/api/handoffs/:id/claim", async (c) => {
+  const id = handoffId(c.req.param("id"));
+  if (id === null) return c.json({ error: "not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { session?: unknown };
+  const session = typeof body.session === "string" && body.session.trim() ? body.session.trim().slice(0, 120) : `web_${crypto.randomUUID().slice(0, 8)}`;
+  try { return c.json({ ok: true, handoff: await claimHandoff(c.env.DB, id, c.get("principal").handle, session) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+app.post("/api/handoffs/:id/expire", async (c) => {
+  const id = handoffId(c.req.param("id"));
+  if (id === null) return c.json({ error: "not found" }, 404);
+  try { return c.json({ ok: true, handoff: await expireHandoff(c.env.DB, id, c.get("principal").handle) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+
+app.get("/api/prompts", async (c) => {
+  const tags = (c.req.query("tags") ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+  const sort = c.req.query("sort") === "updated_asc" ? "updated_asc" : "updated_desc";
+  return c.json({ prompts: await listPrompts(c.env.DB, { q: c.req.query("q") ?? "", tags, sort }) });
+});
+app.get("/api/prompts/:slug", async (c) => {
+  const prompt = await getPrompt(c.env.DB, c.req.param("slug"));
+  return prompt ? c.json({ prompt }) : c.json({ error: "not found" }, 404);
+});
+app.get("/api/prompts/:slug/versions", async (c) => {
+  const slug = c.req.param("slug");
+  if (!(await getPrompt(c.env.DB, slug))) return c.json({ error: "not found" }, 404);
+  return c.json({ versions: await listPromptVersions(c.env.DB, slug) });
+});
+app.post("/api/prompts", async (c) => {
+  const parsed = PromptSaveInput.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "invalid payload" }, 400);
+  try { return c.json({ ok: true, prompt: await savePrompt(c.env.DB, c.get("principal").handle, parsed.data, "human") }); }
+  catch (e) { return handoffFail(c, e); }
+});
+app.post("/api/prompts/:slug/tags", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { tags?: unknown } | null;
+  if (!body || !Array.isArray(body.tags) || !body.tags.every((t) => typeof t === "string")) return c.json({ error: "tags (string[]) required" }, 400);
+  try { return c.json({ ok: true, prompt: await setPromptTags(c.env.DB, c.req.param("slug"), body.tags as string[]) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+// Publishing is a human confirmation, gated exactly like POST /doc/:slug/promote:
+// any signed-in person (sessionGate), never an MCP tool.
+app.post("/api/prompts/:slug/publish", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { version?: unknown } | null;
+  const version = Number(body?.version);
+  if (!Number.isInteger(version)) return c.json({ error: "version (integer) required" }, 400);
+  try { return c.json({ ok: true, prompt: await publishPrompt(c.env.DB, c.req.param("slug"), version) }); }
+  catch (e) { return handoffFail(c, e); }
+});
+
+// A person stages a NEW doc (version 1) through the same gate an agent's
+// propose_doc_update uses — so it lands in Review as a staged proposal and goes
+// live only when promoted. An existing slug is a 409: this route never edits.
+const DocPropose = z.object({
+  title: z.string().trim().min(1).max(200),
+  section: z.string().trim().min(1),
+  space: z.enum(["technical", "product"]),
+  body: z.string().refine((b) => b.trim().length > 0, "body required"),
+  summary: z.string().max(300).optional(),
+  slug: z.string().regex(/^[a-z0-9][a-z0-9_/-]*$/).optional(),
+});
+app.post("/api/docs/propose", async (c) => {
+  const parsed = DocPropose.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "invalid payload" }, 400);
+  const d = parsed.data;
+  if (!isSection(d.section)) return c.json({ error: `unknown section: ${d.section}` }, 400);
+  const slug = d.slug ?? d.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+  if (!slug) return c.json({ error: "title has no usable slug" }, 400);
+  if (await first(c.env.DB, `SELECT 1 FROM docs WHERE slug = ?`, slug)) return c.json({ error: `a doc named ${slug} already exists` }, 409);
+  const result = await ingestDocProposal(
+    c.env.DB,
+    { slug, section: d.section, space: d.space, title: d.title, body: d.body, change_summary: d.summary?.trim() || "Created in Canopy", confidence: "high" },
+    c.get("principal").handle,
+  );
+  if (result.outcome === "refused") return c.json({ error: result.reason }, 400);
+  if (result.outcome !== "written") return c.json({ error: result.outcome === "triaged" ? result.reason : "nothing to stage" }, 409);
+  const proposal = (await list_proposals(c.env.DB)).find((p) => p.slug === slug && p.version === result.version) ?? null;
+  return c.json({ ok: true, proposal });
+});
 
 // Human confirmation (session-gated): promote a staged doc version into the live doc.
 app.post("/doc/:slug/promote", async (c) => {
@@ -459,6 +618,21 @@ app.get("/tickets/:id", async (c) => {
   return c.json(ticket);
 });
 
+// Edit the title and/or body — a mirrored ticket's too (seeded from the issue at
+// import, Canopy's afterwards). A patch that changes neither is a 400.
+app.post("/tickets/:id/edit", async (c) => {
+  const id = ticketId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  const parsed = TicketEdit.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+  try {
+    await edit_ticket(c.env.DB, id, parsed.data, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
 // A status move. Legality is decided by the ONE shared transition table; an
 // illegal move is a 409 and writes nothing at all (not even a history row).
 app.post("/tickets/:id/status", async (c) => {
@@ -495,6 +669,20 @@ app.post("/tickets/:id/links", async (c) => {
   if (!parsed.success) return c.json({ error: "invalid payload", issues: parsed.error.issues }, 400);
   try {
     await add_ticket_link(c.env.DB, id, parsed.data.raw, c.get("principal").handle);
+    return ticketDetailResponse(c, id);
+  } catch (e) {
+    return ticketFail(c, e);
+  }
+});
+
+// Detach one link. The link must be on :id — another ticket's link id is a 404.
+// A LOCKED link (a mirrored ticket's GitHub issue, 0032) is a 403, left in place.
+app.post("/tickets/:id/links/:linkId/remove", async (c) => {
+  const id = ticketId(c);
+  const linkId = Number(c.req.param("linkId"));
+  if (id === null || !Number.isInteger(linkId)) return c.json({ error: "invalid id" }, 400);
+  try {
+    await remove_ticket_link(c.env.DB, id, linkId);
     return ticketDetailResponse(c, id);
   } catch (e) {
     return ticketFail(c, e);

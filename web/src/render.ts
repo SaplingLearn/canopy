@@ -4,11 +4,11 @@
 // `data-act` / `data-arg` attributes dispatched in main.ts.
 
 import type { Me, StagedProposal, IdentityTask, PersonSummary, InviteRow } from "./api";
-import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor } from "@shared/rows";
+import type { FeedRow, DocRow, DocVersionRow, AdrRow, NeedsTriageRow, PersonColor, OAuthGrantSummary } from "@shared/rows";
 import type { QueryResult, QueryPrimary, QueryPointer, Authority, SprintView, SprintDetail, PlanView } from "./api";
 import type { TicketListItem, TicketDetail, TicketSeg, TicketAssigneeFilter, TicketCategory } from "./api";
 import type { TicketPriority } from "@shared/tickets";
-import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip, type StatusMenuAnchor } from "./tickets";
+import { queueView, newTicketView, ticketDetailView, ticketPill, priorityChip, type StatusMenuAnchor, type QueueMenu } from "./tickets";
 import { sprintCard, newSprintPanel, newSprintToggle, sprintScreen } from "./sprints";
 import type { SprintUrgency, SprintDomain } from "@shared/sprints";
 import { initialOnboard, onboardView, personChip, handleTag, swatches, type OnboardState } from "./people";
@@ -20,11 +20,21 @@ import { REPO_URL } from "./github";
 import { esc, attr, initialsOf, relTime } from "./ui";
 import { landingView } from "./landing";
 import { reviewView, type ReviewFilter, type ReviewProps, type DiffViewMode } from "./review";
-import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind } from "./maintenance";
+import { maintenanceView, peopleSection, type MaintenanceProps, type AssignKind, type MaintTab } from "./maintenance";
+import { handoffsView, handoffDetailView, newHandoffView, handoffPromptModal, blankHandoff, type NewHandoffDraft } from "./handoffs";
+import type { PromptView } from "./prompt-box";
+import { promptLibraryView, promptDetailView, promptEditorView, promptPageModal, type PromptFilterCat, type PromptDraft } from "./prompts";
+import { newDocView, blankDoc, type NewDocDraft } from "./newdoc";
+import type { HandoffView, PromptSummary, PromptDetail, PromptVersion, PromptSort } from "@shared/handoffs";
+import { firstLine } from "@shared/handoffs";
 import { emailNotificationsSection, notificationsMaintenanceSections, unsubscribeView } from "./notifications";
 import type { PrefsView, PolicyKindView, NotificationOutboxRow, NotificationSettingsRow, McpTokenSummary } from "./api";
 import { sidebarView, NAV_CLOSED, type NavOpen } from "./sidebar";
 import { repoView, repoControls, repoCrumb, type RepoProps, type RepoPollState } from "./repo";
+import {
+  artifactsView, artifactsHeader, artifactsDialogs, ticketArtifactsBlock, initialArtUi, ART_ROUTE_NONE,
+  type ArtUi, type ArtRoute, type ArtScreen, type ArtProps,
+} from "./artifacts";
 import type { RepoDashboard, RepoTab, RepoRange } from "@shared/repo";
 import { reviewItemsFromReads, ASSIGN_OPTIONS, unplacedFromRow, identityFromTask, peopleFromPersons } from "./triage-map";
 
@@ -40,7 +50,16 @@ export type Screen =
   // `sprint` is a Roadmap child — the sidebar highlights Roadmap while it is open.
   | "tickets" | "ticketdetail" | "newticket" | "sprint"
   // The Repo dashboard (Monitor › Repo): five tabs under one screen, `#repo/<tab>`.
-  | "repo";
+  | "repo"
+  // Artifacts (Knowledge › Artifacts): the library, the new-artifact form, and one
+  // artifact (its viewer, or its version diff), over /api/artifacts (artifacts.ts).
+  | "artifacts" | "artifactnew" | "artifact"
+  // Handoffs (Workspace): the inbox, one handoff, the new-handoff form.
+  | "handoffs" | "handoff" | "newhandoff"
+  // Prompt Library (Knowledge): the library, one prompt, the editor (new / edit / new version).
+  | "prompts" | "prompt" | "promptedit"
+  // Docs › New doc.
+  | "newdoc";
 
 /** Async data slice: a screen's fetched payload plus its load status. */
 export interface Loadable<T> {
@@ -119,15 +138,23 @@ export interface AppState {
   mapPicks: Record<string, string>;
   showHistory: boolean;
   searchQuery: string;
-  searchType: "all" | "doc" | "feed" | "decision";
+  searchType: "all" | "doc" | "feed" | "decision" | "artifact";
   searchResults: Loadable<QueryResult>;
   displayName: string;
-  revealedToken: string | null;
-  tokenCopied: boolean;
-  /** Settings › MCP access tokens: the caller's live tokens (hint only, never the value). */
+  /** Settings › "Get connection command": the modal, open while non-null. `token` is
+   *  null while the mint is in flight; `error` is set when it failed. The token lives
+   *  ONLY here — closing the modal drops it, and the server keeps just a hash. */
+  connect: { token: string | null; error: string | null } | null;
+  /** Which client's setup the modal shows, and its Copy button's state. */
+  connectClient: ConnectClient;
+  connectCopied: boolean;
+  /** Settings › MCP access: the caller's live tokens (hint only, never the value). */
   tokens: Loadable<McpTokenSummary[]>;
   /** The token whose Revoke was clicked once — the second click is the one that revokes. */
   tokenRevokeArm: number | null;
+  /** Settings › Connected apps: the caller's OAuth connections. */
+  grants: Loadable<OAuthGrantSummary[]>;
+  grantRevokeArm: number | null;
   // Settings › Profile: the handle rename editor.
   handleEdit: boolean;
   handleDraft: string;
@@ -157,6 +184,8 @@ export interface AppState {
   qAssignee: TicketAssigneeFilter;
   qCategory: TicketCategory | "all";
   qView: "table" | "board";
+  /** The queue's open filter dropdown (null = none). */
+  qMenu: QueueMenu | null;
   // New-ticket form fields (the design's f* state).
   fTitle: string;
   /** null = nothing picked, which files as `other`. */
@@ -182,9 +211,13 @@ export interface AppState {
   commentHeight: number | null;
   linkDraft: string;
   lkOpen: boolean;
+  /** The ticket detail's title/description editor drafts; null = not editing. */
+  tdEdit: { title: string; body: string } | null;
   asgMenu: boolean;
   sprMenu: boolean;
   relMenu: boolean;
+  /** The linked-work chip whose ⋯ menu is open (a link id; null = none). */
+  lkMenu: number | null;
   /** Which of the ticket's two status controls has its menu open (null = neither). */
   stMenu: StatusMenuAnchor | null;
   /** Sprints back the queue's group headers and the ticket form's/rail's menus. */
@@ -204,6 +237,46 @@ export interface AppState {
   nsDue: string;
   nsLead: string | null;
   nsDom: SprintDomain | null;
+  // ── Artifacts (artifacts.ts) ─────────────────────────────────────────────
+  /** The artifact the `artifact` screen shows (slug, version, diff pair). */
+  artRoute: ArtRoute;
+  /** The artifact reads (list, details, diffs, per-ticket), library filters, menus, dialogs, the create form. */
+  art: ArtUi;
+  // ── Handoffs (UI-first: reads are real, writes are not built yet) ──────────
+  handoffs: Loadable<HandoffView[]>;
+  handoffDetail: Loadable<HandoffView | null>;
+  handoffId: number | null;
+  /** Expire was clicked once — the second click is the one that would expire. */
+  handoffExpireArm: boolean;
+  /** The handoff's prompt, expanded over the page. */
+  handoffPromptOpen: boolean;
+  nh: NewHandoffDraft;
+  // ── Prompt Library ─────────────────────────────────────────────────────────
+  /** The whole library; the search / tag / sort filter runs client-side over it. */
+  promptList: Loadable<PromptSummary[]>;
+  promptQ: string;
+  promptTag: string | null;
+  promptSort: PromptSort;
+  promptFilterOpen: boolean;
+  promptFilterCat: PromptFilterCat;
+  promptSlug: string | null;
+  promptDetail: Loadable<{ prompt: PromptDetail; versions: PromptVersion[] } | null>;
+  /** The version whose diff replaces the body (null = the body). */
+  promptDiffV: number | null;
+  promptTagMenu: boolean;
+  promptTagDraft: string;
+  /** The prompt page's body, expanded over the page (the shared prompt modal). */
+  promptExpanded: boolean;
+  /** Raw markdown or rendered, for every prompt box (a handoff's and a library prompt's). */
+  promptView: PromptView;
+  promptMode: "new" | "edit" | "version";
+  promptEd: PromptDraft | null;
+  // ── Docs › New doc / Maintenance tabs ──────────────────────────────────────
+  nd: NewDocDraft;
+  maintTab: MaintTab;
+  maintDiscardArm: boolean;
+  /** The filter menu (web/src/filter-menu.ts) the NEXT paint opens — its entrance plays once, then main.ts clears this. */
+  fmOpening: string | null;
   toast: string | null;
   /** ADMIN Sync GitHub progress — null when idle; present while a (possibly
    *  multi-batch) sync is running, tracking cumulative counts across batches. */
@@ -258,10 +331,13 @@ export function initialState(): AppState {
     searchQuery: "token", searchType: "all",
     searchResults: { status: "idle", data: { primary: [], pointers: [], meta: { engine: "fts5", total: 0 } } },
     displayName: "",
-    revealedToken: null,
-    tokenCopied: false,
+    connect: null,
+    connectClient: "claude",
+    connectCopied: false,
     tokens: { status: "idle", data: [] },
     tokenRevokeArm: null,
+    grants: { status: "idle", data: [] },
+    grantRevokeArm: null,
     handleEdit: false,
     handleDraft: "",
     handleCheck: "idle",
@@ -283,15 +359,30 @@ export function initialState(): AppState {
     ticketDetail: { status: "idle", data: null },
     ticketId: null,
     ticketBadge: 0,
-    qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table",
+    qSeg: "open", qAssignee: "anyone", qCategory: "all", qView: "table", qMenu: null,
     fTitle: "", fCat: null, fPrio: "normal", fDesc: "", fAsgs: [], fLink: "", fSpr: null,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "",
-    lkOpen: false, asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
+    lkOpen: false, tdEdit: null, asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
     sprints: { status: "idle", data: [] },
     sprintDetail: { status: "idle", data: null },
     sprintId: null,
     sprintDeleteArmed: false,
     nsOpen: false, nsName: "", nsDates: "", nsDesc: "", nsUrg: "normal", nsDue: "", nsLead: null, nsDom: null,
+    artRoute: ART_ROUTE_NONE,
+    art: initialArtUi(),
+    handoffs: { status: "idle", data: [] },
+    handoffDetail: { status: "idle", data: null },
+    handoffId: null, handoffExpireArm: false, handoffPromptOpen: false,
+    nh: blankHandoff(),
+    promptList: { status: "idle", data: [] },
+    promptQ: "", promptTag: null, promptSort: "updated_desc", promptFilterOpen: false, promptFilterCat: "tag",
+    promptSlug: null,
+    promptDetail: { status: "idle", data: null },
+    promptDiffV: null, promptTagMenu: false, promptTagDraft: "", promptExpanded: false, promptView: "raw",
+    promptMode: "new", promptEd: null,
+    nd: blankDoc("technical", ""),
+    maintTab: "unplaced", maintDiscardArm: false,
+    fmOpening: null,
     toast: null,
     backfillSync: null,
   };
@@ -312,6 +403,8 @@ export function reviewProps(s: AppState): ReviewProps {
 
 export function maintenanceProps(s: AppState): MaintenanceProps {
   return {
+    tab: s.maintTab,
+    discardArm: s.maintDiscardArm,
     unplaced: s.needsTriage.data.map(unplacedFromRow),
     assign: ASSIGN_OPTIONS,
     assignOpen: s.assignOpen,
@@ -333,6 +426,14 @@ export function triageCounts(s: AppState): { review: number; maintenance: number
     maintenance: s.needsTriage.data.length + s.identityTasks.data.length,
   };
 }
+
+/** Sidebar count for Handoffs: pending handoffs left for ME (the ones only I can pick up). */
+export function handoffBadge(s: AppState): number {
+  const me = s.me?.handle.toLowerCase() ?? "";
+  return s.handoffs.data.filter((h) => h.status === "pending" && h.recipient.toLowerCase() === me).length;
+}
+
+const PLUS_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>`;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function resolved(s: AppState): "dark" | "light" | "midnight" {
@@ -487,8 +588,9 @@ function sidebar(s: AppState): string {
     repoTab: s.repoTab,
     docSpace: s.docSpace,
     docSpaces: DOC_SPACES.map((k) => ({ key: k, label: spaceLabel(k) })),
+    maintTab: s.maintTab,
     // Tickets: unassigned ACTIVE tickets — a "nobody has this" signal (design call #2).
-    counts: { review: counts.review, maintenance: counts.maintenance, tickets: s.ticketBadge },
+    counts: { review: counts.review, maintenance: counts.maintenance, tickets: s.ticketBadge, handoffs: handoffBadge(s), prompts: s.promptList.data.filter((p) => p.status === "staged").length },
     me: s.me ? { handle: s.me.handle, name: s.me.name, color: s.me.color, avatar_url: s.me.avatar_url } : null,
     displayName: s.displayName,
     logo: logo(24),
@@ -498,6 +600,16 @@ function sidebar(s: AppState): string {
 /** The "›" crumb text for the three child screens (empty on a top-level screen). */
 function headerCrumb(s: AppState): string {
   if (s.screen === "newticket") return "New ticket";
+  if (s.screen === "handoff") return s.handoffDetail.data ? firstLine(s.handoffDetail.data.body) : "";
+  if (s.screen === "newhandoff") return "New handoff";
+  if (s.screen === "prompt") return s.promptDetail.data?.prompt.title ?? "";
+  if (s.screen === "promptedit") {
+    const ed = s.promptEd;
+    if (!ed) return "";
+    return ed.mode === "new" ? "New prompt" : `${ed.mode === "edit" ? "Edit" : "New version"} · ${ed.title}`;
+  }
+  if (s.screen === "newdoc") return "New doc";
+  if (s.screen === "maintenance") return s.maintTab === "identity" ? "Identity" : s.maintTab === "people" ? "People" : "";
   if (s.screen === "ticketdetail") return s.ticketDetail.data?.title ?? "";
   if (s.screen === "sprint") {
     return s.sprintDetail.data?.label ?? s.sprints.data.find((sp) => sp.id === s.sprintId)?.label ?? "";
@@ -513,6 +625,10 @@ function header(s: AppState): string {
     // The three ticket screens all sit under Tickets; a sprint sits under Roadmap.
     tickets: "Tickets", ticketdetail: "Tickets", newticket: "Tickets", sprint: "Roadmap",
     repo: "Repo",
+    artifacts: "Artifacts", artifactnew: "Artifacts", artifact: "Artifacts",
+    handoffs: "Handoffs", handoff: "Handoffs", newhandoff: "Handoffs",
+    prompts: "Prompt Library", prompt: "Prompt Library", promptedit: "Prompt Library",
+    newdoc: "Docs",
   };
   // dark = "show the moon icon" — true for any non-light theme (dark + midnight).
   const dark = resolved(s) !== "light";
@@ -547,11 +663,14 @@ function header(s: AppState): string {
       </select>
     </div>` : "";
 
-  const spaceTab = (k: DocSpace) =>
-    `<button data-act="setDocSpace" data-arg="${attr(k)}" style="display:flex;align-items:center;gap:7px;padding:5px 14px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.docSpace === k ? "var(--fg)" : "var(--fg-55)"};background:${s.docSpace === k ? "var(--hover)" : "transparent"}">${esc(spaceLabel(k))}</button>`;
+  // The Technical / Product space is picked from the sidebar's Docs sub-pages, so the
+  // header carries only New doc (it had a second copy of the same switcher).
   const docsControls = s.screen === "docs"
-    ? `<div style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${DOC_SPACES.map(spaceTab).join("")}</div>`
+    ? `<button data-act="newDoc" class="cnpy-outlinebtn" style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap">${PLUS_ICON}New doc</button>`
     : "";
+  const accentNew = (act: string, label: string) =>
+    `<button data-act="${act}" class="cnpy-accentbtn" style="display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12.5px;font-weight:600;white-space:nowrap;transition:filter .12s ease">${PLUS_ICON}${label}</button>`;
+  const newControls = s.screen === "handoffs" ? accentNew("newHandoff", "New handoff") : s.screen === "prompts" ? accentNew("newPrompt", "New prompt") : "";
 
   const rmTabStyle = (k: string) => `display:flex;align-items:center;gap:7px;padding:5px 13px;border-radius:7px;font-size:12.5px;font-weight:500;color:${s.roadmapTab === k ? "var(--fg)" : "var(--fg-55)"};background:${s.roadmapTab === k ? "var(--hover)" : "transparent"}`;
   const overdueCount = s.screen === "roadmap" && s.roadmap.status === "ok"
@@ -594,22 +713,34 @@ function header(s: AppState): string {
   // becomes a back button to its parent and a "›" crumb names the child.
   // `ticketsBack` resolves to Tickets, or Roadmap from a sprint (one act, like
   // the design's single `back` handler).
-  const child = s.screen === "ticketdetail" || s.screen === "newticket" || s.screen === "sprint";
+  const child = s.screen === "ticketdetail" || s.screen === "newticket" || s.screen === "sprint"
+    || s.screen === "handoff" || s.screen === "newhandoff" || s.screen === "prompt" || s.screen === "promptedit" || s.screen === "newdoc"
+    || (s.screen === "maintenance" && s.maintTab !== "unplaced");
+  // The act the title's back button fires: each child screen returns to its own parent.
+  const backAct = s.screen === "handoff" || s.screen === "newhandoff" ? "goHandoffs"
+    : s.screen === "prompt" ? "goPrompts"
+    : s.screen === "promptedit" ? "edCancel"
+    : s.screen === "newdoc" ? "goDocs"
+    : s.screen === "maintenance" ? "goMaintenance"
+    : "ticketsBack";
   const crumb = s.screen === "repo" ? repoCrumb(repoProps(s)) : child
     ? `<span style="display:inline-flex;align-items:center;gap:10px;min-width:0"><span style="color:var(--fg-40);font-size:13px">›</span><span style="font-size:13px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(headerCrumb(s))}</span></span>`
     : "";
   const title = child
-    ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="ticketsBack" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
+    ? `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0;white-space:nowrap;flex:none"><button data-act="${backAct}" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;padding:0;color:var(--fg-55);cursor:pointer">${titles[s.screen]}</button></h1>`
     : `<h1 style="font-size:15px;font-weight:600;letter-spacing:-0.01em;margin:0">${titles[s.screen]}</h1>`;
+
+  // The Artifacts screens draw their own title + crumbs (a diff has two crumbs).
+  const art = isArtScreen(s.screen) ? artifactsHeader(artProps(s, s.screen)) : null;
 
   return `<header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;min-height:57px;border-bottom:1px solid var(--border);flex:none">
     <div style="display:flex;align-items:center;gap:12px;min-width:0">
-      ${title}
-      ${crumb}
+      ${art ? art.title : title}
+      ${art ? art.crumb : crumb}
       ${filterChip}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${themeBtn}
+      ${newControls}${feedControls}${docsControls}${roadmapControls}${queueControls}${myworkControls}${s.screen === "repo" ? repoControls(repoProps(s)) : ""}${art ? art.controls : ""}${themeBtn}
     </div>
   </header>`;
 }
@@ -1003,10 +1134,10 @@ function roadmapDigest(s: AppState): string {
 // ── search ───────────────────────────────────────────────────────────────────
 // The ticket icon is the sidebar family's ticket glyph (a stub with a notch),
 // drawn at the same 24-viewBox scale as the rest of this map.
-const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5" };
+const SEARCH_TYPE_ICON: Record<string, string> = { feed: "M4 5h16M4 12h16M4 19h10", doc: "M6 3h7l5 5v13H6z", decision: "M9 12l2 2 4-4", sprint: "M5 3v18M5 4h11l-2 3 2 3H5", artifact: "M3 4h18v16H3zM3 9h18M7 13.5h6M7 16.5h9" };
 // The "sprint" type covers the plan narrative + the sprints, so its badge keeps
 // reading "Roadmap" — the screen it navigates to.
-const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap" };
+const SEARCH_TYPE_LABEL: Record<string, string> = { doc: "Doc", feed: "Feed", decision: "Decision", sprint: "Roadmap", artifact: "Artifact" };
 
 // Authority → badge. /search is live-only, so humans normally see LIVE / PENDING;
 // the others are mapped for completeness. Reuses the status badge styling.
@@ -1046,6 +1177,8 @@ function searchOpenAttr(type: string, id: string): string | null {
   if (type === "decision") return null;
   if (type === "feed") return `data-act="goFeed"`;
   if (type === "sprint") return `data-act="goRoadmap"`;
+  // An artifact hit's id is its slug → the artifact viewer (#artifacts/<slug>).
+  if (type === "artifact") return `data-act="artOpen" data-arg="${attr(id)}"`;
   return `data-act="openDocFrom" data-arg="${attr(id)}"`;
 }
 
@@ -1080,7 +1213,7 @@ function searchView(s: AppState): string {
 
   // No "Tickets" chip: tickets never appear in search results, so a filter for
   // them would only ever show an empty list.
-  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"]].map(([k, label]) => {
+  const typeChips = [["all", "All"], ["doc", "Docs"], ["feed", "Feed"], ["decision", "Decisions"], ["artifact", "Artifacts"]].map(([k, label]) => {
     const sel = s.searchType === k;
     const style = `padding:6px 13px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid ${sel ? "var(--accent)" : "var(--border)"};color:${sel ? "var(--accent)" : "var(--fg-55)"};background:${sel ? "var(--accent-soft)" : "transparent"};transition:all .12s ease`;
     return `<button data-act="setSearchType" data-arg="${k}" style="${style}">${label}</button>`;
@@ -1121,98 +1254,179 @@ function searchView(s: AppState): string {
 
 // ── get started / guide ──────────────────────────────────────────────────────
 function guideView(s: AppState): string {
-  // Screenshots are captured per theme (dark/light/midnight); pick the variant that matches
-  // the viewer's active theme so the figures never clash with the surrounding page.
+  // Screenshots are captured per theme (dark/light/midnight) by scripts/capture-guide.mjs;
+  // pick the variant that matches the viewer's active theme so the figures never clash
+  // with the surrounding page.
   const th = resolved(s);
   const gP = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:0 0 4px";
   const gH2 = "font-size:22px;font-weight:600;letter-spacing:-0.02em;margin:8px 0 10px";
   const gH3 = "font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:34px 0 10px";
   const gEyebrow = "font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin:52px 0 2px";
+  const gList = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px";
   const gStrong = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
   const gEm = (t: string) => `<strong style="color:var(--fg-55)">${t}</strong>`;
+  const gCode = (t: string) => `<code style="font-family:var(--mono);font-size:13px">${t}</code>`;
+  // width/height reserve each figure's box (every capture is 2560×1600) so a lazy
+  // image loading mid-jump can't push the table-of-contents target down the page.
+  // Each figure is a button that opens it in the lightbox (web/src/lightbox.ts),
+  // titled and captioned from its own figcaption.
   const gFig = (name: string, cap: string) => `<figure style="margin:18px 0 4px">
-      <img src="/guide/${name}-${th}.png" alt="" style="display:block;width:100%;border:1px solid var(--border);border-radius:12px" />
+      <button data-act="guideZoom" data-arg="${name}" class="cnpy-guide-shot" aria-label="Expand screenshot">
+        <img src="/guide/${name}-${th}.png" alt="" loading="lazy" width="2560" height="1600" />
+      </button>
       <figcaption style="font-size:12px;color:var(--fg-40);margin-top:8px">${cap}</figcaption>
     </figure>`;
+  // The table of contents is built from the headings as they render, so it can
+  // never drift from the page: sec() / sub() emit a heading AND record it.
+  const toc: { id: string; label: string; subs: { id: string; label: string }[] }[] = [];
+  const gid = (t: string) => `guide-${t.toLowerCase().replace(/&amp;/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  const sec = (eyebrow: string, title: string, label: string) => {
+    const id = gid(label);
+    toc.push({ id, label, subs: [] });
+    return `<div id="${id}" class="cnpy-guide-anchor" style="${gEyebrow}">${eyebrow}</div>
+    <h2 style="${gH2}">${title}</h2>`;
+  };
+  const sub = (title: string) => {
+    const id = gid(`${toc[toc.length - 1]?.label ?? ""} ${title}`);
+    toc[toc.length - 1]?.subs.push({ id, label: title });
+    return `<h3 id="${id}" class="cnpy-guide-anchor" style="${gH3}">${title}</h3>`;
+  };
   const gPre = (body: string) => `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">${body}</code></pre>`;
-  return `<div class="cnpy-scroll" style="max-width:860px;margin:0 auto;padding:52px 40px 120px">
-    <h1 style="font-size:30px;font-weight:650;letter-spacing:-0.025em;margin:0 0 14px">Get Started</h1>
-    <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 14px">Welcome to Canopy, your team's shared memory. It holds the team's docs, decisions, roadmap, and a running feed of everything people and their coding agents have done, and it keeps that memory trustworthy with one golden rule: ${gStrong("agents only ever stage changes; a human confirms the ones that matter")}. Nothing an agent writes goes live until someone approves it, so the store stays reliable no matter how many agents are writing to it.</p>
-    <p style="${gP}">This is a tour of the app, following the sidebar top to bottom (${gStrong("Workspace")}, ${gStrong("Knowledge")}, and ${gStrong("Triage")}), then how to connect your own coding agent.</p>
+  const body = `<div style="flex:1;min-width:0;max-width:860px">
+    <h1 id="guide-top" class="cnpy-guide-anchor" style="font-size:30px;font-weight:650;letter-spacing:-0.025em;margin:0 0 14px">Get Started</h1>
+    <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 14px">Canopy is the team's shared memory: docs, decisions, the roadmap, the ticket queue, and a running record of what shipped, open to people and to their coding agents alike. It has one rule: ${gStrong("agents only ever stage changes, and a person confirms the ones that matter")}. That keeps what Canopy says trustworthy no matter how many agents write to it.</p>
+    <p style="${gP}">This page takes you from zero to productive in order: sign in, connect your agent, learn the skills, then the everyday workflows and a tour of every screen. Troubleshooting is at the end.</p>
 
-    <div style="${gEyebrow}">Workspace</div>
-    <h2 style="${gH2}">Your day-to-day</h2>
+    ${sec("Step 1", "Sign in", "Sign in")}
+    <ul style="${gList}">
+      <li>${gStrong("Engineers sign in with GitHub.")} You need to be an ${gStrong("active")} member of the ${gStrong("SaplingLearn")} GitHub org, so accept the org invite first. A pending invite is not enough.</li>
+      <li>${gStrong("Everyone else signs in with Google")}, once an admin has invited that exact address from ${gStrong("Maintenance › People")}.</li>
+      <li>The first time, you pick a ${gStrong("handle")} and a ${gStrong("color")}. The handle starts as your GitHub login, and you can change it later in Settings.</li>
+      <li>Want both? ${gStrong("Settings › Account")} links the second provider, and then either one signs you in.</li>
+    </ul>
 
-    <h3 style="${gH3}">My Work</h3>
-    <p style="${gP}">Canopy opens on ${gStrong("My Work")}, your personal dashboard. It's a read-only projection over captured GitHub events and the ticket queue (no live API calls), so it loads instantly. Three lists: ${gStrong("To-Do")}, your open assigned issues (each with a one-line summary, its sprint, and a suggested next step); ${gStrong("Previous activity")}, your recently merged and closed PRs, each summarized once at capture time; and ${gStrong("Tickets assigned to me")}, the open tickets from the queue that are yours. ${gStrong("Sync GitHub")} pulls the latest events.</p>
-    ${gFig("mywork", `${gEm("My Work")}: your open issues with a summary, sprint, and next step, your recent PRs, and the tickets assigned to you.`)}
+    ${sec("Step 2", "Connect your coding agent", "Connect your agent")}
+    <p style="${gP}">Your agent talks to Canopy over the ${gStrong("Model Context Protocol")} (MCP). You connect it by signing in to Canopy in your browser, once. It acts as you: it sees what you see, and what it writes is recorded as yours.</p>
 
-    <h3 style="${gH3}">Roadmap</h3>
-    <p style="${gP}">${gStrong("Roadmap")} is the admin-authored plan: a narrative of what's happening plus sprints in target-date order. Each sprint's progress comes from its ${gStrong("tickets")} — done plus declined, over the total in that sprint — with overdue flags; the ${gStrong("Narrative")} tab still links the GitHub issues behind a sprint. Toggle between the ${gStrong("Narrative")} digest and the ${gStrong("Timeline")} of sprints.</p>
-    ${gFig("roadmap", `${gEm("Roadmap")}: sprints in target-date order with their ticket progress bars, overdue flags, and the GitHub issues behind each one in the Narrative tab.`)}
-
-    <h3 style="${gH3}">Feed</h3>
-    <p style="${gP}">${gStrong("Feed")} is the running timeline of everything that's shipped, from people and their agents alike, newest first. Each entry links to its PR, commit, or issue, and you can filter by author, tag, or time window.</p>
-    ${gFig("feed", `${gEm("Feed")}: one timeline of every change, with PR / commit / issue chips and author, tag, and time filters.`)}
-
-    <div style="${gEyebrow}">Knowledge</div>
-    <h2 style="${gH2}">The living reference</h2>
-
-    <h3 style="${gH3}">Docs</h3>
-    <p style="${gP}">The ${gStrong("Docs")} library is the team's living reference, split into two spaces (${gStrong("Technical")} and ${gStrong("Product")}), each grouped into sections like ${gStrong("Architecture")}, ${gStrong("Engineering Guide")}, and ${gStrong("Decisions")}. Open a doc and its ${gStrong("heading outline")} expands in the tree so you can jump to any section, and it tracks your scroll position as you read. Every doc is versioned: an agent's proposed update lands as a ${gStrong("staged")} new version while the current one stays live and untouched, with a banner up top pointing you to the proposal. Promote it in Review and the new version goes live; prior versions are never overwritten, just superseded.</p>
-    ${gFig("docs", `${gEm("Docs")}: the Technical / Product library. Opening a doc expands its heading outline in the tree; the STAGED banner flags a proposal awaiting review.`)}
-
-    <h3 style="${gH3}">Search</h3>
-    <p style="${gP}">${gStrong("Search")} runs full-text across everything (docs, decisions, the feed, and the roadmap), ranked by relevance. It returns whole entries plus pointers to related ones, and every result is tagged ${gStrong("live")} or ${gStrong("staged")} so you can tell settled context from a proposal that hasn't been promoted yet.</p>
-    ${gFig("search", `${gEm("Search")}: ranked full-text results across every type, each flagged LIVE or STAGED, with your query highlighted.`)}
-
-    <div style="${gEyebrow}">Triage</div>
-    <h2 style="${gH2}">Where humans confirm</h2>
-    <p style="${gP}">The ${gStrong("Triage")} section is the human's desk, where agent-produced changes get a verdict. It's split into two surfaces.</p>
-
-    <h3 style="${gH3}">Review</h3>
-    <p style="${gP}">${gStrong("Review")} is one queue for everything awaiting a decision: staged doc ${gStrong("proposals")}, shown as a diff against the live version (unified, side-by-side, or rendered), and drafted ${gStrong("decisions")} (ADRs), shown as the proposed record. On each item you ${gStrong("Promote")} the doc (or ${gStrong("Ratify")} the decision) or ${gStrong("Reject")} it; edits made against a stale version are flagged.</p>
-    ${gFig("review", `${gEm("Review")}: the queue on the left, the selected proposal's diff on the right, ready to Promote or Reject.`)}
-
-    <h3 style="${gH3}">Maintenance</h3>
-    <p style="${gP}">${gStrong("Maintenance")} is occasional housekeeping; empty is the normal state. ${gStrong("Unplaced")} holds anything an agent couldn't confidently place: read it, then route it where it belongs or ${gStrong("Discard")} it. ${gStrong("Identity")} matches unrecognized activity logins to people. Nothing here is ever hard-deleted.</p>
-    ${gFig("maintenance", `${gEm("Maintenance")}: the Unplaced queue, where anything an agent couldn't place waits to be routed or discarded.`)}
-
-    <div style="${gEyebrow}">Connect your agent</div>
-    <h2 style="${gH2}">Plug in your coding agent</h2>
-    <p style="${gP}">Everything above is also open to your coding agent over the ${gStrong("Model Context Protocol")}. First, get a token:</p>
-    <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
-      <li>You're already signed in, so that's step one done.</li>
-      <li>Open ${gStrong("Settings")} and, under ${gStrong("MCP access tokens")}, click ${gStrong("Mint new token")}. Copy it right away, since it's shown only once.</li>
+    ${sub("Claude Code: install the plugin")}
+    <p style="${gP}">The plugin wires up the MCP server and installs every skill below. Two steps:</p>
+    <ol style="${gList}">
+      <li>In Claude Code, install the plugin:
+        ${gPre(`/plugin marketplace add SaplingLearn/canopy
+/plugin install canopy@canopy`)}</li>
+      <li>Run ${gCode("/mcp")}, pick ${gStrong("canopy")} and choose ${gStrong("Authenticate")}. Your browser opens Canopy: sign in if asked, then click ${gStrong("Allow")}. The connection is listed in ${gStrong("Settings › MCP access")} under ${gStrong("Connected apps")}, where ${gStrong("Revoke")} disconnects it immediately.</li>
     </ol>
-    ${gFig("settings", `${gEm("Settings")}: mint an MCP access token, pick a theme, and see your org membership.`)}
-    <p style="${gP};margin-top:14px">${gStrong("Easiest: install the Canopy plugin.")} It bundles the three skills below ${gStrong("and")} the MCP connection, so there's nothing to wire by hand. In Claude Code:</p>
-    ${gPre(`/plugin marketplace add SaplingLearn/canopy
-/plugin install canopy@canopy`)}
-    <p style="${gP};margin-top:12px">The plugin reads your token from an environment variable, so export it in the shell that launches your agent (add it to your shell profile to make it stick), then restart:</p>
-    ${gPre(`export CANOPY_MCP_TOKEN=canopy_mcp_…`)}
-    <p style="${gP};margin-top:14px">${gStrong("Prefer to wire it by hand")}, or running your own Canopy? Skip the plugin and drop a <code style="font-family:var(--mono);font-size:13px">.mcp.json</code> in your project with the token as a bearer header, then restart your agent:</p>
-    ${gPre(`{
-  "mcpServers": {
-    "canopy": {
-      "type": "streamable-http",
-      "url": "https://&lt;your-canopy-host&gt;/mcp",
-      "headers": { "Authorization": "Bearer canopy_mcp_…" }
-    }
-  }
-}`)}
-    <p style="${gP};margin-top:14px">Once connected, your agent can read everything with ${gStrong("query")} (ranked, authority-flagged search) and ${gStrong("get_doc")}, and add new context with ${gStrong("append_feed")} and ${gStrong("propose_doc_update")}. Exactly like the UI, those writes are ${gStrong("staged")}: they land in Review for you to confirm, never straight into the live store. The gate de-duplicates no-op writes and tags each doc change as new, edit, or rewrite, so re-running a session never piles up noise.</p>
+    <p style="${gP}">Not using the plugin? ${gStrong("Settings › MCP access")} has a ${gStrong("Sign in with browser")} command that adds the server by hand. Run it, then do step 2. Don't do both, or you'll have two Canopy servers.</p>
+    ${gFig("connect", `${gEm("Get connection command")}: pick your client and copy the ready-made setup. (The token is hidden in this screenshot.)`)}
 
-    <div style="${gEyebrow}">The living loop</div>
-    <h2 style="${gH2}">How Canopy stays current</h2>
-    <p style="${gP}">The thing that keeps Canopy alive isn't any one screen; it's a loop your agent runs every session: ${gStrong("orient → work → record")}. Three Claude Code skills (under <code style="font-family:var(--mono);font-size:13px">.claude/skills/</code>) drive it, and they're the real heart of the system.</p>
-    <ol style="font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px">
-      <li>${gStrong("Orient: load-context.")} Fires on its own before your agent works an area it has touched before, and always before it proposes a doc change. It calls the read-only ${gStrong("query")} tool, reads the assembled authoritative bodies, and respects each result's authority flag, so the agent builds on what the team already knows instead of re-deriving it. It never writes.</li>
-      <li>${gStrong("Work.")} The agent does the task, now grounded in real context rather than guesses.</li>
-      <li>${gStrong("Record: record-session.")} You ask for it explicitly at the end ("record this session"; it never fires on its own). It observes what actually shipped from <code style="font-family:var(--mono);font-size:13px">git</code>/<code style="font-family:var(--mono);font-size:13px">gh</code>, reads the docs it touched back from Canopy so it writes a true delta from a known base, and stages one reconciled batch through the ${gStrong("record_session")} MCP tool, over the same bearer connection you set up above, with no extra auth. The gate drops no-ops, tags each doc change new/edit/rewrite, and routes anything low-confidence or out-of-vocab to Maintenance.</li>
-    </ol>
-    <p style="${gP};margin-top:12px">Then you ${gStrong("confirm")} in Review. That's the whole point: agents feed the store continuously, a human curates what matters, and because nothing goes live unreviewed, and every session writes back what it learned, the context stays trustworthy and current instead of going stale. This loop is the difference between a wiki that rots and a memory that grows.</p>
-    <p style="${gP}">${gStrong("canopy")} is the umbrella skill that maps all of this and carries the full ${gStrong("query")} reference; ${gStrong("load-context")} and ${gStrong("record-session")} are the two halves it composes, kept separate because one must fire on its own and the other must never. The Canopy plugin (above) ships all three, so installing it is all it takes to get them in any project, with no copying by hand.</p>
+    ${sub("Other agents")}
+    <p style="${gP}">For ${gStrong("Codex")}, CI, or any client that can't open a browser, use a personal token instead: in ${gStrong("Settings › MCP access")}, under ${gStrong("Access tokens")}, click ${gStrong("Get connection command")}. It has ready-made setups for Codex and a ${gStrong(".mcp.json")} file (Cursor and other MCP clients), each with a fresh token and this Canopy's address filled in. Paste it and restart the agent. The token is shown only once.</p>
+    <p style="${gP}">Every token you mint stays listed in Settings by its first few characters. ${gStrong("Revoke")} disconnects that agent immediately.</p>
+    ${gFig("settings", `${gEm("Settings")}: profile, sign-in methods, MCP access, appearance, and email digests.`)}
+
+    ${sec("Step 3", "Learn the skills", "Learn the skills")}
+    <p style="${gP}">The plugin's skills are how your agent keeps Canopy current. Three of them form a loop you'll use every session, ${gStrong("orient → work → record")}:</p>
+    <ul style="${gList}">
+      <li>${gStrong("canopy")}: the overview. It explains the whole system and every tool. Ask about it when you're unsure where something lives.</li>
+      <li>${gStrong("load-context")}: ${gStrong("runs on its own")} before your agent works on an area the team already knows about, and always before it proposes a doc change. It reads what Canopy has, checks what's settled and what's only proposed, and at the start of a session shows your My Work and any handoffs waiting for you. It never writes.</li>
+      <li>${gStrong("record-session")}: ${gStrong("only when you ask")} ("record this session"). It checks what actually shipped with ${gCode("git")} and ${gCode("gh")}, reads back the docs it touched, and stages one batch of updates: feed entries, doc changes, and decisions. Repeats are dropped, and anything it can't place goes to Maintenance.</li>
+    </ul>
+    <p style="${gP};margin-top:12px">The rest cover one surface each:</p>
+    <ul style="${gList}">
+      <li>${gStrong("tickets")} (when you ask): works the ticket queue. It checks the ticket is yours to change, shows a one-line diff, makes one change, and reports the result.</li>
+      <li>${gStrong("my-work")}: answers "what's on my plate?" from your My Work.</li>
+      <li>${gStrong("handoff")} (when you ask): leaves a handoff for your next session or a teammate.</li>
+      <li>${gStrong("prompts")}: finds and fills a prompt from the team's Prompt Library.</li>
+      <li>${gStrong("artifacts")}: finds, downloads, and publishes artifacts, and links them to tickets and sprints.</li>
+      <li>${gStrong("read-plan")} and ${gStrong("update-plan")} (admins): read the roadmap against what shipped, and push a reshaped plan.</li>
+    </ul>
+
+    ${sec("How it works", "Read, propose, confirm", "How it works")}
+
+    ${sub("Reading")}
+    <p style="${gP}">The ${gStrong("Docs")} library is split into ${gStrong("Technical")} and ${gStrong("Product")} spaces, each grouped into sections like ${gStrong("Architecture")} and ${gStrong("Decisions")}. Opening a doc expands its heading outline in the tree, and ${gStrong("Version history")} keeps every earlier version. ${gStrong("New doc")} lets you propose one yourself.</p>
+    ${gFig("docs", `${gEm("Docs")}: the open doc's outline in the tree, and a banner pointing to a proposal awaiting review.`)}
+    <p style="${gP};margin-top:14px">${gStrong("Search")} is the box at the top of the sidebar (${gCode("⌘K")}, or ${gCode("Ctrl K")} on Windows and Linux). It searches docs, decisions, the feed, sprints, tickets, and artifacts, and shows only settled content. Your agent's ${gCode("query")} tool searches the same things plus pending proposals, each labelled, so it can tell settled context from a draft.</p>
+    ${gFig("search", `${gEm("Search")}: ranked results across every type, with your query highlighted.`)}
+
+    ${sub("How agent writes are staged")}
+    <p style="${gP}">When an agent proposes a doc change or drafts a decision (an ADR), it becomes a ${gStrong("staged")} version. The live doc stays untouched until a person promotes the change. Each proposal is labelled ${gStrong("new")}, ${gStrong("edit")}, or ${gStrong("rewrite")}, and an edit written against an out-of-date version is flagged. Sending the same content twice changes nothing, so re-running a session doesn't pile up noise. Docs can include images too: your agent uploads each image to Canopy first and then references it, and a proposal that points at an image that isn't uploaded (or at one elsewhere on the web) is refused. Click any image to see it full size. No agent tool can promote, ratify, or reject anything. Those buttons only exist here, in the web app.</p>
+
+    ${sub("Review: promote, ratify, or reject")}
+    <p style="${gP}">${gStrong("Triage › Review")} is one queue for everything awaiting a decision. A doc proposal shows as a diff against the live version (unified, side by side, or rendered). ${gStrong("Promote")} makes it live; ${gStrong("Reject")} sets it aside. A drafted decision shows the proposed record: ${gStrong("Ratify")} or ${gStrong("Reject")} it. Nothing is deleted either way, and the sidebar count shows what's waiting.</p>
+    ${gFig("review", `${gEm("Review")}: the queue on the left and the selected proposal's diff on the right.`)}
+    <p style="${gP};margin-top:14px">${gStrong("Maintenance")} is occasional housekeeping, and empty is its normal state. ${gStrong("Unplaced")} holds anything an agent couldn't confidently place: route it where it belongs or ${gStrong("Discard")} it. ${gStrong("Identity")} matches unrecognized GitHub logins to people. Admins also see ${gStrong("People")}, for invites and email digest settings.</p>
+    ${gFig("maintenance", `${gEm("Maintenance")}: the Unplaced queue, waiting to be routed or discarded.`)}
+
+    ${sec("Tour", "Every screen, top to bottom", "Tour")}
+    <p style="${gP}">The sidebar groups screens into ${gStrong("Workspace")}, ${gStrong("Monitor")}, ${gStrong("Knowledge")}, and ${gStrong("Triage")}. A chevron opens a screen's sub-pages, ${gStrong("Collapse")} folds the rail to icons, and every screen has its own address (${gCode("#tickets/7")}, ${gCode("#artifacts")}) you can send to a teammate.</p>
+
+    ${sub("My Work")}
+    <p style="${gP}">Canopy opens here, and it has three lists. ${gStrong("To-Do")}: your open assigned GitHub issues, each with a short summary, its sprint, and a suggested next step. ${gStrong("Previous activity")}: your recently merged and closed PRs, each summarized once. ${gStrong("Tickets assigned to me")}: your open tickets. It reads only what Canopy has already captured, so it loads instantly.</p>
+    ${gFig("mywork", `${gEm("My Work")}: your open issues, recent PRs, and tickets.`)}
+
+    ${sub("Tickets")}
+    <p style="${gP}">The team's request queue. Anyone can file a bug, request, question, or access ask with ${gStrong("New ticket")}. The ${gStrong("Queue")} groups tickets by sprint (no sprint means ${gStrong("Backlog")}); ${gStrong("Board")} shows the same tickets as status columns. A ticket moves ${gStrong("Triage → In progress → Done")}, or ends ${gStrong("Declined")}, and only a person closes one: a merged PR never does.</p>
+    ${gFig("tickets", `${gEm("Tickets")}: the queue grouped by sprint.`)}
+    ${gFig("board", `${gEm("Board")}: the same queue as status columns.`)}
+    <p style="${gP};margin-top:14px">A ticket's page holds its thread (comments with ${gCode("@mentions")}, next to every status change), its assignees and sprint, one level of sub-tickets, and ${gStrong("Linked work")}: paste a GitHub or Figma URL, or a bare ${gCode("#123")}. Artifacts linked to the ticket show here too. Your agent can file tickets, and on tickets ${gStrong("assigned to you")} it can move status, comment, link, set the sprint, or nest. It can't change who a ticket is assigned to.</p>
+    ${gFig("ticket", `${gEm("A ticket")}: description, linked work, and thread, with status, assignees, and sprint alongside.`)}
+
+    ${sub("Roadmap and sprints")}
+    <p style="${gP}">${gStrong("Narrative")} reads the plan as a document; ${gStrong("Timeline")} lays out the sprints by date. Each sprint shows its urgency, due date, domain, lead, and a progress bar that counts that sprint's tickets closed (done or declined) out of its total, plus any GitHub issues it tracks. A sprint's own page lists its tickets, assignees, and resources. When everything in it is closed, the page offers to complete it. That's always a person's call.</p>
+    ${gFig("roadmap", `${gEm("Roadmap")}: sprints in progress and upcoming, each with its progress.`)}
+    ${gFig("sprint", `${gEm("A sprint")}: its tickets, progress, properties, assignees, and resources.`)}
+
+    ${sub("Handoffs")}
+    <p style="${gP}">A handoff is a note from one session to the next: the task, what's done, what's next, the files that matter, and optionally a ready-to-run prompt. Your agent leaves one with the ${gStrong("handoff")} skill, addressed to you, a teammate, or anyone. At the start of your next session, load-context lists the ones waiting and claims only the one you pick. Unclaimed handoffs expire after 7 days. The sidebar count is what's waiting for you.</p>
+    ${gFig("handoffs", `${gEm("Handoffs")}: pending ones first, then claimed and expired history.`)}
+
+    ${sub("Repo")}
+    <p style="${gP}">A dashboard over the product repo in five tabs: ${gStrong("Overview")} (each environment's deploys, checks, health, and drift), ${gStrong("Code")}, ${gStrong("CI &amp; Deploys")}, ${gStrong("Usage")}, and ${gStrong("Team &amp; Planning")}. It reads only what Canopy has captured from the GitHub webhook and scheduled polls. A section with nothing yet reads ${gStrong("not connected")} and names what it's waiting on, never a made-up zero. ${gStrong("Preview with sample data")} shows the full layout with labelled placeholder numbers. Admins also get ${gStrong("Poll now")}.</p>
+    ${gFig("repo", `${gEm("Repo › Overview")} (sample data): both environments with deploys, checks, and health.`)}
+    ${gFig("repo-usage", `${gEm("Repo › Usage")} (sample data): traffic, errors, active users, and product metrics.`)}
+
+    ${sub("Feed")}
+    <p style="${gP}">A timeline of everything that shipped, from people and agents alike. Each entry links to its PR, commit, or issue and says whether an agent wrote it. Filter by author, tag, or time.</p>
+    ${gFig("feed", `${gEm("Feed")}: every change with its PR, commit, and issue links.`)}
+
+    ${sub("Artifacts")}
+    <p style="${gP}">An artifact is a page an agent or person made: an HTML design, a markdown report, an SVG or mermaid diagram, an image, a PDF, or a file. Canopy stores every version and links it to the ticket or sprint it came from. ${gStrong("New artifact")} takes pasted source, an upload, or a URL. A new artifact starts as a ${gStrong("draft")}; ${gStrong("Published")} shares it; ${gStrong("Ratify")} is a person's sign-off on the latest version, and only a person can give it. ${gStrong("Compare versions")} diffs any two. Turn off ${gStrong("Visible to org")} to keep one to yourself.</p>
+    ${gFig("artifacts", `${gEm("Artifacts")}: every page with a live preview, its author, and its area.`)}
+    ${gFig("artifact", `${gEm("An artifact")}: the latest version, ratified, with its status and version picker.`)}
+
+    ${sub("Prompt Library")}
+    <p style="${gP}">The team's reusable prompts, each with a slug, tags, and ${gCode("{{variables}}")} for the parts that change. Every save is a new version. When your agent saves one, it lands as ${gStrong("staged")}, and a person publishes it from the prompt's page. The sidebar count is the staged ones. Ask your agent to "run the ${gCode("&lt;slug&gt;")} prompt" and the ${gStrong("prompts")} skill fills it in, asking you for anything it can't fill.</p>
+    ${gFig("prompts", `${gEm("Prompt Library")}: published, staged, and draft prompts with their tags and versions.`)}
+
+    ${sub("Settings")}
+    <p style="${gP}">Click your name at the bottom of the sidebar. ${gStrong("Profile")} sets your name, handle, and color. ${gStrong("Account")} links GitHub and Google. ${gStrong("MCP access")} is where agents connect: your connected apps and any access tokens. ${gStrong("Appearance")} switches between Light, Dark, Midnight, and System. ${gStrong("Email notifications")} sets each digest (your work, the review queue, roadmap changes, the ticket queue) to daily, weekly, or off.</p>
+
+    ${sec("Troubleshooting", "When something doesn't work", "Troubleshooting")}
+    <ul style="${gList}">
+      <li>${gStrong("GitHub sign-in says you're not a member.")} Accept the SaplingLearn org invite on GitHub, then sign in again.</li>
+      <li>${gStrong("Google sign-in says you're not invited.")} Ask an admin to invite the exact address you signed in with.</li>
+      <li>${gStrong("Canopy shows as needing authentication in Claude Code.")} Run ${gCode("/mcp")}, pick ${gStrong("canopy")} and choose ${gStrong("Authenticate")}. If the browser says Canopy doesn't recognise the app, choose ${gStrong("Clear authentication")} first, then Authenticate again. A connection you revoked in Settings needs the same.</li>
+      <li>${gStrong("A token-based agent (Codex, CI) gets 401 Unauthorized.")} The token is missing, mistyped, or revoked. Check that ${gCode("echo $CANOPY_MCP_TOKEN")} prints it in the terminal you launch the agent from; if you set it in one shell's profile (say ${gCode("~/.zshrc")}) but run another (say fish), that shell never sees it. When in doubt, mint a new token and revoke the old one.</li>
+      <li>${gStrong("The Canopy server doesn't appear in /mcp.")} Restart Claude Code after installing the plugin and setting the token. Run ${gCode("/plugin")} to check that ${gCode("canopy")} is installed and enabled.</li>
+      <li>${gStrong("The plugin is out of date.")} Run ${gCode("/plugin marketplace update canopy")}, then restart.</li>
+      <li>${gStrong("Your agent sees every tool twice.")} It's connected both through the plugin and through a manual setup. Remove one: ${gCode("claude mcp remove canopy")} drops the manual one.</li>
+      <li>${gStrong("Your agent can't change a ticket.")} Agents can only change tickets assigned to you. Assign yourself in the web app first.</li>
+      <li>${gStrong("An agent's change isn't live.")} That's by design: it's waiting in ${gStrong("Review")} for a person to promote it.</li>
+      <li>${gStrong("A Repo section reads not connected.")} Nothing has been captured for it yet. The section names what it's waiting on.</li>
+    </ul>
+  </div>`;
+  // Buttons, not #anchors: the hash is the route (guideJump scrolls in place).
+  const item = (id: string, label: string, cls: string) =>
+    `<button data-act="guideJump" data-arg="${id}" class="${cls}"><span>${label}</span></button>`;
+  const rail = `<nav class="cnpy-guide-toc" aria-label="On this page">
+      <div class="cnpy-guide-toc-h">On this page</div>
+      ${item("guide-top", "Introduction", "cnpy-guide-toc-sec")}
+      ${toc.map((t) => `${item(t.id, t.label, "cnpy-guide-toc-sec")}${t.subs.length ? `<div class="cnpy-guide-toc-subs">${t.subs.map((x) => item(x.id, x.label, "cnpy-outline-item")).join("")}</div>` : ""}`).join("")}
+    </nav>`;
+  return `<div class="cnpy-guide" style="display:flex;gap:56px;max-width:1180px;margin:0 auto;padding:52px 40px 120px;align-items:flex-start">
+    ${rail}
+    ${body}
   </div>`;
 }
 
@@ -1302,7 +1516,12 @@ export function accountSection(s: AppState): string {
   </section>`;
 }
 
-/** Settings › MCP access tokens: one hairline row per live token. Only the hint is ever
+/** This Canopy's own MCP endpoint — the origin the SPA is served from, so a local
+ *  `wrangler dev` hands out a local URL and prod hands out prod's. */
+const mcpEndpoint = (): string =>
+  `${typeof location !== "undefined" && location.origin ? location.origin : "https://canopy.saplinglearn.com"}/mcp`;
+
+/** Settings › MCP access: one hairline row per live token. Only the hint is ever
  *  known here — the server keeps a hash — so a row is `canopy_mcp_ab12…`, when it was
  *  minted and last used, and a two-click Revoke (an agent stops working the moment it lands). */
 export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): string {
@@ -1310,7 +1529,7 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
   const t = s.tokens;
   if (t.status === "error") return note(`Couldn't load your tokens${t.error ? ` &mdash; ${esc(t.error)}` : ""}.`);
   if (t.status !== "ok" && !t.data.length) return note("Loading tokens&hellip;");
-  if (!t.data.length) return note("No tokens yet. Mint one to connect an agent.");
+  if (!t.data.length) return note("No tokens yet. Get a connection command to connect an agent.");
   const rows = t.data.map((tk) => {
     const armed = s.tokenRevokeArm === tk.id;
     const btn = "flex:none;padding:4px 10px;border-radius:6px;font-size:12px";
@@ -1327,6 +1546,140 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
     </div>`;
   }).join("");
   return `<div class="cnpy-scroll cnpy-set-tokens">${rows}</div>`;
+}
+
+/** Settings › Connected apps: one hairline row per OAuth connection — the app's
+ *  self-reported name, when it connected and was last used, and a two-click Revoke. */
+export function grantListBody(s: Pick<AppState, "grants" | "grantRevokeArm">): string {
+  const note = (text: string) => `<div style="padding:12px 0;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-40)">${text}</div>`;
+  const g = s.grants;
+  if (g.status === "error") return note(`Couldn't load connected apps${g.error ? ` &mdash; ${esc(g.error)}` : ""}.`);
+  if (g.status !== "ok" && !g.data.length) return note("Loading connected apps&hellip;");
+  if (!g.data.length) return note("No apps connected. Run the command above, then sign in from the app.");
+  return g.data.map((gr) => {
+    const armed = s.grantRevokeArm === gr.id;
+    const btn = "flex:none;padding:4px 10px;border-radius:6px;font-size:12px";
+    const actions = armed
+      ? `<button data-act="revokeGrant" data-arg="${gr.id}" class="cnpy-revoke" style="${btn};font-weight:600;color:var(--red);border:1px solid var(--red)">Disconnect</button>
+         <button data-act="revokeGrantCancel" class="cnpy-ghostbtn" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Keep</button>`
+      : `<button data-act="revokeGrantArm" data-arg="${gr.id}" class="cnpy-revoke" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Revoke</button>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)">
+      <div style="flex:1;min-width:0;line-height:1.35">
+        <span style="display:block;font-size:13px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(gr.client_name)}</span>
+        <span style="font-size:11.5px;color:var(--fg-40)">${armed ? "The app is signed out the moment you disconnect it." : `Connected ${esc(relTime(gr.created_at))} &middot; ${gr.last_used_at ? `last used ${esc(relTime(gr.last_used_at))}` : "never used"}`}</span>
+      </div>
+      ${actions}
+    </div>`;
+  }).join("");
+}
+
+/** The browser sign-in setup: the server with no header — Claude Code opens the
+ *  browser on `/mcp` → Authenticate. Mints nothing. */
+export function browserConnectCommand(url: string = mcpEndpoint()): string {
+  return `claude mcp add --transport http --scope user canopy ${url}`;
+}
+
+// ── Settings › Connect an agent ──────────────────────────────────────────────
+
+export type ConnectClient = "claude" | "codex" | "json" | "token";
+export const CONNECT_CLIENTS: readonly { id: ConnectClient; label: string }[] = [
+  { id: "claude", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
+  { id: "json", label: ".mcp.json" },
+  { id: "token", label: "Token only" },
+];
+
+/**
+ * The setup text for one client, with `token` filled in. Pure, so a test pins each
+ * shape. Claude Code takes the header on the command line; Codex reads a bearer
+ * token from an environment variable via its `--bearer-token-env-var`, spelled
+ * `CANOPY_MCP_TOKEN` here. (The Canopy plugin itself never reads this variable —
+ * it connects by browser sign-in, `/mcp` → Authenticate.)
+ */
+export function connectSnippet(client: ConnectClient, token: string, url: string = mcpEndpoint()): string {
+  switch (client) {
+    case "claude":
+      return `claude mcp add --transport http --scope user canopy ${url} \\\n  --header "Authorization: Bearer ${token}"`;
+    case "codex":
+      return `export CANOPY_MCP_TOKEN=${token}\ncodex mcp add canopy --url ${url} --bearer-token-env-var CANOPY_MCP_TOKEN`;
+    case "json":
+      return `{\n  "mcpServers": {\n    "canopy": {\n      "type": "http",\n      "url": "${url}",\n      "headers": { "Authorization": "Bearer ${token}" }\n    }\n  }\n}`;
+    case "token":
+      return token;
+  }
+}
+
+const CONNECT_NOTE: Record<ConnectClient, string> = {
+  claude: `Paste it into a terminal, then restart Claude Code. <code style="font-family:var(--mono);font-size:11px">--scope user</code> makes Canopy available in every project.`,
+  codex: `Paste both lines into a terminal, then restart Codex. Codex reads the token from <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--mono);font-size:11px">export</code> line to your shell profile too.`,
+  json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--mono);font-size:11px">.mcp.json</code>), then restart it.`,
+  token: `For anything else, send it as a bearer header: <code style="font-family:var(--mono);font-size:11px">Authorization: Bearer &lt;token&gt;</code> to <code style="font-family:var(--mono);font-size:11px">${esc(mcpEndpoint())}</code>. Using the Canopy plugin? It connects by browser sign-in instead — see <strong>Sign in with browser</strong> above.`,
+};
+
+/** The Settings row a minted token shows up as: `canopy_mcp_` + the first 4 characters. */
+export const tokenLabel = (token: string): string =>
+  `canopy_mcp_${token.startsWith("canopy_mcp_") ? token.slice(11, 15) : ""}`;
+
+/**
+ * "Get connection command": ONE modal that is the whole flow. The click mints a
+ * token; the modal shows the exact setup for the chosen client with that token
+ * already in it, says where the token now lives in Settings, and on Done/close the
+ * token is gone from the page for good — there is no second place it is shown.
+ * Built on the sign-in dialog's pattern: a sibling backdrop that closes it, and a
+ * pointer-events:none wrapper so clicks inside the panel never reach the backdrop.
+ */
+export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "connectCopied">): string {
+  const m = s.connect;
+  if (!m) return "";
+  const close = `<button data-act="connectClose" title="Close" aria-label="Close" class="cnpy-iconbtn" style="position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--fg-40)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>`;
+
+  let body: string;
+  if (m.error) {
+    body = `<div style="font-size:13px;color:var(--red);line-height:1.6;margin-bottom:18px">Couldn't create a token — ${esc(m.error)}</div>
+      <div style="display:flex;justify-content:flex-end"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70)">Close</button></div>`;
+  } else if (!m.token) {
+    body = `<div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--fg-55);padding:18px 0 8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="animation:cnpy-spin .8s linear infinite"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>Creating a token for this connection&hellip;</div>`;
+  } else {
+    const tabs = CONNECT_CLIENTS.map(({ id, label }) => {
+      const on = s.connectClient === id;
+      return `<button ${on ? "" : `data-act="connectClient" data-arg="${id}"`} aria-pressed="${on}" style="padding:5px 11px;border-radius:7px;font-size:12.5px;font-weight:500;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};border:1px solid ${on ? "var(--border-strong)" : "transparent"}">${label}</button>`;
+    }).join("");
+    const token = m.token;
+    // EVERY client's snippet (and note) is rendered, stacked in one grid cell, and
+    // only the chosen one is visible: the box is always as tall as the tallest, so a
+    // tab switch changes the text and nothing else moves.
+    const stack = (cell: (id: ConnectClient) => string): string =>
+      CONNECT_CLIENTS.map(({ id }) => {
+        const on = s.connectClient === id;
+        return `<div data-client="${id}" ${on ? "" : `aria-hidden="true"`} style="grid-area:1/1;min-width:0;visibility:${on ? "visible" : "hidden"}">${cell(id)}</div>`;
+      }).join("");
+    const btnBase = "flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600";
+    const copy = s.connectCopied
+      ? `<button data-act="connectCopy" class="cnpy-copybtn is-copied" style="${btnBase};background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
+      : `<button data-act="connectCopy" class="cnpy-copybtn" style="${btnBase};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
+    body = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+      <div style="display:flex;align-items:stretch;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:10px 10px 10px 14px">
+        <div style="flex:1;min-width:0;display:grid">${stack((id) =>
+          `<pre style="margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(id, token))}</pre>`)}</div>
+        ${copy}
+      </div>
+      <div style="display:grid;font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${stack((id) => `<div>${CONNECT_NOTE[id]}</div>`)}</div>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:9px;border:1px solid var(--border);font-size:12px;line-height:1.55;color:var(--fg-70)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+        <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--mono);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">Access tokens</strong> under MCP access in Settings. Revoke it there to disconnect the agent.</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:18px"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:600;color:var(--fg)">Done</button></div>`;
+  }
+
+  return `<div data-overlay="connect"><div data-act="connectClose" style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);animation:cnpy-fade .14s ease"></div>
+  <div style="position:fixed;inset:0;z-index:61;display:grid;place-items:center;padding:16px;pointer-events:none">
+    <div role="dialog" aria-modal="true" aria-labelledby="connect-title" style="pointer-events:auto;position:relative;width:min(580px, 100%);max-height:calc(100vh - 32px);overflow-y:auto;border:1px solid var(--border-strong);border-radius:14px;padding:26px 26px 22px;background:var(--bg);box-shadow:var(--shadow);animation:cnpy-pop .16s ease">
+      ${close}
+      <div id="connect-title" style="font-size:16px;font-weight:600;letter-spacing:-0.01em;margin-bottom:4px">Connect an agent</div>
+      <div style="font-size:12.5px;color:var(--fg-55);margin-bottom:18px">Pick your agent, copy the setup, paste it. Your agent acts as you.</div>
+      ${body}
+    </div>
+  </div></div>`;
 }
 
 function settingsView(s: AppState): string {
@@ -1348,27 +1701,11 @@ function settingsView(s: AppState): string {
     return `<button data-act="setTheme" data-arg="${k}" class="cnpy-themecard" style="${style}">${icon}<span style="font-size:13px;font-weight:500">${label}</span></button>`;
   }).join("");
 
-  const copied = s.tokenCopied;
-  const copyBtn = copied
-    ? `<button data-act="copyToken" class="cnpy-copybtn is-copied" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"></path></svg>Copied</button>`
-    : `<button data-act="copyToken" class="cnpy-copybtn" style="flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;font-size:12.5px;font-weight:600;background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>Copy</button>`;
-  const reveal = s.revealedToken ? `<div style="border:1px solid var(--accent);border-radius:12px;padding:15px 16px;margin-bottom:14px;background:var(--accent-soft);animation:cnpy-pop .22s ease">
-      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--accent);margin-bottom:11px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>Copy this token now — it won't be shown again</div>
-      <div style="display:flex;align-items:stretch;gap:8px;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;padding:6px 6px 6px 13px">
-        <code style="flex:1;min-width:0;display:flex;align-items:center;font-family:var(--mono);font-size:13px;color:var(--fg);word-break:break-all">${esc(s.revealedToken!)}</code>
-        ${copyBtn}
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px">
-        <div style="font-size:11.5px;color:var(--fg-55);min-width:0">Use it as a <code style="font-family:var(--mono);font-size:11px">Bearer</code> header in your agent's MCP config.</div>
-        <button data-act="dismissReveal" class="cnpy-mutelink" style="flex:none;font-size:12px;font-weight:500;color:var(--fg-40)">Done</button>
-      </div>
-    </div>` : "";
-
   const tokenList = tokenListBody(s);
 
   // Bento on three columns: Profile / Account / tokens across the top — the three tiles
-  // whose natural heights match, so none is stretched hollow — then Email and the
-  // Appearance strip at full width. Nothing sits BESIDE the tall tile: whatever does
+  // whose natural heights match, so none is stretched hollow — then the Appearance
+  // strip and Email at full width. Nothing sits BESIDE the tall tile: whatever does
   // gets stretched to its height (canopy.css has the folds).
   return `<div class="cnpy-set-wrap"><div class="cnpy-set">
     ${profileSection(s)}
@@ -1376,13 +1713,27 @@ function settingsView(s: AppState): string {
     ${accountSection(s)}
 
     <section class="cnpy-tile" style="display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
-        <div style="${SECTION_LABEL};margin-bottom:0">MCP access tokens</div>
-        <button data-act="mintToken" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Mint new token</button>
+      <div style="${SECTION_LABEL}">MCP access</div>
+      <div style="font-size:12.5px;font-weight:500;margin-bottom:6px">Sign in with browser <span style="font-weight:400;color:var(--fg-40)">· recommended</span></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:8px 8px 8px 12px">
+        <code style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(browserConnectCommand())}</code>
+        <button data-act="copyBrowserConnect" class="cnpy-copybtn" style="flex:none;padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;border:1px solid var(--border-strong);color:var(--fg-70)">Copy</button>
       </div>
-      ${reveal}
+      <div style="font-size:11.5px;color:var(--fg-40);margin:6px 0 14px;line-height:1.5">Then run <code style="font-family:var(--mono);font-size:11px">/mcp</code> in Claude Code and choose Authenticate.</div>
+      <div style="font-size:12.5px;font-weight:500;margin-bottom:4px">Connected apps</div>
+      ${grantListBody(s)}
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;row-gap:8px;flex-wrap:wrap;margin:18px 0 4px">
+        <div style="flex:1 1 180px;min-width:0;font-size:12.5px;font-weight:500">Access tokens <span style="font-weight:400;color:var(--fg-40)">· for CI and other headless clients</span></div>
+        <button data-act="connectOpen" class="cnpy-mintbtn" style="flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12.5px;font-weight:600;background:var(--accent-soft)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"></path></svg>Get connection command</button>
+      </div>
       ${tokenList}
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">A token's value is shown once, when minted. Revoking takes effect immediately.</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:auto;padding-top:12px;line-height:1.5">Each connection command creates its own token. Revoking a token or an app disconnects it immediately.</div>
+    </section>
+
+    <section class="cnpy-tile cnpy-set-appear">
+      <div style="${SECTION_LABEL}">Appearance</div>
+      <div class="cnpy-set-themes">${themeCards}</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
     </section>
 
     ${emailNotificationsSection({
@@ -1393,11 +1744,6 @@ function settingsView(s: AppState): string {
       emailDraft: s.emailDraft,
     })}
 
-    <section class="cnpy-tile cnpy-set-appear">
-      <div style="${SECTION_LABEL}">Appearance</div>
-      <div class="cnpy-set-themes">${themeCards}</div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">System follows your operating system's appearance.</div>
-    </section>
   </div></div>`;
 }
 
@@ -1529,8 +1875,9 @@ export function todoCard(t: MyWorkTodo): string {
  * NO NUMERIC ID is shown: a ticket's id is an internal D1 key, not something
  * people refer to a ticket by. The TITLE is the open control
  * (data-act="openTicket") — it NAVIGATES rather than linking out, because a
- * ticket is a D1 row on this origin, never a GitHub issue (ADR-007), so there is
- * no external URL to point at. That is exactly what separates this block from
+ * ticket is a D1 row on this origin, never the GitHub issue itself (ADR-007, as
+ * amended), so there is no external URL to point at — and a ticket MIRRORED from
+ * an issue never reaches this block (listAssignedTickets reads native tickets only). That is exactly what separates this block from
  * the To-do cards above it, which keep their GitHub issue number pill.
  */
 export function ticketCard(t: MyWorkTicket, personOf: (handle: string) => PersonSummary | null): string {
@@ -1609,19 +1956,21 @@ function reviewScreen(s: AppState): string {
 function maintenanceScreen(s: AppState): string {
   if (slicePending(s.needsTriage) && slicePending(s.identityTasks)) return notice("Loading maintenance&hellip;");
   if (s.needsTriage.status === "error" && s.identityTasks.status === "error") return notice("Couldn't load maintenance.");
-  const hint = s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
-    : s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
+  const hint = s.maintTab === "unplaced" && s.needsTriage.status === "error" ? mwDegradedHint("Couldn't load the triage queue.")
+    : s.maintTab === "identity" && s.identityTasks.status === "error" ? mwDegradedHint("Couldn't load identity tasks.")
     : "";
-  const people = s.me?.admin
-    ? peopleSection({
-        persons: s.persons.data,
-        invites: s.invites.data,
-        inviteDraft: s.inviteDraft,
-        loading: s.persons.status === "loading" || s.invites.status === "loading",
-        error: s.invites.error ?? null,
-      })
-    : "";
-  const notif = s.me?.admin
+  // People: the directory for everyone; invites (and the admin-only email
+  // notification sections that used to close the single column) for admins.
+  const admin = s.me?.admin === true;
+  const people = s.maintTab !== "people" ? "" : peopleSection({
+    persons: s.persons.data,
+    invites: admin ? s.invites.data : [],
+    inviteDraft: s.inviteDraft,
+    loading: s.persons.status === "loading" || (admin && s.invites.status === "loading"),
+    error: admin ? (s.invites.error ?? null) : null,
+    me: s.me?.handle ?? null,
+    canInvite: admin,
+  }) + (admin
     ? notificationsMaintenanceSections({
         policy: s.notifPolicy.data,
         settings: s.notifSettings.data,
@@ -1629,12 +1978,8 @@ function maintenanceScreen(s: AppState): string {
         outboxExpanded: s.outboxExpanded,
         fromDraft: s.fromDraft,
       })
-    : "";
-  // The maintenance view closes its own container; People + the notification
-  // sections share that column, so they are spliced in before its closing tag.
-  const base = maintenanceView(maintenanceProps(s));
-  const cut = base.lastIndexOf("</div>");
-  return `${hint}${base.slice(0, cut)}${people}${notif}${base.slice(cut)}`;
+    : "");
+  return `${hint}${maintenanceView(maintenanceProps(s), people)}`;
 }
 
 // ── tickets ──────────────────────────────────────────────────────────────────
@@ -1655,6 +2000,7 @@ function ticketsScreen(s: AppState): string {
     category: s.qCategory,
     view: s.qView,
     unassignedCount: s.ticketBadge,
+    menu: s.qMenu,
   });
 }
 
@@ -1691,7 +2037,10 @@ function ticketDetailScreen(s: AppState): string {
     asgMenu: s.asgMenu,
     sprMenu: s.sprMenu,
     relMenu: s.relMenu,
+    lkMenu: s.lkMenu,
     stMenu: s.stMenu,
+    artifactsBlock: ticketArtifactsBlock(s.art.ticketArts[slice.data.id]),
+    edit: s.tdEdit,
   });
 }
 
@@ -1721,6 +2070,20 @@ function screenBody(s: AppState): string {
     case "ticketdetail": return ticketDetailScreen(s);
     case "sprint": return sprintScreenBody(s);
     case "repo": return repoView(repoProps(s));
+    case "artifacts":
+    case "artifactnew":
+    case "artifact": return artifactsView(artProps(s, s.screen));
+    case "handoffs": return handoffsView({ status: s.handoffs.status, handoffs: s.handoffs.data, me: s.me?.handle ?? "", persons: s.persons.data });
+    case "handoff": return handoffDetailView({ status: s.handoffDetail.status, handoff: s.handoffDetail.data, me: s.me?.handle ?? "", persons: s.persons.data, expireArm: s.handoffExpireArm, promptView: s.promptView });
+    case "newhandoff": return newHandoffView({ draft: s.nh, me: s.me?.handle ?? "", persons: s.persons.data });
+    case "prompts": return promptLibraryView({ status: s.promptList.status, prompts: s.promptList.data, q: s.promptQ, tag: s.promptTag, sort: s.promptSort, filterOpen: s.promptFilterOpen, filterCat: s.promptFilterCat, fmOpening: s.fmOpening, persons: s.persons.data });
+    case "prompt": return promptDetailView({
+      status: s.promptDetail.status, prompt: s.promptDetail.data?.prompt ?? null, versions: s.promptDetail.data?.versions ?? [],
+      persons: s.persons.data, knownTags: [...new Set(s.promptList.data.flatMap((p) => p.tags))],
+      diffVersion: s.promptDiffV, tagMenu: s.promptTagMenu, tagDraft: s.promptTagDraft, promptView: s.promptView,
+    });
+    case "promptedit": return promptEditorView({ draft: s.promptEd, takenSlugs: s.promptList.data.map((p) => p.slug) });
+    case "newdoc": return newDocView({ draft: s.nd, spaces: DOC_SPACES.map((k) => ({ key: k, label: spaceLabel(k) })), sections: ASSIGN_OPTIONS.sections });
     default: return feedView(s);
   }
 }
@@ -1733,12 +2096,28 @@ function repoProps(s: AppState): RepoProps {
   };
 }
 
+/** Project the app state onto the Artifacts screens' props. */
+function artProps(s: AppState, screen: ArtScreen): ArtProps {
+  return {
+    screen, route: s.artRoute, ui: s.art, me: s.me?.handle ?? "", fmOpening: s.fmOpening,
+    persons: s.persons.data, host: typeof location !== "undefined" ? location.host : "canopy",
+    theme: resolved(s),
+    // Every ticket (the attach dialog's own read); the queue's filtered list until it lands.
+    tickets: s.art.attachTickets.data ?? s.tickets.data.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    sprints: s.sprints.data.map((x) => ({ id: x.id, label: x.label, dates: x.dates, active: x.active })),
+  };
+}
+const isArtScreen = (screen: Screen): screen is ArtScreen => screen === "artifacts" || screen === "artifactnew" || screen === "artifact";
+
 // `.cnpy-shell` is the seam web/src/morph.ts looks for: inside it the <aside> is
-// patched in place (so its transitions run) and <main> is swapped.
+// patched in place (so its transitions run) and <main> is swapped — or, on the
+// Artifacts screens, patched too while the SAME view stays up (`data-morph` = the
+// screen + its route): their previews are iframes, and a swapped iframe reloads.
 function appView(s: AppState): string {
+  const morphKey = isArtScreen(s.screen) ? `${s.screen}:${JSON.stringify(s.screen === "artifact" ? s.artRoute : null)}` : "";
   return `<div class="cnpy-shell" style="display:flex;height:100vh;overflow:hidden">
     ${sidebar(s)}
-    <main style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
+    <main${morphKey ? ` data-morph="${attr(morphKey)}"` : ""} style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)">
       ${header(s)}
       <div id="cnpy-main" class="cnpy-scroll" style="flex:1;overflow-y:auto;min-height:0">${screenBody(s)}</div>
     </main>
@@ -1784,5 +2163,9 @@ export function render(s: AppState): string {
     ${s.view === "auth" ? authView(s) : s.screen === "site" ? landingView({ dark: resolved(s) !== "light", signInOpen: false, signedIn: true, seen: s.landingSeen }) : s.screen === "unsubscribe" ? unsubscribeView({ email: s.notifPrefs.data?.email ?? s.me?.handle ?? null, pending: s.unsub.pending, error: s.unsub.error }) : appView(s)}
     ${s.toast ? toastBlock(s.toast) : ""}
     ${s.backfillSync ? backfillSyncModal(s.backfillSync) : ""}
+    ${s.view === "app" ? connectModal(s) : ""}
+    ${s.view === "app" && isArtScreen(s.screen) ? artifactsDialogs(artProps(s, s.screen)) : ""}
+    ${s.view === "app" && s.screen === "handoff" && s.handoffPromptOpen && s.handoffDetail.data ? handoffPromptModal(s.handoffDetail.data) : ""}
+    ${s.view === "app" && s.screen === "prompt" && s.promptExpanded && s.promptDetail.data ? promptPageModal(s.promptDetail.data.prompt) : ""}
   </div>`;
 }

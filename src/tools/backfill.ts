@@ -2,6 +2,7 @@ import type { Env } from "../env";
 import type { PrSummaryRow, IssueSummaryRow } from "@shared/rows";
 import { first } from "../db";
 import { ingestEvent } from "../consumer";
+import { mirrorIssue } from "./ticket-mirror";
 import { eventsFromDelivery } from "../webhook";
 import { type Summarizer, type PrSummary, type IssueSummary, geminiPrSummarizer, geminiIssueSummarizer, storePrSummary, storeIssueSummary } from "./summarize";
 import { applyEventProgress } from "./progress";
@@ -106,6 +107,7 @@ interface GhIssueListItem {
   body: string | null;
   html_url: string;
   state: string;
+  state_reason?: string | null;
   updated_at: string;
   user: GhUserLite;
   assignees?: GhUserLite[];
@@ -147,11 +149,14 @@ function prClosedDelivery(pr: GhPrListItem) {
   };
 }
 
-function issueDelivery(issue: GhIssueListItem) {
+function issueDelivery(issue: GhIssueListItem, repo: string) {
   const assignee = issue.assignees?.[0] ?? issue.assignee ?? null;
   const action = assignee ? "assigned" : "opened";
   return {
     action,
+    // A list item carries no `repository` object; the delivery the webhook gets
+    // does, and the ticket mirror scopes on it — so the reconstruction adds it.
+    repository: { full_name: repo },
     ...(assignee ? { assignee: { login: assignee.login } } : {}),
     issue: {
       number: issue.number,
@@ -159,6 +164,7 @@ function issueDelivery(issue: GhIssueListItem) {
       body: issue.body,
       html_url: issue.html_url,
       state: issue.state,
+      state_reason: issue.state_reason ?? null,
       updated_at: issue.updated_at,
       user: { login: issue.user.login },
       assignees: (issue.assignees ?? []).map((a) => ({ login: a.login })),
@@ -274,8 +280,20 @@ export async function runBackfill(
   // rate-limit wall the long PR run can hit. PRs (Previous activity) take whatever
   // budget remains and finish across follow-up Sync batches (the frontend auto-loops).
   for (const issue of issueList) {
-    const payload = issueDelivery(issue);
+    const payload = issueDelivery(issue, repo);
     const isAssigned = payload.action === "assigned";
+
+    // The ticket mirror, through the SAME function as the webhook. OPEN issues
+    // only (the list is already state=open; the check keeps it true whatever the
+    // query says) — a closed issue enters Canopy only by a real delivery. Best
+    // effort, like the webhook's: a mirror failure never costs the capture.
+    if (issue.state === "open") {
+      try {
+        await mirrorIssue(env.DB, repo, payload);
+      } catch (e) {
+        console.error("ticket mirror failed (backfill)", issue.number, e instanceof Error ? e.message : String(e));
+      }
+    }
     if (isAssigned) issuesToSummarize++;
 
     for (const base of eventsFromDelivery("issues", payload)) {

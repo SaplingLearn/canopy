@@ -483,4 +483,16 @@ describe("handleRepoCron", () => {
     expect(await snapshots()).toHaveLength(0);
     expect(await progressRows()).toHaveLength(0);
   });
+
+  describe("the :30 tick also prunes OAuth", () => {
+    it("deletes an old spent code alongside the repo prune", async () => {
+      await env.DB.prepare(`INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES ('c', 'C', '[]', '2026-01-01T00:00:00.000Z')`).run();
+      await env.DB.prepare(`INSERT INTO persons (handle, name, color, created_at, onboarded_at) VALUES ('p', 'P', 'stone', 't', 't')`).run();
+      await env.DB.prepare(`INSERT INTO oauth_grants (id, person, client_id, client_name, created_at) VALUES (1, 'p', 'c', 'C', 't')`).run();
+      await env.DB.prepare(`INSERT INTO oauth_codes (code_hash, client_id, person, grant_id, redirect_uri, code_challenge, created_at, expires_at, used_at) VALUES ('h', 'c', 'p', 1, 'r', 'x', '2026-01-01T00:00:00.000Z', '2026-01-01T00:01:00.000Z', '2026-01-01T00:00:30.000Z')`).run();
+      const ok = (async () => new Response("ok", { status: 200 })) as typeof fetch;
+      await handleRepoCron(env as unknown as Env, Date.parse("2026-09-24T06:30:00.000Z"), ok);
+      expect(await env.DB.prepare(`SELECT 1 AS x FROM oauth_codes`).first()).toBeNull();
+    });
+  });
 });

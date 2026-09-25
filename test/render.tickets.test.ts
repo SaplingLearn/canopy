@@ -38,7 +38,7 @@ import type { TicketListItem, TicketDetail, TicketLinkRow, TicketCommentRow, Tic
 import { TICKET_STATUS_LABEL, type TicketStatus } from "@shared/tickets";
 import type { SprintView } from "@shared/sprints";
 import type { PersonSummary } from "../web/src/api";
-import { WORK_SHELL } from "../web/src/ui";
+import { WORK_SHELL, DETAIL_SHELL } from "../web/src/ui";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ function ticket(o: Partial<TicketListItem> & { id: number; title: string }): Tic
   return {
     body: "", category: "bug", priority: "normal", status: "submitted", requester: "meilin",
     parent_id: null, sprint_id: null, created_at: ago(2 * H), updated_at: ago(1 * H),
+    source: "canopy", source_ref: null, source_author: null, source_updated_at: null,
     assignees: [], link_count: 0, sub_count: 0, sprint_label: null,
     ...o,
   };
@@ -78,6 +79,7 @@ function detail(o: Partial<TicketDetail> & { id: number; title: string }): Ticke
     body: "Something is broken.", category: "bug", priority: "normal", status: "submitted",
     requester: "meilin", parent_id: null, sprint_id: null,
     created_at: ago(2 * H), updated_at: ago(1 * H),
+    source: "canopy", source_ref: null, source_author: null, source_updated_at: null,
     assignees: [], links: [], comments: [], events: [], parent: null, children: [], sprint: null,
     ...o,
   };
@@ -86,7 +88,7 @@ function detail(o: Partial<TicketDetail> & { id: number; title: string }): Ticke
 const link = (o: Partial<TicketLinkRow> = {}): TicketLinkRow => ({
   id: 1, ticket_id: 1, url: "https://github.com/SaplingLearn/sapling/issues/214",
   kind: "github", label: "sapling #214", meta: "GITHUB · ISSUE",
-  created_by: "jose-a", created_at: ago(1 * H), ...o,
+  created_by: "jose-a", created_at: ago(1 * H), locked: 0, ...o,
 });
 const comment = (o: Partial<TicketCommentRow> = {}): TicketCommentRow => ({
   id: 1, ticket_id: 1, author: "jose-a", body: "On it.", created_at: ago(1 * H), ...o,
@@ -114,7 +116,7 @@ function detailProps(t: TicketDetail, o: Partial<TicketDetailProps> = {}): Ticke
   return {
     ticket: t, allTickets: [], sprints: [], persons: PERSONS,
     commentDraft: "", mention: null, commentHeight: null, linkDraft: "", linkOpen: false,
-    asgMenu: false, sprMenu: false, relMenu: false, stMenu: null,
+    asgMenu: false, sprMenu: false, relMenu: false, lkMenu: null, stMenu: null,
     ...o,
   };
 }
@@ -187,10 +189,10 @@ describe("sidebar — the Tickets entry (design call #2)", () => {
 
   it("hides the badge at 0 and shows the count in an accent pill above it", () => {
     const zero = ticketsRow(render(appState({ screen: "feed", ticketBadge: 0 })));
-    expect(zero).toContain('<span class="cnpy-lbl cnpy-badge is-accent" data-n="0">0</span>');
+    expect(zero).toContain('<span class="cnpy-lbl cnpy-badge" data-n="0">0</span>');
 
     const some = ticketsRow(render(appState({ screen: "feed", ticketBadge: 4 })));
-    expect(some).toContain('<span class="cnpy-lbl cnpy-badge is-accent" data-n="4">4</span>');
+    expect(some).toContain('<span class="cnpy-lbl cnpy-badge" data-n="4">4</span>');
   });
 
   it("carries the collapsed rail's accent dot beside the count", () => {
@@ -198,7 +200,7 @@ describe("sidebar — the Tickets entry (design call #2)", () => {
     expect(html).toContain('data-collapsed="1"');
     expect(ticketsRow(html)).toContain('<span class="cnpy-dot" data-n="4"></span>');
     // review/maintenance counts are 0 here, so theirs stay hidden
-    expect(html.match(/class="cnpy-dot" data-n="0"/g)?.length).toBe(8);
+    expect(html.match(/class="cnpy-dot" data-n="0"/g)?.length).toBe(11);
   });
 
   it("lights Tickets on all three ticket screens", () => {
@@ -405,23 +407,38 @@ describe("queueView — the footer count", () => {
 });
 
 describe("queueView — the filter row", () => {
-  it("renders the segment, the assignee select and the category select with the design's labels", () => {
+  it("renders the segment and the two filter dropdowns — themed menus, not native selects", () => {
     const html = queueView(queueProps({ seg: "closed", assignee: "me", category: "bug" }));
     expect(html).toContain('data-act="queueSeg" data-arg="open"');
     expect(html).toContain('data-act="queueSeg" data-arg="closed"');
     expect(html).toContain('data-act="queueSeg" data-arg="all"');
-    expect(html).toContain('<select data-act="queueAssignee"');
-    expect(html).toContain(">Any assignee</option>");
-    expect(html).toContain(">Assigned to me</option>");
-    expect(html).toContain(">Unassigned</option>");
-    expect(html).toContain('<select data-act="queueCategory"');
-    expect(html).toContain(">All categories</option>");
-    for (const c of ["bug", "request", "question", "access", "other"]) {
-      expect(html).toContain(`<option value="${c}"`);
+    // No native <select>: its popup is the OS list, which ignores the theme.
+    expect(html).not.toContain("<select");
+    // Closed, each trigger shows the CURRENT value and no list.
+    expect(html).toContain('data-act="queueMenu" data-arg="assignee"');
+    expect(html).toContain('data-act="queueMenu" data-arg="category"');
+    expect(html).toContain(">Assigned to me</button>");
+    expect(html).toContain(">Bug</button>");
+    expect(html).not.toContain('role="listbox"');
+  });
+
+  it("an open dropdown lists every option, checks the current one, and has a backdrop", () => {
+    const asg = queueView(queueProps({ assignee: "me", menu: "assignee" }));
+    expect(asg).toContain('role="listbox" aria-label="Assignee"');
+    for (const [v, l] of [["anyone", "Any assignee"], ["me", "Assigned to me"], ["unassigned", "Unassigned"]]) {
+      expect(asg).toMatch(new RegExp(`data-act="queueAssignee" data-arg="${v}"[^>]*>.*${l}</button>`));
     }
-    // The current values are the selected ones.
-    expect(html).toContain('<option value="me" selected>');
-    expect(html).toContain('<option value="bug" selected>');
+    expect(asg).toContain('aria-selected="true" data-act="queueAssignee" data-arg="me"');
+    expect(asg).toContain('data-act="closeTicketMenus"');
+
+    const cat = queueView(queueProps({ category: "bug", menu: "category" }));
+    expect(cat).toContain('data-act="queueCategory" data-arg="all"');
+    for (const c of ["bug", "request", "question", "access", "other"]) {
+      expect(cat).toContain(`data-act="queueCategory" data-arg="${c}"`);
+    }
+    expect(cat).toContain('aria-selected="true" data-act="queueCategory" data-arg="bug"');
+    // Only the open one renders its list.
+    expect(cat).not.toContain('data-act="queueAssignee"');
   });
 });
 
@@ -511,19 +528,20 @@ describe("queueView — the row", () => {
 // ── new ticket ───────────────────────────────────────────────────────────────
 
 describe("the ticket screens' frame", () => {
-  it("gives the queue, the form and the detail the SAME full-width work shell", () => {
-    const shells = [
-      queueView(queueProps()),
-      newTicketView(formProps()),
-      ticketDetailView(detailProps(detail({ id: 1, title: "T" }))),
-    ];
-    for (const html of shells) {
+  it("gives the queue and the form the full-width work shell", () => {
+    for (const html of [queueView(queueProps()), newTicketView(formProps())]) {
       expect(html).toContain(WORK_SHELL);
-      // None of them is capped at the old narrow measures.
+      // Neither is capped at the old narrow measures.
       expect(html).not.toContain("max-width:960px");
       expect(html).not.toContain("max-width:1000px");
       expect(html).not.toContain("max-width:1080px");
     }
+  });
+
+  it("centres a single ticket in the narrower detail shell", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T" })));
+    expect(html).toContain(DETAIL_SHELL);
+    expect(html).not.toContain(WORK_SHELL);
   });
 
   it("keeps the form's rail a rail — fixed, so a wide window grows the fields", () => {
@@ -543,7 +561,8 @@ describe("the ticket screens' frame", () => {
 
   it("runs the form's card and the detail's columns down the window", () => {
     expect(newTicketView(formProps())).toContain("min-height:calc(100vh - 210px)");
-    expect(ticketDetailView(detailProps(detail({ id: 1, title: "T" })))).toContain("min-height:calc(calc(100vh - 210px) - 92px)");
+    // The title now sits inside the grid, so the grid itself takes the full height.
+    expect(ticketDetailView(detailProps(detail({ id: 1, title: "T" })))).toContain("gap:34px;min-height:calc(100vh - 210px)");
   });
 });
 
@@ -664,7 +683,7 @@ describe("ticketDetailView — the status control (design call #7)", () => {
   it("the trigger IS the pill — no outlined box around it", () => {
     const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: null }));
     const triggers = html.match(/<button data-act="ticketStatusMenu"[^>]*>/g) ?? [];
-    expect(triggers).toHaveLength(2);
+    expect(triggers).toHaveLength(1);
     for (const t of triggers) {
       expect(t).toContain('class="cnpy-statusbtn"');
       expect(t).not.toContain("cnpy-outlinebtn");
@@ -672,19 +691,17 @@ describe("ticketDetailView — the status control (design call #7)", () => {
       expect(t).toContain("var(--blue)"); // tinted as the status itself
       expect(t).toContain('aria-expanded="false"');
     }
-    const open = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: "header" }));
-    expect(open).toContain('data-arg="header" title="Set status" aria-haspopup="menu" aria-expanded="true"');
-    expect(open).toContain('data-arg="rail" title="Set status" aria-haspopup="menu" aria-expanded="false"');
+    const open = ticketDetailView(detailProps(detail({ id: 1, title: "T", status: "submitted" }), { stMenu: "rail" }));
+    expect(open).toContain('data-arg="rail" title="Set status" aria-haspopup="menu" aria-expanded="true"');
   });
 
-  const props = (status: TicketStatus, stMenu: "header" | "rail" | null = null) =>
+  const props = (status: TicketStatus, stMenu: "rail" | null = null) =>
     detailProps(detail({ id: 1, title: "T", status }), { stMenu });
 
   it("shows the status as a pill you click — no accept/reject action buttons", () => {
     const html = ticketDetailView(props("submitted"));
-    // Two controls: the header's and the rail's STATUS row.
-    expect(html.match(/data-act="ticketStatusMenu"/g)?.length).toBe(2);
-    expect(html).toContain('data-act="ticketStatusMenu" data-arg="header"');
+    // ONE control, in the rail's STATUS row — the header's duplicate is gone.
+    expect(html.match(/data-act="ticketStatusMenu"/g)?.length).toBe(1);
     expect(html).toContain('data-act="ticketStatusMenu" data-arg="rail"');
     // Nothing is settable until a menu is open, and the old copy is gone.
     expect(html).not.toContain('data-act="ticketStatus"');
@@ -694,14 +711,13 @@ describe("ticketDetailView — the status control (design call #7)", () => {
   });
 
   it("offers submitted → in progress | declined, with the current status ticked", () => {
-    const html = ticketDetailView(props("submitted", "header"));
+    const html = ticketDetailView(props("submitted", "rail"));
     expect(html).toContain('data-act="ticketStatus" data-arg="in_progress"');
     expect(html).toContain('data-act="ticketStatus" data-arg="declined"');
     expect(html).not.toContain('data-act="ticketStatus" data-arg="done"');
     // The current status is listed but inert (a ticked row, not a button).
     expect(html).not.toContain('data-act="ticketStatus" data-arg="submitted"');
     expect(html).toContain("color:var(--accent)");
-    // One menu opens at a time — the rail's control stays closed.
     expect(html.match(/data-act="ticketStatus" /g)?.length).toBe(2);
   });
 
@@ -715,7 +731,7 @@ describe("ticketDetailView — the status control (design call #7)", () => {
 
   it("renders a terminal status as a plain pill — no control, nothing to set", () => {
     for (const status of ["done", "declined"] as const) {
-      const html = ticketDetailView(props(status, "header"));
+      const html = ticketDetailView(props(status, "rail"));
       expect(html).not.toContain('data-act="ticketStatusMenu"');
       expect(html).not.toContain('data-act="ticketStatus"');
       expect(html).toContain(TICKET_STATUS_LABEL[status].toUpperCase());
@@ -723,7 +739,24 @@ describe("ticketDetailView — the status control (design call #7)", () => {
   });
 
   it("dismisses the open menu with the shared backdrop", () => {
-    expect(ticketDetailView(props("submitted", "header"))).toContain('data-act="closeTicketMenus"');
+    expect(ticketDetailView(props("submitted", "rail"))).toContain('data-act="closeTicketMenus"');
+  });
+
+  it("is laid out like the sprint page: the title heads the left column, the rail starts at the top", () => {
+    const html = ticketDetailView(props("submitted"));
+    const grid = html.indexOf('class="cnpy-td-grid"');
+    expect(grid).toBeGreaterThan(-1);
+    expect(html.indexOf("<h2")).toBeGreaterThan(grid); // the title sits INSIDE the grid
+  });
+
+  it("puts who filed it and when in the rail — nothing under the title", () => {
+    const html = ticketDetailView(props("submitted"));
+    expect(html).toContain(">REQUESTER<");
+    expect(html).toContain(">OPENED<");
+    expect(html).not.toContain(">opened ");
+    // The left column goes straight from the title to the body: no chip, no meta line.
+    const left = html.slice(html.indexOf("<h2"), html.indexOf(">Properties<"));
+    expect(left.includes("cnpy-av")).toBe(false);
   });
 });
 
@@ -744,6 +777,25 @@ describe("ticketDetailView — linked work (design call #8)", () => {
     expect(html).toContain("sapling #214");
     expect(html).toContain("GITHUB · ISSUE");
     expect(html).toContain('href="https://github.com/SaplingLearn/sapling/issues/214"');
+  });
+
+  it("gives each link a ⋯ menu trigger outside the <a>, and a right-click hook on the chip", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", links: [link({ id: 42 })] })));
+    expect(html).toMatch(/<\/a>\s*<button data-act="ticketLinkMenu" data-arg="42"/);
+    expect(html).toContain('data-ctx="ticketLinkMenuOpen" data-arg="42"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-act="ticketLinkRemove"');        // closed: no remove anywhere
+  });
+
+  it("opens that chip's menu with Copy link and Remove link", () => {
+    const html = ticketDetailView(detailProps(
+      detail({ id: 1, title: "T", links: [link({ id: 42 }), link({ id: 43, label: "other" })] }),
+      { lkMenu: 42 },
+    ));
+    expect(html).toContain('data-act="ticketLinkCopy" data-arg="42"');
+    expect(html).toContain('data-act="ticketLinkRemove" data-arg="42"');
+    expect(html).not.toContain('data-act="ticketLinkRemove" data-arg="43"');
+    expect(html).toContain('data-act="closeTicketMenus"');
   });
 
   it("re-opens the field through the toggle", () => {
@@ -989,11 +1041,11 @@ describe("hover classes — menu rows, pick chips, segments", () => {
     const html = ticketDetailView(detailProps(detail({ id: 1, title: "T", assignees: ["meilin"] }), {
       sprints: [s12], allTickets: [ticket({ id: 9, title: "Candidate" })],
     }));
-    for (const act of ["ticketAsgMenu", "ticketSprintMenu", "ticketRelMenu"]) {
+    for (const act of ["ticketEdit", "ticketAsgMenu", "ticketSprintMenu", "ticketRelMenu"]) {
       expect(html).toContain(`data-act="${act}"`);
     }
     expect(html).toContain('data-act="ticketAsgRemove" data-arg="meilin" title="Remove" class="cnpy-iconbtn"');
-    expect(html.match(/class="cnpy-iconbtn"/g)?.length).toBe(4);   // 3 menu openers + the remove
+    expect(html.match(/class="cnpy-iconbtn"/g)?.length).toBe(5);   // the edit pencil + 3 menu openers + the remove
   });
 
   it("marks the queue's segment buttons and its Open sprint link", () => {
@@ -1144,5 +1196,65 @@ describe("render — the ticket screens", () => {
 
   it("paints the new-ticket form", () => {
     expect(render(appState({ screen: "newticket" }))).toContain('data-act="ntSubmit"');
+  });
+});
+
+// ── mirrored tickets (0032): source chip, the locked link, the editor ─────────
+
+describe("mirrored tickets", () => {
+  const SRC = { source: "github" as const, source_ref: "SaplingLearn/sapling#214", source_author: "outsider", source_updated_at: ago(H) };
+
+  it("the queue row and board card carry a GitHub #n chip; a native row carries none", () => {
+    const rows = [ticket({ id: 1, title: "Mirrored", ...SRC }), ticket({ id: 2, title: "Native" })];
+    const table = queueView(queueProps({ tickets: rows }));
+    expect(table.match(/GitHub #214/g)).toHaveLength(1);
+    const board = queueView(queueProps({ tickets: rows, view: "board" } as Partial<QueueProps>));
+    expect(board).toContain("GitHub #214");
+  });
+
+  it("the detail shows a SOURCE row, names an unmapped author, and locks the source link", () => {
+    const d = detail({
+      id: 1, title: "Mirrored", ...SRC, requester: "github-webhook",
+      links: [link({ id: 5, locked: 1 }), link({ id: 6, url: "https://www.figma.com/file/x/Checkout", kind: "figma", label: "Checkout", meta: "FIGMA · DESIGN" })],
+    });
+    const html = ticketDetailView(detailProps(d, { lkMenu: 5 }));
+    expect(html).toContain("SOURCE");
+    expect(html).toContain("GitHub #214");
+    expect(html).toContain("@outsider");
+    expect(html).toContain("GITHUB · ISSUE · SOURCE");
+    // The locked link's menu: Copy only, and the reason in place of Remove.
+    expect(html).not.toContain('data-act="ticketLinkRemove" data-arg="5"');
+    expect(html).toContain("Source issue — locked");
+    // The unlocked extra link still offers Remove.
+    const other = ticketDetailView(detailProps(d, { lkMenu: 6 }));
+    expect(other).toContain('data-act="ticketLinkRemove" data-arg="6"');
+  });
+
+  it("status and assignee controls stay live on a mirrored ticket (only the link is locked)", () => {
+    const html = ticketDetailView(detailProps(detail({ id: 1, title: "Mirrored", ...SRC })));
+    expect(html).not.toContain("Managed on GitHub");
+    expect(html).toContain('data-act="ticketAsgMenu"');
+  });
+
+  it("the pencil opens the title/description editor; Save arms only on a non-empty title", () => {
+    const d = detail({ id: 1, title: "T", body: "B" });
+    expect(ticketDetailView(detailProps(d))).toContain('data-act="ticketEdit"');
+    const editing = ticketDetailView(detailProps(d, { edit: { title: "New", body: "Body" } }));
+    expect(editing).toContain('data-act="ticketEditTitle"');
+    expect(editing).toContain('data-act="ticketEditBody"');
+    expect(editing).toContain('data-act="ticketEditSave"');
+    // primaryBtn arms by class (main.ts also refuses a blank title on Save).
+    expect(editing).toMatch(/data-act="ticketEditSave"[^>]*class="cnpy-accentbtn"/);
+    const blank = ticketDetailView(detailProps(d, { edit: { title: "  ", body: "" } }));
+    expect(blank).toMatch(/data-act="ticketEditSave"[^>]*class=""/);
+  });
+});
+
+describe("mirrored ticket history", () => {
+  it("names the github-webhook actor 'GitHub' in the history", () => {
+    const d = detail({ id: 1, title: "T", events: [{ id: 1, ticket_id: 1, actor: "github-webhook", from_status: null, to_status: "submitted", created_at: ago(H) }] });
+    const html = ticketDetailView(detailProps(d));
+    expect(html).toContain(">GitHub</span>");
+    expect(html).not.toContain(">github-webhook</span>");
   });
 });

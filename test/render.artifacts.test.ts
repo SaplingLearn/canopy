@@ -1,0 +1,483 @@
+/**
+ * The Artifacts screens (web/src/artifacts.ts) — pure render + reducer tests over
+ * inline wire DTOs (shared/artifacts-core.ts), no network.
+ *
+ * What matters here: each screen renders from the API's DTOs; every kind is shown
+ * the way the spec mandates (html in an allow-scripts-only sandbox loaded from the
+ * raw route — never srcdoc, never allow-same-origin; svg only through the
+ * sanitizer; image/pdf/file from the raw route); the reducer's gates hold and its
+ * writes come out as effects (PATCH status / visibility, POST ratify, POST links,
+ * the create body — JSON for text, multipart for binary); and the caps are
+ * per-kind (500 KB text, 10 MB binary).
+ */
+import { describe, it, expect, vi } from "vitest";
+
+// marked + DOMPurify need DOM globals this pool does not have (as in render.docs.test.ts):
+// the stand-ins mark that a body went through the markdown / svg sanitizer.
+vi.mock("../web/src/markdown", () => ({
+  renderMarkdown: (b: string) => `<div data-md>${b.length}</div>`,
+  renderMarkdownInline: (t: string) => t,
+  sanitizeSvg: (s: string) => `<div data-svg-clean>${s.length}</div>`,
+}));
+import {
+  artifactsView, artifactsHeader, artifactsDialogs, artifactsAct, libraryRows, parseArtLink, createBytes,
+  ticketArtifactsBlock, artAcceptFile, artFileName, detailKey, diffKey, initialArtUi, ART_ROUTE_NONE,
+  type ArtProps, type ArtUi, type ArtRoute, type ArtScreen,
+} from "../web/src/artifacts";
+import { render, initialState } from "../web/src/render";
+import type { ArtifactSummaryDTO, ArtifactDetailDTO, ArtifactVersionDTO, ArtifactKind, ArtifactDiffDTO } from "@shared/artifacts-core";
+
+// ── fixtures ─────────────────────────────────────────────────────────────────
+
+const T0 = "2026-09-20T10:00:00.000Z";
+function ver(n: number, over: Partial<ArtifactVersionDTO> = {}): ArtifactVersionDTO {
+  return { version_no: n, summary: `v${n} summary`, created_by: "AndresL230", created_at: T0, size_bytes: 1200, content_type: "text/html; charset=utf-8", sha256: "ab".repeat(32), ...over };
+}
+function summary(slug: string, over: Partial<ArtifactSummaryDTO> = {}): ArtifactSummaryDTO {
+  return {
+    id: 1, slug, title: slug.replace(/-/g, " "), kind: "html", area: "ui", repo: "SaplingLearn/canopy", author_id: "AndresL230",
+    status: "published", visibility: "org", current_version: 1, updated_at: T0, size_bytes: 1200, excerpt: null,
+    ticket_ids: [], sprint_ids: [], ...over,
+  };
+}
+function detail(slug: string, kind: ArtifactKind, over: Partial<ArtifactDetailDTO> = {}, versions = 3, at = versions): ArtifactDetailDTO {
+  const vs = Array.from({ length: versions }, (_, i) => ver(i + 1));
+  return {
+    ...summary(slug, { kind, current_version: versions }),
+    ratified_version: null, ratified_by: null, ratified_at: null,
+    versions: vs, links: [], version: vs[at - 1], content: kind === "html" ? "<h1>hi</h1>" : kind === "markdown" ? "# Title" : kind === "svg" ? "<svg></svg>" : kind === "mermaid" ? "graph TD; A-->B" : null,
+    raw_url: `/raw/a/${slug}@v${at}`, ...over,
+  };
+}
+const LIST: ArtifactSummaryDTO[] = [
+  summary("google-signin-design", { kind: "html", author_id: "Jose-Gael-Cruz-Lopez", ticket_ids: [10], sprint_ids: [14], updated_at: "2026-09-22T10:00:00.000Z", current_version: 3 }),
+  summary("auth-audit-sep-2026", { kind: "markdown", area: "auth", ticket_ids: [9], excerpt: "# Auth audit\n\nFindings", updated_at: "2026-09-21T10:00:00.000Z" }),
+  summary("session-flow", { kind: "mermaid", area: "architecture", status: "ratified", excerpt: "graph TD\n  A-->B", updated_at: "2026-09-19T10:00:00.000Z" }),
+  summary("login-mock", { kind: "image", status: "draft", visibility: "private", updated_at: "2026-09-18T10:00:00.000Z" }),
+  summary("rfc-pdf", { kind: "pdf", area: "infra", size_bytes: 2 * 1024 * 1024, updated_at: "2026-09-17T10:00:00.000Z" }),
+];
+const SPRINTS = [{ id: 14, label: "Sprint 14", dates: "Sep 14 – Sep 27", active: true }, { id: 13, label: "Sprint 13", dates: null, active: false }];
+const TICKETS = [{ id: 10, title: "Google sign-in for staff", status: "in_progress" }, { id: 9, title: "Review session security", status: "submitted" }, { id: 7, title: "Sign-in loop", status: "done" }];
+
+function ui(over: Partial<ArtUi> = {}): ArtUi {
+  return { ...initialArtUi(), list: { status: "ok", data: LIST.map((x) => ({ ...x })) }, ...over };
+}
+function props(screen: ArtScreen, route: ArtRoute = ART_ROUTE_NONE, over: Partial<ArtProps> = {}): ArtProps {
+  return { screen, route, ui: ui(), me: "AndresL230", persons: [], host: "canopy.test", theme: "dark", tickets: TICKETS, sprints: SPRINTS, ...over };
+}
+const view = (slug: string, v: number | null = null): ArtRoute => ({ slug, v, diff: null });
+/** Props for the viewer with one detail loaded under the route's key. */
+function viewer(d: ArtifactDetailDTO, v: number | null = null, over: Partial<ArtProps> = {}): ArtProps {
+  const p = props("artifact", view(d.slug, v), over);
+  p.ui.details[detailKey(d.slug, v)] = { status: "ok", data: d };
+  return p;
+}
+const ctx = (p: ArtProps) => ({ screen: p.screen, route: p.route, me: p.me, host: "https://canopy.test", sprints: p.sprints });
+
+// ── library ──────────────────────────────────────────────────────────────────
+
+describe("artifacts — library", () => {
+  it("renders the list as cards, newest first, with no preview strip", () => {
+    const html = artifactsView(props("artifacts"));
+    expect(html).not.toContain("PREVIEW");
+    expect((html.match(/data-act="artOpen"/g) ?? []).length).toBe(5);
+    expect(html).toContain("5 shown · 5 total");
+    expect(html.indexOf("google-signin-design")).toBeLessThan(html.indexOf("auth-audit-sep-2026"));
+    expect(html).not.toMatch(/undefined|NaN|\[object/);
+  });
+
+  it("thumbnails per kind: html/svg framed from the raw route in an empty sandbox, image as an image, text as the excerpt, pdf as its icon", () => {
+    const html = artifactsView(props("artifacts"));
+    expect(html).toContain('src="/raw/a/google-signin-design@v3" sandbox="" tabindex="-1" loading="lazy"');
+    expect(html).not.toContain("srcdoc");
+    expect(html).toContain('<img src="/raw/a/login-mock@v1"');
+    expect(html).toContain("Auth audit\nFindings");
+    expect(html).toContain("PDF · 2.00 MB");
+  });
+
+  it("filters client-side by the popover and by search (a ticket number or title finds what's attached)", () => {
+    const p = props("artifacts");
+    artifactsAct(p.ui, ctx(p), "artFilterPick", "kind:markdown", null);
+    expect(libraryRows(p).map((a) => a.slug)).toEqual(["auth-audit-sep-2026"]);
+    artifactsAct(p.ui, ctx(p), "artFilterClear", null, null);
+    artifactsAct(p.ui, ctx(p), "artFilterPick", "sprint:14", null);
+    expect(libraryRows(p).map((a) => a.slug)).toEqual(["google-signin-design"]);
+    artifactsAct(p.ui, ctx(p), "artFilterClear", null, null);
+    artifactsAct(p.ui, ctx(p), "artQ", null, "#9");
+    expect(libraryRows(p).map((a) => a.slug)).toEqual(["auth-audit-sep-2026"]);
+    artifactsAct(p.ui, ctx(p), "artQ", null, "staff");
+    expect(libraryRows(p).map((a) => a.slug)).toEqual(["google-signin-design"]);
+    artifactsAct(p.ui, ctx(p), "artQ", null, "zzz-nothing");
+    expect(artifactsView(p)).toContain("No artifacts match these filters.");
+  });
+
+  it("the filter popover counts each option and offers every kind and the known sprints", () => {
+    const p = props("artifacts");
+    p.ui.filterOpen = true;
+    // Every category's panel is rendered (only the current one shown), so switching
+    // category never needs a rerender.
+    const html = artifactsView(p);
+    for (const k of ["html", "markdown", "svg", "mermaid", "image", "pdf", "file"]) expect(html).toContain(`data-arg="kind:${k}"`);
+    expect(html).toContain("Sprint 14");
+    expect(html).toContain('data-fm-panel="area" class="fm-panel">');
+    expect(html).toContain('data-fm-panel="kind" class="fm-panel" hidden>');
+  });
+
+  it("the filter menu opens on hover and its categories switch on hover", () => {
+    const p = props("artifacts");
+    expect(artifactsView(p)).toContain('data-hover-menu="art"');
+    p.ui.filterOpen = true;
+    const html = artifactsView(p);
+    for (const k of ["area", "kind", "author", "status", "sprint"]) {
+      expect(html).toContain(`data-act="fmCat" data-hover="fmCat" data-arg="art:${k}"`);
+    }
+    // The click-outside backdrop sits OUTSIDE the hover wrapper, or leaving could never close it.
+    expect(html.indexOf('data-act="fmClose" data-arg="art" style="position:fixed')).toBeLessThan(html.indexOf('data-hover-menu="art"'));
+  });
+
+  it("plays the menu's entrance only on the render that opens it", () => {
+    const p = props("artifacts");
+    p.ui.filterOpen = true;
+    expect(artifactsView({ ...p, fmOpening: "art" })).toContain("fm-pop is-opening");
+    expect(artifactsView({ ...p, fmOpening: null })).not.toContain("is-opening");
+  });
+
+  it("loading, error and empty states", () => {
+    expect(artifactsView(props("artifacts", ART_ROUTE_NONE, { ui: initialArtUi() }))).toContain("Loading artifacts");
+    expect(artifactsView(props("artifacts", ART_ROUTE_NONE, { ui: { ...initialArtUi(), list: { status: "error", data: null } } }))).toContain("Couldn't load artifacts.");
+    expect(artifactsView(props("artifacts", ART_ROUTE_NONE, { ui: { ...initialArtUi(), list: { status: "ok", data: [] } } }))).toContain("No artifacts yet.");
+  });
+
+  it("puts New artifact in the header", () => {
+    expect(artifactsHeader(props("artifacts")).controls).toContain('data-act="artNew"');
+  });
+});
+
+// ── viewer ───────────────────────────────────────────────────────────────────
+
+describe("artifacts — viewer per kind", () => {
+  it("html: an iframe on the raw route, scripts allowed, never same-origin, never srcdoc", () => {
+    const html = artifactsView(viewer(detail("google-signin-design", "html")));
+    expect(html).toContain('src="/raw/a/google-signin-design@v3" sandbox="allow-scripts"');
+    expect(html).toContain('class="art-frame" data-art-key="google-signin-design@3"');
+    expect(html).not.toContain("allow-same-origin");
+    expect(html).not.toContain("srcdoc");
+  });
+
+  it("svg: inlined only through the sanitizer", () => {
+    const html = artifactsView(viewer(detail("logo", "svg", { content: `<svg><script>alert(1)</script></svg>` })));
+    expect(html).toContain('<div class="art-svg"');
+    expect(html).toContain("<div data-svg-clean>");
+    expect(html).not.toContain("<script>");
+  });
+
+  it("markdown through renderMarkdown; mermaid waits for the post-paint renderer", () => {
+    expect(artifactsView(viewer(detail("auth-audit", "markdown")))).toContain('<div class="cnpy-md" style="max-width:760px;margin:0 auto"><div data-md>');
+    const mm = artifactsView(viewer(detail("session-flow", "mermaid")));
+    expect(mm).toContain('data-art-mermaid="session-flow@3|dark"');
+    expect(mm).toContain("Rendering diagram…");
+  });
+
+  it("image as <img>, pdf in an unsandboxed frame (Chrome draws no PDF in a sandbox) with a new-tab link, file as a download card", () => {
+    expect(artifactsView(viewer(detail("login-mock", "image")))).toContain('<img src="/raw/a/login-mock@v3" alt="login mock"');
+    const pdf = artifactsView(viewer(detail("rfc", "pdf")));
+    expect(pdf).toContain('src="/raw/a/rfc@v3" style=');
+    expect(pdf).not.toMatch(/src="\/raw\/a\/rfc@v3"[^>]*sandbox/);
+    expect(pdf).toContain("Open PDF in a new tab");
+    const f = detail("bundle", "file");
+    f.version = ver(3, { content_type: "application/zip", size_bytes: 3 * 1024 * 1024 });
+    const file = artifactsView(viewer(f));
+    expect(file).toContain("bundle-v3.bin");
+    expect(file).toContain("3.00 MB · application/zip");
+    expect(file).toContain('data-act="artDownload"');
+    // A stored filename wins when the API sends one.
+    expect(artFileName("bundle", "file", { ...ver(2), filename: "report.zip" } as ArtifactVersionDTO)).toBe("report.zip");
+    expect(artFileName("rfc", "pdf", ver(2, { content_type: "application/pdf" }))).toBe("rfc-v2.pdf");
+    expect(artFileName("page", "html", ver(4))).toBe("page-v4.html");
+  });
+});
+
+describe("artifacts — viewer chrome", () => {
+  it("an older version says so and offers the compare", () => {
+    const html = artifactsView(viewer(detail("google-signin-design", "html", {}, 3, 1), 1));
+    expect(html).toContain("older version");
+    expect(html).toContain('data-act="artDiff" data-arg="google-signin-design:1..3"');
+    expect(html).toContain("/#artifacts/google-signin-design/v1");
+  });
+
+  it("the author sees the private banner; the not-found page answers a 404", () => {
+    expect(artifactsView(viewer(detail("mine", "html", { visibility: "private", status: "draft" })))).toContain("Only you can see this artifact.");
+    expect(artifactsView(viewer(detail("theirs", "html", { visibility: "private", author_id: "someone" })))).not.toContain("Only you can see this artifact.");
+    const p = props("artifact", view("nope"));
+    p.ui.details[detailKey("nope", null)] = { status: "missing", data: null };
+    expect(artifactsView(p)).toContain("This artifact isn't available.");
+    expect(artifactsHeader(p).crumb).toContain("Not found");
+  });
+
+  it("shows linked work from the DTO's links", () => {
+    const d = detail("x", "html", {
+      links: [
+        { target_type: "ticket", target_ref: "10", label: null, meta: null },
+        { target_type: "sprint", target_ref: "14", label: "Sprint 14", meta: null },
+        { target_type: "pr", target_ref: "SaplingLearn/canopy#212", label: null, meta: null },
+      ],
+    });
+    const html = artifactsView(viewer(d));
+    expect(html).toContain('data-act="openTicket" data-arg="10"');
+    expect(html).toContain("Google sign-in for staff");
+    expect(html).toContain("TICKET #10 · IN PROGRESS");
+    expect(html).toContain("SEP 14 – SEP 27 · ACTIVE");
+    expect(html).toContain('href="https://github.com/SaplingLearn/canopy/pull/212"');
+  });
+
+  it("names the artifact in the header crumb, and Compare on a diff", () => {
+    expect(artifactsHeader(viewer(detail("auth-audit", "markdown", { title: "Auth audit report" }))).crumb).toContain("Auth audit report");
+    const p = props("artifact", { slug: "auth-audit", v: null, diff: { a: 1, b: 2 } });
+    p.ui.details[detailKey("auth-audit", null)] = { status: "ok", data: detail("auth-audit", "markdown") };
+    const c = artifactsHeader(p).crumb;
+    expect(c).toContain('data-act="artOpen"');
+    expect(c).toContain("Compare");
+  });
+});
+
+// ── reducer: writes come out as effects ──────────────────────────────────────
+
+describe("artifacts — reducer", () => {
+  it("draft ⇄ published is a PATCH; ratified opens the dialog only on the latest published version", () => {
+    const p = viewer(detail("a", "html"));
+    expect(artifactsAct(p.ui, ctx(p), "artStatus", "draft", null)).toEqual({ write: { op: "patch", slug: "a", body: { status: "draft" }, flash: "Moved back to draft" } });
+    expect(artifactsAct(p.ui, ctx(p), "artStatus", "ratified", null)).toBeNull();
+    expect(p.ui.ratifyOpen).toBe(true);
+    expect(artifactsDialogs(p)).toContain("Ratify v3");
+    expect(artifactsAct(p.ui, ctx(p), "artRatifyConfirm", null, null)).toEqual({ write: { op: "ratify", slug: "a", version: 3, flash: "Ratified v3" } });
+
+    const old = viewer(detail("a", "html", {}, 3, 1), 1);
+    artifactsAct(old.ui, ctx(old), "artStatus", "ratified", null);
+    expect(old.ui.ratifyOpen).toBe(false);
+    const draft = viewer(detail("a", "html", { status: "draft" }));
+    artifactsAct(draft.ui, ctx(draft), "artStatus", "ratified", null);
+    expect(draft.ui.ratifyOpen).toBe(false);
+    // A write in flight holds the controls.
+    p.ui.busy = true;
+    expect(artifactsAct(p.ui, ctx(p), "artStatus", "draft", null)).toBeNull();
+  });
+
+  it("only the author may make an org artifact private; anyone who sees a private one may publish it", () => {
+    const theirs = viewer(detail("a", "html", { author_id: "Jose-Gael-Cruz-Lopez" }));
+    expect(artifactsAct(theirs.ui, ctx(theirs), "artVis", null, null)).toBeNull();
+    const mine = viewer(detail("a", "html"));
+    expect(artifactsAct(mine.ui, ctx(mine), "artVis", null, null)).toMatchObject({ write: { op: "patch", body: { visibility: "private" } } });
+    const priv = viewer(detail("a", "html", { visibility: "private" }));
+    expect(artifactsAct(priv.ui, ctx(priv), "artPublish", null, null)).toMatchObject({ write: { op: "patch", body: { visibility: "org" }, flash: "Published to the org" } });
+  });
+
+  it("attaches a ticket once, as a POST link", () => {
+    const p = viewer(detail("a", "html", { links: [{ target_type: "ticket", target_ref: "10", label: null, meta: null }] }));
+    artifactsAct(p.ui, ctx(p), "artAttachOpen", null, null);
+    expect(artifactsDialogs(p)).toContain("ATTACHED");
+    artifactsAct(p.ui, ctx(p), "artAttachPick", "10", null); // already attached
+    expect(p.ui.attachPick).toBeNull();
+    artifactsAct(p.ui, ctx(p), "artAttachPick", "7", null);
+    expect(artifactsAct(p.ui, ctx(p), "artAttachConfirm", null, null)).toEqual({ write: { op: "link", slug: "a", target_type: "ticket", target_ref: "7", flash: "Attached to ticket #7" } });
+  });
+
+  it("open in a new tab and download go to the raw route", () => {
+    const p = viewer(detail("a", "html", {}, 3, 2), 2);
+    expect(artifactsAct(p.ui, ctx(p), "artOpenTab", null, null)).toEqual({ openUrl: "/raw/a/a@v2" });
+    expect(artifactsAct(p.ui, ctx(p), "artDownload", null, null)).toEqual({ download: { url: "/raw/a/a@v2?download=1", name: "a-v2.html" } });
+  });
+
+  it("navigates: both version spellings, and a diff pair from the selects", () => {
+    const p = props("artifacts");
+    expect(artifactsAct(p.ui, ctx(p), "artOpen", "a-page@v3", null)).toEqual({ nav: { screen: "artifact", route: { slug: "a-page", v: 3, diff: null } } });
+    expect(artifactsAct(p.ui, ctx(p), "artOpen", "a-page", null)).toEqual({ nav: { screen: "artifact", route: { slug: "a-page", v: null, diff: null } } });
+    const d = props("artifact", { slug: "a-page", v: null, diff: { a: 1, b: 3 } });
+    expect(artifactsAct(d.ui, ctx(d), "artDiffA", "a-page", "2", )).toEqual({ nav: { screen: "artifact", route: { slug: "a-page", v: null, diff: { a: 2, b: 3 } } } });
+  });
+});
+
+// ── diff ─────────────────────────────────────────────────────────────────────
+
+describe("artifacts — diff", () => {
+  const pair = (kind: ArtifactKind, a: string | null, b: string | null, over: Partial<ArtifactVersionDTO> = {}): ArtifactDiffDTO => ({
+    kind, a: { ...ver(1), content: a, raw_url: "/raw/a/x@v1" }, b: { ...ver(2, over), content: b, raw_url: "/raw/a/x@v2" },
+  });
+  function diffProps(kind: ArtifactKind, dto: ArtifactDiffDTO | null): ArtProps {
+    const p = props("artifact", { slug: "x", v: null, diff: { a: 1, b: 2 } });
+    p.ui.details[detailKey("x", null)] = { status: "ok", data: detail("x", kind, {}, 2) };
+    if (dto) p.ui.diffs[diffKey("x", 1, 2)] = { status: "ok", data: dto };
+    return p;
+  }
+  it("text kinds: a line diff with counts", () => {
+    const html = artifactsView(diffProps("markdown", pair("markdown", "a\nb\nc", "a\nB\nc")));
+    expect(html).toContain("+1");
+    expect(html).toContain("−1");
+    expect(html).toContain("Compare versions");
+  });
+  it("image side by side; pdf/file metadata only; loading until it lands", () => {
+    const img = artifactsView(diffProps("image", pair("image", null, null)));
+    expect(img).toContain('<img src="/raw/a/x@v1"');
+    expect(img).toContain('<img src="/raw/a/x@v2"');
+    const pdf = artifactsView(diffProps("pdf", pair("pdf", null, null, { sha256: "cd".repeat(32), size_bytes: 4096 })));
+    expect(pdf).toContain("can't be compared line by line");
+    expect(pdf).toContain("SHA-256");
+    expect(artifactsView(diffProps("markdown", null))).toContain("Loading the comparison");
+  });
+});
+
+// ── new artifact ─────────────────────────────────────────────────────────────
+
+describe("artifacts — new artifact", () => {
+  it("parses the link forms the field accepts, sprints by label", () => {
+    expect(parseArtLink("#10")).toMatchObject({ kind: "ticket", target_type: "ticket", target_ref: "10" });
+    expect(parseArtLink("Sprint 14", SPRINTS)).toMatchObject({ kind: "sprint", target_type: "sprint", target_ref: "14" });
+    expect(parseArtLink("Sprint 99", SPRINTS)).toBeNull();
+    expect(parseArtLink("https://github.com/SaplingLearn/canopy/pull/212")).toMatchObject({ kind: "PR", target_type: "pr", target_ref: "SaplingLearn/canopy#212" });
+    expect(parseArtLink("https://github.com/SaplingLearn/sapling/issues/9")).toMatchObject({ kind: "issue", target_ref: "SaplingLearn/sapling#9" });
+    expect(parseArtLink("pr 12")).toMatchObject({ target_type: "pr", target_ref: "#12" });
+    expect(parseArtLink("hello")).toBeNull();
+  });
+
+  it("offers every kind; a binary kind moves to the file tab and shows the 10 MB cap", () => {
+    const p = props("artifactnew");
+    const html = artifactsView(p);
+    for (const k of ["html", "markdown", "svg", "mermaid", "image", "pdf", "file"]) expect(html).toContain(`data-act="artCKind" data-arg="${k}"`);
+    expect(html).toContain("/ 500 KB");
+    artifactsAct(p.ui, ctx(p), "artCKind", "pdf", null);
+    expect(p.ui.c.tab).toBe("file");
+    expect(artifactsView(p)).toContain("/ 10 MB");
+    // Paste and URL are text-only.
+    artifactsAct(p.ui, ctx(p), "artCTab", "paste", null);
+    expect(p.ui.c.tab).toBe("file");
+  });
+
+  it("blocks an upload over the text cap and warns on claude.ai-only calls", () => {
+    const p = props("artifactnew");
+    p.ui.c.title = "Big";
+    p.ui.c.paste = "x".repeat(500 * 1024 + 1);
+    expect(artifactsView(p)).toContain("Over the 500 KB cap.");
+    expect(artifactsAct(p.ui, ctx(p), "artCSubmit", null, null)).toBeNull();
+    p.ui.c.paste = "<script>window.claude.complete('x')</script>";
+    expect(artifactsView(p)).toContain("CLAUDE.AI ONLY");
+  });
+
+  it("a picked file sets the kind from its extension; a binary one is sent multipart", () => {
+    const p = props("artifactnew");
+    const blob = new Blob([new Uint8Array(2048)], { type: "image/png" });
+    artAcceptFile(p.ui, { name: "login-mock.png", size: 2048, text: null, blob });
+    expect(p.ui.c.kind).toBe("image");
+    expect(p.ui.c.title).toBe("login mock");
+    expect(createBytes(p.ui.c)).toBe(2048);
+    const fx = artifactsAct(p.ui, ctx(p), "artCSubmit", null, null);
+    expect(fx).toMatchObject({ write: { op: "create", content: null, filename: "login-mock.png", fields: { kind: "image", title: "login mock" } } });
+    expect((fx as { write: { file: Blob } }).write.file).toBe(blob);
+    expect(p.ui.c.submitting).toBe(true);
+    // A binary file over 10 MB is refused.
+    const q = props("artifactnew");
+    artAcceptFile(q.ui, { name: "huge.pdf", size: 11 * 1024 * 1024, text: null, blob });
+    expect(artifactsView(q)).toContain("Over the 10 MB cap.");
+    expect(artifactsAct(q.ui, ctx(q), "artCSubmit", null, null)).toBeNull();
+  });
+
+  it("a text upload is a JSON body with its links", () => {
+    const p = props("artifactnew");
+    p.ui.c.title = "Retro board";
+    p.ui.c.paste = "# Retro";
+    artifactsAct(p.ui, ctx(p), "artCKind", "markdown", null);
+    artifactsAct(p.ui, ctx(p), "artCLinkDraft", null, "#10");
+    artifactsAct(p.ui, ctx(p), "artCLinkAdd", null, null);
+    expect(artifactsAct(p.ui, ctx(p), "artCSubmit", null, null)).toEqual({
+      write: {
+        op: "create",
+        fields: { title: "Retro board", kind: "markdown", area: "ui", repo: "SaplingLearn/canopy", visibility: "org", summary: "Uploaded from Canopy" },
+        content: "# Retro", file: null, filename: null, links: [{ target_type: "ticket", target_ref: "10" }],
+      },
+    });
+  });
+
+  it("the URL tab asks the fetch route and shows the returned text", () => {
+    const p = props("artifactnew");
+    artifactsAct(p.ui, ctx(p), "artCTab", "url", null);
+    artifactsAct(p.ui, ctx(p), "artCUrl", null, "https://example.com/page.html");
+    expect(artifactsAct(p.ui, ctx(p), "artCFetch", null, null)).toEqual({ write: { op: "fetchUrl", url: "https://example.com/page.html" } });
+    expect(artifactsView(p)).toContain("Fetching…");
+    p.ui.c.fetching = false;
+    p.ui.c.urlFetched = { text: "<h1>fetched page</h1>" };
+    expect(artifactsView(p)).toContain("&lt;h1&gt;fetched page&lt;/h1&gt;");
+  });
+});
+
+// ── the ticket detail's block ────────────────────────────────────────────────
+
+describe("artifacts — on the ticket detail", () => {
+  it("lists what's attached, or says how to attach one", () => {
+    const html = ticketArtifactsBlock({ status: "ok", data: [LIST[0]] });
+    expect(html).toContain('data-act="artOpen" data-arg="google-signin-design"');
+    expect(html).toContain("HTML · V3 · @JOSE-GAEL-CRUZ-LOPEZ");
+    expect(html).toContain("PUBLISHED");
+    expect(ticketArtifactsBlock({ status: "ok", data: [] })).toContain("No artifacts attached.");
+    expect(ticketArtifactsBlock(undefined)).toContain("Loading artifacts");
+  });
+});
+
+// ── search results (GET /search `type: "artifact"`, id = slug) ────────────────
+
+describe("artifacts — in Search", () => {
+  function searchHtml(over: Partial<ReturnType<typeof initialState>> = {}): string {
+    return render({
+      ...initialState(), view: "app", screen: "search",
+      searchResults: {
+        status: "ok",
+        data: {
+          primary: [{
+            type: "artifact", id: "google-signin-design", title: "Google sign-in design page",
+            section: null, space: null, body: "Status: published · v3", authority: "live",
+            current_version: null, pending_version: null, staged_body: null, confidence: null,
+            updated_at: null, updated_by: null, score: 1,
+          }],
+          pointers: [{ type: "artifact", id: "auth-audit-sep-2026", title: "Auth audit", snippet: "…", authority: "draft", score: 1 }],
+          meta: { engine: "fts5", total: 2 },
+        },
+      },
+      ...over,
+    });
+  }
+
+  it("QueryType carries artifact, and an artifact hit opens the viewer through artOpen, not the doc route", () => {
+    const html = searchHtml();
+    expect(html).toContain('data-act="artOpen" data-arg="google-signin-design"');
+    expect(html).toContain('data-act="artOpen" data-arg="auth-audit-sep-2026"');
+    expect(html).not.toContain('data-act="openDocFrom"');
+    // …and artOpen with that id lands on #artifacts/<slug>.
+    const p = props("artifacts");
+    expect(artifactsAct(p.ui, ctx(p), "artOpen", "google-signin-design", null)).toEqual({ nav: { screen: "artifact", route: { slug: "google-signin-design", v: null, diff: null } } });
+  });
+
+  it("labels an artifact result like the other types", () => {
+    expect(searchHtml()).toMatch(/<path d="M3 4h18v16H3zM3 9h18M7 13\.5h6M7 16\.5h9"><\/path><\/svg>Artifact<\/span>/);
+  });
+
+  it("the type filter offers Artifacts and keeps only artifact hits", () => {
+    expect(searchHtml()).toContain('data-act="setSearchType" data-arg="artifact"');
+    const docOnly = searchHtml({ searchType: "doc" });
+    expect(docOnly).not.toContain('data-arg="google-signin-design"');
+    expect(searchHtml({ searchType: "artifact" })).toContain('data-arg="google-signin-design"');
+  });
+});
+
+// ── in the app shell ─────────────────────────────────────────────────────────
+
+describe("artifacts — in the app shell", () => {
+  it("renders through render() with the sidebar lighting Artifacts", () => {
+    const s = { ...initialState(), view: "app" as const, screen: "artifacts" as const, art: ui() };
+    const html = render(s);
+    expect(html).toContain('class="cnpy-navrow n-artifacts is-active"');
+    expect(html).toContain("New artifact");
+  });
+
+  it("escapes a hostile title", () => {
+    const p = props("artifacts");
+    p.ui.list.data![0].title = `<img src=x onerror=alert(1)>`;
+    expect(artifactsView(p)).not.toContain("<img src=x");
+  });
+});
