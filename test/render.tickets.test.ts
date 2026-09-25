@@ -407,23 +407,38 @@ describe("queueView — the footer count", () => {
 });
 
 describe("queueView — the filter row", () => {
-  it("renders the segment, the assignee select and the category select with the design's labels", () => {
+  it("renders the segment and the two filter dropdowns — themed menus, not native selects", () => {
     const html = queueView(queueProps({ seg: "closed", assignee: "me", category: "bug" }));
     expect(html).toContain('data-act="queueSeg" data-arg="open"');
     expect(html).toContain('data-act="queueSeg" data-arg="closed"');
     expect(html).toContain('data-act="queueSeg" data-arg="all"');
-    expect(html).toContain('<select data-act="queueAssignee"');
-    expect(html).toContain(">Any assignee</option>");
-    expect(html).toContain(">Assigned to me</option>");
-    expect(html).toContain(">Unassigned</option>");
-    expect(html).toContain('<select data-act="queueCategory"');
-    expect(html).toContain(">All categories</option>");
-    for (const c of ["bug", "request", "question", "access", "other"]) {
-      expect(html).toContain(`<option value="${c}"`);
+    // No native <select>: its popup is the OS list, which ignores the theme.
+    expect(html).not.toContain("<select");
+    // Closed, each trigger shows the CURRENT value and no list.
+    expect(html).toContain('data-act="queueMenu" data-arg="assignee"');
+    expect(html).toContain('data-act="queueMenu" data-arg="category"');
+    expect(html).toContain(">Assigned to me</button>");
+    expect(html).toContain(">Bug</button>");
+    expect(html).not.toContain('role="listbox"');
+  });
+
+  it("an open dropdown lists every option, checks the current one, and has a backdrop", () => {
+    const asg = queueView(queueProps({ assignee: "me", menu: "assignee" }));
+    expect(asg).toContain('role="listbox" aria-label="Assignee"');
+    for (const [v, l] of [["anyone", "Any assignee"], ["me", "Assigned to me"], ["unassigned", "Unassigned"]]) {
+      expect(asg).toMatch(new RegExp(`data-act="queueAssignee" data-arg="${v}"[^>]*>.*${l}</button>`));
     }
-    // The current values are the selected ones.
-    expect(html).toContain('<option value="me" selected>');
-    expect(html).toContain('<option value="bug" selected>');
+    expect(asg).toContain('aria-selected="true" data-act="queueAssignee" data-arg="me"');
+    expect(asg).toContain('data-act="closeTicketMenus"');
+
+    const cat = queueView(queueProps({ category: "bug", menu: "category" }));
+    expect(cat).toContain('data-act="queueCategory" data-arg="all"');
+    for (const c of ["bug", "request", "question", "access", "other"]) {
+      expect(cat).toContain(`data-act="queueCategory" data-arg="${c}"`);
+    }
+    expect(cat).toContain('aria-selected="true" data-act="queueCategory" data-arg="bug"');
+    // Only the open one renders its list.
+    expect(cat).not.toContain('data-act="queueAssignee"');
   });
 });
 
