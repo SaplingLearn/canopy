@@ -16,7 +16,7 @@ it, however many agents are writing.
 **Authored work is not knowledge, and is not staged.** A ticket is somebody's request and a sprint is
 the team's plan; both take effect immediately, the same as when a person clicks the button. What
 bounds those is not a queue but **scope**: a ticket write needs the ticket to be assigned to you
-already, and sprint writes need admin. So there are two write classes, and it is worth knowing which
+already. So there are two write classes, and it is worth knowing which
 one you are in:
 
 | | Staged — a human confirms | Direct — takes effect now |
@@ -141,8 +141,9 @@ triage step — a ticket write is org-visible immediately. What bounds them is s
 - **`edit_ticket` / `transition_ticket` / `add_ticket_comment` / `add_ticket_link` / `set_ticket_sprint` /
   `set_ticket_parent`** — scoped. Outside your lane you get `{"code": "forbidden"}` and nothing is
   written. `set_ticket_parent` needs the lane on both tickets.
-- **Sprint writes are ADMIN-ONLY**: `create_sprint`, `set_sprint_active`, `complete_sprint`,
-  `add_sprint_resource`. A non-admin does not see them in `tools/list` at all.
+- **Sprint writes are open to everyone**: `create_sprint`, `set_sprint_active`, `complete_sprint`,
+  `add_sprint_resource`, `delete_sprint` (hard delete; its tickets move to the backlog). Only the
+  whole-plan rewrite `update_plan` is admin-only.
 - One admin exception to the lane: an admin may `set_ticket_sprint` on any ticket, because composing
   a sprint is sprint management. It spreads to no other verb.
 

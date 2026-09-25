@@ -11,7 +11,7 @@ import {
 } from "./render";
 import {
   getFeed, listDocs, getDoc, search, getRoadmap, getMyDashboard, getRepoDashboard,
-  completeSprint,
+  completeSprint, deleteSprint,
   listStagedProposals, listAdrs, promoteDoc, rejectDoc, ratifyAdr, rejectAdr,
   listNeedsTriage, listIdentityTasks, assignTriage, discardTriage, mapIdentity, type AssignTarget,
   getMe, logout, mintMcpToken, adminBackfill, adminPoll,
@@ -1046,6 +1046,7 @@ function loadSprintDetail(id: number): void {
   const seq = ++sprintDetailSeq;
   // Keep the sprint on screen while it refreshes; clear it when opening another.
   const keep = state.sprintDetail.data?.id === id ? state.sprintDetail.data : null;
+  if (!keep) state.sprintDeleteArmed = false;       // a confirm never carries to another sprint
   state.sprintDetail = { status: "loading", data: keep };
   rerender();
   getSprint(id)
@@ -1772,6 +1773,27 @@ function dispatch(act: string, arg: string | null, value: string | null, caret: 
           loadSprints();
           if (state.roadmap.status !== "idle") loadRoadmap();
           flash(active ? `${sp.label} is active` : `${sp.label} is no longer active`);
+        })
+        .catch(sprintErr);
+      return;
+    }
+    case "sprintDeleteArm": state.sprintDeleteArmed = true; rerender(); return;
+    case "sprintDeleteCancel": state.sprintDeleteArmed = false; rerender(); return;
+    case "sprintDelete": {
+      const id = state.sprintId;
+      if (id === null) return;
+      deleteSprint(id)
+        .then((r) => {
+          state.sprintDeleteArmed = false;
+          state.sprintDetail = { status: "idle", data: null };
+          state.sprintId = null;
+          state.screen = "roadmap";
+          loadRoadmap();
+          loadSprints();
+          if (state.tickets.status !== "idle") loadTickets();
+          flash(r.moved > 0
+            ? `${r.label} deleted — ${r.moved} ticket${r.moved === 1 ? "" : "s"} moved to the backlog`
+            : `${r.label} deleted`);
         })
         .catch(sprintErr);
       return;

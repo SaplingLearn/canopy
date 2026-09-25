@@ -36,9 +36,11 @@ const WRITE_TOOLS = [
   "set_ticket_parent",
 ] as const;
 
-// The sprint writes: ADMIN-ONLY, conditionally registered like update_plan, so a
-// non-admin does not see them at all. Behavior: test/mcp.sprints.writes.test.ts.
-const ADMIN_WRITE_TOOLS = ["create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource"] as const;
+// The sprint writes: open to EVERY principal, like the web's sprint routes.
+// Only update_plan stays admin-only. Behavior: test/mcp.sprints.writes.test.ts.
+const SPRINT_WRITE_TOOLS = [
+  "create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource", "delete_sprint",
+] as const;
 
 // Assignment is the data the lane rule is built on: an agent that could edit the
 // assignee list could edit its own permissions. `toggle_assignee` is web-only,
@@ -171,21 +173,21 @@ describe("the MCP ticket/sprint surface", () => {
     for (const banned of BANNED_WRITE_TOOLS) expect(names).not.toContain(banned);
     // "exactly these": nothing else on the tickets/sprints surface exists for a
     // non-admin. Kept exhaustive on purpose — this list IS the surface's contract.
-    expect(names.filter((n) => /ticket|sprint/.test(n)).sort()).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
+    expect(names.filter((n) => /ticket|sprint/.test(n)).sort()).toEqual([...READ_TOOLS, ...WRITE_TOOLS, ...SPRINT_WRITE_TOOLS].sort());
   });
 
-  it("a NON-ADMIN sees every read and every ticket write — but no sprint write", async () => {
+  it("a NON-ADMIN sees every read, every ticket write and every sprint write — but not update_plan", async () => {
     const names = await toolNames("beatrix");
     // beatrix is genuinely non-admin: the admin-only plan write is absent for her.
     expect(names).not.toContain("update_plan");
     for (const t of READ_TOOLS) expect(names).toContain(t);
     for (const t of WRITE_TOOLS) expect(names).toContain(t);
-    for (const t of ADMIN_WRITE_TOOLS) expect(names).not.toContain(t);
+    for (const t of SPRINT_WRITE_TOOLS) expect(names).toContain(t);
   });
 
-  it("an ADMIN gets the four sprint writes on top, and no extra TICKET tool", async () => {
+  it("an ADMIN gets update_plan on top, and no extra TICKET tool", async () => {
     const names = await toolNames("admin-user");
-    for (const t of ADMIN_WRITE_TOOLS) expect(names).toContain(t);
+    for (const t of SPRINT_WRITE_TOOLS) expect(names).toContain(t);
     expect(names).toContain("update_plan");
     // The admin's ticket surface is the same as everyone's: the D6 exception is a
     // call-time scope relaxation on set_ticket_sprint, NOT an extra tool.

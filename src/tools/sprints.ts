@@ -390,6 +390,30 @@ export async function complete_sprint(db: DB, id: number): Promise<SprintView> {
 }
 
 /**
+ * Delete a sprint — a HARD delete, open to any signed-in member (and, over MCP,
+ * any principal). Its tickets are NOT deleted: they move to the backlog
+ * (`sprint_id = NULL`, `updated_at` bumped so they resurface in the queue) and
+ * keep every comment, link and event. The sprint's own `sprint_resources` and
+ * its `sprint_progress` cache row go with it (both FK the sprint); the
+ * `roadmap_fts` row goes via the AFTER DELETE trigger. Past `plan_versions`
+ * snapshots still name it — history, not the live plan.
+ *
+ * ONE `db.batch` (a single implicit transaction), children before the parent
+ * so the FKs hold. Answers with how many tickets moved to the backlog.
+ */
+export async function delete_sprint(db: DB, id: number): Promise<{ id: number; label: string; moved: number }> {
+  const sp = await requireSprint(db, id);
+  const now = nowIso();
+  const [moved] = await db.batch([
+    db.prepare(`UPDATE tickets SET sprint_id = NULL, updated_at = ? WHERE sprint_id = ?`).bind(now, id),
+    db.prepare(`DELETE FROM sprint_resources WHERE sprint_id = ?`).bind(id),
+    db.prepare(`DELETE FROM sprint_progress WHERE sprint_id = ?`).bind(id),
+    db.prepare(`DELETE FROM sprints WHERE id = ?`).bind(id),
+  ]);
+  return { id, label: sp.title, moved: moved.meta.changes ?? 0 };
+}
+
+/**
  * Attach one resource to the sprint itself, parsed by the SHARED link parser the
  * ticket links and the SPA also use — so `#214` means the same thing wherever it
  * is typed. An unparseable raw is a 400 (never a silently dropped field); an

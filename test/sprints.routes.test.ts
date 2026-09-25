@@ -587,3 +587,32 @@ describe("GET /sprints/:id past 100 tickets", () => {
     expect(detail.tickets[0].assignees).toEqual([]);
   });
 });
+
+// ── POST /sprints/:id/delete — any member, tickets move to the backlog ───────
+
+describe("POST /sprints/:id/delete", () => {
+  it("a NON-admin member deletes a sprint; its tickets land in the backlog and it leaves the roadmap", async () => {
+    await seedPerson("andres");
+    const cookie = await cookieFor("andres");
+    const sp = await createSprint(cookie, { label: "Doomed" });
+    const t = await createTicket(cookie, { title: "keep me", sprint_id: sp.id });
+
+    const res = await post(`/sprints/${sp.id}/delete`, cookie);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await json(res)).toEqual({ ok: true, id: sp.id, label: "Doomed", moved: 1 });
+
+    expect((await get(`/sprints/${sp.id}`, cookie)).status).toBe(404);
+    const ticket = await first<{ sprint_id: number | null }>(env.DB, `SELECT sprint_id FROM tickets WHERE id = ?`, t.id);
+    expect(ticket!.sprint_id).toBeNull();
+    const roadmap = await json<{ sprints: SprintView[] }>(await get("/roadmap", cookie));
+    expect(roadmap.sprints.map((s) => s.id)).not.toContain(sp.id);
+  });
+
+  it("404s on an unknown sprint, 400s on a non-integer id, 401s without a session", async () => {
+    await seedPerson("andres");
+    const cookie = await cookieFor("andres");
+    expect((await post(`/sprints/4242/delete`, cookie)).status).toBe(404);
+    expect((await post(`/sprints/abc/delete`, cookie)).status).toBe(400);
+    expect((await post(`/sprints/1/delete`, "")).status).toBe(401);
+  });
+});

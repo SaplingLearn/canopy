@@ -322,6 +322,8 @@ export interface SprintScreenProps {
   persons: PersonSummary[];
   /** The Resources rail's "Add a URL…" draft (shared with the ticket detail's link draft). */
   resourceDraft: string;
+  /** "Delete sprint" was clicked once — the rail shows the inline confirm instead. */
+  deleteArmed?: boolean;
 }
 
 /**
@@ -338,6 +340,28 @@ export interface SprintScreenProps {
  * `POST /sprints/:id/active`; `done` is NEVER set here (§C.6 — the plan write or
  * the Roadmap's Confirm-done own that).
  */
+/**
+ * The rail's last block: a quiet "Delete sprint" that arms an inline confirm
+ * (never a browser dialog). The confirm names what happens to the tickets —
+ * they move to the backlog, they are not deleted.
+ */
+function deleteBlock(sp: SprintDetail, armed: boolean): string {
+  const n = sp.tickets.length;
+  if (!armed) {
+    return `<div style="margin-top:28px;padding-top:14px;border-top:1px solid var(--border)"><button data-act="sprintDeleteArm" style="font-size:12px;font-weight:500;color:var(--red)">Delete sprint</button></div>`;
+  }
+  const fate = n === 0
+    ? "It has no tickets."
+    : `Its ${n} ticket${n === 1 ? "" : "s"} move${n === 1 ? "s" : ""} to the backlog — nothing else is deleted.`;
+  return `<div style="margin-top:28px;padding-top:14px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;line-height:1.5;color:var(--fg-70);margin-bottom:10px">Delete <strong style="color:var(--fg);font-weight:600">${esc(sp.label)}</strong> for good? ${fate}</div>
+    <div style="display:flex;gap:7px">
+      <button data-act="sprintDelete" style="padding:5px 12px;border-radius:7px;background:var(--red);color:#fff;font-size:12px;font-weight:600">Delete</button>
+      <button data-act="sprintDeleteCancel" class="cnpy-outlinebtn" style="padding:5px 12px;border-radius:7px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg-70)">Cancel</button>
+    </div>
+  </div>`;
+}
+
 export function sprintScreen(p: SprintScreenProps): string {
   const sp = p.detail;
   const activeChip = sp.active ? `<span style="${ACTIVE_CHIP}">ACTIVE</span>` : "";
@@ -405,6 +429,7 @@ export function sprintScreen(p: SprintScreenProps): string {
           <button data-act="sprintResourceAdd" class="cnpy-outlinebtn" style="padding:0 11px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg-70);flex:none">Add</button>
         </div>
         <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">Sprint-level links plus everything linked from its tickets.</div>
+        ${deleteBlock(sp, p.deleteArmed ?? false)}
       </div>
     </div>
   </div>`;

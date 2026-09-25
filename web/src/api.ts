@@ -410,6 +410,10 @@ export function setSprintActive(id: number, active: boolean): Promise<SprintView
 export function addSprintResource(id: number, raw: string): Promise<SprintDetail> {
   return postJson<{ ok: true; sprint: SprintDetail }>(`/sprints/${id}/resources`, { raw }).then((r) => r.sprint);
 }
+/** Hard-delete a sprint; its tickets move to the backlog (`moved` of them). */
+export function deleteSprint(id: number): Promise<{ ok: true; id: number; label: string; moved: number }> {
+  return postJson<{ ok: true; id: number; label: string; moved: number }>(`/sprints/${id}/delete`);
+}
 
 // ── Artifacts (/api/artifacts — the spec's Track B routes) ────────────────────
 // One sender for every artifact call: JSON bodies, or a FormData (multipart, for a

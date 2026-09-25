@@ -454,6 +454,18 @@ describe("sprintScreen", () => {
     expect(html).toContain('value="https://example.com/x"');
   });
 
+  it("offers Delete sprint, and once armed confirms inline that its tickets move to the backlog", () => {
+    const idle = sprintScreen({ detail: detail({ id: 3, label: "Doomed" }), persons: PERSONS, resourceDraft: "" });
+    expect(idle).toContain('data-act="sprintDeleteArm"');
+    expect(idle).not.toContain('data-act="sprintDelete"');
+
+    const armed = sprintScreen({ detail: detail({ id: 3, label: "Doomed" }), persons: PERSONS, resourceDraft: "", deleteArmed: true });
+    expect(armed).toContain('data-act="sprintDelete"');
+    expect(armed).toContain('data-act="sprintDeleteCancel"');
+    expect(armed).toContain("Doomed");
+    expect(armed).not.toContain('data-act="sprintDeleteArm"');
+  });
+
   it("neutralizes a non-http resource url in the href", () => {
     const html = sprintScreen({
       detail: detail({ id: 3, label: "S", resources: [resource({ url: "javascript:alert(1)", kind: "plain", label: "evil", meta: "LINK" })] }),

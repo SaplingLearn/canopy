@@ -78,7 +78,7 @@ authority-flagged. Use it to orient, to search, and to explore — there is no s
   The ticket WRITE tools are scoped to tickets already assigned to you, with TWO exceptions:
   `create_ticket` is unscoped (filing is how work enters the queue), and an **admin** may call
   `set_ticket_sprint` on any ticket (composing a sprint is sprint management — it spreads to no other
-  verb). Sprint writes are admin-only. See the `canopy` skill, or the `tickets` skill to drive them.
+  verb). Sprint writes are open to every principal. See the `canopy` skill, or the `tickets` skill to drive them.
 - **`artifact_get <slug>`** — you know the artifact's slug (from a `query` hit or `get_ticket`'s
   `artifacts`) and want its content, versions and links; `slug@v3` reads an older version.
 - **`get_my_work`** — you want your own previous-activity + to-do projection from captured GitHub events.

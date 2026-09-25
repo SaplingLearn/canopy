@@ -6,18 +6,21 @@ import { buildCanopyMcpServer } from "../src/mcp";
 import type { Env } from "../src/env";
 import { first } from "../src/db";
 import { create_sprint } from "../src/tools/sprints";
+import { create_ticket } from "../src/tools/tickets";
+import { TicketCreate } from "@shared/tickets";
 import { SprintCreate, type SprintDetail, type SprintView } from "@shared/sprints";
 import type { SprintRow } from "@shared/rows";
 import { seedPerson } from "./helpers/persons";
 
-// Phase 3: the FOUR admin-only sprint write tools, driven through the REAL
-// registered closures. ADMIN_LOGINS binds only "admin-user" (vitest.config.ts).
-//
-// Conditional registration means a non-admin does not merely get refused — the
-// tools are absent from tools/list entirely, exactly like update_plan.
+// The FIVE sprint write tools, driven through the REAL registered closures.
+// They are open to EVERY principal, matching the web (every sprint route sits
+// under sessionGate with no adminGate). Only update_plan stays admin-only.
+// ADMIN_LOGINS binds only "admin-user" (vitest.config.ts).
 
 const ADMIN = "admin-user";
-const ADMIN_WRITE_TOOLS = ["create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource"] as const;
+const SPRINT_WRITE_TOOLS = [
+  "create_sprint", "set_sprint_active", "complete_sprint", "add_sprint_resource", "delete_sprint",
+] as const;
 
 async function withClient<T>(handle: string, fn: (client: Client) => Promise<T>): Promise<T> {
   const server = buildCanopyMcpServer(env as unknown as Env, { handle });
@@ -55,34 +58,25 @@ function failed(r: { text: string; isError?: boolean }) {
 const seedSprint = (label: string, due = "2026-09-01") =>
   create_sprint(env.DB, SprintCreate.parse({ label, due }), ADMIN);
 
-describe("the sprint write surface is admin-gated", () => {
-  it("registers all four for an admin", async () => {
+describe("the sprint write surface is open to every member", () => {
+  it("registers all five for an admin", async () => {
     await seedPerson(ADMIN);
     const names = await withClient(ADMIN, async (c) => (await c.listTools()).tools.map((t) => t.name));
-    for (const t of ADMIN_WRITE_TOOLS) expect(names).toContain(t);
+    for (const t of SPRINT_WRITE_TOOLS) expect(names).toContain(t);
   });
 
-  it("hides all four from a non-admin — absent, not merely refused", async () => {
+  it("registers all five for a non-admin too — but not update_plan", async () => {
     await seedPerson("andres");
     const names = await withClient("andres", async (c) => (await c.listTools()).tools.map((t) => t.name));
-    for (const t of ADMIN_WRITE_TOOLS) expect(names).not.toContain(t);
-    // A fresh server is built per request with the principal in scope, so calling
-    // one by name is tool-not-found rather than a permission error — the same
-    // shape update_plan already has for a non-admin.
-    for (const t of ADMIN_WRITE_TOOLS) {
-      const res = await callTool("andres", t, { id: 1, label: "sneaky", active: true, raw: "#1" });
-      expect(res.isError, t).toBeTruthy();
-      expect(res.text.toLowerCase(), t).toContain("not found");
-    }
+    for (const t of SPRINT_WRITE_TOOLS) expect(names).toContain(t);
+    expect(names).not.toContain("update_plan");
   });
 
-  it("is admin-only even for complete_sprint, which the WEB lets any member do", async () => {
-    // POST /sprints/:id/complete sits under sessionGate with no adminGate. Over MCP
-    // it is admin-only. The delta is deliberate — assert BOTH halves so a later
-    // reader cannot mistake it for an oversight.
+  it("a non-admin can create and complete a sprint", async () => {
     await seedPerson("beatrix");
-    const names = await withClient("beatrix", async (c) => (await c.listTools()).tools.map((t) => t.name));
-    expect(names).not.toContain("complete_sprint");
+    const sp = ok<SprintView>(await callTool("beatrix", "create_sprint", { label: "Member-made" }));
+    const done = ok<SprintView>(await callTool("beatrix", "complete_sprint", { id: sp.id }));
+    expect(done.status).toBe("done");
   });
 });
 
@@ -222,5 +216,45 @@ describe("add_sprint_resource", () => {
     const seeded = await seedSprint("Strict");
     expect(failed(await callTool(ADMIN, "add_sprint_resource", { id: seeded.id, raw: "javascript:alert(1)" })).code).toBe("bad_request");
     expect(failed(await callTool(ADMIN, "add_sprint_resource", { id: 4242, raw: "#1" })).code).toBe("not_found");
+  });
+});
+
+describe("delete_sprint", () => {
+  it("hard-deletes the sprint, its resources and progress cache; its tickets move to the backlog", async () => {
+    await seedPerson("andres");
+    const seeded = await seedSprint("Doomed");
+    ok(await callTool("andres", "add_sprint_resource", { id: seeded.id, raw: "#214" }));
+    await env.DB.prepare(`INSERT INTO sprint_progress (sprint_id, closed, total, source, computed_at) VALUES (?, 1, 2, 'event', '2026-09-01T00:00:00.000Z')`).bind(seeded.id).run();
+    const t1 = await create_ticket(env.DB, TicketCreate.parse({ title: "one", sprint_id: seeded.id }), "andres");
+    const t2 = await create_ticket(env.DB, TicketCreate.parse({ title: "two", sprint_id: seeded.id }), "andres");
+
+    const res = ok<{ id: number; label: string; moved: number }>(await callTool("andres", "delete_sprint", { id: seeded.id }));
+    expect(res).toEqual({ id: seeded.id, label: "Doomed", moved: 2 });
+
+    expect(await first(env.DB, `SELECT id FROM sprints WHERE id = ?`, seeded.id)).toBeNull();
+    expect(await first(env.DB, `SELECT id FROM sprint_resources WHERE sprint_id = ?`, seeded.id)).toBeNull();
+    expect(await first(env.DB, `SELECT sprint_id FROM sprint_progress WHERE sprint_id = ?`, seeded.id)).toBeNull();
+    expect(await first(env.DB, `SELECT ref FROM roadmap_fts WHERE ref = ?`, `sprint:${seeded.id}`)).toBeNull();
+    for (const id of [t1, t2]) {
+      const row = await first<{ sprint_id: number | null }>(env.DB, `SELECT sprint_id FROM tickets WHERE id = ?`, id);
+      expect(row).not.toBeNull();
+      expect(row!.sprint_id).toBeNull();
+    }
+  });
+
+  it("leaves every other sprint and its tickets alone", async () => {
+    await seedPerson("andres");
+    const doomed = await seedSprint("Doomed");
+    const kept = await seedSprint("Kept");
+    const t = await create_ticket(env.DB, TicketCreate.parse({ title: "stays", sprint_id: kept.id }), "andres");
+    ok(await callTool("andres", "delete_sprint", { id: doomed.id }));
+    expect(await first(env.DB, `SELECT id FROM sprints WHERE id = ?`, kept.id)).not.toBeNull();
+    const row = await first<{ sprint_id: number | null }>(env.DB, `SELECT sprint_id FROM tickets WHERE id = ?`, t);
+    expect(row!.sprint_id).toBe(kept.id);
+  });
+
+  it("refuses an unknown sprint as not_found", async () => {
+    await seedPerson("andres");
+    expect(failed(await callTool("andres", "delete_sprint", { id: 4242 })).code).toBe("not_found");
   });
 });

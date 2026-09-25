@@ -140,8 +140,8 @@ describe("record_session MCP tool — the real bearer-only agent write path", ()
       // went with its queue (0025), and focus was retired back in 0014.
       expect(names.filter((n) => n.startsWith("propose_"))).toEqual(["propose_doc_update"]);
       expect(names).not.toContain("set_focus");
-      // Sprints are authored writes on cookie routes — MCP gets no sprint writer.
-      for (const banned of ["propose_sprint", "create_sprint", "complete_sprint", "set_sprint_active"]) {
+      // Sprints are authored, never proposed — no staged sprint writer exists.
+      for (const banned of ["propose_sprint", "promote_sprint"]) {
         expect(names).not.toContain(banned);
       }
 

@@ -23,7 +23,7 @@ import {
 } from "@shared/tickets";
 import { promote_doc, ratify_adr, reject_doc_version, reject_adr, resolve_triage, assign_triage, map_identity, type AssignType } from "./tools/writes";
 import {
-  create_sprint, set_sprint_active, complete_sprint, add_sprint_resource, list_sprints, get_sprint,
+  create_sprint, set_sprint_active, complete_sprint, add_sprint_resource, delete_sprint, list_sprints, get_sprint,
   SprintError, SPRINT_ERROR_STATUS,
 } from "./tools/sprints";
 import { SprintCreate, SprintActiveSet, SprintResourceAdd } from "@shared/sprints";
@@ -796,6 +796,18 @@ app.post("/sprints/:id/resources", async (c) => {
   try {
     const sprint = await add_sprint_resource(c.env.DB, id, parsed.data.raw);
     return c.json({ ok: true, sprint });
+  } catch (e) {
+    return sprintFail(c, e);
+  }
+});
+
+// Delete a sprint (session-gated, any member — no adminGate). Its tickets move
+// to the backlog; see delete_sprint. Never an ingestion path.
+app.post("/sprints/:id/delete", async (c) => {
+  const id = sprintId(c);
+  if (id === null) return c.json({ error: "invalid id" }, 400);
+  try {
+    return c.json({ ok: true, ...(await delete_sprint(c.env.DB, id)) });
   } catch (e) {
     return sprintFail(c, e);
   }

@@ -24,7 +24,7 @@ stays living** (orient → work → record), not a side feature. The core loop i
   the same gate as `/ingest`).
 
 **Tickets from Claude Code** — **`tickets`** (explicit only, never auto-fires) works the ticket queue and,
-for an admin, the sprints, over the scoped MCP write tools. It orients with a read, checks the lane before
+the sprints, over the scoped MCP write tools. It orients with a read, checks the lane before
 proposing anything, shows a one-line diff, then makes ONE call and reports the real new state. Per-team
 defaults live in a `tickets.config.md` it reads (`references/config.md`) — advisory taste on top of the
 Worker's hard rules, never a permission system. Reading the queue needs no skill.
@@ -258,9 +258,9 @@ cookie routes, which are NOT assignee-scoped and did not change. `create_ticket`
 write (filing is how work enters the queue) and its `assignees` is the only agent-reachable assignment;
 `set_ticket_parent` needs the lane on BOTH ids. ONE exception: an **admin** may `set_ticket_sprint` on any
 ticket (composing a sprint is sprint management) — it spreads to no other verb. **Sprint writes are
-admin-only** (`create_sprint` / `set_sprint_active` / `complete_sprint` / `add_sprint_resource`),
-conditionally registered like `update_plan` so a non-admin cannot see them — a deliberate delta from the
-web, where `POST /sprints/:id/complete` is open to any member. **No provenance is stored** (design D4): an
+open to every principal** (`create_sprint` / `set_sprint_active` / `complete_sprint` /
+`add_sprint_resource` / `delete_sprint`), matching the web, where every sprint route sits under
+`sessionGate` with no `adminGate`; only the whole-plan rewrite `update_plan` stays admin-only. **No provenance is stored** (design D4): an
 MCP write is recorded as the person, indistinguishable from a click.
 
 - **MCP `query`** defaults `include_staged: true` — agents see staged/unpromoted context (authority-flagged).
@@ -283,9 +283,12 @@ Agents only ever stage; humans confirm via **authenticated HTTP routes that are 
   in `src/tools/sprints.ts` —
   `POST /sprints` (created `upcoming`, `phase` `'Unscheduled'`, no `due` → `target_date` `''` which the
   DTO shows as `due: null`), `POST /sprints/:id/active` (`true` → `in_progress`, `false` → `upcoming`;
-  on a `done` sprint `false` is a NO-OP and `true` re-opens it), `POST /sprints/:id/resources`, and
-  `POST /sprints/:id/complete` which flips status to `done`. All direct promote-class writes; the same four
-  are ADMIN-ONLY MCP tools (read side above). `'done'` is NEVER set by the worker and NEVER inferred from issue closure or from every ticket
+  on a `done` sprint `false` is a NO-OP and `true` re-opens it), `POST /sprints/:id/resources`,
+  `POST /sprints/:id/complete` which flips status to `done`, and `POST /sprints/:id/delete` — a HARD delete
+  (`delete_sprint`, one `db.batch`): its tickets move to the backlog (`sprint_id = NULL`), its
+  `sprint_resources` and `sprint_progress` rows go with it, past `plan_versions` snapshots keep naming it. All
+  direct promote-class writes, open to any signed-in member; the same five are MCP tools for every principal
+  (read side above). `'done'` is NEVER set by the worker and NEVER inferred from issue closure or from every ticket
   in the sprint being resolved — a sprint is completed by a PERSON: `POST /sprints/:id/complete` sits under
   the blanket `sessionGate` with no `adminGate`, so any signed-in org member can do it from the web UI;
   the plan write is the admin path. The
