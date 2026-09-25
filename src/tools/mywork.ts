@@ -188,6 +188,9 @@ interface AssignedTicketRow {
  * `getPerson` — a caller spelling the handle in another case must not be told
  * "nothing assigned to you" while holding half the queue.
  * Closed tickets (`done` / `declined`) never appear — My Work is what is open.
+ * NATIVE tickets only (`source = 'canopy'`): a ticket mirrored from a GitHub issue
+ * (0032) is already on the To-do card as that issue, and must not appear twice.
+ * The ticket-queue digest reuses this read, so the email inherits the same rule.
  */
 export async function listAssignedTickets(db: DB, handle: string, limit = TICKET_LIMIT): Promise<MyWorkTicket[]> {
   const rows = await all<AssignedTicketRow>(
@@ -197,7 +200,7 @@ export async function listAssignedTickets(db: DB, handle: string, limit = TICKET
        FROM tickets t
        JOIN ticket_assignees a ON a.ticket_id = t.id AND a.login = ? COLLATE NOCASE
        LEFT JOIN sprints s ON s.id = t.sprint_id
-      WHERE t.status IN ('submitted', 'in_progress')
+      WHERE t.status IN ('submitted', 'in_progress') AND t.source = 'canopy'
       ORDER BY t.updated_at DESC, t.id DESC
       LIMIT ${Math.trunc(limit)}`,
     handle

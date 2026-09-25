@@ -158,15 +158,18 @@ function parseLabels(json: string | null): string[] {
 const isBug = (i: OpenIssue): boolean => i.labels.some((l) => l.toLowerCase() === "bug");
 
 // ── tickets ──────────────────────────────────────────────────────────────────
-/** Open tickets now, and the NET change over the window: filed − resolved + re-opened. */
+/** Open tickets now, and the NET change over the window: filed − resolved + re-opened.
+ *  NATIVE tickets only: the tile sits beside the open-ISSUE tiles, and a ticket
+ *  mirrored from an issue (0032) is already counted there. */
 async function ticketCounts(db: DB, since: string): Promise<{ open: number; delta: number }> {
-  const open = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE status IN ('submitted','in_progress')`);
-  const filed = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE created_at > ?`, since);
+  const open = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE status IN ('submitted','in_progress') AND source = 'canopy'`);
+  const filed = await first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM tickets WHERE created_at > ? AND source = 'canopy'`, since);
   const moves = await first<{ resolved: number | null; reopened: number | null }>(
     db,
-    `SELECT SUM(CASE WHEN to_status IN ('done','declined') AND (from_status IS NULL OR from_status NOT IN ('done','declined')) THEN 1 ELSE 0 END) AS resolved,
-            SUM(CASE WHEN from_status IN ('done','declined') AND to_status NOT IN ('done','declined') THEN 1 ELSE 0 END) AS reopened
-       FROM ticket_events WHERE created_at > ?`,
+    `SELECT SUM(CASE WHEN e.to_status IN ('done','declined') AND (e.from_status IS NULL OR e.from_status NOT IN ('done','declined')) THEN 1 ELSE 0 END) AS resolved,
+            SUM(CASE WHEN e.from_status IN ('done','declined') AND e.to_status NOT IN ('done','declined') THEN 1 ELSE 0 END) AS reopened
+       FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id AND t.source = 'canopy'
+      WHERE e.created_at > ?`,
     since
   );
   return { open: open?.n ?? 0, delta: (filed?.n ?? 0) - (moves?.resolved ?? 0) + (moves?.reopened ?? 0) };
