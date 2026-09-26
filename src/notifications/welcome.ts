@@ -30,7 +30,7 @@ export function renderWelcomeEmail(o: { name: string | null; handle: string; ori
   const about = "Canopy is the team's shared memory: what everyone is working on, the docs and decisions behind it, and what ships next.";
   const settings = `${o.origin}/#settings`;
   const button = `display:inline-block;${EMAIL_FONT.sans}font-size:14px;line-height:20px;font-weight:600;color:#ffffff;background-color:${C.accent};text-decoration:none;padding:10px 18px;border-radius:9px;`;
-  const handleStyle = `${EMAIL_FONT.label}color:${C.fg};`;
+  const handleStyle = `${EMAIL_FONT.sans}font-weight:500;color:${C.fg};`;
   const html =
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title><link href="${FONTS_HREF}" rel="stylesheet"></head>` +
     `<body style="margin:0;padding:0;background-color:${C.ground};">` +

@@ -631,7 +631,7 @@ function viewerView(p: ArtProps, d: ArtifactDetailDTO): string {
       <div class="cnpy-scroll" style="max-height:320px;overflow-y:auto">
       ${[...versions].reverse().map((x) => `<button data-act="artOpen" data-arg="${attr(vArg(x.version_no))}" role="menuitem" class="cnpy-menurow" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 10px;border-radius:7px">
         <span style="font-family:var(--label);font-size:12px;font-weight:600;color:var(--fg);min-width:22px;flex:none">v${x.version_no}</span>
-        <span style="flex:1;min-width:0"><span style="display:block;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.summary || "No summary")}</span><span style="display:block;font-family:var(--label);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px">@${esc(x.created_by)} · ${esc(relTime(x.created_at))}</span></span>
+        <span style="flex:1;min-width:0"><span style="display:block;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.summary || "No summary")}</span><span style="display:block;font-family:var(--label);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px"><span style="font-family:var(--sans);letter-spacing:0">@${esc(x.created_by)}</span> · ${esc(relTime(x.created_at))}</span></span>
         ${I.check("currentColor", "flex:none;" + (x.version_no === ver.version_no ? "color:var(--accent)" : "visibility:hidden"))}
       </button>`).join("")}
       </div>
@@ -681,7 +681,7 @@ function viewerView(p: ArtProps, d: ArtifactDetailDTO): string {
     propRow("KIND", `<span style="${NEUTRAL}">${d.kind.toUpperCase()}</span>`),
     propRow("AREA", `<span style="${CHIP}color:var(--fg-40);border:1px solid var(--border)">${esc(d.area)}</span>`),
     propRow("REPO", d.repo ? `<a href="https://github.com/${attr(d.repo)}" target="_blank" rel="noopener" style="${MONO_VAL};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.repo)}</a>` : `<span style="${MONO_VAL};color:var(--fg-40)">—</span>`),
-    propRow("AUTHOR", `${av(author, 20)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg-70)">${esc(author.name)} <span style="font-family:var(--label);font-size:11px;color:var(--p-${author.color})">@${esc(author.handle)}</span></span>`),
+    propRow("AUTHOR", `${av(author, 20)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg-70)">${esc(author.name)} <span style="font-family:var(--sans);font-size:11px;color:var(--p-${author.color})">@${esc(author.handle)}</span></span>`),
     propRow("UPDATED", `<span style="font-size:12.5px;color:var(--fg-70)">v${latest.version_no} · ${esc(relTime(latest.created_at))} by @${esc(latest.created_by)}</span>`),
     ...(d.ratified_version !== null ? [propRow("RATIFIED", `<span style="font-size:12.5px;color:var(--fg-70)">v${d.ratified_version}${d.ratified_at ? ` · ${esc(relTime(d.ratified_at))}` : ""}${d.ratified_by ? ` by @${esc(d.ratified_by)}` : ""}</span>`)] : []),
   ].join("");
@@ -761,7 +761,7 @@ function diffView(p: ArtProps, d: ArtifactDetailDTO, pair: { a: number; b: numbe
     return `<div style="border:1px solid var(--border);border-radius:11px;padding:12px 14px;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
       <div style="display:flex;align-items:center;gap:8px"><span style="${CHIP}color:${color};border:1px solid color-mix(in srgb,${color} 38%,transparent)">${tag}</span><span style="font-family:var(--label);font-size:12px;font-weight:600">v${n}</span></div>
       ${x && w ? `<div style="font-size:13px;color:var(--fg-70);margin-top:7px">${esc(x.summary || "No summary")}</div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11.5px;color:var(--fg-40)">${av(w, 16)}<span style="font-family:var(--label);font-size:11px;font-weight:500;color:var(--p-${w.color})">@${esc(w.handle)}</span> · ${esc(relTime(x.created_at))}</div>` : `<div style="font-size:13px;color:var(--fg-40);margin-top:7px">No such version.</div>`}
+      <div style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11.5px;color:var(--fg-40)">${av(w, 16)}<span style="font-family:var(--sans);font-size:11px;font-weight:500;color:var(--p-${w.color})">@${esc(w.handle)}</span> · ${esc(relTime(x.created_at))}</div>` : `<div style="font-size:13px;color:var(--fg-40);margin-top:7px">No such version.</div>`}
     </div>`;
   };
   const base = "font-family:var(--code);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;white-space:pre-wrap;word-break:break-word;color:var(--fg-55)";
@@ -961,7 +961,7 @@ export function artifactsDialogs(p: ArtProps): string {
       <div style="font-size:17px;font-weight:600;letter-spacing:-0.01em">Ratify “${esc(d.title)}”?</div>
       <div style="font-size:13.5px;color:var(--fg-70);margin-top:8px;line-height:1.55">Ratifying marks v${vno} as the version the team agreed on. Agents reading this artifact are told it's ratified. A newer upload starts as published again and needs its own ratification.</div>
       <div style="display:flex;align-items:center;gap:9px;margin-top:16px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;font-size:12.5px;color:var(--fg-55)">
-        ${av(me, 20)}<span>Recorded as <span style="font-family:var(--label);font-size:12px;font-weight:500;color:var(--p-${me.color})">@${esc(me.handle)}</span>, just now</span>
+        ${av(me, 20)}<span>Recorded as <span style="font-family:var(--sans);font-size:12px;font-weight:500;color:var(--p-${me.color})">@${esc(me.handle)}</span>, just now</span>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
         <button data-act="artCloseDialogs" class="cnpy-outlinebtn" style="${OUTLINE_BTN}">Cancel</button>

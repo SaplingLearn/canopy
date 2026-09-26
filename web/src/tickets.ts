@@ -692,7 +692,7 @@ function mentionPicker(p: TicketDetailProps, boxHeight: number): string {
     `<button data-act="mentionPick" data-arg="${attr(c.handle)}" role="option" aria-selected="${i === active}" class="${MENU_ROW_CLASS}${i === active ? " is-active" : ""}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:6px 9px;border-radius:7px">
       ${personChip(c, 20, c.handle)}
       <span style="font-size:13px;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name || c.handle)}</span>
-      <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55);margin-left:auto;flex:none">@${esc(c.handle)}</span>
+      <span style="font-family:var(--sans);font-size:11.5px;color:var(--fg-55);margin-left:auto;flex:none">@${esc(c.handle)}</span>
     </button>`).join("");
   return `<div role="listbox" aria-label="Mention someone" style="position:absolute;top:${top}px;left:0;right:0;min-width:220px;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:5px">
     ${rows}

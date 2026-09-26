@@ -183,7 +183,7 @@ function hero(): string {
             <div style="font-size:10.5px;color:var(--fg-40);padding:0 8px 12px">agents produce · humans confirm</div>
             <div style="display:flex;align-items:center;gap:9px;padding:8px;border-top:1px solid var(--border)">
               ${initials("MC")}
-              <span style="min-width:0"><span style="display:block;font-size:11.5px;font-weight:600">Maya Chen</span><span style="display:block;font-size:10.5px;color:var(--fg-40);font-family:var(--label)">@maya</span></span>
+              <span style="min-width:0"><span style="display:block;font-size:11.5px;font-weight:600">Maya Chen</span><span style="display:block;font-size:10.5px;color:var(--fg-40);font-family:var(--sans)">@maya</span></span>
             </div>
           </div>
         </div>
@@ -224,7 +224,7 @@ function hero(): string {
           <div class="site-toast" role="presentation" style="position:absolute;right:20px;bottom:20px;display:flex;align-items:center;gap:10px;padding:10px 14px 10px 12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);box-shadow:var(--shadow);font-size:12px;${at(TOAST)}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.4" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
             <span><span style="font-weight:600">Deploy process</span> <span style="color:var(--fg-55)">is live as v5</span></span>
-            <span style="font-family:var(--label);font-size:10.5px;color:var(--fg-40)">@maya</span>
+            <span style="font-family:var(--sans);font-size:10.5px;color:var(--fg-40)">@maya</span>
           </div>
         </div>
       </div>

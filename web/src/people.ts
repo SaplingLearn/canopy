@@ -25,10 +25,10 @@ export function initialsOfName(name: string | null | undefined, fallback: string
   return initialsOf(fallback);
 }
 
-/** `@handle` in the person's color (label-face, 500). Unmapped → muted, no color. */
+/** `@handle` in the person's color (Geist, 500 — a name, not a label chip). Unmapped → muted, no color. */
 export function handleTag(p: { handle: string; color: PersonColor } | null, fallback: string, size = 12): string {
-  if (!p) return `<span style="font-family:var(--label);font-size:${size}px;color:var(--fg-55)">@${esc(fallback)}</span>`;
-  return `<span style="font-family:var(--label);font-size:${size}px;font-weight:500;color:var(--p-${p.color})">@${esc(p.handle)}</span>`;
+  if (!p) return `<span style="font-family:var(--sans);font-size:${size}px;color:var(--fg-55)">@${esc(fallback)}</span>`;
+  return `<span style="font-family:var(--sans);font-size:${size}px;font-weight:500;color:var(--p-${p.color})">@${esc(p.handle)}</span>`;
 }
 
 export function personChip(p: { handle: string; name?: string | null; color: PersonColor; avatar_url?: string | null } | null, size: number, fallback: string): string {
@@ -75,7 +75,7 @@ export function onboardView(o: OnboardState): string {
       <p style="font-size:14px;color:var(--fg-70);margin:0;line-height:1.55">Your handle is how work gets attributed to you, in the feed, in decisions, in My Work. You can change it later in Settings. Your color can too.</p>
     </div>
     <div style="display:grid;gap:22px">
-      ${field("Handle", `<div style="${row}"><span style="font-family:var(--label);font-size:14px;color:var(--fg-40);padding-left:12px">@</span><input data-act="onbHandle" data-field="onbHandle" value="${attr(o.handle)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="${input};padding-left:4px;font-family:var(--label)" /><span style="font-family:var(--label);font-size:11px;padding:0 12px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span></div>`,
+      ${field("Handle", `<div style="${row}"><span style="font-family:var(--sans);font-size:14px;color:var(--fg-40);padding-left:12px">@</span><input data-act="onbHandle" data-field="onbHandle" value="${attr(o.handle)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="${input};padding-left:4px;font-family:var(--label)" /><span style="font-family:var(--label);font-size:11px;padding:0 12px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span></div>`,
         "2 to 24 characters. Lowercase letters, numbers and hyphens. Starts with a letter.")}
       ${field("Display name", `<div style="${row}"><input data-act="onbName" data-field="onbName" value="${attr(o.name)}" maxlength="120" class="cnpy-input" style="${input}" /></div>`)}
       ${field("Your color", swatches("onbColor", o.color))}
