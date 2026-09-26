@@ -29,11 +29,11 @@ describe("email shell — site theming", () => {
     expect(html).not.toContain("Courier New");
   });
 
-  it("uses the site type stack: Geist with a system fallback, Geist Mono for labels", () => {
+  it("uses the site type stack: Geist with a system fallback, Archivo Narrow for labels", () => {
     const { html } = msg();
     expect(html).toContain("fonts.googleapis.com/css2?family=Geist");
     expect(EMAIL_STYLE.body).toMatch(/font-family:Geist,/);
-    expect(EMAIL_STYLE.label).toMatch(/font-family:'Geist Mono',/);
+    expect(EMAIL_STYLE.label).toMatch(/font-family:'Archivo Narrow',/);
     expect(EMAIL_STYLE.label).toContain("text-transform:uppercase");
   });
 

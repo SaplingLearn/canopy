@@ -1,14 +1,14 @@
 // The prompt box — ONE component for a prompt wherever it shows: a handoff's
 // inline prompt and a Prompt Library prompt. A bordered panel (PROMPT eyebrow,
 // the title, a Raw / Rendered switch, copy + expand icons) over the body — the
-// markdown source in a scrolling mono block, or rendered — and the expand modal
+// markdown source in a scrolling monospace block, or rendered — and the expand modal
 // that renders the same body as markdown. Purely
 // presentational: the caller names the acts its buttons dispatch.
 
 import { esc, attr } from "./ui";
 import { renderMarkdown } from "./markdown";
 
-const MONO_EYEBROW = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+const MONO_EYEBROW = "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
 export const COPY_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>`;
 const EXPAND_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"></path><path d="M9 21H3v-6"></path><path d="M21 3l-7 7"></path><path d="M3 21l7-7"></path></svg>`;
 const ICON_BTN = "width:26px;height:26px;display:grid;place-items:center;border-radius:6px;color:var(--fg-55);flex:none";
@@ -23,7 +23,7 @@ export interface PromptBoxProps {
   expandAct: string;
   /** Space above the box (the handoff drops it when the box is the first thing). */
   marginTop?: number;
-  /** Raw markdown (the mono source) or rendered markdown. One setting app-wide. */
+  /** Raw markdown (the monospace source) or rendered markdown. One setting app-wide. */
   view: PromptView;
 }
 
@@ -57,7 +57,7 @@ export function promptBox(p: PromptBoxProps): string {
     <div class="cnpy-scroll" style="flex:1 1 0;min-height:180px;min-width:0;overflow:auto;background:color-mix(in srgb,var(--fg) 2.5%,transparent)">
       ${p.view === "rendered"
         ? `<div class="cnpy-md" style="padding:14px 18px;font-size:13.5px;line-height:1.65;color:var(--fg-70)">${renderMarkdown(p.body)}</div>`
-        : `<pre style="margin:0;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--fg-70);white-space:pre;width:max-content;min-width:100%;box-sizing:border-box">${esc(p.body)}</pre>`}
+        : `<pre style="margin:0;padding:14px 16px;font-family:var(--code);font-size:12px;line-height:1.65;color:var(--fg-70);white-space:pre;width:max-content;min-width:100%;box-sizing:border-box">${esc(p.body)}</pre>`}
     </div>
   </div>`;
 }

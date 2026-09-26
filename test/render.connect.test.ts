@@ -127,4 +127,8 @@ describe("grantListBody", () => {
     expect(armed).toContain(`data-act="revokeGrant" data-arg="7"`);
     expect(armed).toContain(`data-act="revokeGrantCancel"`);
   });
+  it("the rows sit in the capped scroller, so many apps never grow the tile", () => {
+    expect(grantListBody({ grants: { status: "ok", data: [grant, { ...grant, id: 8 }, { ...grant, id: 9 }] }, grantRevokeArm: null }))
+      .toMatch(/^<div class="cnpy-scroll cnpy-set-grants">[\s\S]*<\/div>$/);
+  });
 });

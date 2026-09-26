@@ -27,9 +27,9 @@ import { ticketPill, priorityChip, age, avatarStack, tagChip } from "./tickets";
 
 // ── atoms ────────────────────────────────────────────────────────────────────
 
-/** The design's `tagBase` — the mono chip every sprint tag is drawn from. */
+/** The design's `tagBase` — the label-face chip every sprint tag is drawn from. */
 const TAG_BASE =
-  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 7px;white-space:nowrap;flex:none;";
+  "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 7px;white-space:nowrap;flex:none;";
 /** The design's `tint(c)` — colored text, 45% border, 12% fill. */
 const tint = (c: string): string =>
   `${TAG_BASE}color:${c};border:1px solid color-mix(in srgb,${c} 45%,transparent);background:color-mix(in srgb,${c} 12%,transparent)`;
@@ -81,9 +81,9 @@ function leadBlock(lead: string | null, persons: PersonSummary[]): string {
 }
 
 const NEXT_UP_STYLE =
-  "font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px";
+  "font-size:9.5px;font-weight:700;font-family:var(--label);letter-spacing:.06em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:5px;padding:1px 6px";
 const OVERDUE_STYLE =
-  "font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px";
+  "font-size:9.5px;font-weight:700;font-family:var(--label);letter-spacing:.06em;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:5px;padding:1px 6px";
 
 // ── the Roadmap Timeline card ────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ export function sprintCard(sp: SprintView, persons: PersonSummary[], opts: Sprin
   const bar = counted
     ? `<div style="display:flex;align-items:center;gap:10px;margin-top:11px">
         <div style="flex:1;height:5px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${sp.progress.pct}%;background:${barColor}"></div></div>
-        <span style="font-size:11px;color:var(--fg-40);font-family:var(--mono);white-space:nowrap;flex:none">${sp.progress.closed}/${sp.progress.total} done</span>
+        <span style="font-size:11px;color:var(--fg-40);font-family:var(--label);white-space:nowrap;flex:none">${sp.progress.closed}/${sp.progress.total} done</span>
       </div>`
     : "";
 
@@ -152,7 +152,7 @@ export function sprintCard(sp: SprintView, persons: PersonSummary[], opts: Sprin
       ${leadBlock(sp.lead, persons)}
     </div>
     ${sp.summary ? `<p style="font-size:13px;line-height:1.65;color:var(--fg-70);margin:0 0 8px">${esc(sp.summary)}</p>` : ""}
-    <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${esc(dateNote)}</span>
+    <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--label)">${esc(dateNote)}</span>
     ${bar}
     <div style="display:flex;align-items:center;gap:10px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)">
       ${avatarStack(sp.members, persons)}
@@ -209,7 +209,7 @@ export function newSprintPanel(s: NewSprintState, persons: PersonSummary[]): str
     `<button data-act="nsLead" data-arg="${attr(p.handle)}" class="${chipClass(s.lead === p.handle)}" style="display:inline-flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:7px;font-size:12.5px;font-weight:500;transition:all .12s ease;border:1px solid ${s.lead === p.handle ? "var(--accent);color:var(--accent);background:var(--accent-soft)" : "var(--border);color:var(--fg-55);background:transparent"}">${personChip(p, 20, p.handle)}${esc(p.name || p.handle)}</button>`).join("");
 
   const domChips = SPRINT_DOMAINS.map((d) =>
-    `<button data-act="nsDom" data-arg="${d}" class="${chipClass(s.domain === d)}" style="${chipStyle(s.domain === d)};font-family:var(--mono)">${d}</button>`).join("");
+    `<button data-act="nsDom" data-arg="${d}" class="${chipClass(s.domain === d)}" style="${chipStyle(s.domain === d)};font-family:var(--label)">${d}</button>`).join("");
 
   const createStyle = canCreate
     ? "background:var(--accent);color:var(--accent-fg);border:1px solid transparent"
@@ -258,13 +258,13 @@ export function newSprintToggle(open: boolean): string {
 // ── the Sprint screen (design 490–571) ───────────────────────────────────────
 
 const PROP_ROW = "display:grid;grid-template-columns:74px 1fr;gap:10px;align-items:center;height:30px";
-const PROP_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
+const PROP_LABEL = "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
 const PROP_CHIP =
-  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px;white-space:nowrap";
+  "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px;white-space:nowrap";
 const RAIL_EYEBROW =
-  "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)";
+  "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)";
 const ACTIVE_CHIP =
-  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:5px;padding:2px 7px;white-space:nowrap";
+  "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:5px;padding:2px 7px;white-space:nowrap";
 
 /** The resource-chip icons — the SAME three the ticket detail's linked-work chips use. */
 const RESOURCE_ICON: Record<string, string> = {
@@ -280,7 +280,7 @@ function resourceRow(lk: SprintResourceView): string {
     <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)">${RESOURCE_ICON[lk.kind] ?? RESOURCE_ICON.plain}</span>
     <span style="min-width:0;flex:1">
       <span style="display:block;font-size:12px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(lk.label)}</span>
-      <span style="display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${esc(lk.meta)}</span>
+      <span style="display:block;font-family:var(--label);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${esc(lk.meta)}</span>
     </span>
   </a>`;
 }
@@ -301,7 +301,7 @@ function sprintTicketCard(t: SprintTicketRow, persons: PersonSummary[]): string 
     : `<span style="font-size:11.5px;font-style:italic;color:var(--fg-40)">Unassigned</span>`;
   return `<button data-act="openTicket" data-arg="${t.id}" class="cnpy-tcard" style="display:flex;flex-direction:column;gap:10px;min-width:0;min-height:132px;text-align:left;padding:14px 15px 13px;border:1px solid var(--border);border-radius:11px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);${closed ? "opacity:.6;" : ""}">
     <div style="display:flex;align-items:center;gap:8px;width:100%;min-width:0">
-      <span style="font-family:var(--mono);font-size:11px;color:var(--fg-40);flex:none">#${t.id}</span>
+      <span style="font-family:var(--label);font-size:11px;color:var(--fg-40);flex:none">#${t.id}</span>
       ${tagChip(t.category)}
       <span style="margin-left:auto;flex:none">${ticketPill(t.status)}</span>
     </div>
@@ -312,7 +312,7 @@ function sprintTicketCard(t: SprintTicketRow, persons: PersonSummary[]): string 
     <div style="display:flex;align-items:center;gap:8px;width:100%;margin-top:auto">
       ${who}
       <span style="margin-left:auto;flex:none">${priorityChip(t.priority)}</span>
-      <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--mono);flex:none">${esc(age(t.created_at))}</span>
+      <span style="font-size:11.5px;color:var(--fg-40);font-family:var(--label);flex:none">${esc(age(t.created_at))}</span>
     </div>
   </button>`;
 }
@@ -401,10 +401,10 @@ export function sprintScreen(p: SprintScreenProps): string {
             : ""}
         <div style="display:flex;align-items:center;gap:12px;margin:16px 0 26px">
           <div style="flex:1;height:6px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${sp.progress.pct}%;background:var(--accent)"></div></div>
-          <span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${sp.progress.closed}/${sp.progress.total} done</span>
+          <span style="font-size:11.5px;color:var(--fg-55);font-family:var(--label);white-space:nowrap;flex:none">${sp.progress.closed}/${sp.progress.total} done</span>
         </div>
         <div style="display:flex;align-items:baseline;justify-content:space-between;padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
-          <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">TICKETS IN THIS SPRINT</div>
+          <div style="font-family:var(--label);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">TICKETS IN THIS SPRINT</div>
         </div>
         ${tickets}
       </div>
@@ -425,7 +425,7 @@ export function sprintScreen(p: SprintScreenProps): string {
         <div style="${RAIL_EYEBROW};margin:22px 0 8px">Resources</div>
         ${resources}
         <div style="display:flex;gap:7px">
-          <input data-act="sprintResourceDraft" data-field="sprint-resource" value="${attr(p.resourceDraft)}" placeholder="Add a URL…" style="flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:11.5px;font-family:var(--mono);outline:none" />
+          <input data-act="sprintResourceDraft" data-field="sprint-resource" value="${attr(p.resourceDraft)}" placeholder="Add a URL…" style="flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:11.5px;font-family:var(--label);outline:none" />
           <button data-act="sprintResourceAdd" class="cnpy-outlinebtn" style="padding:0 11px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg-70);flex:none">Add</button>
         </div>
         <div style="font-size:11px;color:var(--fg-40);margin-top:8px;line-height:1.5">Sprint-level links plus everything linked from its tickets.</div>

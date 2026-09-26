@@ -20,10 +20,10 @@ input, select { font-family: inherit; }
 @keyframes cnpy-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes cnpy-pop { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
 
-[data-cnpy-theme="dark"] { --bg:#1c1a16; --fg:#ede9e2; --fg-70:rgba(237,233,226,0.72); --fg-55:rgba(237,233,226,0.55); --fg-40:rgba(237,233,226,0.40); --border:rgba(237,233,226,0.11); --border-strong:rgba(237,233,226,0.20); --hover:rgba(237,233,226,0.07); --accent:#9aab65; --accent-fg:#131a07; --accent-soft:rgba(154,171,101,0.14); --green:#5ab86c; --amber:#d98a52; --blue:#6aa8c4; --red:#cc6262; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
-[data-cnpy-theme="light"] { --bg:#faf8f3; --fg:#1a1814; --fg-70:rgba(26,24,20,0.72); --fg-55:rgba(26,24,20,0.55); --fg-40:rgba(26,24,20,0.40); --border:rgba(42,39,31,0.10); --border-strong:rgba(42,39,31,0.18); --hover:rgba(42,39,31,0.06); --accent:#8a9a5b; --accent-fg:#ffffff; --accent-soft:rgba(138,154,91,0.12); --green:#1b6c42; --amber:#b4562c; --blue:#3e6f8a; --red:#a83a3a; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
+[data-cnpy-theme="dark"] { --bg:#1c1a16; --fg:#ede9e2; --fg-70:rgba(237,233,226,0.72); --fg-55:rgba(237,233,226,0.55); --fg-40:rgba(237,233,226,0.40); --border:rgba(237,233,226,0.11); --border-strong:rgba(237,233,226,0.20); --hover:rgba(237,233,226,0.07); --accent:#9aab65; --accent-fg:#131a07; --accent-soft:rgba(154,171,101,0.14); --green:#5ab86c; --amber:#d98a52; --blue:#6aa8c4; --red:#cc6262; --sans:'Geist',system-ui,-apple-system,sans-serif; --label:'Archivo Narrow',system-ui,sans-serif; --code:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+[data-cnpy-theme="light"] { --bg:#faf8f3; --fg:#1a1814; --fg-70:rgba(26,24,20,0.72); --fg-55:rgba(26,24,20,0.55); --fg-40:rgba(26,24,20,0.40); --border:rgba(42,39,31,0.10); --border-strong:rgba(42,39,31,0.18); --hover:rgba(42,39,31,0.06); --accent:#8a9a5b; --accent-fg:#ffffff; --accent-soft:rgba(138,154,91,0.12); --green:#1b6c42; --amber:#b4562c; --blue:#3e6f8a; --red:#a83a3a; --sans:'Geist',system-ui,-apple-system,sans-serif; --label:'Archivo Narrow',system-ui,sans-serif; --code:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 /* Midnight = the original high-contrast black + neon-green theme (pre-Sapling), kept as an option. */
-[data-cnpy-theme="midnight"] { --bg:#000000; --fg:#ffffff; --fg-70:rgba(255,255,255,0.70); --fg-55:rgba(255,255,255,0.55); --fg-40:rgba(255,255,255,0.40); --border:rgba(255,255,255,0.11); --border-strong:rgba(255,255,255,0.20); --hover:rgba(255,255,255,0.055); --accent:#2BFF88; --accent-fg:#00130a; --accent-soft:rgba(43,255,136,0.13); --green:#2BFF88; --amber:#FFB454; --blue:#74A9FF; --red:#FF6B6B; --mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
+[data-cnpy-theme="midnight"] { --bg:#000000; --fg:#ffffff; --fg-70:rgba(255,255,255,0.70); --fg-55:rgba(255,255,255,0.55); --fg-40:rgba(255,255,255,0.40); --border:rgba(255,255,255,0.11); --border-strong:rgba(255,255,255,0.20); --hover:rgba(255,255,255,0.055); --accent:#2BFF88; --accent-fg:#00130a; --accent-soft:rgba(43,255,136,0.13); --green:#2BFF88; --amber:#FFB454; --blue:#74A9FF; --red:#FF6B6B; --sans:'Geist',system-ui,-apple-system,sans-serif; --label:'Archivo Narrow',system-ui,sans-serif; --code:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 
 /* ── sidebar ─────────────────────────────────────────────────────────────────
    Ported from `Canopy Repo Dashboard.dc.html`. The <aside> outlives rerenders
@@ -61,7 +61,7 @@ input, select { font-family: inherit; }
 .cnpy-search .cnpy-nav-ic { flex:none; }
 .cnpy-search-in { flex:1; min-width:0; background:none; border:none; outline:none; color:var(--fg); font-size:13px; font-family:inherit; padding:0; }
 .cnpy-search-in::placeholder { color:var(--fg-40); }
-.cnpy-kbd { font-family:var(--mono); font-size:10.5px; border:1px solid var(--border); border-radius:4px; padding:0 5px; color:var(--fg-40); flex:none; white-space:nowrap; }
+.cnpy-kbd { font-family:var(--label); font-size:10.5px; border:1px solid var(--border); border-radius:4px; padding:0 5px; color:var(--fg-40); flex:none; white-space:nowrap; }
 .cnpy-search:focus-within .cnpy-kbd { opacity:0; }
 [data-collapsed="1"] .cnpy-search { padding-left:12.5px; padding-right:0; cursor:pointer; }
 
@@ -87,7 +87,7 @@ input, select { font-family: inherit; }
 [data-collapsed="1"] .cnpy-nav-i { padding:9px 0 9px 13.5px; }
 
 /* ONE count badge for every sidebar entry: a quiet pill that brightens on the active row. */
-.cnpy-badge { font-family:var(--mono); font-size:11px; font-weight:600; flex:none; min-width:18px; height:18px; line-height:18px; padding:0 6px; border-radius:999px; text-align:center; color:var(--fg-55); background:var(--hover); box-shadow:inset 0 0 0 1px var(--border); }
+.cnpy-badge { font-family:var(--label); font-size:11px; font-weight:600; flex:none; min-width:18px; height:18px; line-height:18px; padding:0 6px; border-radius:999px; text-align:center; color:var(--fg-55); background:var(--hover); box-shadow:inset 0 0 0 1px var(--border); }
 .cnpy-navrow.is-active .cnpy-badge { color:var(--fg); box-shadow:inset 0 0 0 1px var(--border-strong); }
 /* Rows without a chevron reserve its 30px (24 wide + 6 margin), so every count sits in one column. */
 [data-collapsed="0"] .cnpy-navrow:not(:has(> .cnpy-chev)) .cnpy-nav-i { padding-right:41px; }
@@ -157,7 +157,7 @@ input, select { font-family: inherit; }
 /* Review list cards: selected state keeps the border + fill, no left accent bar. */
 .cnpy-titem .cnpy-selbar { box-shadow:none; }
 /* ── docs nav tree (static section labels · pages · per-page outline) ───────── */
-.cnpy-treesec { font-family:var(--mono); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:0 10px 7px 8px; }
+.cnpy-treesec { font-family:var(--label); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:0 10px 7px 8px; }
 .cnpy-tree { display:flex; align-items:center; gap:5px; width:100%; text-align:left; padding:6px 10px 6px 6px; border-radius:7px; font-size:13px; font-weight:400; color:var(--fg-55); background:transparent; transition:background .12s ease, color .12s ease; }
 .cnpy-tree:hover { color:var(--fg); }
 .cnpy-tree.is-active { color:var(--accent); font-weight:500; }
@@ -185,7 +185,7 @@ input, select { font-family: inherit; }
 /* Get Started's table of contents: a sticky rail inside #cnpy-main (the scroller). The
    section rows read like the docs tree's pages, the sub-rows reuse .cnpy-outline-item. */
 .cnpy-guide-toc { position:sticky; top:24px; width:210px; flex:none; max-height:calc(100vh - 110px); overflow-y:auto; display:flex; flex-direction:column; gap:1px; padding-bottom:12px; }
-.cnpy-guide-toc-h { font-family:var(--mono); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:0 8px 10px; }
+.cnpy-guide-toc-h { font-family:var(--label); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:0 8px 10px; }
 .cnpy-guide-toc-sec { text-align:left; width:100%; padding:6px 8px; border-radius:7px; font-size:13px; font-weight:500; color:var(--fg-55); background:transparent; transition:color .12s ease, background .12s ease; }
 .cnpy-guide-toc-sec:hover { color:var(--fg); background:var(--hover); }
 .cnpy-guide-toc-sec.is-current { color:var(--accent); }
@@ -218,7 +218,7 @@ input, select { font-family: inherit; }
 .cnpy-lightbox-frame { position:relative; width:100%; aspect-ratio:16 / 10; border-radius:14px; overflow:hidden; background:var(--bg); border:1px solid var(--border-strong); box-shadow:0 30px 80px -30px rgba(0,0,0,.7); }
 .cnpy-lightbox-frame img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .cnpy-lightbox-cap { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
-.cnpy-lightbox-eyebrow { font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(250,248,243,.62); }
+.cnpy-lightbox-eyebrow { font-family:var(--label); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(250,248,243,.62); }
 .cnpy-lightbox-title { font-size:15px; font-weight:600; letter-spacing:-.01em; color:#faf8f3; }
 .cnpy-lightbox-text { flex-basis:100%; font-size:13.5px; line-height:1.6; color:rgba(250,248,243,.72); }
 .cnpy-lightbox-text strong { color:#faf8f3 !important; }
@@ -252,18 +252,42 @@ input, select { font-family: inherit; }
    width. At two columns Appearance drops beside the tokens (dense flow); then one
    column. These are CONTAINER queries, not viewport ones: the sidebar collapses, so
    the viewport says little about the room the page actually has. */
+/* Prompt detail: the page fills the scroll area (min-height:100% of #cnpy-main) and the
+   body row flexes into the rest, so the prompt box reaches the bottom of the screen.
+   Side by side the rail sits right; once they no longer fit (content < 760px) the rail
+   drops below and the box keeps most of a screen for itself. */
+.cnpy-pdetail-page { container:cnpy-pdetail / inline-size; min-height:100%; box-sizing:border-box; display:flex; flex-direction:column; }
+.cnpy-pdetail { flex:1 0 auto; display:flex; gap:32px 40px; margin-top:28px; align-items:stretch; }
+.cnpy-pdetail-main { flex:1 1 480px; min-width:0; display:flex; flex-direction:column; }
+.cnpy-pdetail-rail { flex:1 0 240px; max-width:300px; }
+@container cnpy-pdetail (max-width:759px) {
+  .cnpy-pdetail { flex-direction:column; }
+  .cnpy-pdetail-main { flex:none; min-height:70vh; }
+  .cnpy-pdetail-rail { flex:none; max-width:none; }
+}
 .cnpy-set-wrap { container:cnpy-set / inline-size; }
 .cnpy-set { max-width:1180px; margin:0 auto; padding:24px 32px 32px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-auto-flow:dense; gap:14px; align-items:stretch; }
 .cnpy-tile { min-width:0; border:1px solid var(--border); border-radius:16px; padding:20px 22px; background:color-mix(in srgb,var(--fg) 2.5%,transparent); }
-.cnpy-set-full, .cnpy-set-appear { grid-column:1 / -1; }
+.cnpy-set-full { grid-column:1 / -1; }
+/* Three columns: MCP access holds the right column for two rows and Appearance sits
+   under Profile + Account only, so it never pushes into MCP access. */
+.cnpy-set-mcp { grid-row:span 2; }
+.cnpy-set-appear { grid-column:span 2; }
 .cnpy-set-pairs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:40px; }
 .cnpy-set-themes { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
 .cnpy-set .cnpy-sw.compact { padding:6px 0; }
 /* The token list takes whatever height its row leaves and scrolls inside it, so a long
    list never stretches the bento; stacked in one column it caps itself instead. */
-.cnpy-set-tokens { flex:1 1 0; min-height:0; overflow-y:auto; }
+/* The MCP tile's lists never set its height: tokens get a fixed one-row box (every
+   state renders inside it, so 0, 1 or 50 tokens is the same tile) that scrolls and
+   takes any spare height; connected apps cap at two rows. An explicit height, not
+   flex-basis 0 — a basis-0 scroller either collapses to nothing (Chrome) or still
+   counts its rows toward the grid row (other engines). */
+.cnpy-set-tokens { flex:1 0 auto; height:58px; overflow-y:auto; }
+.cnpy-set-grants { flex:none; max-height:114px; overflow-y:auto; }
 @container cnpy-set (max-width:999px) {
   .cnpy-set { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .cnpy-set-mcp { grid-row:auto; }
   .cnpy-set-appear { grid-column:auto; }
   .cnpy-set-appear .cnpy-set-themes { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .cnpy-set-pairs { grid-template-columns:minmax(0,1fr); }
@@ -271,7 +295,7 @@ input, select { font-family: inherit; }
 @container cnpy-set (max-width:759px) {
   .cnpy-set { grid-template-columns:minmax(0,1fr); padding:24px 16px 64px; }
   .cnpy-set-appear .cnpy-set-themes { grid-template-columns:repeat(4,minmax(0,1fr)); }
-  .cnpy-set-tokens { flex:none; max-height:236px; }
+  .cnpy-set-tokens { flex:none; height:auto; max-height:236px; }
 }
 @container cnpy-set (max-width:419px) { .cnpy-set-appear .cnpy-set-themes { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 /* Tickets: the queue's table rows, and the two-column form/detail layouts that
@@ -374,7 +398,7 @@ input, select { font-family: inherit; }
 .cnpy-grip:hover { color:var(--fg-70) !important; }
 
 /* ── rendered markdown (docs reader) ───────────────────────────────────────── */
-/* A typeset technical document: comfortable measure, mono structural spine.
+/* A typeset technical document: comfortable measure, label-face structural spine.
    Every color derives from the theme vars so it holds in dark / light / midnight. */
 .cnpy-md { font-size:15px; line-height:1.75; color:color-mix(in srgb, var(--fg) 82%, transparent); }
 .cnpy-md > :first-child { margin-top:0 !important; }
@@ -384,7 +408,7 @@ input, select { font-family: inherit; }
 .cnpy-md h1 { font-size:23px; font-weight:650; letter-spacing:-0.02em; line-height:1.2; margin:42px 0 15px; }
 .cnpy-md h2 { font-size:18.5px; font-weight:640; letter-spacing:-0.012em; line-height:1.25; margin:36px 0 14px; padding-bottom:7px; border-bottom:1px solid var(--border); }
 .cnpy-md h3 { font-size:16px; font-weight:640; letter-spacing:-0.006em; margin:28px 0 9px; }
-.cnpy-md h4 { font-family:var(--mono); font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:.09em; color:var(--fg-55); margin:24px 0 9px; }
+.cnpy-md h4 { font-family:var(--label); font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:.09em; color:var(--fg-55); margin:24px 0 9px; }
 
 .cnpy-md p { margin:0 0 15px; }
 .cnpy-md a { color:var(--accent); text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--accent) 34%, transparent); text-underline-offset:2px; text-decoration-thickness:1px; }
@@ -392,7 +416,7 @@ input, select { font-family: inherit; }
 /* Inline-only markdown (a feed summary): links and code spans, no block typography. */
 .cnpy-md-inline a { color:var(--accent); text-decoration:none; }
 .cnpy-md-inline a:hover { text-decoration:underline; text-underline-offset:2px; }
-.cnpy-md-inline code { font-family:var(--mono); font-size:.88em; background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); border-radius:5px; padding:1px 4px; }
+.cnpy-md-inline code { font-family:var(--code); font-size:.88em; background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); border-radius:5px; padding:1px 4px; }
 /* A feed entry's body: the doc typography at a card's scale; a typed line break still breaks. */
 .cnpy-feed-body p { white-space:pre-line; margin:0 0 8px; }
 .cnpy-feed-body h1, .cnpy-feed-body h2, .cnpy-feed-body h3, .cnpy-feed-body h4 { font-size:13.5px; font-weight:600; letter-spacing:0; line-height:1.4; margin:12px 0 6px; padding:0; border:0; }
@@ -407,20 +431,20 @@ input, select { font-family: inherit; }
 .cnpy-md ul, .cnpy-md ol { margin:0 0 15px; padding-left:24px; }
 .cnpy-md li { margin:6px 0; padding-left:3px; }
 .cnpy-md li::marker { color:var(--fg-40); }
-.cnpy-md ol > li::marker { font-family:var(--mono); font-size:.9em; font-weight:600; color:var(--accent); }
+.cnpy-md ol > li::marker { font-family:var(--label); font-size:.9em; font-weight:600; color:var(--accent); }
 .cnpy-md li > ul, .cnpy-md li > ol { margin:6px 0; }
 .cnpy-md li > p { margin:0 0 8px; }
 
-/* inline code — crisp mono chip */
-.cnpy-md code { font-family:var(--mono); font-size:.86em; color:var(--fg); background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); border-radius:5px; padding:1.5px 5px; }
+/* inline code — crisp monospace chip */
+.cnpy-md code { font-family:var(--code); font-size:.86em; color:var(--fg); background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); border-radius:5px; padding:1.5px 5px; }
 .cnpy-md a code { color:var(--accent); }
 
-/* code panel — a bordered card with an optional mono language tag (added in markdown.ts) */
+/* code panel — a bordered card with an optional label-face language tag (added in markdown.ts) */
 .cnpy-code { margin:0 0 18px; border:1px solid var(--border); border-radius:11px; overflow:hidden; background:color-mix(in srgb, var(--fg) 4%, var(--bg)); }
-.cnpy-code-lang { font-family:var(--mono); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:8px 15px; border-bottom:1px solid var(--border); }
+.cnpy-code-lang { font-family:var(--label); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--fg-40); padding:8px 15px; border-bottom:1px solid var(--border); }
 .cnpy-md pre { background:color-mix(in srgb, var(--fg) 4%, var(--bg)); border:1px solid var(--border); border-radius:11px; padding:15px 16px; overflow-x:auto; margin:0 0 18px; }
 .cnpy-md .cnpy-code pre { margin:0; background:none; border:none; border-radius:0; }
-.cnpy-md pre code { font-family:var(--mono); font-size:12.5px; line-height:1.65; color:var(--fg); background:none; border:none; padding:0; white-space:pre; }
+.cnpy-md pre code { font-family:var(--code); font-size:12.5px; line-height:1.65; color:var(--fg); background:none; border:none; padding:0; white-space:pre; }
 
 /* blockquote — a note callout, not a whisper */
 .cnpy-md blockquote { border-left:2px solid var(--accent); background:var(--accent-soft); padding:12px 16px; margin:0 0 16px; border-radius:0 8px 8px 0; color:color-mix(in srgb, var(--fg) 78%, transparent); }
@@ -436,12 +460,12 @@ input, select { font-family: inherit; }
 .cnpy-md-img:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .cnpy-md-img img, .cnpy-md .cnpy-md-img img { display:block; max-width:100%; height:auto; border:0; border-radius:0; }
 
-/* tables — editorial ledger: rule-only borders, mono uppercase header */
+/* tables — editorial ledger: rule-only borders, uppercase label-face header */
 .cnpy-md-tablewrap { overflow-x:auto; margin:0 0 18px; }
 .cnpy-md table { border-collapse:collapse; width:100%; font-size:13.5px; }
 .cnpy-md-tablewrap > table { margin:0; }
 .cnpy-md th, .cnpy-md td { text-align:left; padding:9px 13px; vertical-align:top; }
-.cnpy-md th { font-family:var(--mono); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--fg-55); border-bottom:1.5px solid var(--border-strong); white-space:nowrap; }
+.cnpy-md th { font-family:var(--label); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--fg-55); border-bottom:1.5px solid var(--border-strong); white-space:nowrap; }
 .cnpy-md td { border-bottom:1px solid var(--border); }
 .cnpy-md tbody tr:last-child td { border-bottom:none; }
 .cnpy-md th:first-child, .cnpy-md td:first-child { padding-left:2px; }
@@ -452,7 +476,7 @@ input, select { font-family: inherit; }
 .cnpy-sw { display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 6px 8px; border-radius:10px; border:1px solid transparent; transition:border-color .12s ease, background .12s ease; }
 .cnpy-sw:hover { background:var(--hover); }
 .cnpy-sw i { width:28px; height:28px; border-radius:50%; background:var(--c); display:block; box-shadow:0 0 0 2px var(--bg), 0 0 0 3px transparent; }
-.cnpy-sw span { font-family:var(--mono); font-size:10.5px; color:var(--fg-55); }
+.cnpy-sw span { font-family:var(--label); font-size:10.5px; color:var(--fg-55); }
 .cnpy-sw.is-on { border-color:var(--border-strong); background:var(--hover); }
 .cnpy-sw.is-on i { box-shadow:0 0 0 2px var(--bg), 0 0 0 3px var(--c); }
 .cnpy-sw.is-on span { color:var(--fg); }
@@ -625,7 +649,7 @@ input, select { font-family: inherit; }
 .site-card:hover { transform:translateY(-3px); box-shadow:var(--shadow); }
 .site-lift:hover { transform:translateY(-4px); }
 
-/* text that types itself in: one clip step per character (mono) */
+/* text that types itself in: one clip step per character (even steps — exact only in the monospace terminal lines) */
 .site-type { display:inline-block; clip-path:inset(0 100% 0 0); }
 .is-play .site-type, .is-done .site-type { clip-path:inset(0); }
 .is-play .site-type { transition:clip-path var(--t, .8s) steps(var(--n, 20), end) var(--d, 0ms); }

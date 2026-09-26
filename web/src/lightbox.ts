@@ -8,7 +8,7 @@
 //     the corners layer (canopy.css) apply to it exactly as to the app — every
 //     radius renders at --corner-scale, and the round close button becomes the
 //     app's small rounded square.
-//   • Canopy's type (Geist / Geist Mono), not the companion serif.
+//   • Canopy's type (Geist / Archivo Narrow), not the companion serif.
 // Everything modal is here too: scroll lock on the element that actually scrolls
 // (#cnpy-main, longhands only, so its inline overflow-y round-trips), Escape, focus
 // kept inside, and focus returned to whatever opened it.

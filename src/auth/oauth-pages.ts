@@ -9,10 +9,10 @@ const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
 
 const FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`
-  + `<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;650&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">`;
+  + `<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;650&family=Archivo+Narrow:wght@400;500;600&display=swap" rel="stylesheet">`;
 
 const CSS = `
-:root{--bg:#faf8f3;--card:#fffdf8;--fg:#1a1814;--fg-70:rgba(26,24,20,.72);--fg-55:rgba(26,24,20,.55);--fg-40:rgba(26,24,20,.40);--border:rgba(42,39,31,.10);--border-strong:rgba(42,39,31,.18);--hover:rgba(42,39,31,.05);--accent:#8a9a5b;--accent-fg:#fff;--accent-soft:rgba(138,154,91,.12);--red:#a83a3a;--red-soft:rgba(168,58,58,.08);--shadow:0 32px 64px -24px rgba(42,39,31,.18),0 4px 12px -4px rgba(42,39,31,.08);--mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+:root{--bg:#faf8f3;--card:#fffdf8;--fg:#1a1814;--fg-70:rgba(26,24,20,.72);--fg-55:rgba(26,24,20,.55);--fg-40:rgba(26,24,20,.40);--border:rgba(42,39,31,.10);--border-strong:rgba(42,39,31,.18);--hover:rgba(42,39,31,.05);--accent:#8a9a5b;--accent-fg:#fff;--accent-soft:rgba(138,154,91,.12);--red:#a83a3a;--red-soft:rgba(168,58,58,.08);--shadow:0 32px 64px -24px rgba(42,39,31,.18),0 4px 12px -4px rgba(42,39,31,.08);--label:'Archivo Narrow',system-ui,sans-serif;--code:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#1c1a16;--card:#211f1a;--fg:#ede9e2;--fg-70:rgba(237,233,226,.72);--fg-55:rgba(237,233,226,.55);--fg-40:rgba(237,233,226,.40);--border:rgba(237,233,226,.11);--border-strong:rgba(237,233,226,.20);--hover:rgba(237,233,226,.06);--accent:#9aab65;--accent-fg:#131a07;--accent-soft:rgba(154,171,101,.14);--red:#cc6262;--red-soft:rgba(204,98,98,.10);--shadow:0 32px 64px -24px rgba(0,0,0,.55),0 4px 12px -4px rgba(0,0,0,.3)}}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--fg);font-family:'Geist',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
@@ -29,15 +29,15 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;back
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
 .btn.primary:hover{filter:brightness(1.06)}
 .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.or{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40)}
+.or{display:flex;align-items:center;gap:12px;font-family:var(--label);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40)}
 .or span{flex:1;height:1px;background:var(--border)}
 .foot{text-align:center;margin-top:20px;font-size:12.5px;color:var(--fg-40);line-height:1.5}
 .app{margin-top:22px;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:4px;background:var(--hover)}
 .app-ic{flex:none;width:36px;height:36px;border-radius:3.6px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
 .app-name{font-size:14px;font-weight:600;overflow-wrap:anywhere}
 .app-sub{margin-top:2px;font-size:12px;color:var(--fg-55)}
-.host{font-family:var(--mono);font-size:12px;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:2.4px;padding:1px 6px;overflow-wrap:anywhere}
-.label{margin:20px 0 10px;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)}
+.host{font-family:var(--label);font-size:12px;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:2.4px;padding:1px 6px;overflow-wrap:anywhere}
+.label{margin:20px 0 10px;font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)}
 .perms{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
 .perms li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--fg-70);line-height:1.5}
 .perms svg{flex:none;margin-top:3px;color:var(--accent)}

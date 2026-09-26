@@ -12,7 +12,7 @@ import { renderMarkdown } from "./markdown";
 import { promptBox, promptModal, type PromptView } from "./prompt-box";
 
 // ── atoms ────────────────────────────────────────────────────────────────────
-const CHIP_BASE = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none";
+const CHIP_BASE = "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none";
 
 /** PENDING (blue tint) / CLAIMED (quiet outline) / EXPIRED (faded red) — the ticket pill, mapped onto handoff status. */
 export function handoffPill(status: HandoffStatus): string {
@@ -32,7 +32,7 @@ const nameOf = (persons: PersonSummary[], h: string): string => personOf(persons
 const avatarOf = (persons: PersonSummary[], h: string, size: number): string =>
   h === "anyone" ? anyoneAvatar(size) : personChip(personOf(persons, h), size, h);
 
-const MONO_EYEBROW = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+const MONO_EYEBROW = "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
 
 /** The fixed "Copy as prompt" text for a handoff — what a claiming session is given. */
 export function handoffAsPrompt(h: HandoffView): string {
@@ -74,20 +74,20 @@ function listRow(h: HandoffView, p: HandoffsListProps): string {
   const pending = h.status === "pending";
   const titleSt = `min-width:0;font-size:13.5px;font-weight:${pending ? 600 : 500};letter-spacing:-0.005em;color:${pending ? "var(--fg)" : "var(--fg-55)"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
   const promptChip = h.prompt
-    ? `<span class="cnpy-hrow-chip" style="font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px;white-space:nowrap;flex:none">+ prompt</span>`
+    ? `<span class="cnpy-hrow-chip" style="font-family:var(--label);font-size:9.5px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px;white-space:nowrap;flex:none">+ prompt</span>`
     : "";
   const when = relTime(pending ? h.created_at : (h.claimed_at ?? h.created_at));
   return `<button data-act="openHandoff" data-arg="${h.id}" class="cnpy-trow cnpy-hrow${pending ? " cnpy-attn" : ""}" style="display:grid;grid-template-columns:minmax(0,2.6fr) minmax(0,1.1fr) minmax(0,1.3fr) auto 64px;gap:12px;align-items:center;width:100%;text-align:left;padding:12px 16px;border-bottom:1px solid var(--border);transition:background .12s ease">
-    <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--fg-40);flex:none">#${h.id}</span><span style="${titleSt}">${esc(firstLine(h.body))}</span>${promptChip}</div>
-    <div class="cnpy-hrow-who" style="display:flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40);flex:none;width:32px">${sent ? "TO" : "FROM"}</span>${avatarOf(p.persons, other, 20)}<span style="font-size:12.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(other === "anyone" ? "Anyone" : nameOf(p.persons, other))}</span></div>
-    <div class="cnpy-hrow-ref" style="min-width:0"><div style="font-family:var(--mono);font-size:11.5px;font-weight:500;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.context.branch)}</div><div style="font-family:var(--mono);font-size:10px;color:var(--fg-40);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.context.repo)}</div></div>
+    <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--label);font-size:11px;font-weight:600;color:var(--fg-40);flex:none">#${h.id}</span><span style="${titleSt}">${esc(firstLine(h.body))}</span>${promptChip}</div>
+    <div class="cnpy-hrow-who" style="display:flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40);flex:none;width:32px">${sent ? "TO" : "FROM"}</span>${avatarOf(p.persons, other, 20)}<span style="font-size:12.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(other === "anyone" ? "Anyone" : nameOf(p.persons, other))}</span></div>
+    <div class="cnpy-hrow-ref" style="min-width:0"><div style="font-family:var(--label);font-size:11.5px;font-weight:500;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.context.branch)}</div><div style="font-family:var(--label);font-size:10px;color:var(--fg-40);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.context.repo)}</div></div>
     <div>${handoffPill(h.status)}</div>
-    <div style="font-size:11.5px;color:var(--fg-40);text-align:right;font-family:var(--mono);white-space:nowrap">${esc(when)}</div>
+    <div style="font-size:11.5px;color:var(--fg-40);text-align:right;font-family:var(--label);white-space:nowrap">${esc(when)}</div>
   </button>`;
 }
 
 const sectionHead = (label: string, count: number, top = false): string =>
-  `<div style="${top ? "" : "margin-top:36px"}"><div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:0 2px"><div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap">${esc(label)}</div><div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${count}</div></div></div>`;
+  `<div style="${top ? "" : "margin-top:36px"}"><div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:0 2px"><div style="font-family:var(--label);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap">${esc(label)}</div><div style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${count}</div></div></div>`;
 
 const table = (rows: string): string =>
   `<div style="overflow:hidden;margin-top:10px;border:1px solid var(--border);border-radius:11px"><div class="cnpy-stagger" style="margin-bottom:-1px">${rows}</div></div>`;
@@ -125,8 +125,8 @@ export interface HandoffDetailProps {
   promptView: PromptView;
 }
 
-/** Inline `code` → a mono span; everything else escaped. The checklist's one bit of markup. */
-const inlineCode = (t: string): string => esc(t).replace(/`([^`]+)`/g, '<span style="font-family:var(--mono);font-size:12px">$1</span>');
+/** Inline `code` → a monospace span; everything else escaped. The checklist's one bit of markup. */
+const inlineCode = (t: string): string => esc(t).replace(/`([^`]+)`/g, '<span style="font-family:var(--code);font-size:12px">$1</span>');
 
 
 export function handoffDetailView(p: HandoffDetailProps): string {
@@ -161,7 +161,7 @@ export function handoffDetailView(p: HandoffDetailProps): string {
       <span style="flex:1;min-width:0;color:${done ? "var(--fg-40)" : "var(--fg-70)"}">${inlineCode(t)}</span>
     </div>`;
   const files = c.files.length
-    ? `<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:3px">${c.files.map((f) => `<div style="font-family:var(--mono);font-size:11px;color:var(--fg-40);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f)}</div>`).join("")}</div>`
+    ? `<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:3px">${c.files.map((f) => `<div style="font-family:var(--label);font-size:11px;color:var(--fg-40);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f)}</div>`).join("")}</div>`
     : "";
 
   const statusLine = h.status === "claimed"
@@ -174,7 +174,7 @@ export function handoffDetailView(p: HandoffDetailProps): string {
         <h2 style="margin:0;max-width:620px;font-size:24px;font-weight:600;letter-spacing:-0.02em;line-height:1.28;text-wrap:pretty">${esc(firstLine(h.body))}</h2>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:var(--fg-55)">
           ${handoffPill(h.status)}
-          <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-40)">#${h.id}</span>
+          <span style="font-family:var(--label);font-size:11.5px;font-weight:600;color:var(--fg-40)">#${h.id}</span>
           <span style="white-space:nowrap">${esc(who(h.sender))} → ${esc(who(h.recipient))}</span>
           <span style="color:var(--fg-40);white-space:nowrap">· ${esc(relTime(h.created_at))}</span>
         </div>
@@ -191,11 +191,11 @@ export function handoffDetailView(p: HandoffDetailProps): string {
       <div style="flex:1 1 290px;min-width:0;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);padding:18px 20px">
         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">
           <div style="${MONO_EYEBROW}">Where it stands</div>
-          <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${c.done.length} of ${total} done</div>
+          <div style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${c.done.length} of ${total} done</div>
         </div>
         <div style="height:3px;border-radius:2px;background:var(--border);margin-top:10px;overflow:hidden"><div class="repo-fill" style="height:100%;border-radius:2px;background:var(--accent);width:${pct}%"></div></div>
         <div style="font-size:13.5px;font-weight:500;color:var(--fg);margin-top:16px;line-height:1.45">${esc(c.task || "—")}</div>
-        <div style="font-family:var(--mono);font-size:11px;color:var(--fg-40);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.repo || "—")} · ${esc(c.branch || "—")}</div>
+        <div style="font-family:var(--label);font-size:11px;color:var(--fg-40);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.repo || "—")} · ${esc(c.branch || "—")}</div>
         <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">${c.done.map((t) => check(t, true)).join("")}${c.next.map((t) => check(t, false)).join("")}</div>
         ${files}
       </div>
@@ -250,7 +250,7 @@ export const blankHandoff = (): NewHandoffDraft => ({
 export interface NewHandoffProps { draft: NewHandoffDraft; me: string; persons: PersonSummary[] }
 
 const FIELD = "border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);outline:none";
-const MONO_FIELD_LABEL = (color = "var(--fg-40)") => `display:block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:${color};margin-bottom:6px`;
+const MONO_FIELD_LABEL = (color = "var(--fg-40)") => `display:block;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:${color};margin-bottom:6px`;
 
 /** The design's `primaryBtn` style (accent when armed, muted outline otherwise). */
 export function primaryStyle(enabled: boolean): string {
@@ -279,8 +279,8 @@ export function newHandoffView(p: NewHandoffProps): string {
 
   const ctx = n.ctxOpen ? `
     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px">
-      <div><label style="${MONO_FIELD_LABEL()}">REPO</label>${input("repo", "SaplingLearn/sapling", `width:100%;height:38px;padding:0 12px;${FIELD};font-size:12.5px;font-family:var(--mono)`)}</div>
-      <div><label style="${MONO_FIELD_LABEL()}">BRANCH</label>${input("branch", "feat/…", `width:100%;height:38px;padding:0 12px;${FIELD};font-size:12.5px;font-family:var(--mono)`)}</div>
+      <div><label style="${MONO_FIELD_LABEL()}">REPO</label>${input("repo", "SaplingLearn/sapling", `width:100%;height:38px;padding:0 12px;${FIELD};font-size:12.5px;font-family:var(--label)`)}</div>
+      <div><label style="${MONO_FIELD_LABEL()}">BRANCH</label>${input("branch", "feat/…", `width:100%;height:38px;padding:0 12px;${FIELD};font-size:12.5px;font-family:var(--label)`)}</div>
     </div>
     <label style="${MONO_FIELD_LABEL()};margin:14px 0 6px">TASK</label>
     ${input("task", "One line: what is this session in the middle of?", `width:100%;height:38px;padding:0 12px;${FIELD};font-size:13.5px`)}
@@ -289,7 +289,7 @@ export function newHandoffView(p: NewHandoffProps): string {
       <div><label style="${MONO_FIELD_LABEL("var(--accent)")}">NEXT <span style="color:var(--fg-40);font-weight:500;letter-spacing:0">· one per line</span></label>${area("next", "", `width:100%;min-height:96px;padding:9px 12px;${FIELD};font-size:13px;line-height:1.55;resize:vertical;font-family:inherit`)}</div>
     </div>
     <label style="${MONO_FIELD_LABEL()};margin:14px 0 6px">FILES TOUCHED <span style="font-weight:500;letter-spacing:0">· one per line</span></label>
-    ${area("files", "backend/routes/documents.py", `width:100%;min-height:76px;padding:9px 12px;${FIELD};font-size:12.5px;line-height:1.6;resize:vertical;font-family:var(--mono)`)}` : "";
+    ${area("files", "backend/routes/documents.py", `width:100%;min-height:76px;padding:9px 12px;${FIELD};font-size:12.5px;line-height:1.6;resize:vertical;font-family:var(--label)`)}` : "";
 
   const canSend = !!n.body.trim();
   return `<div data-screen-label="New handoff" style="${WORK_SHELL}">
@@ -311,7 +311,7 @@ export function newHandoffView(p: NewHandoffProps): string {
         <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">${esc(help)}</div>
         <label style="display:block;font-size:13px;font-weight:500;margin:20px 0 8px">Prompt <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
         ${input("promptTitle", "Title", `width:100%;height:38px;padding:0 12px;${FIELD};font-size:12.5px`)}
-        ${area("promptBody", "Instructions for the session that claims this", `width:100%;min-height:140px;margin-top:8px;padding:9px 12px;${FIELD};font-size:12.5px;line-height:1.6;resize:vertical;font-family:var(--mono)`)}
+        ${area("promptBody", "Instructions for the session that claims this", `width:100%;min-height:140px;margin-top:8px;padding:9px 12px;${FIELD};font-size:12.5px;line-height:1.6;resize:vertical;font-family:var(--label)`)}
         <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Belongs to this handoff only. It isn't added to the Prompt Library.</div>
       </div>
     </div>

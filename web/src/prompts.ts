@@ -18,7 +18,7 @@ import { promptBox, promptModal, type PromptView } from "./prompt-box";
 
 const personOf = (persons: PersonSummary[], h: string): PersonSummary | null =>
   persons.find((p) => p.handle.toLowerCase() === h.toLowerCase()) ?? null;
-const MONO_EYEBROW = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+const MONO_EYEBROW = "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
 const notice = (text: string): string => `<div style="text-align:center;padding:60px;color:var(--fg-40);font-size:13px">${esc(text)}</div>`;
 
 /** STAGED (amber) / DRAFT (blue) — the triage badges — and PUBLISHED in the docs' accent. */
@@ -33,7 +33,7 @@ export { detectVars };
 export const slugify = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 
 const tagPill = (t: string) =>
-  `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none">${esc(t)}</span>`;
+  `<span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none">${esc(t)}</span>`;
 
 // ── library ──────────────────────────────────────────────────────────────────
 export type PromptFilterCat = "tag" | "sort";
@@ -91,7 +91,7 @@ function promptCard(x: PromptSummary, persons: PersonSummary[]): string {
       <div style="font-size:14px;font-weight:600;letter-spacing:-0.005em;color:var(--fg);min-width:0">${esc(x.title)}</div>
       ${promptBadge(x.status)}
     </div>
-    <div style="font-family:var(--mono);font-size:11px;color:var(--fg-40);margin-top:3px">${esc(x.slug)}</div>
+    <div style="font-family:var(--label);font-size:11px;color:var(--fg-40);margin-top:3px">${esc(x.slug)}</div>
     <div style="font-size:12.5px;color:var(--fg-55);margin-top:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%">${esc(x.excerpt)}</div>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px">${x.tags.map(tagPill).join("")}</div>
     <div style="flex:1"></div>
@@ -99,7 +99,7 @@ function promptCard(x: PromptSummary, persons: PersonSummary[]): string {
       ${personChip(au, 18, x.author)}
       ${handleTag(au, x.author, 11.5)}
       <span style="font-size:12px;color:var(--fg-40)">·</span>
-      <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--fg-55)">v${x.version}</span>
+      <span style="font-family:var(--label);font-size:11px;font-weight:600;color:var(--fg-55)">v${x.version}</span>
       <span style="font-size:11.5px;color:var(--fg-40);margin-left:auto;white-space:nowrap">${esc(relTime(x.updated_at))}</span>
     </div>
   </button>`;
@@ -134,7 +134,7 @@ export function promptLibraryView(p: PromptLibraryProps): string {
       ${filterMenu(menu)}
     </div>
     <span style="flex:1"></span>
-    <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;margin-left:6px">${loading ? "" : `${shown.length} shown · ${staged} staged`}</span>
+    <span style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;margin-left:6px">${loading ? "" : `${shown.length} shown · ${staged} staged`}</span>
   </div>
   ${body}
 </div>`;
@@ -156,7 +156,7 @@ export interface PromptDetailProps {
 }
 
 const PROP_ROW = "display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px";
-const PROP_KEY = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
+const PROP_KEY = "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
 const railHead = (label: string) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;height:22px;margin-bottom:6px"><div style="${MONO_EYEBROW}">${esc(label)}</div></div>`;
 
 /** The add-tag menu's options: known tags not already on the prompt, narrowed by the draft; a new draft leads as "+ tag". */
@@ -169,7 +169,9 @@ export function tagOptions(current: string[], known: string[], draftRaw: string)
 }
 
 export function promptDetailView(p: PromptDetailProps): string {
-  const shell = (inner: string) => `<div data-screen-label="Prompt detail" style="width:100%;max-width:1260px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">${inner}</div>`;
+  // The page is at least the viewport tall and the body row takes what is left, so the
+  // prompt box runs to the bottom of the screen instead of stopping at the rail's height.
+  const shell = (inner: string) => `<div data-screen-label="Prompt detail" class="cnpy-pdetail-page" style="width:100%;max-width:1260px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 28px">${inner}</div>`;
   const x = p.prompt;
   if (!x) {
     if (p.status === "idle" || p.status === "loading") return shell(notice("Loading…"));
@@ -201,19 +203,19 @@ export function promptDetailView(p: PromptDetailProps): string {
   const tagMenu = p.tagMenu
     ? `<div data-act="promptTagMenu" style="position:fixed;inset:0;z-index:29"></div>
       <div style="position:absolute;top:calc(100% + 6px);left:0;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:11px;padding:5px;box-shadow:0 14px 38px rgba(0,0,0,.38);width:200px">
-        <input data-act="promptTagDraft" data-field="promptTagDraft" value="${attr(p.tagDraft)}" placeholder="New tag…" aria-label="New tag" style="width:100%;box-sizing:border-box;height:30px;padding:0 9px;margin-bottom:4px;border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--fg);font-size:12px;font-family:var(--mono);outline:none">
-        ${opts.map((o) => `<button data-act="promptTagAdd" data-arg="${attr(o.tag)}" class="cnpy-menurow" style="display:flex;align-items:center;width:100%;text-align:left;padding:6px 9px;border-radius:7px;font-size:12px;font-family:var(--mono);color:var(--fg-70)">${esc(o.label)}</button>`).join("")}
+        <input data-act="promptTagDraft" data-field="promptTagDraft" value="${attr(p.tagDraft)}" placeholder="New tag…" aria-label="New tag" style="width:100%;box-sizing:border-box;height:30px;padding:0 9px;margin-bottom:4px;border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--fg);font-size:12px;font-family:var(--label);outline:none">
+        ${opts.map((o) => `<button data-act="promptTagAdd" data-arg="${attr(o.tag)}" class="cnpy-menurow" style="display:flex;align-items:center;width:100%;text-align:left;padding:6px 9px;border-radius:7px;font-size:12px;font-family:var(--label);color:var(--fg-70)">${esc(o.label)}</button>`).join("")}
         ${opts.length ? "" : `<div style="padding:6px 9px;font-size:11.5px;color:var(--fg-40)">${p.tagDraft.trim() ? "Already added" : "Type to create a tag"}</div>`}
       </div>`
     : "";
-  const tags = x.tags.map((t) => `<span style="display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 3px 2px 6px;white-space:nowrap;flex:none">${esc(t)}<button data-act="promptTagRemove" data-arg="${attr(t)}" class="cnpy-xbtn" aria-label="Remove tag" title="Remove" style="width:14px;height:14px;display:grid;place-items:center;border-radius:3px;color:var(--fg-40)"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></span>`).join("");
+  const tags = x.tags.map((t) => `<span style="display:inline-flex;align-items:center;gap:3px;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 3px 2px 6px;white-space:nowrap;flex:none">${esc(t)}<button data-act="promptTagRemove" data-arg="${attr(t)}" class="cnpy-xbtn" aria-label="Remove tag" title="Remove" style="width:14px;height:14px;display:grid;place-items:center;border-radius:3px;color:var(--fg-40)"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></span>`).join("");
   const addTagSt = `display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:500;color:${p.tagMenu ? "var(--fg)" : "var(--fg-40)"};border:1px dashed var(--border-strong);border-radius:5px;padding:2px 7px;white-space:nowrap;background:${p.tagMenu ? "var(--hover)" : "transparent"}`;
 
   const versions = p.versions.map((v) => {
     const on = p.diffVersion === v.version;
     return `<button data-act="promptDiff" data-arg="${on ? "" : v.version}" class="cnpy-menurow" style="display:block;width:100%;text-align:left;padding:8px;border-radius:7px;background:${on ? "var(--hover)" : "transparent"}">
       <div style="display:flex;align-items:center;gap:8px;width:100%">
-        <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);flex:none">v${v.version}</span>
+        <span style="font-family:var(--label);font-size:12px;font-weight:600;color:var(--fg);flex:none">v${v.version}</span>
         <span style="font-size:11px;color:var(--fg-40);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(relTime(v.created_at))}</span>
         ${promptBadge(v.status)}
       </div>
@@ -225,7 +227,7 @@ export function promptDetailView(p: PromptDetailProps): string {
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap">
       <div style="flex:1 1 340px;min-width:0">
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(x.title)}</h2>
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px;font-size:12px;color:var(--fg-55)"><span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);white-space:nowrap">${esc(x.slug)}</span></div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px;font-size:12px;color:var(--fg-55)"><span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55);white-space:nowrap">${esc(x.slug)}</span></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px;flex-wrap:wrap">
         ${staged ? `<button data-act="promptPublish" data-arg="${staged.version}" class="cnpy-accentbtn" style="${primaryStyle(true)}">Publish v${staged.version}</button>` : ""}
@@ -234,13 +236,13 @@ export function promptDetailView(p: PromptDetailProps): string {
       </div>
     </div>
 
-    <div style="display:flex;flex-wrap:wrap;gap:32px 40px;margin-top:28px;align-items:stretch">
-      <div style="flex:1 1 480px;min-width:0;display:flex;flex-direction:column">
+    <div class="cnpy-pdetail">
+      <div class="cnpy-pdetail-main">
         ${x.description ? `<div style="${MONO_EYEBROW};margin-bottom:8px">Description</div><div style="font-size:14px;line-height:1.65;color:var(--fg-70);margin-bottom:30px;max-width:760px;text-wrap:pretty">${esc(x.description)}</div>` : ""}
         ${main}
       </div>
 
-      <div style="flex:1 0 240px;max-width:300px;min-width:0;border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
+      <div class="cnpy-pdetail-rail" style="min-width:0;border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
         <div>
           ${railHead("Properties")}
           <div style="${PROP_ROW}"><div style="${PROP_KEY}">STATUS</div><div>${promptBadge(x.status)}</div></div>
@@ -326,26 +328,26 @@ export function promptEditorView(p: PromptEditorProps): string {
           ${ed.slugTouched ? `<button data-act="edResetSlug" class="cnpy-mutelink" style="font-size:11.5px;font-weight:500;color:var(--fg-40)">Reset to title</button>` : `<span style="font-size:11.5px;color:var(--fg-40)">— from the title; edit to pin it</span>`}
         </div>
         <div style="display:flex;align-items:center;border:1px solid var(--border-strong);border-radius:9px;background:var(--bg);overflow:hidden">
-          <span style="font-family:var(--mono);font-size:13px;color:var(--fg-40);padding-left:12px;white-space:nowrap">prompts/</span>
-          <input data-act="edSlug" data-field="edSlug" value="${attr(ed.slug)}" class="cnpy-input" autocomplete="off" spellcheck="false" maxlength="60" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font-size:13px;padding:10px 12px 10px 2px;font-family:var(--mono)">
-          <span style="font-family:var(--mono);font-size:11px;padding:0 12px;white-space:nowrap;color:${slugColor}">${slugStatus}</span>
+          <span style="font-family:var(--label);font-size:13px;color:var(--fg-40);padding-left:12px;white-space:nowrap">prompts/</span>
+          <input data-act="edSlug" data-field="edSlug" value="${attr(ed.slug)}" class="cnpy-input" autocomplete="off" spellcheck="false" maxlength="60" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font-size:13px;padding:10px 12px 10px 2px;font-family:var(--label)">
+          <span style="font-family:var(--label);font-size:11px;padding:0 12px;white-space:nowrap;color:${slugColor}">${slugStatus}</span>
         </div>
-        <label style="display:block;font-size:13px;font-weight:500;margin:20px 0 8px">Body <span style="font-weight:400;color:var(--fg-40)">— write <span style="font-family:var(--mono)">{{name}}</span> for anything the caller fills in</span></label>
-        <textarea data-act="edBody" data-field="edBody" placeholder="Review the endpoint {{endpoint}} in {{router_file}}…" style="width:100%;flex:1;min-height:260px;padding:12px 14px;${FIELD};font-size:12.5px;line-height:1.65;resize:vertical;font-family:var(--mono)">${esc(ed.body)}</textarea>
+        <label style="display:block;font-size:13px;font-weight:500;margin:20px 0 8px">Body <span style="font-weight:400;color:var(--fg-40)">— write <span style="font-family:var(--label)">{{name}}</span> for anything the caller fills in</span></label>
+        <textarea data-act="edBody" data-field="edBody" placeholder="Review the endpoint {{endpoint}} in {{router_file}}…" style="width:100%;flex:1;min-height:260px;padding:12px 14px;${FIELD};font-size:12.5px;line-height:1.65;resize:vertical;font-family:var(--code)">${esc(ed.body)}</textarea>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px">
           <span style="${MONO_EYEBROW}">Variables</span>
-          <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40)">${vars.length === 1 ? "1 detected" : `${vars.length} detected`}</span>
-          ${vars.map((v) => `<span style="font-family:var(--mono);font-size:11.5px;color:var(--accent);font-weight:600;background:var(--accent-soft);border-radius:4px;padding:1px 5px">{{${esc(v)}}}</span>`).join("")}
+          <span style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40)">${vars.length === 1 ? "1 detected" : `${vars.length} detected`}</span>
+          ${vars.map((v) => `<span style="font-family:var(--label);font-size:11.5px;color:var(--accent);font-weight:600;background:var(--accent-soft);border-radius:4px;padding:1px 5px">{{${esc(v)}}}</span>`).join("")}
           ${vars.length ? "" : `<span style="font-size:11.5px;color:var(--fg-40)">none yet</span>`}
         </div>
       </div>
       <div style="min-width:0;border-left:1px solid var(--border);padding-left:26px">
         <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Tags</label>
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:38px;padding:5px 8px;border:1px solid var(--border-strong);border-radius:9px">
-          ${ed.tags.map((t) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 9px;border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft);border-radius:999px;font-size:11.5px;font-weight:500;font-family:var(--mono)">${esc(t)}<button data-act="edTagRemove" data-arg="${attr(t)}" class="cnpy-xbtn" aria-label="Remove tag" style="width:16px;height:16px;display:grid;place-items:center;border-radius:50%;color:var(--accent)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></span>`).join("")}
-          <input data-act="edTagDraft" data-field="edTagDraft" value="${attr(ed.tagDraft)}" placeholder="Add a tag" style="flex:1;min-width:70px;border:none;outline:none;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--mono);padding:3px 2px">
+          ${ed.tags.map((t) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 9px;border:1px solid var(--accent);color:var(--accent);background:var(--accent-soft);border-radius:999px;font-size:11.5px;font-weight:500;font-family:var(--label)">${esc(t)}<button data-act="edTagRemove" data-arg="${attr(t)}" class="cnpy-xbtn" aria-label="Remove tag" style="width:16px;height:16px;display:grid;place-items:center;border-radius:50%;color:var(--accent)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 5l14 14M19 5 5 19"></path></svg></button></span>`).join("")}
+          <input data-act="edTagDraft" data-field="edTagDraft" value="${attr(ed.tagDraft)}" placeholder="Add a tag" style="flex:1;min-width:70px;border:none;outline:none;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--label);padding:3px 2px">
         </div>
-        ${suggest.length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">${suggest.map((t) => `<button data-act="edTagAdd" data-arg="${attr(t)}" class="cnpy-pickchip" style="padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:500;border:1px solid var(--border);color:var(--fg-55);font-family:var(--mono);white-space:nowrap">+ ${esc(t)}</button>`).join("")}</div>` : ""}
+        ${suggest.length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">${suggest.map((t) => `<button data-act="edTagAdd" data-arg="${attr(t)}" class="cnpy-pickchip" style="padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:500;border:1px solid var(--border);color:var(--fg-55);font-family:var(--label);white-space:nowrap">+ ${esc(t)}</button>`).join("")}</div>` : ""}
         <label style="display:block;font-size:13px;font-weight:500;margin:20px 0 8px">Status</label>
         <div style="display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;padding:2px">
           ${(["draft", "staged", "published"] as const).map((k) => `<button data-act="edStatus" data-arg="${k}" class="cnpy-segbtn${ed.status === k ? " is-on" : ""}" style="${segStyle(ed.status === k)}">${k[0].toUpperCase()}${k.slice(1)}</button>`).join("")}
@@ -353,7 +355,7 @@ export function promptEditorView(p: PromptEditorProps): string {
         <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">${help}</div>
         <label style="display:block;font-size:13px;font-weight:500;margin:20px 0 8px">What changed <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
         <input data-act="edSummary" data-field="edSummary" value="${attr(ed.summary)}" class="cnpy-input" placeholder="One line for the version history" style="width:100%;height:38px;padding:0 12px;${FIELD};font-size:12.5px">
-        <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);margin-top:18px;line-height:1.6">${ed.mode === "new" ? "Saving creates v1." : `Saving creates v${ed.nextVersion}. v${ed.nextVersion - 1} stays in the history.`}</div>
+        <div style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);margin-top:18px;line-height:1.6">${ed.mode === "new" ? "Saving creates v1." : `Saving creates v${ed.nextVersion}. v${ed.nextVersion - 1} stays in the history.`}</div>
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">

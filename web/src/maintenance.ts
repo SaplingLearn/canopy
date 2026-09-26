@@ -76,23 +76,23 @@ export interface MaintenanceProps {
 }
 
 // ── shared atoms ─────────────────────────────────────────────────────────────
-const EYEBROW = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+const EYEBROW = "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
 
-/** The design's pick chip (`V.pickSt`): accent when on, mono for vocabulary values. */
+/** The design's pick chip (`V.pickSt`): accent when on, label-face for vocabulary values. */
 function pickChip(label: string, on: boolean, act: string, arg: string, mono = false): string {
-  const st = `padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent)" : "var(--border)"};color:${on ? "var(--accent)" : "var(--fg-55)"};background:${on ? "var(--accent-soft)" : "transparent"};font-family:${mono ? "var(--mono)" : "inherit"}`;
+  const st = `padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:500;white-space:nowrap;transition:all .12s ease;border:1px solid ${on ? "var(--accent)" : "var(--border)"};color:${on ? "var(--accent)" : "var(--fg-55)"};background:${on ? "var(--accent-soft)" : "transparent"};font-family:${mono ? "var(--label)" : "inherit"}`;
   return `<button data-act="${attr(act)}" data-arg="${attr(arg)}" style="${st}">${esc(label)}</button>`;
 }
 
-/** A mono section header with a hint and a count (the admin email-notification
+/** A label-face section header with a hint and a count (the admin email-notification
  *  sections under People still use it). */
 export function maintSectionHeader(label: string, hint: string, countLabel: string, first: boolean): string {
   return `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:${first ? "38px" : "44px"};padding-bottom:9px;border-bottom:1px solid var(--border-strong)">
     <div style="display:flex;align-items:baseline;gap:10px">
-      <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55)">${esc(label)}</div>
+      <div style="font-family:var(--label);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55)">${esc(label)}</div>
       <div style="font-size:11.5px;color:var(--fg-40)">${esc(hint)}</div>
     </div>
-    <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40)">${esc(countLabel)}</div>
+    <div style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40)">${esc(countLabel)}</div>
   </div>`;
 }
 
@@ -166,11 +166,11 @@ function unplacedTab(p: MaintenanceProps): string {
     <div class="cnpy-scroll" style="flex:1 1 260px;min-width:0;max-width:100%;box-shadow:1px 0 0 var(--border);overflow-y:auto;overflow-x:hidden;max-height:640px">${list}</div>
     <div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;padding:24px 28px;box-shadow:0 -1px 0 var(--border)">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--fg-55)">
-        <span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px;white-space:nowrap">${esc(sel.reason)}</span>
+        <span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-55);border:1px solid var(--border-strong);border-radius:5px;padding:2px 6px;white-space:nowrap">${esc(sel.reason)}</span>
         <span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;min-width:0">${chipOf(au, 18, sel.author ?? "?")}<span style="overflow:hidden;text-overflow:ellipsis">${esc(au?.name ?? sel.author ?? "unknown")}</span></span>
         <span style="color:var(--fg-40);white-space:nowrap">&middot; ${esc(sel.when ?? "")}</span>
         <span style="flex:1"></span>
-        <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${idx + 1} of ${p.unplaced.length}</span>
+        <span style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${idx + 1} of ${p.unplaced.length}</span>
       </div>
       ${bigText}
       <div style="font-size:12.5px;line-height:1.55;color:var(--fg-40);margin-top:10px"><span style="color:var(--fg-55);font-weight:500">Why it wasn't placed:</span> ${esc(sel.reasonNote)}</div>
@@ -210,10 +210,10 @@ export function personPicker(groupId: string, people: Person[], pick: string | n
 
 /** One unmatched login: the activity sample that identifies the person, beside the picker. */
 export function identityCard(g: IdentityGroup, people: Person[], pick: string | null, confirming: boolean): string {
-  const sample = g.sample.map((ev) => `<div style="display:flex;align-items:baseline;gap:9px;min-width:0"><span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px;flex:none">${esc(ev.kind)}</span><span style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.text)}</span><span style="font-size:11px;color:var(--fg-40);flex:none;white-space:nowrap">${esc(ev.when)}</span></div>`).join("");
+  const sample = g.sample.map((ev) => `<div style="display:flex;align-items:baseline;gap:9px;min-width:0"><span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px;flex:none">${esc(ev.kind)}</span><span style="font-size:12.5px;color:var(--fg-70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.text)}</span><span style="font-size:11px;color:var(--fg-40);flex:none;white-space:nowrap">${esc(ev.when)}</span></div>`).join("");
   return `<div style="display:flex;flex-wrap:wrap;gap:20px 36px;padding:20px 22px;border-bottom:1px solid var(--border);margin-bottom:-1px">
     <div style="flex:1 1 280px;min-width:0">
-      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><div style="font-family:var(--mono);font-size:15px;font-weight:600;color:var(--fg);white-space:nowrap">${esc(g.login)}</div><div style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(g.meta)}</div></div>
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><div style="font-family:var(--label);font-size:15px;font-weight:600;color:var(--fg);white-space:nowrap">${esc(g.login)}</div><div style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(g.meta)}</div></div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-top:12px">${sample}</div>
     </div>
     <div style="flex:1 1 380px;min-width:0">${personPicker(g.id, people, pick, confirming)}</div>
@@ -245,13 +245,13 @@ export function peopleSection(p: PeopleProps): string {
   const pending = canInvite ? p.invites.filter((i) => !i.accepted_by && !i.revoked_at) : [];
   const canSend = EMAIL_RE.test(p.inviteDraft.trim());
   const row = "display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--border);margin-bottom:-1px";
-  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="flex:1;min-width:0;line-height:1.3"><div style="font-size:13.5px;font-weight:600">${esc(x.name ?? x.handle)}</div>${handleTag(x, x.handle, 11.5)}</div>${p.me && x.handle.toLowerCase() === p.me.toLowerCase() ? `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">YOU</span>` : ""}</div>`).join("");
+  const persons = p.persons.map((x) => `<div style="${row}">${personChip(x, 28, x.handle)}<div style="flex:1;min-width:0;line-height:1.3"><div style="font-size:13.5px;font-weight:600">${esc(x.name ?? x.handle)}</div>${handleTag(x, x.handle, 11.5)}</div>${p.me && x.handle.toLowerCase() === p.me.toLowerCase() ? `<span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">YOU</span>` : ""}</div>`).join("");
   const invites = pending.map((i) => {
     const status = i.email_error ? `<span style="color:var(--red)">email failed: ${esc(i.email_error)}</span>` : i.email_sent_at ? "email sent" : "email not sent";
     return `<div style="${row};flex-wrap:wrap">
       <div style="width:28px;height:28px;border-radius:50%;border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--fg-40);font-size:12px;flex:none">?</div>
       <div style="flex:1;min-width:0;line-height:1.3"><div style="font-size:13.5px;font-weight:500;color:var(--fg-55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.email)}</div><div style="font-size:11.5px;color:var(--fg-40)">invited ${esc(relTime(i.invited_at))} by ${esc(i.invited_by)} · ${status}</div></div>
-      <span style="font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px dashed var(--border-strong);color:var(--amber);white-space:nowrap">pending</span>
+      <span style="font-family:var(--label);font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px dashed var(--border-strong);color:var(--amber);white-space:nowrap">pending</span>
       <button data-act="inviteResend" data-arg="${attr(i.email)}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border);white-space:nowrap">Resend</button>
       <button data-act="inviteRevoke" data-arg="${attr(i.email)}" class="cnpy-rejectbtn" style="font-size:12px;color:var(--fg-40);padding:4px 8px;border-radius:6px;border:1px solid var(--border);white-space:nowrap">Revoke</button>
     </div>`;

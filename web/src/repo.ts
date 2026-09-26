@@ -41,11 +41,11 @@ export interface RepoProps {
 export type RepoPollState = { status: "polling" } | { status: "done"; result: RepoRefreshResult } | { status: "busy" } | { status: "error" };
 
 // ── design tokens (verbatim from the .dc.html) ───────────────────────────────
-const LABEL = "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+const LABEL = "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
 const LABEL_SM = LABEL.replace("10.5px", "10px");
 const FRAME = "max-width:1180px;margin:0 auto;padding:22px 32px 36px";
 const PANEL = "border:1px solid var(--border);border-radius:16px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);display:flex;flex-direction:column;overflow:hidden";
-const CODE = "font-family:var(--mono);font-size:12.5px;color:var(--fg);background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 5px";
+const CODE = "font-family:var(--label);font-size:12.5px;color:var(--fg);background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 5px";
 const TOP = "border-top:1px solid var(--border)";
 const LEFT = "border-left:1px solid var(--border)";
 
@@ -156,7 +156,7 @@ export function repoCrumb(p: RepoProps): string {
   return `<span style="display:inline-flex;align-items:center;gap:14px;min-width:0">
     <span style="color:var(--fg-40);font-size:13px">›</span>
     <span style="font-size:13px;font-weight:500;color:var(--fg-70);white-space:nowrap">${esc(label)}</span>
-    ${slug ? `<span style="font-family:var(--mono);font-size:11px;color:var(--fg-40);white-space:nowrap">${esc(slug)}</span>` : ""}
+    ${slug ? `<span style="font-family:var(--label);font-size:11px;color:var(--fg-40);white-space:nowrap">${esc(slug)}</span>` : ""}
   </span>`;
 }
 
@@ -172,7 +172,7 @@ export function repoControls(p: RepoProps): string {
   const envs = okData(p, (d) => d.environments) ?? [];
   const pills = envs.map((e) => {
     const c = TONE[e.tone];
-    return `<span title="${attr(`${e.name} — ${e.pill.toLowerCase()}`)}" style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;white-space:nowrap;color:var(--fg-70)"><span class="repo-envdot${e.tone === "good" || e.tone === "neutral" ? "" : " repo-pulse"}" style="--c:${c};width:7px;height:7px;border-radius:50%;background:${c};box-shadow:0 0 0 3px color-mix(in srgb,${c} 16%,transparent)"></span>${esc(e.name)}</span>`;
+    return `<span title="${attr(`${e.name} — ${e.pill.toLowerCase()}`)}" style="display:inline-flex;align-items:center;gap:7px;font-family:var(--label);font-size:11px;white-space:nowrap;color:var(--fg-70)"><span class="repo-envdot${e.tone === "good" || e.tone === "neutral" ? "" : " repo-pulse"}" style="--c:${c};width:7px;height:7px;border-radius:50%;background:${c};box-shadow:0 0 0 3px color-mix(in srgb,${c} 16%,transparent)"></span>${esc(e.name)}</span>`;
   }).join("");
   const busy = p.repo.status === "loading";
   // "Poll now" sits beside the refresh icon on EVERY tab and in every state of
@@ -215,10 +215,10 @@ function overviewTab(p: RepoProps): string {
         </div>
         ${e.parts.map((pt) => kv(pt.part === "backend" ? "Backend" : "Frontend",
           pt.sha
-            ? `<div style="font-size:13.5px;line-height:1.6;color:var(--fg-70);display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="${CODE}">${esc(pt.sha)}</span><span style="font-size:12px;color:var(--fg-40);white-space:nowrap">${esc(ago(pt.deployedAt ?? "", now))} ago · by ${esc(pt.deployedBy ?? "unknown")} · ${esc(pt.host)}</span>${pt.result === "fail" ? `<span style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--red)">FAILED</span>` : ""}</div>`
+            ? `<div style="font-size:13.5px;line-height:1.6;color:var(--fg-70);display:flex;align-items:center;gap:9px;flex-wrap:wrap"><span style="${CODE}">${esc(pt.sha)}</span><span style="font-size:12px;color:var(--fg-40);white-space:nowrap">${esc(ago(pt.deployedAt ?? "", now))} ago · by ${esc(pt.deployedBy ?? "unknown")} · ${esc(pt.host)}</span>${pt.result === "fail" ? `<span style="font-family:var(--label);font-size:10px;font-weight:600;color:var(--red)">FAILED</span>` : ""}</div>`
             : `<div style="font-size:12.5px;color:var(--fg-40)">No ${esc(pt.host)} deploy captured yet</div>`)).join("")}
-        ${kv("CI on head", `<div style="font-size:13.5px;line-height:1.6;display:flex;align-items:center;gap:7px;color:${TONE[e.ciTone]}"><span style="font-family:var(--mono);font-size:13px">${e.ciTone === "good" ? "✓" : e.ciTone === "bad" ? "✕" : GDOT}</span>${esc(e.ci)}</div>`)}
-        ${kv("URL", `<div style="font-size:13.5px;line-height:1.6"><a href="${attr(safeUrl(e.url))}" target="_blank" rel="noopener" class="repo-link" style="font-family:var(--mono);font-size:12.5px">${esc(e.url.replace(/^https?:\/\//, ""))} ↗</a></div>`)}
+        ${kv("CI on head", `<div style="font-size:13.5px;line-height:1.6;display:flex;align-items:center;gap:7px;color:${TONE[e.ciTone]}"><span style="font-family:var(--label);font-size:13px">${e.ciTone === "good" ? "✓" : e.ciTone === "bad" ? "✕" : GDOT}</span>${esc(e.ci)}</div>`)}
+        ${kv("URL", `<div style="font-size:13.5px;line-height:1.6"><a href="${attr(safeUrl(e.url))}" target="_blank" rel="noopener" class="repo-link" style="font-family:var(--label);font-size:12.5px">${esc(e.url.replace(/^https?:\/\//, ""))} ↗</a></div>`)}
       </div>`;
     }).join("")}</div>`);
 
@@ -226,19 +226,19 @@ function overviewTab(p: RepoProps): string {
   const drift = okData(p, (d) => d.drift);
   const driftStrip = drift ? `<button data-act="repoToggleDrift" aria-expanded="${p.driftOpen}" class="repo-strip" style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 22px;${TOP};font-size:13px;color:var(--fg-70)">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--fg-40)" stroke-width="1.8" style="flex:none"><path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
-      <span>${esc(drift.head)} is <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${drift.ahead}</span> commits ahead, <span style="font-family:var(--mono);font-weight:600;color:var(--fg)">${drift.behind}</span> behind ${esc(drift.base)}</span>
+      <span>${esc(drift.head)} is <span style="font-family:var(--label);font-weight:600;color:var(--fg)">${drift.ahead}</span> commits ahead, <span style="font-family:var(--label);font-weight:600;color:var(--fg)">${drift.behind}</span> behind ${esc(drift.base)}</span>
       <svg class="repo-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--fg-40)" stroke-width="2.4" style="flex:none;transform:rotate(${p.driftOpen ? 90 : 0}deg)"><path d="M9 6l6 6-6 6"></path></svg>
     </button>
     <div class="repo-drift" data-open="${p.driftOpen ? "1" : "0"}"><div style="overflow:hidden;min-height:0">${drift.groups.map((g) => {
       const c = g.kind === "pr" ? "var(--accent)" : g.kind === "behind" ? "var(--red)" : "var(--fg-55)";
       return `<div>
         <div style="display:flex;align-items:center;gap:9px;padding:10px 22px;${TOP};background:color-mix(in srgb,var(--fg) 2%,transparent)">
-          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:${c};background:color-mix(in srgb,${c} 12%,transparent);border-radius:5px;padding:1px 7px;flex:none">${esc(g.tag)}</span>
+          <span style="font-family:var(--label);font-size:11px;font-weight:600;color:${c};background:color-mix(in srgb,${c} 12%,transparent);border-radius:5px;padding:1px 7px;flex:none">${esc(g.tag)}</span>
           <span style="font-size:13px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.title)}</span>
           <span style="font-size:11.5px;color:var(--fg-40);flex:none;margin-left:auto;white-space:nowrap">${esc(g.meta)}</span>
         </div>
         ${g.commits.map((cm) => `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 64px;gap:10px;align-items:center;padding:7px 22px 7px 30px;${TOP}">
-          <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">${esc(cm.sha)}</span>
+          <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55)">${esc(cm.sha)}</span>
           <span style="font-size:12.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(cm.msg)}</span>
           <span style="font-size:11px;color:var(--fg-40);text-align:right">${esc(ago(cm.at, now))}</span>
         </div>`).join("")}
@@ -249,8 +249,8 @@ function overviewTab(p: RepoProps): string {
     `<div class="repo-tiles" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr))">${rows.map((s, i) => `<div style="padding:16px 22px;${i ? LEFT : ""}">
       <div style="${LABEL}">${esc(s.label)}</div>
       <div style="display:flex;align-items:baseline;gap:10px;margin-top:8px;flex-wrap:wrap">
-        <span data-count="${s.value}" style="font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-0.02em">${s.value}</span>
-        <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${TONE[s.tone]}">${delta(s.delta)}</span>
+        <span data-count="${s.value}" style="font-family:var(--label);font-size:27px;font-weight:600;letter-spacing:-0.02em">${s.value}</span>
+        <span style="font-family:var(--label);font-size:11.5px;font-weight:600;color:${TONE[s.tone]}">${delta(s.delta)}</span>
         <span style="font-size:11px;color:var(--fg-40)">vs last week</span>
       </div>
     </div>`).join("")}</div>`);
@@ -263,10 +263,10 @@ function overviewTab(p: RepoProps): string {
     rows.map((h) => {
       const c = h.up ? "var(--green)" : "var(--red)";
       return `<div style="display:grid;grid-template-columns:84px minmax(0,1fr) 110px 90px;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)">
-        <span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(h.env)}</span>
-        <a href="${attr(safeUrl(h.url))}" target="_blank" rel="noopener" class="repo-link" style="font-family:var(--mono);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-55)">${esc(h.url.replace(/^https?:\/\//, ""))}</a>
-        <span style="display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;font-weight:600;color:${c}"><span style="width:7px;height:7px;border-radius:50%;background:${c}"></span>${h.up ? "UP" : "DOWN"}</span>
-        <span style="font-family:var(--mono);font-size:12px;color:var(--fg-55);text-align:right">${h.ms} ms</span>
+        <span style="font-family:var(--label);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(h.env)}</span>
+        <a href="${attr(safeUrl(h.url))}" target="_blank" rel="noopener" class="repo-link" style="font-family:var(--label);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-55)">${esc(h.url.replace(/^https?:\/\//, ""))}</a>
+        <span style="display:inline-flex;align-items:center;gap:7px;font-family:var(--label);font-size:11px;font-weight:600;color:${c}"><span style="width:7px;height:7px;border-radius:50%;background:${c}"></span>${h.up ? "UP" : "DOWN"}</span>
+        <span style="font-family:var(--label);font-size:12px;color:var(--fg-55);text-align:right">${h.ms} ms</span>
       </div>`;
     }).join(""));
 
@@ -281,7 +281,7 @@ function overviewTab(p: RepoProps): string {
 }
 
 // ── Code ─────────────────────────────────────────────────────────────────────
-const M_CHIP = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 7px;white-space:nowrap;color:var(--fg-40);border:1px solid var(--border);background:transparent";
+const M_CHIP = "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 7px;white-space:nowrap;color:var(--fg-40);border:1px solid var(--border);background:transparent";
 const PR_STATE: Record<RepoPrState, [string, string | null]> = {
   draft: ["DRAFT", null], review: ["IN REVIEW", "var(--blue)"], approved: ["APPROVED", "var(--green)"],
   merged: ["MERGED", "var(--accent)"], closed: ["CLOSED", null],
@@ -294,9 +294,9 @@ function prRow(pr: RepoPr, now: number): string {
   const ck = pr.checks ? CHECKS[pr.checks] : null;
   return `<a href="${attr(safeUrl(pr.url))}" target="_blank" rel="noopener" class="repo-row" style="display:flex;align-items:center;gap:12px;padding:8px 20px;border-bottom:1px solid var(--border);color:inherit;text-decoration:none">
     <span title="${attr(who(pr.author))}" style="flex:none">${avatar(pr.author, 22)}</span>
-    <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500">${esc(pr.title)} <span style="font-family:var(--mono);font-size:11px;font-weight:400;color:var(--fg-40)">#${pr.number}${pr.branch ? ` · ${esc(pr.branch)}` : ""}</span></span>
+    <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500">${esc(pr.title)} <span style="font-family:var(--label);font-size:11px;font-weight:400;color:var(--fg-40)">#${pr.number}${pr.branch ? ` · ${esc(pr.branch)}` : ""}</span></span>
     <span style="flex:none">${chip}</span>
-    <span title="${ck ? ck[2] : ""}" style="width:16px;text-align:center;flex:none;font-family:var(--mono);font-size:12px;font-weight:600;color:${ck ? ck[1] : "transparent"}">${ck ? ck[0] : ""}</span>
+    <span title="${ck ? ck[2] : ""}" style="width:16px;text-align:center;flex:none;font-family:var(--label);font-size:12px;font-weight:600;color:${ck ? ck[1] : "transparent"}">${ck ? ck[0] : ""}</span>
     <span style="width:38px;text-align:right;flex:none;font-size:11.5px;color:var(--fg-40)">${esc(ago(pr.at, now))}</span>
   </a>`;
 }
@@ -307,7 +307,7 @@ function codeTab(p: RepoProps): string {
     `<div class="repo-tiles" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr))">${rows.map((s, i) => `<div style="padding:14px 20px 12px;${i ? LEFT : ""}">
       <div style="${LABEL}">${esc(s.label)}</div>
       <div style="display:flex;align-items:baseline;gap:9px;margin-top:6px;flex-wrap:wrap">
-        <span data-count="${s.value}" style="font-family:var(--mono);font-size:24px;font-weight:600;letter-spacing:-0.02em">${s.value}</span>
+        <span data-count="${s.value}" style="font-family:var(--label);font-size:24px;font-weight:600;letter-spacing:-0.02em">${s.value}</span>
         <span style="font-size:11px;color:${s.tone === "neutral" ? "var(--fg-40)" : TONE[s.tone]};white-space:nowrap">${esc(s.sub)}</span>
       </div>
     </div>`).join("")}</div>`);
@@ -322,7 +322,7 @@ function codeTab(p: RepoProps): string {
       const h = (d.count / max) * 25;
       return `<rect class="repo-bar" style="--i:${i}" x="${(i * w + 0.8).toFixed(2)}" y="${(27 - h).toFixed(2)}" width="${(w - 1.6).toFixed(2)}" height="${h.toFixed(2)}" fill="var(--accent)" opacity="0.85"><title>${esc(fmt(d.date))} — ${d.count}</title></rect>`;
     }).join("")}</svg>
-    <div style="display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--fg-40)"><span>${esc(fmt(b.days[0].date))}</span><span>${esc(fmt(mid.date))}</span><span>${esc(fmt(b.days[b.days.length - 1].date))}</span></div>`;
+    <div style="display:flex;justify-content:space-between;margin-top:6px;font-family:var(--label);font-size:10px;color:var(--fg-40)"><span>${esc(fmt(b.days[0].date))}</span><span>${esc(fmt(mid.date))}</span><span>${esc(fmt(b.days[b.days.length - 1].date))}</span></div>`;
   });
 
   const prRows = okData(p, (d) => d.prs);
@@ -334,10 +334,10 @@ function codeTab(p: RepoProps): string {
   const br = okData(p, (d) => d.branches);
   const branches = sec(p, (d) => d.branches, { nc: "No branch snapshot yet. One is taken when an admin runs Sync GitHub and by the 6-hourly GitHub reconcile — both need GITHUB_SERVICE_TOKEN.", empty: "No branches recorded." }, (b) =>
     b.rows.map((r) => `<div style="display:grid;grid-template-columns:minmax(0,1.4fr) 90px 130px 54px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-      <span style="font-family:var(--mono);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
+      <span style="font-family:var(--label);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
       <span style="font-size:11.5px;color:var(--fg-40);white-space:nowrap">${esc(ago(r.at, now))} ago</span>
-      <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);white-space:nowrap">+${r.ahead} / −${r.behind}${b.head ? ` vs ${esc(b.head)}` : ""}</span>
-      <span style="text-align:right">${r.stale ? `<span style="font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 5px;flex:none">STALE</span>` : ""}</span>
+      <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55);white-space:nowrap">+${r.ahead} / −${r.behind}${b.head ? ` vs ${esc(b.head)}` : ""}</span>
+      <span style="text-align:right">${r.stale ? `<span style="font-family:var(--label);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 5px;flex:none">STALE</span>` : ""}</span>
     </div>`).join(""));
 
   return `<div ${rise(0)}>${okData(p, (d) => d.codeStats) ? tiles : `<div style="padding:6px 20px">${tiles}</div>`}</div>
@@ -381,9 +381,9 @@ function activityRow(a: RepoActivity, now: number): string {
 // `windowDelta` in src/tools/repo.ts) — render the note alone then, with no
 // delta span and no stray leading space.
 const trendBlock = (title: string, t: RepoTrend, stroke: string): string =>
-  `<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">${title}</span><span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap">${esc(t.value)}</span></div>
+  `<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">${title}</span><span style="font-family:var(--label);font-size:16px;font-weight:600;white-space:nowrap">${esc(t.value)}</span></div>
   ${spark(t.trend, stroke, 44)}
-  <div style="font-size:11.5px;color:var(--fg-40);margin-top:6px">${t.delta ? `<span style="font-family:var(--mono);color:${TONE[t.tone]}">${esc(t.delta)}</span> ` : ""}${esc(t.note)}</div>`;
+  <div style="font-size:11.5px;color:var(--fg-40);margin-top:6px">${t.delta ? `<span style="font-family:var(--label);color:${TONE[t.tone]}">${esc(t.delta)}</span> ` : ""}${esc(t.note)}</div>`;
 const titled = (title: string, body: string): string => `<div style="${LABEL}">${title}</div>${body}`;
 
 function ciTab(p: RepoProps): string {
@@ -394,16 +394,16 @@ function ciTab(p: RepoProps): string {
       const okCount = row.deploys.filter((d) => d.result === "ok").length;
       const last = row.deploys[row.deploys.length - 1];
       return `<div style="display:flex;align-items:center;gap:16px;padding:14px 0;${TOP};flex-wrap:wrap">
-        <span style="width:118px;font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70);flex:none">${esc(row.label)}</span>
+        <span style="width:118px;font-family:var(--label);font-size:11.5px;font-weight:600;color:var(--fg-70);flex:none">${esc(row.label)}</span>
         <div style="display:flex;align-items:center;gap:9px">${row.deploys.map((d, i) => {
           const [color, word] = RESULT[d.result];
           // Pure CSS tooltip (hover + keyboard focus): no state, so no rerender on every dot.
           return `<span class="repo-dotwrap" style="position:relative;display:inline-block">
             <button class="repo-dot" style="--i:${i};width:15px;height:15px;border-radius:50%;background:${color};display:block;padding:0" aria-label="${attr(`${d.sha} ${word.toLowerCase()} ${ago(d.at, now)} ago by ${d.by}`)}"></button>
             <span class="repo-tip" role="tooltip">
-              <span style="display:block;font-family:var(--mono);font-size:11.5px;font-weight:600">${esc(d.sha)}</span>
+              <span style="display:block;font-family:var(--label);font-size:11.5px;font-weight:600">${esc(d.sha)}</span>
               <span style="display:block;font-size:11.5px;color:var(--fg-55);margin-top:2px">${esc(ago(d.at, now))} ago · by ${esc(d.by)}</span>
-              <span style="display:block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;margin-top:4px;color:${color}">${word}</span>
+              <span style="display:block;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;margin-top:4px;color:${color}">${word}</span>
             </span>
           </span>`;
         }).join("")}</div>
@@ -421,8 +421,8 @@ function ciTab(p: RepoProps): string {
         ? `<div style="margin-top:8px;font-size:12.5px;color:var(--fg-40)">A 7-day rate appears after a week of captured runs.</div>`
         : spark(f.trend, "var(--amber)", 40)}
     <div style="margin-top:10px">${f.rows.map((r) => `<div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) 82px;gap:10px;align-items:center;padding:10px 4px;${TOP}">
-      <span style="display:inline-flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--red);flex:none">✕</span><span style="font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.workflow)}</span></span>
-      <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.branch)}</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;min-width:0"><span style="font-family:var(--label);font-size:12px;font-weight:600;color:var(--red);flex:none">✕</span><span style="font-family:var(--label);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.workflow)}</span></span>
+      <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.branch)}</span>
       <span style="font-size:12px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.job)}</span>
       <span style="text-align:right;white-space:nowrap"><span style="font-size:11px;color:var(--fg-40)">${esc(ago(r.at, now))} · </span><a href="${attr(safeUrl(r.url))}" target="_blank" rel="noopener" class="repo-link" style="font-size:11.5px">Logs ↗</a></span>
     </div>`).join("")}</div>`);
@@ -442,13 +442,13 @@ function ciTab(p: RepoProps): string {
   return `<div ${rise(0, `padding:18px 20px 4px`)}>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <span style="${LABEL}">Deploy history — last 10</span>
-        <span style="display:${okData(p, (d) => d.deploys) ? "inline-flex" : "none"};gap:14px;font-size:10.5px;font-family:var(--mono);color:var(--fg-40)">${(["ok", "fail", "cancel"] as const).map((k) => `<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:${RESULT[k][0]}"></span>${RESULT[k][1].toLowerCase()}</span>`).join("")}</span>
+        <span style="display:${okData(p, (d) => d.deploys) ? "inline-flex" : "none"};gap:14px;font-size:10.5px;font-family:var(--label);color:var(--fg-40)">${(["ok", "fail", "cancel"] as const).map((k) => `<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:${RESULT[k][0]}"></span>${RESULT[k][1].toLowerCase()}</span>`).join("")}</span>
       </div>
       ${deploys}
     </div>
     <div ${rise(1, `display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,1fr);${TOP};flex:1`, "repo-split")}>
       <div style="padding:18px 20px;min-width:0;display:flex;flex-direction:column">
-        <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">CI failures — 7-day rate</span>${fails && fails.rate !== null ? `<span style="font-family:var(--mono);font-size:16px;font-weight:600;white-space:nowrap;color:var(--amber)">${fails.rate.toFixed(1)}%</span>` : ""}</div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL}">CI failures — 7-day rate</span>${fails && fails.rate !== null ? `<span style="font-family:var(--label);font-size:16px;font-weight:600;white-space:nowrap;color:var(--amber)">${fails.rate.toFixed(1)}%</span>` : ""}</div>
         ${failures}
       </div>
       <div style="${LEFT};min-width:0;display:flex;flex-direction:column" class="repo-split-r">
@@ -480,14 +480,14 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
     `<div style="${TOP};padding:12px 0">
       <div style="display:flex;align-items:baseline;justify-content:space-between"><span style="${LABEL_SM}">${label}</span>${
         m
-          ? `<span style="font-family:var(--mono);font-size:17px;font-weight:600;white-space:nowrap;${valueColor ? `color:${valueColor}` : ""}">${esc(m.value)}</span>`
+          ? `<span style="font-family:var(--label);font-size:17px;font-weight:600;white-space:nowrap;${valueColor ? `color:${valueColor}` : ""}">${esc(m.value)}</span>`
           : `<span style="font-size:11.5px;color:var(--fg-40)">${absent}</span>`
       }</div>
       ${m ? spark(m.trend, stroke, 40, 8) : ""}
     </div>`;
   const errC = e.errorRate ? TONE[e.errorRate.tone === "neutral" ? "good" : e.errorRate.tone] : "";
   return `<div style="padding:18px 20px 4px;min-width:0;${i ? LEFT : ""}">
-    <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><span style="font-size:15px;font-weight:600;flex:1">${esc(e.name)}</span><span style="font-family:var(--mono);font-size:10px;color:var(--fg-40)">${esc(e.host)}</span></div>
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><span style="font-size:15px;font-weight:600;flex:1">${esc(e.name)}</span><span style="font-family:var(--label);font-size:10px;color:var(--fg-40)">${esc(e.host)}</span></div>
     ${metric("Requests", e.requests, "var(--accent)", "", absentLabel(e.seen.requests))}
     ${metric("Error rate", e.errorRate, errC, errC, e.requests ? "—" : absentLabel(e.seen.requests))}
     ${metric("Active users", e.users, "var(--blue)", "", absentLabel(e.seen.users))}
@@ -509,7 +509,7 @@ function usageEnv(e: RepoUsageEnv, i: number): string {
 // recent reading" (and draws no stale trend); an absent key is absent. Labels,
 // notes, titles and environment names originate in ANOTHER service — every one
 // goes through `esc()` / `attr()`.
-const NUM = "font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap";
+const NUM = "font-family:var(--label);font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap";
 const QUIET = "font-size:11.5px;color:var(--fg-40)";
 const HEADLINE_KEYS = ["signups", "tutor_sessions", "llm_cost_cents", "errors_5xx", "chat_messages", "logins", "quizzes_completed"];
 const AI_LEAD = "llm_cost_cents";
@@ -741,9 +741,9 @@ function productSection(p: RepoProps, i: number): string {
     ? `<div class="repo-seg" role="group" aria-label="Environment" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px;min-width:0;max-width:100%;overflow-x:auto">${envs.map((e) => {
         const on = e === shown;
         // The one already showing takes no action: pressing it again must not replay the cross-fade.
-        return `<button ${on ? "" : `data-act="repoProductEnv" `}data-arg="${attr(e.name)}" aria-pressed="${on}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"}">${esc(e.name)}</button>`;
+        return `<button ${on ? "" : `data-act="repoProductEnv" `}data-arg="${attr(e.name)}" aria-pressed="${on}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--label);white-space:nowrap;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"}">${esc(e.name)}</button>`;
       }).join("")}</div>`
-    : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(shown.name)}</span>`;
+    : `<span style="font-family:var(--label);font-size:11.5px;font-weight:600;color:var(--fg-70)">${esc(shown.name)}</span>`;
   const aside = `<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px 14px;min-width:0"><span style="font-size:11px;color:var(--fg-40)">reported by the app · counts over ${esc(p.range)}</span>${seg}</div>`;
   return `<div style="${TOP};min-width:0">
       <div ${rise(i)}>${head(aside)}</div>
@@ -781,7 +781,7 @@ function pollOutcome(o: PollOutcome): string {
   // What a FAILED poll stored anyway is not part of the failure: muted, not red.
   const landed = o.status === "failed" && o.written > 0 ? `<span style="color:${MUTED}"> — ${o.written} new</span>` : "";
   // "*" is the whole source (an arm that threw), not an environment called "*".
-  return `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}</span> <span style="color:${color}">${esc(text)}</span>${landed}</span>`;
+  return `<span><span style="font-family:var(--label);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}</span> <span style="color:${color}">${esc(text)}</span>${landed}</span>`;
 }
 const pollSource = (s: UsagePollSource): string =>
   s === "not_configured" || !Array.isArray(s) ? `<span style="color:${MUTED}">not configured</span>`
@@ -796,7 +796,7 @@ function pollHealth(s: UsagePollSource | undefined): string {
   if (!s.length) return `<span style="color:${MUTED}">no environment configured</span>`;
   const up = s.filter((o) => o.status === "ok").length;
   const downs = s.filter((o) => o.status !== "ok").map((o) =>
-    `<span><span style="font-family:var(--mono);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}${o.part ? ` ${esc(PART_NAME[o.part] ?? o.part)}` : ""}</span> <span style="color:${TONE.bad}">${esc(`✗ ${o.detail ?? "down"}`)}</span></span>`);
+    `<span><span style="font-family:var(--label);font-weight:600;color:var(--fg-70)">${esc(o.env === "*" ? "all" : o.env)}${o.part ? ` ${esc(PART_NAME[o.part] ?? o.part)}` : ""}</span> <span style="color:${TONE.bad}">${esc(`✗ ${o.detail ?? "down"}`)}</span></span>`);
   return [...(up || !downs.length ? [`<span style="color:${TONE.good}">${up} up</span>`] : []), ...downs].join(SEP);
 }
 /** GitHub: the reconcile's counts, or the arms that failed BY NAME, or why it did not run. */
@@ -843,7 +843,7 @@ export function errorShare(requests: string | undefined, errors: string | undefi
 function usageTab(p: RepoProps): string {
   const usageLive = okData(p, (d) => d.usage) !== null;
   const ranges = `<div class="repo-seg" style="display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px">${REPO_RANGES.map((r) =>
-    `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--mono);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
+    `<button data-act="repoRange" data-arg="${r}" aria-pressed="${p.range === r}" style="padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;font-family:var(--label);color:${p.range === r ? "var(--fg)" : "var(--fg-55)"};background:${p.range === r ? "var(--hover)" : "transparent"}">${r}</button>`).join("")}</div>`;
 
   const usage = sec(p, (d) => d.usage, { nc: "No usage captured yet. Requests and error rate come from the hourly Cloudflare analytics poll (CF_ANALYTICS_TOKEN and CF_ANALYTICS_ACCOUNT_ID); active users come from the app's own metrics endpoint (SAPLING_METRICS_TOKEN). Both need an environment in REPO_ENVIRONMENTS.", empty: "No current usage reading — the hourly polls have gone quiet.", lines: 4 }, (u) =>
     `<div class="repo-swap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))">${u[p.range].map(usageEnv).join("")}</div>`);
@@ -856,7 +856,7 @@ function usageTab(p: RepoProps): string {
   const envCols = (cols: string[]): string =>
     `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:18px 28px;margin-top:4px">${cols.join("")}</div>`;
   const envName = (name: string): string =>
-    `<div style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg-70);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>`;
+    `<div style="font-family:var(--label);font-size:11.5px;font-weight:600;color:var(--fg-70);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>`;
   // "0.48 vCPU" → the figure at size, its unit quiet beside it (the same string, split at the space).
   const stat = (value: string, label: string, size = 21): string => {
     const [, fig, unit] = /^(\S+)\s+(.+)$/.exec(value) ?? [null, value, ""];
@@ -911,11 +911,11 @@ function planningTab(p: RepoProps): string {
     const due = sp.due ? new Date(sp.due).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).toUpperCase() : null;
     return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="${LABEL}">Current sprint</span>
-        ${due ? `<span style="margin-left:auto;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-55);border:1px solid var(--border);border-radius:5px;padding:2px 7px;white-space:nowrap">DUE ${esc(due)}</span>` : ""}
+        ${due ? `<span style="margin-left:auto;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-55);border:1px solid var(--border);border-radius:5px;padding:2px 7px;white-space:nowrap">DUE ${esc(due)}</span>` : ""}
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
         <button data-act="openSprint" data-arg="${sp.id}" class="repo-quiet" style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:0">${esc(sp.label)}</button>
-        <span style="font-family:var(--mono);font-size:13px;font-weight:600;color:var(--accent);flex:none"><span data-count="${sp.pct}">${sp.pct}</span>%</span>
+        <span style="font-family:var(--label);font-size:13px;font-weight:600;color:var(--accent);flex:none"><span data-count="${sp.pct}">${sp.pct}</span>%</span>
         <span style="font-size:12px;color:var(--fg-40);flex:none;white-space:nowrap">${sp.closed} closed · ${sp.total - sp.closed} open</span>
       </div>
       <div style="height:9px;border-radius:999px;background:var(--hover);overflow:hidden;margin-top:12px"><div class="repo-fill" style="height:100%;width:${sp.pct}%;background:var(--accent);border-radius:999px"></div></div>`;
@@ -929,9 +929,9 @@ function planningTab(p: RepoProps): string {
     return rows.map((r, i) => {
       const color = r.person.color ? `var(--p-${r.person.color})` : "var(--fg-40)";
       return `<div style="display:grid;grid-template-columns:112px minmax(0,1fr) 74px;gap:12px;align-items:center;padding:5.5px 0;${TOP}">
-        <span style="display:inline-flex;align-items:center;gap:7px;min-width:0">${avatar(r.person, 20)}<span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(who(r.person))}</span></span>
+        <span style="display:inline-flex;align-items:center;gap:7px;min-width:0">${avatar(r.person, 20)}<span style="font-family:var(--label);font-size:11.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(who(r.person))}</span></span>
         <span style="display:block;height:6px;border-radius:999px;background:var(--hover);overflow:hidden"><span class="repo-fill" style="--i:${i};display:block;height:100%;border-radius:999px;background:${color};width:${Math.round(((r.pushes + r.merged + (r.reviews ?? 0)) / max) * 100)}%"></span></span>
-        <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);text-align:right">${r.pushes} · ${r.merged} · ${r.reviews === null ? "—" : r.reviews}</span>
+        <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55);text-align:right">${r.pushes} · ${r.merged} · ${r.reviews === null ? "—" : r.reviews}</span>
       </div>`;
     }).join("");
   });
@@ -942,9 +942,9 @@ function planningTab(p: RepoProps): string {
     return l.rows.map((r, i) => {
       const bug = r.name.toLowerCase() === "bug";
       return `<div style="display:grid;grid-template-columns:110px minmax(0,1fr) 30px;gap:12px;align-items:center;padding:9px 0;${TOP}">
-        <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
+        <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
         <span style="display:block;height:6px;border-radius:999px;background:var(--hover);overflow:hidden"><span class="repo-fill" style="--i:${i};display:block;height:100%;border-radius:999px;background:${bug ? "var(--red)" : "var(--border-strong)"};width:${Math.round((r.count / max) * 100)}%"></span></span>
-        <span style="font-family:var(--mono);font-size:12px;font-weight:600;text-align:right;color:${bug ? "var(--red)" : "var(--fg)"}">${r.count}</span>
+        <span style="font-family:var(--label);font-size:12px;font-weight:600;text-align:right;color:${bug ? "var(--red)" : "var(--fg)"}">${r.count}</span>
       </div>`;
     }).join("");
   });
@@ -956,8 +956,8 @@ function planningTab(p: RepoProps): string {
   // days", not "nothing has ever scanned this".
   const todos = sec(p, (d) => d.todos, { nc: "No TODO / FIXME count reported yet. It appears once the repo's CI posts a canopy/todo commit status on a push to the default environment branch; it is read from a status webhook event, the 6-hourly GitHub reconcile, or Poll now.", empty: "No count reported in the last 90 days." }, (t) =>
     `<div style="display:flex;align-items:baseline;gap:12px;margin-top:10px">
-      <span data-count="${t.count}" style="font-family:var(--mono);font-size:31px;font-weight:600;letter-spacing:-0.02em">${t.count}</span>
-      ${t.delta === null ? "" : `<span style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
+      <span data-count="${t.count}" style="font-family:var(--label);font-size:31px;font-weight:600;letter-spacing:-0.02em">${t.count}</span>
+      ${t.delta === null ? "" : `<span style="font-family:var(--label);font-size:11.5px;font-weight:600;color:${t.delta <= 0 ? "var(--green)" : "var(--amber)"}">${t.delta < 0 ? "−" : "+"}${Math.abs(t.delta)}</span>
       <span style="font-size:11px;color:var(--fg-40)">since ${esc(t.since)}</span>`}
     </div>
     ${spark(t.trend, "var(--fg-55)", 52, 12)}
@@ -966,7 +966,7 @@ function planningTab(p: RepoProps): string {
   return `<div ${rise(0, `padding:20px 22px`)}>${sprintLive ? sprint : `<div style="${LABEL}">Current sprint</div>${sprint}`}</div>
     <div ${rise(1, `display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));${TOP};flex:1`)}>
       <div style="padding:16px 20px;min-width:0">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="${LABEL}">Contributors this week</span><span title="pushes · merged PRs · reviews" style="font-family:var(--mono);font-size:10px;color:var(--fg-40);letter-spacing:.04em">P · M · R</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span style="${LABEL}">Contributors this week</span><span title="pushes · merged PRs · reviews" style="font-family:var(--label);font-size:10px;color:var(--fg-40);letter-spacing:.04em">P · M · R</span></div>
         ${contributors}
       </div>
       <div style="padding:16px 20px;${LEFT};min-width:0">
@@ -999,7 +999,7 @@ export function repoView(p: RepoProps): string {
   const info = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--fg-40)" stroke-width="1.8" style="flex:none"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>`;
   const banner = p.sample
     ? `<div class="cnpy-rise" style="display:flex;align-items:center;gap:9px;margin-bottom:16px;font-size:12.5px;color:var(--fg-55)">${info}
-        <span><span style="font-family:var(--mono);font-size:11.5px;color:var(--fg);background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 5px">sample data</span> — every section shown with placeholder values, not this repo's.</span>
+        <span><span style="font-family:var(--label);font-size:11.5px;color:var(--fg);background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 5px">sample data</span> — every section shown with placeholder values, not this repo's.</span>
         <button data-act="repoSampleOff" class="repo-textbtn" style="margin-left:auto;font-size:12.5px;font-weight:500;color:var(--accent);padding:0;white-space:nowrap">Back to live data</button>
       </div>`
     : p.repo.data?.degraded

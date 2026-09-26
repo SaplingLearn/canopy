@@ -65,7 +65,7 @@ export function reviewFilterChips(filter: ReviewFilter): string {
 
 /** One review queue row — mirrors the detail header: title first, status badge
  *  up-right on the title row, 2-line summary, then a byline that folds the
- *  record type · identifier (mono) into the author · date. */
+ *  record type · identifier (label-face) into the author · date. */
 export function reviewCard(it: ReviewItem, selected: boolean): string {
   const { type, id } = splitEyebrow(it.eyebrow);
   const dot = `<span style="color:var(--fg-40)">·</span>`;
@@ -79,7 +79,7 @@ export function reviewCard(it: ReviewItem, selected: boolean): string {
       <div style="font-size:12.5px;color:var(--fg-55);margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(it.summary)}</div>
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11.5px;color:var(--fg-55)">
         ${type ? `<span>${esc(type)}</span>` : ""}
-        ${id ? `${dot}<span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">${esc(id)}</span>` : ""}
+        ${id ? `${dot}<span style="font-family:var(--label);font-size:11px;color:var(--fg-55)">${esc(id)}</span>` : ""}
         ${dot}<span style="display:inline-flex;align-items:center;gap:6px">${agentBit(it, 18)}</span>
         ${dot}<span style="color:var(--fg-40)">${esc(it.time)}</span>
       </div>
@@ -101,21 +101,21 @@ export function reviewListEmpty(): string {
 // ── detail pane pieces ───────────────────────────────────────────────────────
 export function staleBaseWarning(note: string): string {
   return `<div style="border:1px solid var(--border);border-left:2px solid var(--amber);border-radius:9px;padding:11px 15px;margin-top:18px;display:flex;gap:10px;align-items:baseline">
-    <div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--amber);flex:none">STALE BASE</div>
+    <div style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--amber);flex:none">STALE BASE</div>
     <div style="font-size:12.5px;color:var(--fg-70)">${esc(note)}</div>
   </div>`;
 }
 
 // ── diff viewer ──────────────────────────────────────────────────────────────
 function diffLineStyle(t: DiffEntryKind): string {
-  const base = "font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;white-space:pre-wrap;color:var(--fg-55);border-left:2px solid transparent";
+  const base = "font-family:var(--code);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;white-space:pre-wrap;color:var(--fg-55);border-left:2px solid transparent";
   if (t === "del") return `${base};border-left:2px solid var(--red);background:color-mix(in srgb,var(--red) 7%,transparent)`;
   if (t === "add") return `${base};border-left:2px solid var(--green);background:color-mix(in srgb,var(--green) 7%,transparent);color:var(--fg-70)`;
   if (t === "h") return `${base};color:var(--fg);font-weight:600`;
   return base;
 }
 const GAP_STYLE = "height:14px;border-bottom:1px solid var(--border);margin-bottom:14px";
-const ELLIPSIS_STYLE = "font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--fg-40);text-align:center;padding:6px 16px;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:6px 0";
+const ELLIPSIS_STYLE = "font-family:var(--label);font-size:11px;letter-spacing:.04em;color:var(--fg-40);text-align:center;padding:6px 16px;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:6px 0";
 
 function diffPrefix(t: DiffEntryKind): string {
   const color = t === "del" ? "var(--red)" : t === "add" ? "var(--green)" : "var(--fg-40)";
@@ -164,7 +164,7 @@ function splitCellHtml(c: SplitCell, isLeft: boolean): string {
   const borderRight = isLeft ? ";border-right:1px solid var(--border)" : "";
   if (c.t === "gap") return `<div style="${GAP_STYLE}${borderRight}"></div>`;
   if (c.t === "ellipsis") return `<div style="${ELLIPSIS_STYLE}${borderRight}">${esc(c.text)}</div>`;
-  if (c.t === "empty") return `<div style="font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;border-left:2px solid transparent;color:transparent${borderRight}">·</div>`;
+  if (c.t === "empty") return `<div style="font-family:var(--label);font-size:12.5px;line-height:1.75;padding:2px 16px 2px 12px;border-left:2px solid transparent;color:transparent${borderRight}">·</div>`;
   return `<div style="${diffLineStyle(c.t)}${borderRight}">${esc(c.text)}</div>`;
 }
 
@@ -174,8 +174,8 @@ export function splitDiff(entries: DiffEntry[], liveLabel: string): string {
   ).join("");
   return `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
     <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border)">
-      <div style="padding:8px 14px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);border-right:1px solid var(--border)">${esc(liveLabel)}</div>
-      <div style="padding:8px 14px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--accent)">PROPOSED</div>
+      <div style="padding:8px 14px;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);border-right:1px solid var(--border)">${esc(liveLabel)}</div>
+      <div style="padding:8px 14px;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--accent)">PROPOSED</div>
     </div>
     <div style="padding:8px 0">${rows}</div>
   </div>`;
@@ -266,13 +266,17 @@ function splitEyebrow(eyebrow: string): { type: string; id: string } {
   return { type, id };
 }
 
+// The header's status chips and its two buttons are ONE height, so the row reads as a set.
+const HEAD_BTN = "box-sizing:border-box;height:34px;display:inline-flex;align-items:center;border-radius:8px;font-size:12.5px";
+const HEAD_CHIP = "box-sizing:border-box;height:34px;display:inline-flex;align-items:center;border-radius:8px;padding:0 12px;font-size:11.5px";
+
 export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
   const acceptLabel = it.kind === "decision" ? "Ratify" : "Promote";
   const content = it.kind === "decision"
     ? adrRecord(it.adr ?? [])
     : diffViewer(it.diff ?? [], diffView, it.liveVersion ?? "LIVE");
   const { type, id } = splitEyebrow(it.eyebrow);
-  // Byline: record type · identifier (mono, reads as a reference) · author · date.
+  // Byline: record type · identifier (label-face, reads as a reference) · author · date.
   const dot = `<span style="color:var(--fg-40)">·</span>`;
   return `<div style="max-width:920px;padding:24px 32px 100px">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px">
@@ -280,15 +284,15 @@ export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
         <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.02em">${esc(it.title)}</h2>
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px;font-size:12px;color:var(--fg-55)">
           ${type ? `<span>${esc(type)}</span>` : ""}
-          ${id ? `${dot}<span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">${esc(id)}</span>` : ""}
+          ${id ? `${dot}<span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55)">${esc(id)}</span>` : ""}
           ${dot}<span style="display:inline-flex;align-items:center;gap:6px">${agentBit(it, 18)}</span>
           ${dot}<span style="color:var(--fg-40)">${esc(it.time)}</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">
-        ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)") : ""}
-        <button data-act="reviewReject" data-arg="${attr(it.id)}" class="cnpy-rejectbtn" style="background:transparent;border:1px solid var(--border-strong);border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Reject</button>
-        <button data-act="reviewAccept" data-arg="${attr(it.id)}" class="cnpy-accentbtn" style="background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:9px 17px;font-size:13px;font-weight:600">${acceptLabel}</button>
+        ${statusBadge(it.badge, it.badgeColor, HEAD_CHIP)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)", HEAD_CHIP) : ""}
+        <button data-act="reviewReject" data-arg="${attr(it.id)}" class="cnpy-rejectbtn" style="${HEAD_BTN};background:transparent;border:1px solid var(--border-strong);padding:0 14px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Reject</button>
+        <button data-act="reviewAccept" data-arg="${attr(it.id)}" class="cnpy-accentbtn" style="${HEAD_BTN};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:0 17px;font-weight:600">${acceptLabel}</button>
       </div>
     </div>
     ${it.stale && it.staleNote ? staleBaseWarning(it.staleNote) : ""}

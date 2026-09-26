@@ -7,7 +7,7 @@ import type { NotificationOutboxRow, NotificationSettingsRow } from "@shared/row
 import { esc, attr } from "./ui";
 import { maintSectionHeader, maintEmpty } from "./maintenance";
 
-const MONO = "font-family:var(--mono)";
+const LABEL = "font-family:var(--label)";
 const cadCap = (c: Cadence): string => (c === "off" ? "Off" : c.charAt(0).toUpperCase() + c.slice(1));
 const segStyle = (on: boolean): string =>
   `padding:4px 12px;border-radius:7px;font-size:12px;font-weight:500;color:${on ? "var(--fg)" : "var(--fg-55)"};background:${on ? "var(--hover)" : "transparent"};transition:all .12s ease`;
@@ -20,11 +20,11 @@ const switchBtn = (act: string, arg: string | null, on: boolean): string =>
 
 const CHEVRON_BG = `var(--bg) url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23888' stroke-width='2'><path d='M2 4l4 4 4-4'/></svg>\") no-repeat right 9px center`;
 const SELECT = `appearance:none;-webkit-appearance:none;padding:5px 28px 5px 11px;border-radius:7px;font-size:12.5px;font-weight:500;border:1px solid var(--border);color:var(--fg-70);background:${CHEVRON_BG};cursor:pointer`;
-const FORM_SELECT = `appearance:none;-webkit-appearance:none;width:100%;height:36px;padding:0 30px 0 12px;border-radius:8px;font-size:12.5px;font-weight:500;${MONO};border:1px solid var(--border-strong);color:var(--fg);background:${CHEVRON_BG};cursor:pointer`;
-const INPUT = `height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;${MONO};outline:none`;
+const FORM_SELECT = `appearance:none;-webkit-appearance:none;width:100%;height:36px;padding:0 30px 0 12px;border-radius:8px;font-size:12.5px;font-weight:500;${LABEL};border:1px solid var(--border-strong);color:var(--fg);background:${CHEVRON_BG};cursor:pointer`;
+const INPUT = `height:40px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;${LABEL};outline:none`;
 const ACCENT_BTN = `padding:0 18px;height:40px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:13.5px;font-weight:600`;
 const GHOST_BTN = `height:40px;border-radius:9px;border:1px solid var(--border-strong);font-size:13px;font-weight:500`;
-const SECTION_LABEL = `font-size:11px;font-weight:600;${MONO};text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px`;
+const SECTION_LABEL = `font-size:11px;font-weight:600;${LABEL};text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px`;
 
 // ── Settings › Email notifications ───────────────────────────────────────────
 
@@ -64,7 +64,7 @@ function emailRow(p: NotifSettingsProps, email: string | null): string {
     : `<div style="display:flex;align-items:center;justify-content:space-between;gap:16px">
         <div style="min-width:0">
           <div style="font-size:13.5px;font-weight:500">Digest address</div>
-          <div style="font-size:13px;color:var(--fg-70);${MONO};margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(email)}</div>
+          <div style="font-size:13px;color:var(--fg-70);${LABEL};margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(email)}</div>
         </div>
         <button data-act="emailStartEdit" class="cnpy-ghostbtn" style="flex:none;padding:7px 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500">Edit</button>
       </div>`;
@@ -76,7 +76,7 @@ function kindRow(k: PrefsView["kinds"][number]): string {
     .map((c) => `<button data-act="setKindCadence" data-arg="${attr(`${k.id}:${c}`)}" style="${segStyle(c === k.cadence)}">${cadCap(c)}</button>`)
     .join("");
   const marker = k.inherited
-    ? `<span style="font-size:10px;font-weight:600;${MONO};letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">ORG DEFAULT</span>`
+    ? `<span style="font-size:10px;font-weight:600;${LABEL};letter-spacing:.05em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">ORG DEFAULT</span>`
     : `<button data-act="resetKind" data-arg="${attr(k.id)}" style="font-size:11.5px;font-weight:500;color:var(--accent);text-decoration:underline;text-underline-offset:3px;padding:0">Reset to default</button>`;
   return `<div style="display:flex;align-items:center;gap:18px;${TILE_ROW}">
     <div style="flex:1;min-width:0">
@@ -131,7 +131,7 @@ export function unsubscribeView(p: { email: string | null; pending: boolean; err
     ? "One moment."
     : p.error
     ? esc(p.error)
-    : `No more digests will be sent${p.email ? ` to <span style="${MONO};font-size:12.5px">${esc(p.email)}</span>` : ""}. Nothing else about your account changed.`;
+    : `No more digests will be sent${p.email ? ` to <span style="${LABEL};font-size:12.5px">${esc(p.email)}</span>` : ""}. Nothing else about your account changed.`;
   return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px;background:var(--bg);color:var(--fg)">
     <div style="width:400px;max-width:100%">
       <div style="display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:36px">
@@ -189,9 +189,9 @@ function fmtWhen(iso: string | null): string {
 function outboxRow(o: NotificationOutboxRow, expanded: boolean): string {
   const failed = o.status === "failed";
   const statusStyle = `font-size:12.5px;font-weight:${failed ? 600 : 500};color:${o.status === "sent" ? "var(--accent)" : failed ? "var(--fg)" : "var(--fg-55)"};display:inline-flex;align-items:center;gap:6px`;
-  const cells = `<div style="${MONO};font-size:12.5px;color:var(--fg-70)">${esc(o.user_id)}</div>
+  const cells = `<div style="${LABEL};font-size:12.5px;color:var(--fg-70)">${esc(o.user_id)}</div>
     <div style="font-size:12.5px;color:var(--fg-55)">${esc(o.cadence)}</div>
-    <div style="${MONO};font-size:12px;color:var(--fg-55)">${esc(o.window_id)}</div>
+    <div style="${LABEL};font-size:12px;color:var(--fg-55)">${esc(o.window_id)}</div>
     <div style="${statusStyle}">${esc(o.status)}${failed ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="transform:${expanded ? "rotate(180deg)" : "none"};transition:transform .15s ease;flex:none;color:var(--fg-40)"><path d="m6 9 6 6 6-6"></path></svg>` : ""}</div>
     <div style="font-size:12px;color:var(--fg-55);text-align:right">${esc(o.status === "pending" ? "queued" : fmtWhen(o.sent_at ?? o.created_at))}</div>`;
   const grid = "display:grid;grid-template-columns:1.1fr .6fr 1fr .9fr .9fr;gap:12px;align-items:center;padding:11px 0";
@@ -200,7 +200,7 @@ function outboxRow(o: NotificationOutboxRow, expanded: boolean): string {
     : `<div style="${grid}">${cells}</div>`;
   const detail = failed && expanded
     ? `<div style="margin:2px 0 14px;border:1px solid var(--border-strong);border-radius:9px;padding:12px 14px">
-        <div style="${MONO};font-size:12px;line-height:1.7;color:var(--fg)">${esc(o.error ?? "failed")}</div>
+        <div style="${LABEL};font-size:12px;line-height:1.7;color:var(--fg)">${esc(o.error ?? "failed")}</div>
         <div style="font-size:11.5px;color:var(--fg-40);margin-top:6px">Retried hourly for 48 hours, then left as is. The next window sends normally once the cause is fixed.</div>
       </div>`
     : "";
@@ -220,33 +220,33 @@ export function notificationsMaintenanceSections(p: NotifMaintenanceProps): stri
   const tzs = tzList.map((tz) => `<option value="${attr(tz)}"${s && s.timezone === tz ? " selected" : ""}>${esc(tz)}</option>`).join("");
   const schedule = `<div style="display:grid;grid-template-columns:140px 230px minmax(0,1fr);gap:16px;padding:18px 0;border-bottom:1px solid var(--border)">
     <div>
-      <div style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">SEND HOUR</div>
+      <div style="${LABEL};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">SEND HOUR</div>
       <select data-act="schedHour" style="${FORM_SELECT}"${s ? "" : " disabled"}>${hours}</select>
     </div>
     <div>
-      <div style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">TIMEZONE</div>
+      <div style="${LABEL};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">TIMEZONE</div>
       <select data-act="schedTz" style="${FORM_SELECT}"${s ? "" : " disabled"}>${tzs}</select>
     </div>
     <div>
-      <div style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">FROM ADDRESS</div>
-      <input data-act="schedFrom" data-field="schedFrom" data-commit="1" value="${attr(p.fromDraft ?? s?.from_address ?? "")}"${s ? "" : " disabled"} style="width:100%;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;${MONO};outline:none" />
+      <div style="${LABEL};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40);margin-bottom:8px">FROM ADDRESS</div>
+      <input data-act="schedFrom" data-field="schedFrom" data-commit="1" value="${attr(p.fromDraft ?? s?.from_address ?? "")}"${s ? "" : " disabled"} style="width:100%;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;${LABEL};outline:none" />
     </div>
   </div>
   <div style="font-size:11.5px;color:var(--fg-40);margin-top:10px">Digests assemble on the hour. A window with nothing to say is skipped, not sent empty. The from address saves when you leave the field.</div>
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px">
-    <span style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">PREVIEW</span>
+    <span style="${LABEL};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">PREVIEW</span>
     <a href="/api/notifications/preview?cadence=daily" target="_blank" rel="noopener" class="cnpy-ghostbtn" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg);text-decoration:none">Daily</a>
     <a href="/api/notifications/preview?cadence=weekly" target="_blank" rel="noopener" class="cnpy-ghostbtn" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border-strong);font-size:12px;font-weight:500;color:var(--fg);text-decoration:none">Weekly</a>
     <a href="/api/notifications/preview?cadence=daily&amp;sample=1" target="_blank" rel="noopener" class="cnpy-ghostbtn" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);font-size:12px;font-weight:500;color:var(--fg-55);text-decoration:none">Sample data</a>
     <span style="width:1px;height:18px;background:var(--border)"></span>
-    <span style="${MONO};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">SEND TEST TO ME</span>
+    <span style="${LABEL};font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">SEND TEST TO ME</span>
     <button data-act="testSend" data-arg="daily" class="cnpy-accentbtn" style="padding:6px 12px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12px;font-weight:600">Daily</button>
     <button data-act="testSend" data-arg="weekly" class="cnpy-accentbtn" style="padding:6px 12px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:12px;font-weight:600">Weekly</button>
   </div>
   <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px">Preview renders your own digest with live data (prefs ignored). A test send goes to your address through the real delivery path and shows up in the outbox below; when nothing has changed it falls back to sample data.</div>`;
 
   const outbox = p.outbox.length
-    ? `<div style="display:grid;grid-template-columns:1.1fr .6fr 1fr .9fr .9fr;gap:12px;padding:10px 0 8px;border-bottom:1px solid var(--border);${MONO};font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">
+    ? `<div style="display:grid;grid-template-columns:1.1fr .6fr 1fr .9fr .9fr;gap:12px;padding:10px 0 8px;border-bottom:1px solid var(--border);${LABEL};font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">
         <div>USER</div><div>CADENCE</div><div>WINDOW</div><div>STATUS</div><div style="text-align:right">AT</div>
       </div>` + p.outbox.map((o) => outboxRow(o, p.outboxExpanded === o.idempotency_key)).join("")
     : maintEmpty("No sends yet", "Runs appear here after the first scheduled window.");
