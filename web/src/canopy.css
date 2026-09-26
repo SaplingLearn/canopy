@@ -268,7 +268,11 @@ input, select { font-family: inherit; }
 .cnpy-set-wrap { container:cnpy-set / inline-size; }
 .cnpy-set { max-width:1180px; margin:0 auto; padding:24px 32px 32px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-auto-flow:dense; gap:14px; align-items:stretch; }
 .cnpy-tile { min-width:0; border:1px solid var(--border); border-radius:16px; padding:20px 22px; background:color-mix(in srgb,var(--fg) 2.5%,transparent); }
-.cnpy-set-full, .cnpy-set-appear { grid-column:1 / -1; }
+.cnpy-set-full { grid-column:1 / -1; }
+/* Three columns: MCP access holds the right column for two rows and Appearance sits
+   under Profile + Account only, so it never pushes into MCP access. */
+.cnpy-set-mcp { grid-row:span 2; }
+.cnpy-set-appear { grid-column:span 2; }
 .cnpy-set-pairs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:40px; }
 .cnpy-set-themes { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
 .cnpy-set .cnpy-sw.compact { padding:6px 0; }
@@ -283,6 +287,7 @@ input, select { font-family: inherit; }
 .cnpy-set-grants { flex:none; max-height:114px; overflow-y:auto; }
 @container cnpy-set (max-width:999px) {
   .cnpy-set { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .cnpy-set-mcp { grid-row:auto; }
   .cnpy-set-appear { grid-column:auto; }
   .cnpy-set-appear .cnpy-set-themes { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .cnpy-set-pairs { grid-template-columns:minmax(0,1fr); }

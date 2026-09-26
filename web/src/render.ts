@@ -1707,17 +1707,16 @@ function settingsView(s: AppState): string {
 
   const tokenList = tokenListBody(s);
 
-  // Bento on three columns: Profile / Account / tokens across the top — the three tiles
-  // whose natural heights match, so none is stretched hollow; the token and app lists
-  // are fixed-height scrollers, so how many you have never changes that height — then
-  // the Appearance strip and Email at full width. Nothing sits BESIDE the tall tile: whatever does
-  // gets stretched to its height (canopy.css has the folds).
+  // Bento on three columns: Profile / Account on the left two, MCP access down the right
+  // column for two rows with Appearance under Profile + Account beside it, then Email at
+  // full width. The token and app lists are fixed-height scrollers, so how many you have
+  // never changes a tile's height (canopy.css has the folds for narrower widths).
   return `<div class="cnpy-set-wrap"><div class="cnpy-set">
     ${profileSection(s)}
 
     ${accountSection(s)}
 
-    <section class="cnpy-tile" style="display:flex;flex-direction:column">
+    <section class="cnpy-tile cnpy-set-mcp" style="display:flex;flex-direction:column">
       <div style="${SECTION_LABEL}">MCP access</div>
       <div style="font-size:12.5px;font-weight:500;margin-bottom:6px">Sign in with browser <span style="font-weight:400;color:var(--fg-40)">· recommended</span></div>
       <div style="display:flex;align-items:center;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:8px 8px 8px 12px">
