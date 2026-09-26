@@ -195,8 +195,8 @@ describe("reviewDetail — restructured header", () => {
     expect(html).toContain(">Decision<");
     expect(html).toContain("AndresL230");
     expect(html).toContain("Jun 25");
-    // The identifier reads as a reference: monospace.
-    expect(html).toMatch(/font-family:var\(--mono\)[^>]*>ADR-005</);
+    // The identifier reads as a reference: the label face.
+    expect(html).toMatch(/font-family:var\(--label\)[^>]*>ADR-005</);
     // Title is the first element — it precedes the byline record type.
     expect(html.indexOf("Append-only feed as the record")).toBeLessThan(html.indexOf(">Decision<"));
   });
@@ -222,9 +222,9 @@ describe("reviewCard — restructured to match the detail header", () => {
     // Title is first — before the byline record type and before the badge.
     expect(html.indexOf("A decision card title")).toBeLessThan(html.indexOf(">Decision<"));
     expect(html.indexOf("A decision card title")).toBeLessThan(html.indexOf("DRAFT"));
-    // Byline folds type/id/author/date; identifier in monospace.
+    // Byline folds type/id/author/date; identifier in the label face.
     expect(html).toContain(">Decision<");
-    expect(html).toMatch(/font-family:var\(--mono\)[^>]*>ADR-005</);
+    expect(html).toMatch(/font-family:var\(--label\)[^>]*>ADR-005</);
     expect(html).toContain("AndresL230");
     expect(html).toContain("Jun 25");
   });

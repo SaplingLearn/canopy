@@ -8,7 +8,7 @@ const pr = (n: number, title: string, what: string, why: string | null, impact: 
   K.item({
     title, number: n, url: `https://github.com/SaplingLearn/sapling/pull/${n}`,
     rows: [K.row("What changed", K.prose(what)), ...(why ? [K.row("Why", K.prose(why))] : []), ...(impact ? [K.row("Impact", K.prose(impact))] : [])],
-    footer: `${K.chip("MERGED", "green")}<span style="padding-left:8px;">into <span style="font-family:'Geist Mono',ui-monospace,Menlo,monospace;">main</span></span>`,
+    footer: `${K.chip("MERGED", "green")}<span style="padding-left:8px;">into <span style="font-family:'Archivo Narrow',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">main</span></span>`,
     first,
   });
 const issue = (n: number, title: string, summary: string, sprint: string | null, next: string | null, prio: string | null, labels: string[], first = false) =>

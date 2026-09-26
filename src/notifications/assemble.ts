@@ -76,16 +76,17 @@ export const EMAIL_WIDTH = 680;
 const SP = EMAIL_SPACE;
 
 const SANS = "font-family:Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
-const MONO = "font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
-export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600&display=swap";
-export const EMAIL_FONT = { sans: SANS, mono: MONO } as const;
+const LABEL = "font-family:'Archivo Narrow',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;";
+const CODE = "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;";
+export const FONTS_HREF = "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Archivo+Narrow:wght@500;600&display=swap";
+export const EMAIL_FONT = { sans: SANS, label: LABEL } as const;
 
 /** Shared inline-style tokens for the section renderers (mirrors the app's text tiers). */
 export const EMAIL_STYLE = {
-  /** Mono uppercase section label — the app's `.cnpy-treesec` / SECTION_LABEL. */
-  label: `${MONO}font-size:10.5px;line-height:16px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.fg40};`,
-  /** Mono reference cell (#123). */
-  mono: `${MONO}font-size:12px;line-height:20px;color:${C.fg55};vertical-align:top;padding:${SP.xs}px 0;`,
+  /** Uppercase section label — the app's `.cnpy-treesec` / SECTION_LABEL. */
+  label: `${LABEL}font-size:10.5px;line-height:16px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.fg40};`,
+  /** Reference cell (#123). */
+  ref: `${LABEL}font-size:12px;line-height:20px;color:${C.fg55};vertical-align:top;padding:${SP.xs}px 0;`,
   /** Row text. */
   body: `${SANS}font-size:13px;line-height:20px;color:${C.fg};padding:${SP.xs}px 0;`,
   /** Secondary line under a row. */
@@ -118,12 +119,12 @@ const CHIP_TONES: Record<ChipTone, { fg: string; bg: string; bd: string }> = {
  * hooks for the admin preview; mail clients ignore them.
  */
 export const EMAIL_CARD = {
-  /** Small mono chip, e.g. MERGED / P1 / ADDED — callers pass the case they want (status chips uppercase, labels as-is). */
+  /** Small label chip, e.g. MERGED / P1 / ADDED — callers pass the case they want (status chips uppercase, labels as-is). */
   chip(text: string, tone: ChipTone): string {
     const t = CHIP_TONES[tone];
-    return `<span data-chip style="display:inline-block;${MONO}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
+    return `<span data-chip style="display:inline-block;${LABEL}font-size:9.5px;font-weight:600;letter-spacing:.04em;color:${t.fg};background-color:${t.bg};border:1px solid ${t.bd};border-radius:5px;padding:2px 6px;white-space:nowrap;vertical-align:middle;">${text}</span>`;
   },
-  /** One labelled row: 96px mono label + body; `tone` colours the label (Next step is accent). */
+  /** One labelled row: 96px label + body; `tone` colours the label (Next step is accent). */
   row(label: string, body: string, tone: "muted" | "accent" = "muted"): string {
     return `<tr data-row><td data-row-label width="96" style="${EMAIL_STYLE.label}line-height:20px;color:${tone === "accent" ? C.accentText : C.fg40};vertical-align:top;padding:${SP.xs}px 10px ${SP.xs}px 0;">${label}</td><td data-row-body style="${SANS}font-size:13px;line-height:20px;color:${C.fg70};padding:${SP.xs}px 0;">${body}</td></tr>`;
   },
@@ -136,12 +137,12 @@ export const EMAIL_CARD = {
   },
   /** Escaped prose with backtick spans styled as code (escape FIRST — bodies never inject HTML). */
   prose(escaped: string): string {
-    return escaped.replace(/`([^`]+)`/g, `<code style="${MONO}font-size:12px;background-color:${C.hover};border-radius:4px;padding:1px 4px;">$1</code>`);
+    return escaped.replace(/`([^`]+)`/g, `<code style="${CODE}font-size:12px;background-color:${C.hover};border-radius:4px;padding:1px 4px;">$1</code>`);
   },
   /** One ledger item: title left, the #number pill (the item's only link) far right on the same line; rows and chips flush beneath. `first` drops the hairline above (the group label sits there instead). */
   item(o: { title: string; number: number | null; url: string | null; rows: string[]; footer?: string; first?: boolean }): string {
     const pill = o.number !== null && o.url
-      ? `<td data-pill-cell align="right" width="1" style="vertical-align:top;padding-left:12px;white-space:nowrap;"><a data-pill href="${o.url}" style="display:inline-block;${MONO}font-size:11.5px;font-weight:600;line-height:16px;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:2px 7px;text-decoration:none;white-space:nowrap;">#${o.number}</a></td>`
+      ? `<td data-pill-cell align="right" width="1" style="vertical-align:top;padding-left:12px;white-space:nowrap;"><a data-pill href="${o.url}" style="display:inline-block;${LABEL}font-size:11.5px;font-weight:600;line-height:16px;color:${C.accentText};background-color:${C.accentSoft};border-radius:6px;padding:2px 7px;text-decoration:none;white-space:nowrap;">#${o.number}</a></td>`
       : "";
     return (
       `<table data-item ${EMAIL_STYLE.table} style="${o.first ? "" : `border-top:1px solid ${C.border};`}"><tr>` +

@@ -52,15 +52,15 @@ const check = (size: number, start: number, extra = "") => `<svg class="site-che
 const AGENT_TAG = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 5px"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M12 8V4M8 13h.01M16 13h.01"></path></svg>agent</span>`;
 
 // ── shared pieces of the canvas's repeated markup ────────────────────────────
-const MONO_EYEBROW = "font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)";
+const MONO_EYEBROW = "font-family:var(--label);font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)";
 const H2 = "margin:0;font-size:clamp(28px, 3.4vw, 38px);font-weight:650;letter-spacing:-0.025em";
 const LEDE = "margin:14px 0 0;max-width:560px;font-size:15.5px;line-height:1.6;color:var(--fg-70);text-wrap:pretty";
 const section = (top = 150) => `max-width:1120px;margin:0 auto;padding:${top}px 24px 0`;
 const MOCK = "flex:1.3 1 400px;min-width:0;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:hidden";
 
-/** A mono status pill; `c` is a color var name (green / amber / blue / red). */
+/** A label-face status pill; `c` is a color var name (green / amber / blue / red). */
 function pill(text: string, c: string, size = "8.5px", pad = "1.5px 5px"): string {
-  return `<span style="font-family:var(--mono);font-size:${size};font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--${c});border:1px solid color-mix(in srgb, var(--${c}) 45%, transparent);background:color-mix(in srgb, var(--${c}) 11%, transparent);border-radius:4px;padding:${pad};flex:none">${text}</span>`;
+  return `<span style="font-family:var(--label);font-size:${size};font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--${c});border:1px solid color-mix(in srgb, var(--${c}) 45%, transparent);background:color-mix(in srgb, var(--${c}) 11%, transparent);border-radius:4px;padding:${pad};flex:none">${text}</span>`;
 }
 function initials(text: string, size = 26, font = "10px"): string {
   return `<span style="width:${size}px;height:${size}px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:${font};font-weight:600;display:grid;place-items:center;flex:none">${text}</span>`;
@@ -134,7 +134,7 @@ function hero(): string {
   const side = (svg: string, label: string) =>
     `<div style="display:flex;align-items:center;gap:9px;padding:6.5px 8px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-55)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none">${svg}</svg>${label}</div>`;
   const sideHead = (label: string, top: string) =>
-    `<div style="font-family:var(--mono);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);padding:${top} 8px 5px">${label}</div>`;
+    `<div style="font-family:var(--label);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);padding:${top} 8px 5px">${label}</div>`;
   const line = (text: string) => `<div style="padding:1px 12px">${text}</div>`;
   const hl = (inner: string, kind: "add" | "del", start: number) => `<div class="site-hl hl-${kind}" style="padding:1px 12px;${at(start)}"><span>${inner}</span></div>`;
   const paneHead = (label: string) => `<div style="padding:7px 12px;border-bottom:1px solid var(--border);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)">${label}</div>`;
@@ -154,7 +154,7 @@ function hero(): string {
     <div ${rv("hero-mock", "rv-lift")} style="margin:72px auto 0;max-width:1060px;text-align:left;border:1px solid var(--border-strong);border-radius:13px;background:var(--bg);box-shadow:var(--shadow);overflow:hidden;${at(MOCK_IN)}">
       <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border)">
         ${dot}${dot}${dot}
-        <span style="margin:0 auto;font-family:var(--mono);font-size:11px;color:var(--fg-40);border:1px solid var(--border);border-radius:6px;padding:3px 14px">canopy.saplinglearn.com/review</span>
+        <span style="margin:0 auto;font-family:var(--label);font-size:11px;color:var(--fg-40);border:1px solid var(--border);border-radius:6px;padding:3px 14px">canopy.saplinglearn.com/review</span>
         <span style="width:44px"></span>
       </div>
       <div style="display:flex;height:568px;overflow:hidden">
@@ -183,7 +183,7 @@ function hero(): string {
             <div style="font-size:10.5px;color:var(--fg-40);padding:0 8px 12px">agents produce · humans confirm</div>
             <div style="display:flex;align-items:center;gap:9px;padding:8px;border-top:1px solid var(--border)">
               ${initials("MC")}
-              <span style="min-width:0"><span style="display:block;font-size:11.5px;font-weight:600">Maya Chen</span><span style="display:block;font-size:10.5px;color:var(--fg-40);font-family:var(--mono)">@maya</span></span>
+              <span style="min-width:0"><span style="display:block;font-size:11.5px;font-weight:600">Maya Chen</span><span style="display:block;font-size:10.5px;color:var(--fg-40);font-family:var(--label)">@maya</span></span>
             </div>
           </div>
         </div>
@@ -200,13 +200,13 @@ function hero(): string {
               </span>
             </div>
             <div style="margin-top:7px;display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--fg-55)">
-              Proposal · <span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.03em">TECHNICAL / OPERATIONS</span> · Maya Chen ${AGENT_TAG} · 2h ago
+              Proposal · <span style="font-family:var(--label);font-size:10.5px;letter-spacing:.03em">TECHNICAL / OPERATIONS</span> · Maya Chen ${AGENT_TAG} · 2h ago
             </div>
             <div style="margin-top:20px;display:flex;align-items:center;gap:10px">
-              <span style="font-family:var(--mono);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40)">What changed</span>
+              <span style="font-family:var(--label);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40)">What changed</span>
               <span style="margin-left:auto;display:flex;gap:6px">${diffTab("Unified", false)}${diffTab("Side by side", true)}${diffTab("Rendered", false)}</span>
             </div>
-            <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);border-radius:10px;overflow:hidden;font-family:var(--mono);font-size:11px;line-height:1.7">
+            <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);border-radius:10px;overflow:hidden;font-family:var(--label);font-size:11px;line-height:1.7">
               <div style="border-right:1px solid var(--border)">
                 ${paneHead("Current · v4")}
                 <div style="padding:10px 0 14px;color:var(--fg-70)">
@@ -224,7 +224,7 @@ function hero(): string {
           <div class="site-toast" role="presentation" style="position:absolute;right:20px;bottom:20px;display:flex;align-items:center;gap:10px;padding:10px 14px 10px 12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);box-shadow:var(--shadow);font-size:12px;${at(TOAST)}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.4" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
             <span><span style="font-weight:600">Deploy process</span> <span style="color:var(--fg-55)">is live as v5</span></span>
-            <span style="font-family:var(--mono);font-size:10.5px;color:var(--fg-40)">@maya</span>
+            <span style="font-family:var(--label);font-size:10.5px;color:var(--fg-40)">@maya</span>
           </div>
         </div>
       </div>
@@ -265,7 +265,7 @@ function loop(): string {
       <div style="font-size:11px;color:var(--fg-55)">${meta}</div>
     </div>`;
   const orient = `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11.5px;color:var(--fg-55)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>${search}</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);font-family:var(--label);font-size:11.5px;color:var(--fg-55)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>${search}</div>
       ${hit("Rate limiting on the public API", pill("Live", "green"), "Doc · Technical / API", true, searchEnd + 200)}
       ${hit("Retry budget for webhook callers", pill("Pending", "amber"), "Decision · ADR-0012", false, searchEnd + 360)}
     </div>`;
@@ -278,9 +278,9 @@ function loop(): string {
   const work = `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--term);color:var(--term-fg)">
       <div style="display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid rgba(237,233,226,0.11)">
         ${tdot}${tdot}${tdot}
-        <span style="margin-left:6px;font-family:var(--mono);font-size:10px;color:rgba(237,233,226,0.5)">claude</span>
+        <span style="margin-left:6px;font-family:var(--label);font-size:10px;color:rgba(237,233,226,0.5)">claude</span>
       </div>
-      <div style="padding:12px 14px 14px;font-family:var(--mono);font-size:11px;line-height:1.75">
+      <div style="padding:12px 14px 14px;font-family:var(--code);font-size:11px;line-height:1.75">
         <div style="color:rgba(237,233,226,0.6)">${cmd}</div>
         ${tline("⏺ canopy · load-context", "#9aab65", cmdEnd + 250)}
         ${tline("Read: Rate limiting on the public API", "rgba(237,233,226,0.85)", cmdEnd + 650)}
@@ -293,7 +293,7 @@ function loop(): string {
   const [rec, recEnd] = typed("> record this session", b + 550, 34);
   const done = (text: string, start: number) => `<div style="display:flex;align-items:center;gap:8px">${check(12, start)}<span class="site-st st-l" style="${at(start + 80)}">${text}</span></div>`;
   const record = `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <div style="padding:9px 12px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11.5px;color:var(--fg-55)">${rec}</div>
+      <div style="padding:9px 12px;border-bottom:1px solid var(--border);font-family:var(--label);font-size:11.5px;color:var(--fg-55)">${rec}</div>
       <div style="padding:11px 12px;display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--fg-70)">
         ${done("2 feed entries posted", recEnd + 250)}${done("3 docs: 1 staged, 2 unchanged", recEnd + 500)}${done("1 decision drafted", recEnd + 750)}
       </div>
@@ -337,7 +337,7 @@ function authority(): string {
 // ── 5 · product tour ─────────────────────────────────────────────────────────
 function tour(): string {
   const S = 380; // mockup contents start once the mockup has slid in
-  const treeHead = (label: string, top: string) => `<div style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);padding:${top} 6px 6px">${label}</div>`;
+  const treeHead = (label: string, top: string) => `<div style="font-family:var(--label);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);padding:${top} 6px 6px">${label}</div>`;
   const tree = (i: number, style: string, text: string) => `<div class="site-st st-l" style="${style};${at(S + i * 70)}">${text}</div>`;
   const docs = `
       <div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)">
@@ -355,7 +355,7 @@ function tour(): string {
           ${tree(4, "padding:4px 6px;font-size:11.5px;color:var(--fg-55)", "▸ ADR-0012 · Retry budget")}
         </div>
         <div style="flex:1;min-width:0;padding:16px 20px">
-          <div style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40)">Technical / Operations</div>
+          <div style="font-family:var(--label);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40)">Technical / Operations</div>
           <div style="margin-top:6px;display:flex;align-items:center;gap:10px">
             <span style="font-size:17px;font-weight:650">Deploy process</span>
             <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:500;color:var(--fg-70);border:1px solid var(--border);border-radius:6px;padding:3px 8px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v6h6"></path><path d="M3.5 9a9 9 0 1 0 2.3-3.3L3 9"></path><path d="M12 8v4l3 2"></path></svg>Version history</span>
@@ -376,7 +376,7 @@ function tour(): string {
             <div style="font-size:13px;font-weight:600">Rate limiting shipped on the public API</div>
             <div style="margin-top:3px;font-size:11.5px;line-height:1.55;color:var(--fg-70)">Token bucket per org, 429s carry Retry-After. Follows ADR-0012.</div>
             <div style="margin-top:7px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-55);flex-wrap:wrap">Leo Park${AGENT_TAG}· 1d ago</div>
-            <div style="margin-top:9px;padding-top:9px;border-top:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;font-family:var(--mono);font-size:10px">
+            <div style="margin-top:9px;padding-top:9px;border-top:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;font-family:var(--label);font-size:10px">
               ${ref("PR", "#142", 0)}${ref("commit", "3f2a9c1", 1)}${ref("issue", "#128", 2)}
             </div>
           </div>
@@ -393,7 +393,7 @@ function tour(): string {
         </div>
       </div>`;
 
-  const prio = (p: string, c: string) => `<span style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;color:var(--${c});border:1px solid ${c === "fg-55" ? "var(--border-strong)" : `color-mix(in srgb, var(--${c}) 45%, transparent)`};border-radius:4px;padding:1.5px 5px;flex:none">${p}</span>`;
+  const prio = (p: string, c: string) => `<span style="font-family:var(--label);font-size:9px;font-weight:600;text-transform:uppercase;color:var(--${c});border:1px solid ${c === "fg-55" ? "var(--border-strong)" : `color-mix(in srgb, var(--${c}) 45%, transparent)`};border-radius:4px;padding:1.5px 5px;flex:none">${p}</span>`;
   const ticket = (i: number, title: string, meta: string, p: string, who: string, last = false) => `<div class="site-st st-l" style="display:flex;align-items:center;gap:10px;padding:12px 16px${last ? "" : ";border-bottom:1px solid var(--border)"};${at(S + 250 + i * 110)}">
       <div style="min-width:0;flex:1"><div style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</div><div style="margin-top:2px;font-size:10.5px;color:var(--fg-55)">${meta}</div></div>
       ${p}${who}
@@ -408,10 +408,10 @@ function tour(): string {
 
   const sprint = (i: number, title: string, badge: string, meta: string, pct: number, count: string) => `<div class="site-st" style="border:1px solid var(--border);border-radius:10px;padding:13px 16px;${at(S + i * 150)}">
       <div style="display:flex;align-items:center;gap:9px"><span style="font-size:13px;font-weight:600">${title}</span>${badge}</div>
-      <div style="margin-top:4px;font-family:var(--mono);font-size:10px;color:var(--fg-40)">${meta}</div>
+      <div style="margin-top:4px;font-family:var(--label);font-size:10px;color:var(--fg-40)">${meta}</div>
       <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
         <span style="flex:1;height:5px;border-radius:3px;background:var(--hover);overflow:hidden;display:block"><span class="site-bar" style="display:block;width:${pct}%;height:100%;background:var(--accent);${at(S + 250 + i * 150)}"></span></span>
-        <span style="font-family:var(--mono);font-size:10px;color:var(--fg-55);flex:none">${count}</span>
+        <span style="font-family:var(--label);font-size:10px;color:var(--fg-55);flex:none">${count}</span>
       </div>
     </div>`;
   const roadmap = `
@@ -424,41 +424,41 @@ function tour(): string {
         ${sprint(1, "Notifications and digests", pill("Next", "blue"), "Weeks 5–6 · due Oct 16 · lead @sam", 12, "1/8 closed")}
       </div>`;
 
-  const field = (label: string, text: string, accent = false) => `<span style="font-family:var(--mono);font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(${accent ? "--accent" : "--fg-40"});padding-top:1px">${label}</span><span style="color:var(--fg-70);line-height:1.5">${text}</span>`;
+  const field = (label: string, text: string, accent = false) => `<span style="font-family:var(--label);font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(${accent ? "--accent" : "--fg-40"});padding-top:1px">${label}</span><span style="color:var(--fg-70);line-height:1.5">${text}</span>`;
   const todo = (i: number, title: string, num: string, fields: string) => `<div class="site-st" style="border:1px solid var(--border);border-radius:10px;padding:13px 15px;${at(S + 200 + i * 140)}">
-      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:600;min-width:0">${title}</span><span style="margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--accent);border:1px solid color-mix(in srgb, var(--accent) 45%, transparent);border-radius:5px;padding:1px 6px;flex:none">${num} ↗</span></div>
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:600;min-width:0">${title}</span><span style="margin-left:auto;font-family:var(--label);font-size:9.5px;color:var(--accent);border:1px solid color-mix(in srgb, var(--accent) 45%, transparent);border-radius:5px;padding:1px 6px;flex:none">${num} ↗</span></div>
       <div style="margin-top:9px;display:grid;grid-template-columns:64px 1fr;gap:5px 10px;font-size:10.5px">${fields}</div>
     </div>`;
   const mywork = `
       <div class="site-st" style="font-size:17px;font-weight:650;letter-spacing:-0.015em;${at(S)}">Good morning, Maya</div>
-      <div style="margin-top:14px;font-family:var(--mono);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);border-bottom:1px solid var(--border);padding-bottom:7px">To-do</div>
+      <div style="margin-top:14px;font-family:var(--label);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);border-bottom:1px solid var(--border);padding-bottom:7px">To-do</div>
       <div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:10px">
         ${todo(0, "Retry-After on 429 responses", "#212", field("Summary", "Surface the bucket's reset time on rejected calls.") + field("Next step", "Thread reset through the limiter and test it.", true))}
         ${todo(1, "Digest de-dupe on Mondays", "#218", field("Milestone", "Notifications and digests · due Oct 16") + field("Next step", "Key the send ledger on digest window, not day.", true))}
       </div>`;
 
   const hsec = (label: string, items: string[], start: number) => `<div style="margin-top:12px">
-        <div style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">${label}</div>
+        <div style="font-family:var(--label);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">${label}</div>
         ${items.map((t, i) => `<div class="site-st st-l" style="margin-top:5px;display:flex;gap:8px;font-size:11.5px;line-height:1.5;color:var(--fg-70);${at(start + i * 90)}"><span style="color:var(--fg-40)">·</span>${t}</div>`).join("")}
       </div>`;
   const handoffs = `
       <div style="display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--border)">
-        <span style="font-family:var(--mono);font-size:11px;color:var(--fg-40)">#17</span>
+        <span style="font-family:var(--label);font-size:11px;color:var(--fg-40)">#17</span>
         <span style="font-size:12.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Retry-After is wired, the tests aren't</span>
         <span class="site-swap" style="margin-left:auto;${at(S + 1500)}">${pill("pending", "blue")}${pill("claimed", "green")}</span>
       </div>
       <div style="padding:12px 16px 16px">
-        <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--fg-55);flex-wrap:wrap">${initials("LP", 20, "8px")}Leo Park → Maya Chen<span style="font-family:var(--mono);font-size:10px;color:var(--fg-40);margin-left:auto">feat/retry-after</span></div>
+        <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--fg-55);flex-wrap:wrap">${initials("LP", 20, "8px")}Leo Park → Maya Chen<span style="font-family:var(--label);font-size:10px;color:var(--fg-40);margin-left:auto">feat/retry-after</span></div>
         ${hsec("Done", ["429s carry Retry-After from the bucket's reset time"], S + 150)}
         ${hsec("Next", ["Add limiter tests for the reset edge", "Note the header in the API doc"], S + 330)}
-        <div class="site-st" style="margin-top:14px;border-radius:8px;background:var(--term);color:var(--term-fg);padding:10px 12px;font-family:var(--mono);font-size:10.5px;line-height:1.75;${at(S + 800)}">
+        <div class="site-st" style="margin-top:14px;border-radius:8px;background:var(--term);color:var(--term-fg);padding:10px 12px;font-family:var(--code);font-size:10.5px;line-height:1.75;${at(S + 800)}">
           <div style="color:#9aab65">⏺ canopy · load-context</div>
           <div style="color:rgba(237,233,226,0.85)">1 handoff waiting: #17 from @leo. Claim it?</div>
           <div class="site-st" style="color:rgba(237,233,226,0.6);${at(S + 1350)}">&gt; yes</div>
         </div>
       </div>`;
 
-  const kindTag = (k: string) => `<span style="font-family:var(--mono);font-size:9px;color:var(--fg-40);border:1px solid var(--border);border-radius:4px;padding:1px 5px">${k}</span>`;
+  const kindTag = (k: string) => `<span style="font-family:var(--label);font-size:9px;color:var(--fg-40);border:1px solid var(--border);border-radius:4px;padding:1px 5px">${k}</span>`;
   const bars = (ws: number[]) => ws.map((w) => `<span style="display:block;height:5px;width:${w}%;border-radius:3px;background:var(--border-strong);margin-top:5px"></span>`).join("");
   const artCard = (i: number, preview: string, title: string, kind: string, badge: string) => `<div class="site-st st-pop" style="border:1px solid var(--border);border-radius:9px;overflow:hidden;${at(S + 150 + i * 110)}">
       <div style="height:62px;padding:10px 12px;background:var(--hover)">${preview}</div>
@@ -471,7 +471,7 @@ function tour(): string {
   const artifacts = `
       <div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)">
         <span style="font-size:12px;font-weight:600">Artifacts</span>
-        <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--fg-40)">ticket #212 · 3 pages</span>
+        <span style="margin-left:auto;font-family:var(--label);font-size:10px;color:var(--fg-40)">ticket #212 · 3 pages</span>
       </div>
       <div style="padding:14px 16px 16px;display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:10px">
         ${artCard(0, bars([70, 45, 88, 30]), "Rate limit headers: design", "html", `<span class="site-swap" style="${at(S + 1300)}">${pill("published", "blue")}${pill("ratified", "green")}</span>`)}
@@ -519,12 +519,12 @@ function agents(): string {
   let n = 0;
   const chips = (names: string[], admin = false) => {
     const st = admin
-      ? "font-family:var(--mono);font-size:11px;border:1px dashed var(--border-strong);border-radius:6px;padding:3px 8px;color:var(--fg-55)"
-      : "font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--fg-70)";
+      ? "font-family:var(--label);font-size:11px;border:1px dashed var(--border-strong);border-radius:6px;padding:3px 8px;color:var(--fg-55)"
+      : "font-family:var(--label);font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--fg-70)";
     return `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">${names.map((name) => `<span class="site-st st-pop" style="${st};${at(300 + n++ * 28)}">${name}</span>`).join("")}</div>`;
   };
   const group = (label: string, names: string[], admin = false) => `<div>
-      <div style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">${label}</div>
+      <div style="font-family:var(--label);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40)">${label}</div>
       ${chips(names, admin)}
     </div>`;
   const tools = `
@@ -546,7 +546,7 @@ function agents(): string {
       <div ${rv("agents-mcp")} style="border:1px solid var(--border);border-radius:13px;padding:26px 28px">
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
           <span style="font-size:17px;font-weight:650">MCP server</span>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">33 tools, plus 5 admin-only</span>
+          <span style="font-family:var(--label);font-size:11px;color:var(--fg-55)">33 tools, plus 5 admin-only</span>
         </div>
         <div style="margin-top:20px;display:flex;flex-direction:column;gap:16px">${tools}
         </div>
@@ -554,15 +554,15 @@ function agents(): string {
       <div ${rv("agents-plugin")} style="border:1px solid var(--border);border-radius:13px;padding:26px 28px;display:flex;flex-direction:column;${at(120)}">
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
           <span style="font-size:17px;font-weight:650">Claude Code plugin</span>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--fg-55)">10 skills, installed in two commands</span>
+          <span style="font-family:var(--label);font-size:11px;color:var(--fg-55)">10 skills, installed in two commands</span>
         </div>
         <div style="margin-top:12px">${skills}</div>
         <div style="margin-top:auto;padding-top:22px">
-          <div style="border-radius:10px;background:var(--term);color:var(--term-fg);border:1px solid var(--border);padding:16px 18px;font-family:var(--mono);font-size:12px;line-height:2;overflow-x:auto">
+          <div style="border-radius:10px;background:var(--term);color:var(--term-fg);border:1px solid var(--border);padding:16px 18px;font-family:var(--code);font-size:12px;line-height:2;overflow-x:auto">
             <div style="white-space:nowrap">${prompt}${cmd1}</div>
             <div style="white-space:nowrap">${prompt}${cmd2}<span class="site-caret" style="${at(cmd2End + 150)}"></span></div>
           </div>
-          <p style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-55)">Wires the MCP server and loads all ten skills. Then connect by browser sign-in: run <span style="font-family:var(--mono);font-size:11.5px">/mcp</span>, pick canopy, and choose Authenticate.</p>
+          <p style="margin:12px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-55)">Wires the MCP server and loads all ten skills. Then connect by browser sign-in: run <span style="font-family:var(--label);font-size:11.5px">/mcp</span>, pick canopy, and choose Authenticate.</p>
           <button data-act="siteGuide" class="site-btn site-btn-outline" style="margin-top:16px">Setup steps in Get Started</button>
         </div>
       </div>
@@ -623,7 +623,7 @@ function signInDialog(): string {
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.2 3.44 9.6 8.21 11.16.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.72-4.04-1.61-4.04-1.61-.55-1.38-1.34-1.75-1.34-1.75-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.23 1.84 1.23 1.07 1.83 2.81 1.3 3.49.99.11-.77.42-1.3.76-1.6-2.67-.3-5.47-1.32-5.47-5.87 0-1.3.47-2.36 1.23-3.19-.12-.3-.53-1.51.12-3.15 0 0 1.01-.32 3.3 1.22a11.5 11.5 0 0 1 6 0c2.29-1.54 3.3-1.22 3.3-1.22.65 1.64.24 2.85.12 3.15.77.83 1.23 1.89 1.23 3.19 0 4.56-2.81 5.57-5.49 5.86.43.37.81 1.1.81 2.22 0 1.6-.01 2.89-.01 3.29 0 .32.22.7.83.58A12.01 12.01 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"></path></svg>
           Sign in with GitHub
         </button>
-        <div style="display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40)"><span style="flex:1;height:1px;background:var(--border)"></span>or<span style="flex:1;height:1px;background:var(--border)"></span></div>
+        <div style="display:flex;align-items:center;gap:12px;font-family:var(--label);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-40)"><span style="flex:1;height:1px;background:var(--border)"></span>or<span style="flex:1;height:1px;background:var(--border)"></span></div>
         <button data-act="signInGoogle" class="cnpy-outlinebtn" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:14px;font-weight:600;color:var(--fg)">
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5c-.3 1.5-1.1 2.7-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.7z"/><path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.2v3.1C3.2 21.3 7.3 24 12 24z"/><path fill="#FBBC05" d="M5.3 14.3c-.5-1.5-.5-3.1 0-4.6V6.6H1.2c-1.6 3.3-1.6 7.3 0 10.6l4.1-2.9z"/><path fill="#EA4335" d="M12 4.7c1.7 0 3.3.6 4.5 1.7l3.4-3.4C17.9 1.1 15.1 0 12 0 7.3 0 3.2 2.7 1.2 6.6l4.1 3.1c.9-2.9 3.6-5 6.7-5z"/></svg>
           Continue with Google

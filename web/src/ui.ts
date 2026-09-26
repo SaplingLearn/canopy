@@ -15,13 +15,13 @@ export function attr(v: string): string {
   return esc(v);
 }
 
-/** The mono uppercase eyebrow/label style used across both surfaces. */
+/** The uppercase label-face eyebrow/label style used across both surfaces. */
 export const MONO_LABEL =
-  "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)";
+  "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)";
 
 /** Bordered tinted status chip (STAGED / DRAFT / …); colorVar is a CSS var expression. */
 export function statusBadge(text: string, colorVar: string): string {
-  return `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:${colorVar};border:1px solid color-mix(in srgb,${colorVar} 45%,transparent);background:color-mix(in srgb,${colorVar} 12%,transparent);border-radius:5px;padding:2px 6px;flex:none;white-space:nowrap">${esc(text)}</span>`;
+  return `<span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;color:${colorVar};border:1px solid color-mix(in srgb,${colorVar} 45%,transparent);background:color-mix(in srgb,${colorVar} 12%,transparent);border-radius:5px;padding:2px 6px;flex:none;white-space:nowrap">${esc(text)}</span>`;
 }
 
 /** Selectable filter/view chip. `small` is the compact variant (diff view toggle). */

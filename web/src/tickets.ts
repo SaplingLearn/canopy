@@ -28,9 +28,9 @@ import { mentionCandidates, mentionPickerTop, COMMENT_BOX } from "./mentions";
 
 // ── shared atoms ─────────────────────────────────────────────────────────────
 
-/** The design's `pill()` / `prioSt()` base: mono, 10px, bordered, non-shrinking. */
+/** The design's `pill()` / `prioSt()` base: label-face, 10px, bordered, non-shrinking. */
 const CHIP_BASE =
-  "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none;";
+  "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:5px;padding:2px 6px;white-space:nowrap;flex:none;";
 
 /** Tinted pill styling for one status — design call #5: Triage blue,
  *  In progress green (accent), Done muted, Declined red at reduced opacity. */
@@ -58,13 +58,13 @@ export function priorityChip(p: TicketPriority): string {
   return `<span style="${st}">${esc(p.toUpperCase())}</span>`;
 }
 
-/** A small mono chip (category / sprint tag / relation marker). */
+/** A small label-face chip (category / sprint tag / relation marker). */
 export function tagChip(
   text: string,
   opts: { color?: string; border?: string; size?: number; spacing?: string; pad?: string } = {}
 ): string {
   const { color = "var(--fg-40)", border = "var(--border)", size = 10, spacing = ".05em", pad = "2px 6px" } = opts;
-  return `<span style="font-family:var(--mono);font-size:${size}px;font-weight:600;letter-spacing:${spacing};color:${color};border:1px solid ${border};border-radius:5px;padding:${pad};white-space:nowrap;flex:none">${esc(text)}</span>`;
+  return `<span style="font-family:var(--label);font-size:${size}px;font-weight:600;letter-spacing:${spacing};color:${color};border:1px solid ${border};border-radius:5px;padding:${pad};white-space:nowrap;flex:none">${esc(text)}</span>`;
 }
 
 const categoryChip = (c: string) => tagChip(c, { color: "var(--fg-55)", border: "var(--border-strong)" });
@@ -150,7 +150,7 @@ const chipClass = (on: boolean) => `cnpy-pickchip${on ? " is-on" : ""}`;
 const MENU_ROW_CLASS = "cnpy-menurow";
 
 const MONO_EYEBROW =
-  "font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
+  "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40);white-space:nowrap";
 
 // The table's column template — shared by the header row and every ticket row so
 // the two can never drift apart.
@@ -221,7 +221,7 @@ function filterRow(p: QueueProps): string {
     ${assigneeSelect}
     ${categorySelect}
     <span style="flex:1"></span>
-    <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${esc(count)}</span>
+    <span style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap">${esc(count)}</span>
   </div>`;
 }
 
@@ -243,7 +243,7 @@ function tableRow(t: TicketListItem, persons: PersonSummary[]): string {
     <div>${priorityChip(t.priority)}</div>
     <div>${ticketPill(t.status)}</div>
     <div style="display:flex;align-items:center;gap:7px;min-width:0">${avatarStack(t.assignees, persons)}<span style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${asgStyle}">${esc(asgText)}</span></div>
-    <div style="font-size:11.5px;color:var(--fg-40);text-align:right;font-family:var(--mono)">${esc(age(t.created_at))}</div>
+    <div style="font-size:11.5px;color:var(--fg-40);text-align:right;font-family:var(--label)">${esc(age(t.created_at))}</div>
   </button>`;
 }
 
@@ -285,19 +285,19 @@ function groupHeader(g: QueueGroup): string {
   const openLink = g.key !== null
     ? `<button data-act="openSprint" data-arg="${g.key}" title="Open sprint screen" class="cnpy-grouplink" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;color:var(--fg-55);white-space:nowrap;flex:none;padding:2px 6px">Open sprint →</button>`
     : "";
-  const meta = `<span style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40);white-space:nowrap">${esc(g.dates)}${g.active ? `<span style="color:var(--accent)"> · ACTIVE</span>` : ""}</span>`;
+  const meta = `<span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40);white-space:nowrap">${esc(g.dates)}${g.active ? `<span style="color:var(--accent)"> · ACTIVE</span>` : ""}</span>`;
   return `<div style="display:flex;align-items:center;gap:9px;padding:18px 10px 8px">
     <span style="width:7px;height:7px;border-radius:50%;flex:none;background:${g.active ? "var(--accent)" : "var(--border-strong)"}"></span>
-    <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;white-space:nowrap;color:${g.active ? "var(--accent)" : "var(--fg-55)"}">${esc(g.label)}</span>
+    <span style="font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;white-space:nowrap;color:${g.active ? "var(--accent)" : "var(--fg-55)"}">${esc(g.label)}</span>
     ${meta}
     ${openLink}
     <div style="flex:1;height:1px;background:var(--border)"></div>
-    <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${g.rows.length} ${g.rows.length === 1 ? "ticket" : "tickets"}</span>
+    <span style="font-family:var(--label);font-size:10px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${g.rows.length} ${g.rows.length === 1 ? "ticket" : "tickets"}</span>
   </div>`;
 }
 
 function tableView(p: QueueProps): string {
-  const head = `<div style="display:grid;grid-template-columns:${TABLE_COLS};gap:12px;padding:12px 10px 8px;border-bottom:1px solid var(--border-strong);font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">
+  const head = `<div style="display:grid;grid-template-columns:${TABLE_COLS};gap:12px;padding:12px 10px 8px;border-bottom:1px solid var(--border-strong);font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--fg-40)">
     <div>TITLE</div><div>OPENED BY</div><div>CATEGORY</div><div>PRIORITY</div><div>STATUS</div><div>ASSIGNEE</div><div style="text-align:right">AGE</div>
   </div>`;
   const groups = queueGroups(p.tickets, p.sprints)
@@ -317,7 +317,7 @@ function boardCard(t: TicketListItem, persons: PersonSummary[]): string {
     <div style="display:flex;align-items:center;gap:7px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)">
       ${avatarStack(t.assignees, persons)}
       <span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${asgStyle}">${esc(assigneeLabel(t.assignees, persons))}</span>
-      <span style="font-size:11px;color:var(--fg-40);font-family:var(--mono);margin-left:auto;flex:none">${esc(age(t.created_at))}</span>
+      <span style="font-size:11px;color:var(--fg-40);font-family:var(--label);margin-left:auto;flex:none">${esc(age(t.created_at))}</span>
     </div>
   </button>`;
 }
@@ -332,8 +332,8 @@ function boardView(p: QueueProps): string {
       : "";
     return `<div style="min-width:0">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding-bottom:9px;border-bottom:1px solid var(--border-strong);margin-bottom:10px">
-        <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;white-space:nowrap;${headColor}">${esc(TICKET_STATUS_LABEL[st].toUpperCase())}</span>
-        <span style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${cards.length}</span>
+        <span style="font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;white-space:nowrap;${headColor}">${esc(TICKET_STATUS_LABEL[st].toUpperCase())}</span>
+        <span style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${cards.length}</span>
       </div>
       <div class="cnpy-stagger">${cards.map((t) => boardCard(t, p.persons)).join("")}</div>
       ${empty}
@@ -388,7 +388,7 @@ export function newTicketView(p: NewTicketProps): string {
   const canSubmit = p.title.trim().length > 0;
 
   const catChips = TICKET_CATEGORIES.map((c) =>
-    `<button data-act="ntCategory" data-arg="${c}" class="${chipClass(p.category === c)}" style="${chipStyle(p.category === c)};font-family:var(--mono)">${c}</button>`).join("");
+    `<button data-act="ntCategory" data-arg="${c}" class="${chipClass(p.category === c)}" style="${chipStyle(p.category === c)};font-family:var(--label)">${c}</button>`).join("");
 
   const prioSegs = TICKET_PRIORITIES.map((v) =>
     `<button data-act="ntPriority" data-arg="${v}" class="${segClass(p.priority === v)}" style="${segBtnStyle(p.priority === v)}">${v.charAt(0).toUpperCase() + v.slice(1)}</button>`).join("");
@@ -419,7 +419,7 @@ export function newTicketView(p: NewTicketProps): string {
           <label style="${FIELD_LABEL};margin:20px 0 8px">Description</label>
           <textarea data-act="ntDescription" data-field="ntDescription" placeholder="What's happening, and what would good look like?" style="width:100%;flex:1;min-height:190px;padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;background:transparent;color:var(--fg);font-size:13.5px;line-height:1.6;outline:none;resize:vertical">${esc(p.description)}</textarea>
           <label style="${FIELD_LABEL};margin:20px 0 8px">Linked work <span style="font-weight:400;color:var(--fg-40)">— optional</span></label>
-          <input data-act="ntLink" data-field="ntLink" value="${attr(p.link)}" placeholder="GitHub or Figma URL, or #issue-number" style="${TEXT_INPUT};height:38px;font-size:12.5px;font-family:var(--mono)" />
+          <input data-act="ntLink" data-field="ntLink" value="${attr(p.link)}" placeholder="GitHub or Figma URL, or #issue-number" style="${TEXT_INPUT};height:38px;font-size:12.5px;font-family:var(--label)" />
         </div>
         <div style="min-width:0;border-left:1px solid var(--border);padding-left:26px">
           <label style="${FIELD_LABEL}">Category</label>
@@ -529,11 +529,11 @@ const MENU_BACKDROP = `<div data-act="closeTicketMenus" style="position:fixed;in
 const RAIL_ROW = "display:flex;align-items:center;gap:10px;width:100%;text-align:left;height:38px;padding:0";
 const RAIL_BOX = "width:24px;height:24px;border-radius:6px;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--fg-55);font-size:11px;flex:none";
 const RAIL_TITLE = "display:block;font-size:13px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
-const RAIL_META = "display:block;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);white-space:nowrap;margin-top:2px";
+const RAIL_META = "display:block;font-family:var(--label);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);white-space:nowrap;margin-top:2px";
 const ICON_BTN = "width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--fg-40);transition:all .12s ease";
 const RAIL_SECTION_HEAD = "display:flex;align-items:center;justify-content:space-between;gap:8px;height:22px;margin-bottom:6px";
 const PROP_ROW = "display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:center;height:30px";
-const PROP_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
+const PROP_LABEL = "font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--fg-40)";
 
 /** THE sprint picker — Backlog plus every sprint, the current one ticked. The
  *  ticket detail rail and the new-ticket form both render this ONE menu (they
@@ -647,7 +647,7 @@ function linkedWorkBlock(p: TicketDetailProps): string {
           <span style="flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-70);background:color-mix(in srgb,var(--fg) 6%,transparent)">${LINK_ICON[lk.kind] ?? LINK_ICON.plain}</span>
           <span style="min-width:0">
             <span style="display:block;font-size:12.5px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">${esc(lk.label)}</span>
-            <span style="display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${lk.locked ? `<span title="The issue this ticket mirrors — this link can't be removed" style="display:flex">${LOCK_SVG.replace('width="13" height="13"', 'width="10" height="10"')}</span>` : ""}${esc(lk.locked ? `${lk.meta} · SOURCE` : lk.meta)}</span>
+            <span style="display:flex;align-items:center;gap:4px;font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--fg-40);margin-top:1px;white-space:nowrap">${lk.locked ? `<span title="The issue this ticket mirrors — this link can't be removed" style="display:flex">${LOCK_SVG.replace('width="13" height="13"', 'width="10" height="10"')}</span>` : ""}${esc(lk.locked ? `${lk.meta} · SOURCE` : lk.meta)}</span>
           </span><span class="cnpy-lkarr" style="display:flex">${EXTERNAL_ARROW}</span>
           </a>
           <button data-act="ticketLinkMenu" data-arg="${lk.id}" class="cnpy-lkmore" title="Link actions" aria-label="Actions for ${attr(lk.label)}" aria-haspopup="menu" aria-expanded="${p.lkMenu === lk.id ? "true" : "false"}" style="position:absolute;padding:0;top:50%;right:8px;margin-top:-11px;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--fg-55)"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>
@@ -659,7 +659,7 @@ function linkedWorkBlock(p: TicketDetailProps): string {
     : "";
   const field = !hasLinks || p.linkOpen
     ? `<div style="display:flex;gap:8px;margin-top:10px">
-        <input data-act="ticketLinkDraft" data-field="ticketLinkDraft" value="${attr(p.linkDraft)}" placeholder="Paste a GitHub or Figma URL, or #issue — it links on paste or Enter" style="flex:1;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--mono);outline:none" />
+        <input data-act="ticketLinkDraft" data-field="ticketLinkDraft" value="${attr(p.linkDraft)}" placeholder="Paste a GitHub or Figma URL, or #issue — it links on paste or Enter" style="flex:1;height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:transparent;color:var(--fg);font-size:12.5px;font-family:var(--label);outline:none" />
         <button data-act="ticketLinkAdd" class="cnpy-outlinebtn" style="padding:0 14px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Link</button>
       </div>`
     : "";
@@ -692,11 +692,11 @@ function mentionPicker(p: TicketDetailProps, boxHeight: number): string {
     `<button data-act="mentionPick" data-arg="${attr(c.handle)}" role="option" aria-selected="${i === active}" class="${MENU_ROW_CLASS}${i === active ? " is-active" : ""}" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:6px 9px;border-radius:7px">
       ${personChip(c, 20, c.handle)}
       <span style="font-size:13px;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name || c.handle)}</span>
-      <span style="font-family:var(--mono);font-size:11.5px;color:var(--fg-55);margin-left:auto;flex:none">@${esc(c.handle)}</span>
+      <span style="font-family:var(--label);font-size:11.5px;color:var(--fg-55);margin-left:auto;flex:none">@${esc(c.handle)}</span>
     </button>`).join("");
   return `<div role="listbox" aria-label="Mention someone" style="position:absolute;top:${top}px;left:0;right:0;min-width:220px;z-index:30;background:var(--bg);border:1px solid var(--border-strong);border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:5px">
     ${rows}
-    <div style="font-family:var(--mono);font-size:10.5px;color:var(--fg-40);padding:5px 9px 3px;border-top:1px solid var(--border);margin-top:4px">↑↓ to move · Enter to mention · Esc to close</div>
+    <div style="font-family:var(--label);font-size:10.5px;color:var(--fg-40);padding:5px 9px 3px;border-top:1px solid var(--border);margin-top:4px">↑↓ to move · Enter to mention · Esc to close</div>
   </div>`;
 }
 
@@ -740,7 +740,7 @@ function threadBlock(p: TicketDetailProps): string {
       ts: new Date(ev.created_at).getTime(),
       html: `<div style="display:flex;align-items:center;gap:9px;padding:8px 0 8px 8px;border-bottom:1px solid var(--border)">
         <span style="width:6px;height:6px;border-radius:50%;background:var(--border-strong);flex:none;margin:0 6px"></span>
-        <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--fg-55);white-space:nowrap">${esc(ev.actor === MIRROR_HANDLE ? "GitHub" : ev.actor)}</span>
+        <span style="font-family:var(--label);font-size:11px;font-weight:600;color:var(--fg-55);white-space:nowrap">${esc(ev.actor === MIRROR_HANDLE ? "GitHub" : ev.actor)}</span>
         <span style="font-size:12px;color:var(--fg-40);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(move)}</span>
         <span style="font-size:11px;color:var(--fg-40);margin-left:auto;flex:none;white-space:nowrap">${esc(relTime(ev.created_at))}</span>
       </div>`,
@@ -759,8 +759,8 @@ function threadBlock(p: TicketDetailProps): string {
   // bottom of the window rather than halfway up an empty column.
   return `<div style="display:flex;flex-direction:column;flex:1;min-height:0">
     <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:30px;padding-bottom:9px;border-bottom:1px solid var(--border-strong);flex:none">
-      <div style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">THREAD</div>
-      <div style="font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${t.comments.length} ${t.comments.length === 1 ? "comment" : "comments"}</div>
+      <div style="font-family:var(--label);font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--fg-55);white-space:nowrap;flex:none">THREAD</div>
+      <div style="font-family:var(--label);font-size:10.5px;font-weight:600;color:var(--fg-40);white-space:nowrap;flex:none">${t.comments.length} ${t.comments.length === 1 ? "comment" : "comments"}</div>
     </div>
     <div style="flex:1;min-height:0">${rows.map((r) => r.html).join("")}</div>
     <div style="position:relative;border:1px solid var(--border);border-radius:11px;padding:12px;margin-top:16px;flex:none">
@@ -836,7 +836,7 @@ function relationsRail(p: TicketDetailProps): string {
     : "";
   const menu = p.relMenu && candidates.length
     ? `${MENU_BACKDROP}<div style="${MENU_BOX};width:270px">
-        <div style="font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.05em;color:var(--fg-40);padding:6px 10px 4px">LINK A TICKET AS A SUB-TICKET</div>
+        <div style="font-size:10px;font-weight:600;font-family:var(--label);letter-spacing:.05em;color:var(--fg-40);padding:6px 10px 4px">LINK A TICKET AS A SUB-TICKET</div>
         ${candidates.map((c) => `<button data-act="ticketRelAdd" data-arg="${c.id}" class="${MENU_ROW_CLASS}" style="display:block;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--fg-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title)}</button>`).join("")}
       </div>`
     : "";

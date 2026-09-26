@@ -52,7 +52,7 @@ describe("My Work items (ledger layout)", () => {
     expect(s.html).toMatch(/What changed[\s\S]*Did the thing/);
     expect(s.html).toMatch(/Why[\s\S]*Because reasons/);
     expect(s.html).toMatch(/Impact[\s\S]*Users win/);
-    expect(s.html).toMatch(/>MERGED<[\s\S]*into <span[^>]*>main</); // base ref in mono, like the app
+    expect(s.html).toMatch(/>MERGED<[\s\S]*into <span[^>]*>main</); // base ref in the label face, like the app
     expect(s.html).toContain(THEME.green.light); // the MERGED chip colour comes from the token map
     expect(s.text).toMatch(/What changed:\s+Did the thing/);
   });

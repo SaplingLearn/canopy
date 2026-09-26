@@ -28,7 +28,7 @@ function prItem(pr: ReturnType<typeof toMyWorkPr>, first: boolean): string {
     rows.push(K.row("What changed", "No summary recorded for this PR."));
   }
   if (pr.impact) rows.push(K.row("Impact", K.prose(escapeHtml(pr.impact))));
-  const into = pr.baseRef ? `<span style="padding-left:8px;">into <span style="font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">${escapeHtml(pr.baseRef)}</span></span>` : "";
+  const into = pr.baseRef ? `<span style="padding-left:8px;">into <span style="font-family:'Archivo Narrow',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">${escapeHtml(pr.baseRef)}</span></span>` : "";
   return K.item({ title: escapeHtml(pr.displayTitle ?? pr.title), number: pr.number, url: escapeHtml(pr.url), rows, footer: `${K.chip("MERGED", "green")}${into}`, first });
 }
 

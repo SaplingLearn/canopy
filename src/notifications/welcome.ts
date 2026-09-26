@@ -30,7 +30,7 @@ export function renderWelcomeEmail(o: { name: string | null; handle: string; ori
   const about = "Canopy is the team's shared memory: what everyone is working on, the docs and decisions behind it, and what ships next.";
   const settings = `${o.origin}/#settings`;
   const button = `display:inline-block;${EMAIL_FONT.sans}font-size:14px;line-height:20px;font-weight:600;color:#ffffff;background-color:${C.accent};text-decoration:none;padding:10px 18px;border-radius:9px;`;
-  const mono = `${EMAIL_FONT.mono}color:${C.fg};`;
+  const handleStyle = `${EMAIL_FONT.label}color:${C.fg};`;
   const html =
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title><link href="${FONTS_HREF}" rel="stylesheet"></head>` +
     `<body style="margin:0;padding:0;background-color:${C.ground};">` +
@@ -39,7 +39,7 @@ export function renderWelcomeEmail(o: { name: string | null; handle: string; ori
     emailBanner() +
     `<tr><td style="padding:${SP.xl}px 28px 0 28px;"><div style="${headline}">${lede}</div>` +
     `<div style="${p}color:${C.fg};">${hi}</div>` +
-    `<div style="${p}">Your handle is <span style="${mono}">@${escapeHtml(o.handle)}</span> — that is how the team sees you on tickets, docs and decisions.</div>` +
+    `<div style="${p}">Your handle is <span style="${handleStyle}">@${escapeHtml(o.handle)}</span> — that is how the team sees you on tickets, docs and decisions.</div>` +
     `<div style="${EMAIL_FONT.sans}font-size:13px;line-height:20px;color:${C.fg55};padding:0 0 ${SP.l}px 0;">${about}</div>` +
     `<div style="text-align:center;padding:0 0 ${SP.l}px 0;"><a href="${escapeHtml(welcomeUrl(o.origin))}" style="${button}">Open Get Started</a></div>` +
     `<div style="${EMAIL_FONT.sans}font-size:12.5px;line-height:20px;color:${C.fg55};padding-bottom:24px;">Your handle, name and colour are yours to change, and email digests are off until you pick a cadence — both live in <a href="${escapeHtml(settings)}" style="color:${C.fg70};">Settings</a>.</div></td></tr>` +

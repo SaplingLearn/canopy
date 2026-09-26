@@ -37,7 +37,7 @@ export function newDocView(p: NewDocProps): string {
   const can = !!d.title.trim() && !!d.body.trim();
   const fromBanner = d.from !== null
     ? `<div style="border:1px solid var(--border);border-left:2px solid var(--accent);border-radius:9px;padding:11px 15px;margin-bottom:16px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
-      <div style="font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--accent);flex:none">FROM HANDOFF</div>
+      <div style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--accent);flex:none">FROM HANDOFF</div>
       <div style="font-size:12.5px;color:var(--fg-70);flex:1">Prefilled from handoff #${d.from}. Edit anything before staging.</div>
       <button data-act="openHandoff" data-arg="${d.from}" class="cnpy-link" style="font-size:12.5px;font-weight:500;color:var(--accent)">Open handoff</button>
     </div>`
@@ -50,7 +50,7 @@ export function newDocView(p: NewDocProps): string {
         <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Title</label>
         <input data-act="ndField" data-arg="title" data-field="nd-title" value="${attr(d.title)}" class="cnpy-input" placeholder="What is this doc about?" style="width:100%;height:40px;padding:0 13px;${FIELD};font-size:14px">
         <label style="display:block;font-size:13px;font-weight:500;margin:20px 0 8px">Body <span style="font-weight:400;color:var(--fg-40)">— markdown</span></label>
-        <textarea data-act="ndField" data-arg="body" data-field="nd-body" style="width:100%;flex:1;min-height:300px;padding:12px 14px;${FIELD};font-size:12.5px;line-height:1.65;resize:vertical;font-family:var(--mono)">${esc(d.body)}</textarea>
+        <textarea data-act="ndField" data-arg="body" data-field="nd-body" style="width:100%;flex:1;min-height:300px;padding:12px 14px;${FIELD};font-size:12.5px;line-height:1.65;resize:vertical;font-family:var(--code)">${esc(d.body)}</textarea>
       </div>
       <div style="min-width:0;border-left:1px solid var(--border);padding-left:26px">
         <label style="display:block;font-size:13px;font-weight:500;margin-bottom:8px">Space</label>

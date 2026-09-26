@@ -487,7 +487,7 @@ function feedArtifacts(json: string | null): { kind: string; label: string; href
 }
 /** A linked GitHub chip (issue / PR / commit / issue group). */
 function ghChip(c: { kind: string; label: string; href: string }): string {
-  return `<a href="${c.href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(c.kind)}</span><span style="font-family:var(--mono);font-weight:500">${esc(c.label)}</span></a>`;
+  return `<a href="${c.href}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(c.kind)}</span><span style="font-family:var(--label);font-weight:500">${esc(c.label)}</span></a>`;
 }
 /** GitHub links for a sprint's github_ref. The bare number IS the number of an
  *  issue GROUP on GitHub, hence the "group" chip kind and the URL below. */
@@ -530,11 +530,11 @@ function nonmemberCard(): string {
       </div>
       <div>
         <div style="font-size:18px;font-weight:600;letter-spacing:-0.01em">Canopy is limited to the Sapling team.</div>
-        <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Your GitHub account isn't a member of the <span style="font-family:var(--mono);font-size:12.5px">SaplingLearn</span> organization, so there's nothing here for you yet.</div>
+        <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Your GitHub account isn't a member of the <span style="font-family:var(--label);font-size:12.5px">SaplingLearn</span> organization, so there's nothing here for you yet.</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;padding:9px 14px 9px 9px;border:1px solid var(--border);border-radius:999px">
         <div class="cnpy-av cnpy-av-anon" style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">OS</div>
-        <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono)">octo-stranger</div></div>
+        <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--label)">octo-stranger</div></div>
       </div>
       <button data-act="backToLogin" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Sign out &amp; switch account</button>
     </div>
@@ -549,11 +549,11 @@ function notInvitedCard(email: string | null): string {
       </div>
       <div>
         <div style="font-size:18px;font-weight:600;letter-spacing:-0.01em">This Google account hasn't been invited yet.</div>
-        <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Canopy is limited to the Sapling team. Ask an admin to invite <span style="font-family:var(--mono);font-size:12.5px">${esc(email ?? "your address")}</span>, then sign in again.</div>
+        <div style="font-size:13.5px;color:var(--fg-55);margin-top:8px;line-height:1.55">Canopy is limited to the Sapling team. Ask an admin to invite <span style="font-family:var(--label);font-size:12.5px">${esc(email ?? "your address")}</span>, then sign in again.</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;padding:9px 14px 9px 9px;border:1px solid var(--border);border-radius:999px">
         <div class="cnpy-av cnpy-av-anon" style="width:26px;height:26px;border-radius:50%;${AVATAR};font-size:10px;font-weight:600;color:var(--fg-70)">${esc(initialsOf(email ?? "?"))}</div>
-        <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in with Google as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono)">${esc(email ?? "unknown")}</div></div>
+        <div style="text-align:left;line-height:1.25;white-space:nowrap"><div style="font-size:12.5px;font-weight:500">Signed in with Google as</div><div style="font-size:11.5px;color:var(--fg-55);font-family:var(--label)">${esc(email ?? "unknown")}</div></div>
       </div>
       <button data-act="signInGoogleSwitch" class="cnpy-outlinebtn" style="width:100%;padding:11px 16px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:500">Try a different account</button>
     </div>
@@ -749,7 +749,7 @@ function header(s: AppState): string {
 function wrapFeed(inner: string): string {
   return `<div style="max-width:760px;margin:0 auto;padding:24px 24px 80px">
     ${inner}
-    <div style="text-align:center;padding:18px 0;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">&mdash; start of recorded history &mdash;</div>
+    <div style="text-align:center;padding:18px 0;font-size:11.5px;color:var(--fg-40);font-family:var(--label)">&mdash; start of recorded history &mdash;</div>
   </div>`;
 }
 
@@ -770,7 +770,7 @@ function feedView(s: AppState): string {
     const artifacts = feedArtifacts(e.artifacts);
     const artifactRow = artifacts.length
       ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border)">
-          ${artifacts.map((ar) => `<a href="${ar.href}" target="_blank" class="cnpy-issuechip" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(ar.kind)}</span><span style="font-family:var(--mono);font-weight:500">${esc(ar.label)}</span></a>`).join("")}
+          ${artifacts.map((ar) => `<a href="${ar.href}" target="_blank" class="cnpy-issuechip" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;text-decoration:none;color:var(--fg-70)"><span style="color:var(--fg-40)">${esc(ar.kind)}</span><span style="font-family:var(--label);font-weight:500">${esc(ar.label)}</span></a>`).join("")}
         </div>`
       : "";
     return `<div class="cnpy-card" style="border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px">
@@ -895,23 +895,23 @@ export function docReaderHtml(s: AppState): string {
     const hasStaged = versions.some((v) => v.status === "staged" && v.version > doc.current_version);
 
     const stagedBanner = hasStaged ? `<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--border);border-left:2px solid var(--amber);border-radius:9px;margin-bottom:26px">
-      <span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:3px 7px;flex:none">STAGED</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;font-family:var(--label);letter-spacing:.04em;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:3px 7px;flex:none">STAGED</span>
       <div style="flex:1;font-size:12.5px;color:var(--fg-70);line-height:1.45">You're viewing the <strong style="font-weight:600;color:var(--fg)">promoted</strong> version. A newer proposal is awaiting review.</div>
       <button data-act="goReview" class="cnpy-link" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:500;color:var(--accent);white-space:nowrap;flex:none">Review proposal<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
     </div>` : "";
 
     const history = s.showHistory ? `<div style="border:1px solid var(--border);border-radius:10px;padding:6px;margin-top:18px">
       ${versions.map((v) => `<div style="display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:7px">
-        <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg);width:26px">v${v.version}</span>
+        <span style="font-family:var(--label);font-size:12px;font-weight:600;color:var(--fg);width:26px">v${v.version}</span>
         <span style="flex:1;font-size:12.5px;color:var(--fg-70)">${esc(v.summary ?? "")}</span>
         <span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg-40)">${personChip(personFor(s, v.created_by), 16, v.created_by)}${handleTag(personFor(s, v.created_by), v.created_by, 11)} · ${relTime(v.created_at)}</span>
-        ${v.version === doc.current_version ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
+        ${v.version === doc.current_version ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--label);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft);border-radius:4px;padding:2px 6px">PROMOTED</span>` : ""}
       </div>`).join("")}
     </div>` : "";
 
     return `<div style="max-width:1080px;margin:0 auto;padding:34px 52px 120px">
     ${stagedBanner}
-    <div style="font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel(doc.space))} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
+    <div style="font-family:var(--label);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin-bottom:11px">${esc(spaceLabel(doc.space))} <span style="color:var(--border-strong);margin:0 2px">/</span> ${esc(doc.section)}</div>
     <h1 style="font-size:29px;font-weight:650;letter-spacing:-0.022em;line-height:1.16;margin:0">${esc(doc.title)}</h1>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:15px;padding-bottom:17px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--fg-55)">
@@ -1003,7 +1003,7 @@ function roadmapNarrative(s: AppState): string {
   const done = sprints.filter(isDone);
 
   const sectionHeading = (label: string, color: string): string =>
-    `<div style="display:flex;align-items:center;gap:9px;margin:28px 0 12px"><span style="width:7px;height:7px;border-radius:50%;flex:none;background:${color}"></span><span style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:${color}">${label}</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
+    `<div style="display:flex;align-items:center;gap:9px;margin:28px 0 12px"><span style="width:7px;height:7px;border-radius:50%;flex:none;background:${color}"></span><span style="font-size:11px;font-weight:600;font-family:var(--label);text-transform:uppercase;letter-spacing:.1em;color:${color}">${label}</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
 
   const renderGroup = (items: SprintView[], heading: string, color: string): string =>
     items.length === 0
@@ -1019,7 +1019,7 @@ function roadmapNarrative(s: AppState): string {
 
   return `<div class="cnpy-scroll" style="max-width:820px;margin:0 auto;padding:32px 40px 100px">
     <div style="margin-bottom:20px">
-      <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
+      <div style="font-size:11px;font-weight:600;font-family:var(--label);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
       <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 12px">Roadmap Overview</h1>
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="flex:1;min-width:0">${intro}</div>
@@ -1050,7 +1050,7 @@ function roadmapView(s: AppState): string {
 
 /**
  * The ADMIN-AUTHORED plan narrative (written via the update-plan skill), rendered as markdown
- * inside the digest card idiom (mono "Narrative" label + h1, matching the rest of the app's
+ * inside the digest card idiom (label-face "Narrative" label + h1, matching the rest of the app's
  * section chrome). The narrative is the ONLY thing here that goes through markdownFn — it is
  * DB-sourced prose, so it must be sanitized the same way doc bodies are (real callers pass
  * renderMarkdown, i.e. DOMPurify); it is never additionally esc()'d (that would double-encode
@@ -1061,7 +1061,7 @@ export function planNarrativeBlock(narrative: string, markdownFn: (body: string)
     ? `<div class="cnpy-md">${markdownFn(narrative)}</div>`
     : `<div style="border:1px dashed var(--border-strong);border-radius:13px;padding:18px 20px;color:var(--fg-55);font-size:13.5px;line-height:1.6">No plan narrative yet — write one with the update-plan skill</div>`;
   return `<div style="margin-bottom:18px">
-    <div style="font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
+    <div style="font-size:11px;font-weight:600;font-family:var(--label);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:6px">Narrative</div>
     <h1 style="font-size:24px;font-weight:600;letter-spacing:-0.02em;margin:0 0 14px">What's happening</h1>
     ${body}
   </div>`;
@@ -1080,7 +1080,7 @@ function roadmapDigest(s: AppState): string {
     const bar = focus.total !== null && focus.closed !== null
       ? `<div style="display:flex;align-items:center;gap:12px;margin-top:15px">
           <div style="flex:1;height:6px;border-radius:999px;background:var(--border);overflow:hidden"><div style="height:100%;border-radius:999px;width:${focus.pct}%;background:${barColor}"></div></div>
-          <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${focus.closed}/${focus.total} closed</span>
+          <span style="font-size:12px;color:var(--fg-55);font-family:var(--label);white-space:nowrap;flex:none">${focus.closed}/${focus.total} closed</span>
         </div>`
       : "";
     const chips = sprintRefChips(focus.github_ref);
@@ -1088,15 +1088,15 @@ function roadmapDigest(s: AppState): string {
     // counts, beside the chips that link the issues themselves. Nothing renders
     // when the sprint has no cache row.
     const issueCount = focus.issues
-      ? `<span style="font-size:11.5px;color:var(--fg-55);font-family:var(--mono);white-space:nowrap;flex:none">${focus.issues.closed}/${focus.issues.total} issues closed</span>`
+      ? `<span style="font-size:11.5px;color:var(--fg-55);font-family:var(--label);white-space:nowrap;flex:none">${focus.issues.closed}/${focus.issues.total} issues closed</span>`
       : "";
     return `<div style="border:1px solid var(--accent);border-radius:14px;padding:20px;margin:22px 0;background:var(--accent-soft)">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:10px;min-width:0">
-          <span style="font-size:10px;font-weight:700;font-family:var(--mono);letter-spacing:.12em;color:var(--accent);flex:none">NOW</span>
+          <span style="font-size:10px;font-weight:700;font-family:var(--label);letter-spacing:.12em;color:var(--accent);flex:none">NOW</span>
           <span style="font-size:16px;font-weight:600;letter-spacing:-0.01em">${esc(focus.title)}</span>
         </div>
-        <span style="font-size:12px;color:var(--fg-55);font-family:var(--mono);flex:none">${focus.dateLabel}</span>
+        <span style="font-size:12px;color:var(--fg-55);font-family:var(--label);flex:none">${focus.dateLabel}</span>
       </div>
       ${focus.about ? `<p style="font-size:13px;line-height:1.6;color:var(--fg-70);margin:10px 0 0">${linkifyRefs(focus.about)}</p>` : ""}
       ${bar}
@@ -1109,7 +1109,7 @@ function roadmapDigest(s: AppState): string {
   const happenRows = entries.map((e) => {
     const chips = feedArtifacts(e.artifacts);
     return `<tr style="border-top:1px solid var(--border)">
-      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:11.5px;color:var(--fg-40);font-family:var(--mono)">${relTime(e.created_at)}</td>
+      <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:11.5px;color:var(--fg-40);font-family:var(--label)">${relTime(e.created_at)}</td>
       <td style="padding:11px 14px 11px 0;vertical-align:top;white-space:nowrap;font-size:12.5px;color:var(--fg-55)"><span style="display:inline-flex;align-items:center;gap:6px">${personChip(personFor(s, e.author), 18, e.author)}${handleTag(personFor(s, e.author), e.author, 11.5)}</span></td>
       <td style="padding:11px 0;vertical-align:top;font-size:13px;color:var(--fg);line-height:1.5"><span class="cnpy-md-inline">${renderMarkdownInline(e.summary)}</span>${chips.length ? ` <span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:4px;vertical-align:middle">${chips.map(ghChip).join("")}</span>` : ""}</td>
     </tr>`;
@@ -1124,7 +1124,7 @@ function roadmapDigest(s: AppState): string {
     ${planNarrativeBlock(s.roadmap.data.narrative, renderMarkdown)}
     ${spotlight}
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:28px 0 2px">
-      <h2 style="font-size:12px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-55);margin:0">Recent happenings</h2>
+      <h2 style="font-size:12px;font-weight:600;font-family:var(--label);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-55);margin:0">Recent happenings</h2>
       <button data-act="goFeed" class="cnpy-link" style="font-size:12.5px;font-weight:500;color:var(--accent);background:none">View all in Feed →</button>
     </div>
     ${happenings}
@@ -1149,7 +1149,7 @@ function authorityBadge(a: Authority): string {
     draft: { label: "DRAFT", color: "var(--blue)" },
   };
   const { label, color } = map[a];
-  return `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:${color};border:1px solid color-mix(in srgb,${color} 45%,transparent);background:color-mix(in srgb,${color} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${label}</span>`;
+  return `<span style="font-size:9.5px;font-weight:600;font-family:var(--label);letter-spacing:.03em;color:${color};border:1px solid color-mix(in srgb,${color} 45%,transparent);background:color-mix(in srgb,${color} 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">${label}</span>`;
 }
 
 function searchTypeBadge(type: string): string {
@@ -1157,7 +1157,7 @@ function searchTypeBadge(type: string): string {
   const border = type === "decision" ? "color-mix(in srgb,var(--blue) 45%,transparent)" : type === "feed" ? "var(--border-strong)" : "color-mix(in srgb,var(--accent) 45%,transparent)";
   const label = SEARCH_TYPE_LABEL[type] ?? type;
   const icon = SEARCH_TYPE_ICON[type] ?? SEARCH_TYPE_ICON["doc"];
-  return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${color};border:1px solid ${border}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>`;
+  return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;font-family:var(--label);letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:${color};border:1px solid ${border}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${icon}"></path></svg>${label}</span>`;
 }
 
 // Highlight the active query term inside a body of text.
@@ -1230,7 +1230,7 @@ function searchView(s: AppState): string {
       : "";
     const pointerBlock = pointers.length
       ? `<div style="margin-top:22px">
-           <div style="font-size:11px;font-weight:600;font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-40);margin-bottom:10px">More pointers</div>
+           <div style="font-size:11px;font-weight:600;font-family:var(--label);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-40);margin-bottom:10px">More pointers</div>
            ${pointers.map((r) => pointerRow(r, sq)).join("")}
          </div>`
       : "";
@@ -1242,11 +1242,11 @@ function searchView(s: AppState): string {
     <div style="display:flex;align-items:center;gap:11px;border:1px solid var(--border-strong);border-radius:12px;padding:0 16px;height:52px;margin-bottom:18px">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none;color:var(--fg-40)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
       <input data-act="setSearch" data-field="search" value="${attr(s.searchQuery)}" placeholder="Search the store — feed, docs, decisions" style="flex:1;border:none;outline:none;background:transparent;color:var(--fg);font-size:16px" />
-      <kbd style="font-family:var(--mono);font-size:11px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">⌘K</kbd>
+      <kbd style="font-family:var(--label);font-size:11px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px">⌘K</kbd>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:7px">${typeChips}</div>
-      <span style="font-size:12.5px;color:var(--fg-40);font-family:var(--mono)">${count} results</span>
+      <span style="font-size:12.5px;color:var(--fg-40);font-family:var(--label)">${count} results</span>
     </div>
     ${body}
   </div>`;
@@ -1261,11 +1261,11 @@ function guideView(s: AppState): string {
   const gP = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:0 0 4px";
   const gH2 = "font-size:22px;font-weight:600;letter-spacing:-0.02em;margin:8px 0 10px";
   const gH3 = "font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:34px 0 10px";
-  const gEyebrow = "font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin:52px 0 2px";
+  const gEyebrow = "font-family:var(--label);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.11em;color:var(--fg-40);margin:52px 0 2px";
   const gList = "font-size:14.5px;line-height:1.8;color:var(--fg-70);margin:10px 0 0;padding-left:22px";
   const gStrong = (t: string) => `<strong style="color:var(--fg);font-weight:600">${t}</strong>`;
   const gEm = (t: string) => `<strong style="color:var(--fg-55)">${t}</strong>`;
-  const gCode = (t: string) => `<code style="font-family:var(--mono);font-size:13px">${t}</code>`;
+  const gCode = (t: string) => `<code style="font-family:var(--code);font-size:13px">${t}</code>`;
   // width/height reserve each figure's box (every capture is 2560×1600) so a lazy
   // image loading mid-jump can't push the table-of-contents target down the page.
   // Each figure is a button that opens it in the lightbox (web/src/lightbox.ts),
@@ -1291,7 +1291,7 @@ function guideView(s: AppState): string {
     toc[toc.length - 1]?.subs.push({ id, label: title });
     return `<h3 id="${id}" class="cnpy-guide-anchor" style="${gH3}">${title}</h3>`;
   };
-  const gPre = (body: string) => `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg-70)">${body}</code></pre>`;
+  const gPre = (body: string) => `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0 0"><code style="font-family:var(--code);font-size:12.5px;line-height:1.6;color:var(--fg-70)">${body}</code></pre>`;
   const body = `<div style="flex:1;min-width:0;max-width:860px">
     <h1 id="guide-top" class="cnpy-guide-anchor" style="font-size:30px;font-weight:650;letter-spacing:-0.025em;margin:0 0 14px">Get Started</h1>
     <p style="font-size:16px;line-height:1.8;color:var(--fg-70);margin:0 0 14px">Canopy is the team's shared memory: docs, decisions, the roadmap, the ticket queue, and a running record of what shipped, open to people and to their coding agents alike. It has one rule: ${gStrong("agents only ever stage changes, and a person confirms the ones that matter")}. That keeps what Canopy says trustworthy no matter how many agents write to it.</p>
@@ -1431,7 +1431,7 @@ function guideView(s: AppState): string {
 }
 
 // ── settings ─────────────────────────────────────────────────────────────────
-const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
+const SECTION_LABEL = "font-size:11px;font-weight:600;font-family:var(--label);text-transform:uppercase;letter-spacing:.1em;color:var(--fg-40);margin-bottom:14px";
 
 /** Handle-check status wording, shared with onboarding's STATUS map (people.ts) —
  *  "same" (draft equals the current handle) and "idle" both render blank. */
@@ -1456,9 +1456,9 @@ export function profileSection(s: AppState): string {
     const canSave = s.handleCheck === "available" && s.handleDraft.trim().toLowerCase() !== handle.toLowerCase();
     return `<div style="margin-top:8px">
       <div style="display:flex;align-items:center;border:1px solid var(--border-strong);border-radius:9px;background:var(--bg);overflow:hidden;max-width:280px">
-        <span style="font-family:var(--mono);font-size:13px;color:var(--fg-40);padding-left:10px">@</span>
-        <input data-act="handleDraft" data-field="handleDraft" value="${attr(s.handleDraft)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font-size:13px;padding:9px 4px;font-family:var(--mono)" />
-        <span style="font-family:var(--mono);font-size:11px;padding:0 10px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span>
+        <span style="font-family:var(--label);font-size:13px;color:var(--fg-40);padding-left:10px">@</span>
+        <input data-act="handleDraft" data-field="handleDraft" value="${attr(s.handleDraft)}" autocomplete="off" spellcheck="false" maxlength="24" class="cnpy-input" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font-size:13px;padding:9px 4px;font-family:var(--label)" />
+        <span style="font-family:var(--label);font-size:11px;padding:0 10px;white-space:nowrap;color:${st.color}">${esc(st.text)}</span>
       </div>
       <div style="font-size:11.5px;color:var(--fg-40);margin-top:8px;line-height:1.5">Every entry you've written is re-attributed to the new handle. Links to the old one stop working.</div>
       <div style="display:flex;gap:8px;margin-top:10px">
@@ -1498,7 +1498,7 @@ export function accountSection(s: AppState): string {
     const btn = id
       ? `<button data-act="unlinkProvider" data-arg="${p}" class="cnpy-ghostbtn" ${last ? "disabled " : ""}style="font-size:12px;color:var(--fg-40);padding:4px 10px;border-radius:6px;border:1px solid var(--border);${last ? "opacity:.45;cursor:default" : ""}">Unlink</button>`
       : `<button data-act="linkProvider" data-arg="${p}" class="cnpy-ghostbtn" style="font-size:12px;color:var(--fg-70);padding:4px 10px;border-radius:6px;border:1px solid var(--border-strong)">Link ${label}</button>`;
-    return `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--border)"><div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${label}</b><span style="font-family:var(--mono);font-size:11.5px;color:${id ? "var(--fg-55)" : "var(--fg-40)"}">${id ? esc(id.label) : "not linked"}</span></div>${btn}</div>`;
+    return `<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--border)"><div style="line-height:1.25"><b style="font-size:13.5px;font-weight:600;display:block">${label}</b><span style="font-family:var(--label);font-size:11.5px;color:${id ? "var(--fg-55)" : "var(--fg-40)"}">${id ? esc(id.label) : "not linked"}</span></div>${btn}</div>`;
   };
   return `<section class="cnpy-tile" style="display:flex;flex-direction:column">
     <div style="${SECTION_LABEL}">Account</div>
@@ -1539,7 +1539,7 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
       : `<button data-act="revokeTokenArm" data-arg="${tk.id}" class="cnpy-revoke" style="${btn};color:var(--fg-55);border:1px solid var(--border)">Revoke</button>`;
     return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)">
       <div style="flex:1;min-width:0;line-height:1.35">
-        <code style="display:block;font-family:var(--mono);font-size:12.5px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">canopy_mcp_${esc(tk.hint ?? "")}<span style="color:var(--fg-40)">&bull;&bull;&bull;&bull;</span></code>
+        <code style="display:block;font-family:var(--code);font-size:12.5px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">canopy_mcp_${esc(tk.hint ?? "")}<span style="color:var(--fg-40)">&bull;&bull;&bull;&bull;</span></code>
         <span style="font-size:11.5px;color:var(--fg-40)">${armed ? "Any agent using it stops working." : `Minted ${esc(relTime(tk.created_at))} &middot; ${tk.last_used_at ? `last used ${esc(relTime(tk.last_used_at))}` : "never used"}`}</span>
       </div>
       ${actions}
@@ -1610,10 +1610,10 @@ export function connectSnippet(client: ConnectClient, token: string, url: string
 }
 
 const CONNECT_NOTE: Record<ConnectClient, string> = {
-  claude: `Paste it into a terminal, then restart Claude Code. <code style="font-family:var(--mono);font-size:11px">--scope user</code> makes Canopy available in every project.`,
-  codex: `Paste both lines into a terminal, then restart Codex. Codex reads the token from <code style="font-family:var(--mono);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--mono);font-size:11px">export</code> line to your shell profile too.`,
-  json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--mono);font-size:11px">.mcp.json</code>), then restart it.`,
-  token: `For anything else, send it as a bearer header: <code style="font-family:var(--mono);font-size:11px">Authorization: Bearer &lt;token&gt;</code> to <code style="font-family:var(--mono);font-size:11px">${esc(mcpEndpoint())}</code>. Using the Canopy plugin? It connects by browser sign-in instead — see <strong>Sign in with browser</strong> above.`,
+  claude: `Paste it into a terminal, then restart Claude Code. <code style="font-family:var(--code);font-size:11px">--scope user</code> makes Canopy available in every project.`,
+  codex: `Paste both lines into a terminal, then restart Codex. Codex reads the token from <code style="font-family:var(--code);font-size:11px">CANOPY_MCP_TOKEN</code> each time it starts, so add the <code style="font-family:var(--code);font-size:11px">export</code> line to your shell profile too.`,
+  json: `For Cursor and other MCP clients: put this in the client's MCP config (for Claude Code, a project's <code style="font-family:var(--code);font-size:11px">.mcp.json</code>), then restart it.`,
+  token: `For anything else, send it as a bearer header: <code style="font-family:var(--code);font-size:11px">Authorization: Bearer &lt;token&gt;</code> to <code style="font-family:var(--code);font-size:11px">${esc(mcpEndpoint())}</code>. Using the Canopy plugin? It connects by browser sign-in instead — see <strong>Sign in with browser</strong> above.`,
 };
 
 /** The Settings row a minted token shows up as: `canopy_mcp_` + the first 4 characters. */
@@ -1660,13 +1660,13 @@ export function connectModal(s: Pick<AppState, "connect" | "connectClient" | "co
     body = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
       <div style="display:flex;align-items:stretch;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:10px 10px 10px 14px">
         <div style="flex:1;min-width:0;display:grid">${stack((id) =>
-          `<pre style="margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(id, token))}</pre>`)}</div>
+          `<pre style="margin:0;font-family:var(--code);font-size:12.5px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-all">${esc(connectSnippet(id, token))}</pre>`)}</div>
         ${copy}
       </div>
       <div style="display:grid;font-size:11.5px;color:var(--fg-55);margin-top:10px;line-height:1.55">${stack((id) => `<div>${CONNECT_NOTE[id]}</div>`)}</div>
       <div style="display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;border-radius:9px;border:1px solid var(--border);font-size:12px;line-height:1.55;color:var(--fg-70)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
-        <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--mono);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">Access tokens</strong> under MCP access in Settings. Revoke it there to disconnect the agent.</div>
+        <div>This is the only time the token is shown, so copy it before closing. It's saved as <code style="font-family:var(--code);font-size:11.5px;color:var(--fg)">${esc(tokenLabel(m.token))}&bull;&bull;&bull;&bull;</code> under <strong style="color:var(--fg);font-weight:600">Access tokens</strong> under MCP access in Settings. Revoke it there to disconnect the agent.</div>
       </div>
       <div style="display:flex;justify-content:flex-end;margin-top:18px"><button data-act="connectClose" class="cnpy-outlinebtn" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border-strong);font-size:12.5px;font-weight:600;color:var(--fg)">Done</button></div>`;
   }
@@ -1716,10 +1716,10 @@ function settingsView(s: AppState): string {
       <div style="${SECTION_LABEL}">MCP access</div>
       <div style="font-size:12.5px;font-weight:500;margin-bottom:6px">Sign in with browser <span style="font-weight:400;color:var(--fg-40)">· recommended</span></div>
       <div style="display:flex;align-items:center;gap:8px;background:var(--hover);border:1px solid var(--border-strong);border-radius:9px;padding:8px 8px 8px 12px">
-        <code style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(browserConnectCommand())}</code>
+        <code style="flex:1;min-width:0;font-family:var(--code);font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(browserConnectCommand())}</code>
         <button data-act="copyBrowserConnect" class="cnpy-copybtn" style="flex:none;padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;border:1px solid var(--border-strong);color:var(--fg-70)">Copy</button>
       </div>
-      <div style="font-size:11.5px;color:var(--fg-40);margin:6px 0 14px;line-height:1.5">Then run <code style="font-family:var(--mono);font-size:11px">/mcp</code> in Claude Code and choose Authenticate.</div>
+      <div style="font-size:11.5px;color:var(--fg-40);margin:6px 0 14px;line-height:1.5">Then run <code style="font-family:var(--code);font-size:11px">/mcp</code> in Claude Code and choose Authenticate.</div>
       <div style="font-size:12.5px;font-weight:500;margin-bottom:4px">Connected apps</div>
       ${grantListBody(s)}
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;row-gap:8px;flex-wrap:wrap;margin:18px 0 4px">
@@ -1748,15 +1748,15 @@ function settingsView(s: AppState): string {
 }
 
 // ── my work (personal dashboard) ──────────────────────────────────────────────
-const MW_LABEL = "font-size:13px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--fg)";
+const MW_LABEL = "font-size:13px;font-weight:700;font-family:var(--label);text-transform:uppercase;letter-spacing:.14em;color:var(--fg)";
 
 // Option-2a card anatomy (design_handoff_mywork_cards): roomy card, title +
 // number pill row, then hairline-separated 96px-label section rows, footer meta.
 const MW_CARD = "border:1px solid var(--border);border-radius:16px;padding:20px 22px 14px;background:color-mix(in srgb,var(--fg) 2.5%,transparent);display:flex;flex-direction:column;height:100%";
 const MW_ROW = "display:grid;grid-template-columns:96px 1fr;gap:12px;padding:11px 0;border-top:1px solid var(--border)";
-const MW_ROW_LABEL = "font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);padding-top:2px";
+const MW_ROW_LABEL = "font-family:var(--label);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--fg-40);padding-top:2px";
 const MW_ROW_BODY = "font-size:13.5px;line-height:1.6;color:var(--fg-70)";
-const MW_CODE = "font-family:var(--mono);font-size:12.5px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 4px";
+const MW_CODE = "font-family:var(--label);font-size:12.5px;background:var(--hover);border:1px solid var(--border);border-radius:4px;padding:0 4px";
 const MW_ARROW_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17 17 7"></path><path d="M9 7h8v8"></path></svg>`;
 const MW_FLAG_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="flex:none"><path d="M12 2v20"></path><path d="M12 4h7l-2 3 2 3h-7"></path></svg>`;
 
@@ -1788,10 +1788,10 @@ function mwDegradedHint(text: string): string {
 function mwTitleRow(title: string, number: number, url: string): string {
   return `<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px">
       <span style="font-size:16.5px;font-weight:600;letter-spacing:-0.01em;line-height:1.35;color:var(--fg);flex:1;min-width:0">${esc(title)}</span>
-      <a href="${attr(safeUrl(url))}" target="_blank" rel="noopener" class="cnpy-numpill" style="font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:3px 8px;display:flex;align-items:center;gap:5px;margin-top:2px;text-decoration:none;flex:none">#${number}${MW_ARROW_SVG}</a>
+      <a href="${attr(safeUrl(url))}" target="_blank" rel="noopener" class="cnpy-numpill" style="font-family:var(--label);font-size:11.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:3px 8px;display:flex;align-items:center;gap:5px;margin-top:2px;text-decoration:none;flex:none">#${number}${MW_ARROW_SVG}</a>
     </div>`;
 }
-/** One hairline-separated section row: 96px mono label + a pre-built body cell.
+/** One hairline-separated section row: 96px label-face label + a pre-built body cell.
  *  Callers skip the call entirely for null data — no empty labels. */
 function mwRow(label: string, bodyCell: string, labelExtra = ""): string {
   return `<div style="${MW_ROW}"><div style="${MW_ROW_LABEL}${labelExtra}">${label}</div>${bodyCell}</div>`;
@@ -1833,9 +1833,9 @@ export function prActivityCard(pr: MyWorkPr, markdownFn: (body: string) => strin
   }
   if (pr.impact) rows.push(mwRow("Impact", mwMdBody(pr.impact, markdownFn)));
   const chip = pr.merged
-    ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
-    : `<span style="font-size:9.5px;font-weight:600;font-family:var(--mono);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
-  const into = pr.baseRef ? ` · into <span style="font-family:var(--mono)">${esc(pr.baseRef)}</span>` : "";
+    ? `<span style="font-size:9.5px;font-weight:600;font-family:var(--label);letter-spacing:.03em;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 12%,transparent);border-radius:5px;padding:2px 6px;white-space:nowrap">MERGED</span>`
+    : `<span style="font-size:9.5px;font-weight:600;font-family:var(--label);letter-spacing:.03em;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">CLOSED</span>`;
+  const into = pr.baseRef ? ` · into <span style="font-family:var(--label)">${esc(pr.baseRef)}</span>` : "";
   const footer = mwFooter(`${chip}<span style="font-size:11.5px;color:var(--fg-40)">${relTime(pr.occurredAt)}${into}</span>`, 9);
   return `<div class="cnpy-card" style="${MW_CARD}">
     ${mwTitleRow(pr.displayTitle ?? pr.title, pr.number, pr.url)}
@@ -1856,7 +1856,7 @@ export function todoCard(t: MyWorkTodo): string {
     rows.push(mwRow("Sprint", `<div style="${MW_ROW_BODY};display:flex;align-items:center;gap:8px">${MW_FLAG_SVG}<span>${esc(t.sprint.title)}</span>${due}</div>`));
   }
   if (t.nextStep) rows.push(mwRow("Next step", mwProseBody(t.nextStep), ";color:var(--accent)"));
-  const prio = t.priority ? `<span style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 6px">${esc(t.priority)}</span>` : "";
+  const prio = t.priority ? `<span style="font-family:var(--label);font-size:10.5px;font-weight:700;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);border-radius:5px;padding:1px 6px">${esc(t.priority)}</span>` : "";
   const labels = t.labels.slice(0, 3).map((l) => `<span style="font-size:10.5px;color:var(--fg-40);border:1px solid var(--border);border-radius:5px;padding:1px 6px">${esc(l)}</span>`).join("");
   const footer = mwFooter(`${prio}${labels}<span style="font-size:11px;color:var(--fg-40);margin-left:auto">updated ${relTime(t.updatedAt)}</span>`, 6);
   return `<div class="cnpy-card" style="${MW_CARD}">
