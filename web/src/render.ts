@@ -1467,11 +1467,12 @@ export function profileSection(s: AppState): string {
       </div>
     </div>`;
   })() : `<div style="font-size:12px;color:var(--fg-40);margin-top:8px">Handle ${me ? handleTag({ handle, color: me.color }, handle, 12) : handleTag(null, handle, 12)} <button data-act="handleEdit" class="cnpy-mutelink" style="font-size:11.5px;color:var(--fg-55);text-decoration:underline;text-underline-offset:2px;margin-left:6px">Change</button></div>`;
-  const FIELD_LABEL = "display:block;font-size:13px;font-weight:500;margin-bottom:8px";
+  // The avatar spans the label + the 40px field exactly: 16px line + 8px gap + 40px = 64px.
+  const FIELD_LABEL = "display:block;font-size:13px;line-height:16px;font-weight:500;margin-bottom:8px";
   return `<section class="cnpy-tile">
     <div style="${SECTION_LABEL}">Profile</div>
     <div style="display:flex;align-items:flex-start;gap:14px">
-      ${personChip(me ? { handle, name: s.displayName || me.name, color: me.color, avatar_url: me.avatar_url } : null, 48, handle || "?")}
+      ${personChip(me ? { handle, name: s.displayName || me.name, color: me.color, avatar_url: me.avatar_url } : null, 64, handle || "?")}
       <div style="flex:1;min-width:0">
         <label style="${FIELD_LABEL}">Display name</label>
         <div style="display:flex;gap:10px">
