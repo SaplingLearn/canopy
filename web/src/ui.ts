@@ -19,9 +19,11 @@ export function attr(v: string): string {
 export const MONO_LABEL =
   "font-family:var(--label);font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-40)";
 
-/** Bordered tinted status chip (STAGED / DRAFT / …); colorVar is a CSS var expression. */
-export function statusBadge(text: string, colorVar: string): string {
-  return `<span style="font-family:var(--label);font-size:10px;font-weight:600;letter-spacing:.04em;color:${colorVar};border:1px solid color-mix(in srgb,${colorVar} 45%,transparent);background:color-mix(in srgb,${colorVar} 12%,transparent);border-radius:5px;padding:2px 6px;flex:none;white-space:nowrap">${esc(text)}</span>`;
+/** Bordered tinted status chip (STAGED / DRAFT / …); colorVar is a CSS var expression.
+ *  `size` overrides the box (height, padding, font size, radius) where the chip sits in a
+ *  row of buttons and must match their height. */
+export function statusBadge(text: string, colorVar: string, size = "font-size:10px;border-radius:5px;padding:2px 6px"): string {
+  return `<span style="font-family:var(--label);font-weight:600;letter-spacing:.04em;color:${colorVar};border:1px solid color-mix(in srgb,${colorVar} 45%,transparent);background:color-mix(in srgb,${colorVar} 12%,transparent);${size};flex:none;white-space:nowrap">${esc(text)}</span>`;
 }
 
 /** Selectable filter/view chip. `small` is the compact variant (diff view toggle). */

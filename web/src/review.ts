@@ -266,6 +266,10 @@ function splitEyebrow(eyebrow: string): { type: string; id: string } {
   return { type, id };
 }
 
+// The header's status chips and its two buttons are ONE height, so the row reads as a set.
+const HEAD_BTN = "box-sizing:border-box;height:34px;display:inline-flex;align-items:center;border-radius:8px;font-size:12.5px";
+const HEAD_CHIP = "box-sizing:border-box;height:34px;display:inline-flex;align-items:center;border-radius:8px;padding:0 12px;font-size:11.5px";
+
 export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
   const acceptLabel = it.kind === "decision" ? "Ratify" : "Promote";
   const content = it.kind === "decision"
@@ -286,9 +290,9 @@ export function reviewDetail(it: ReviewItem, diffView: DiffViewMode): string {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex:none;padding-top:2px">
-        ${statusBadge(it.badge, it.badgeColor)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)") : ""}
-        <button data-act="reviewReject" data-arg="${attr(it.id)}" class="cnpy-rejectbtn" style="background:transparent;border:1px solid var(--border-strong);border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Reject</button>
-        <button data-act="reviewAccept" data-arg="${attr(it.id)}" class="cnpy-accentbtn" style="background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:9px 17px;font-size:13px;font-weight:600">${acceptLabel}</button>
+        ${statusBadge(it.badge, it.badgeColor, HEAD_CHIP)}${it.flagged ? statusBadge("FLAGGED FOR REVIEW", "var(--amber)", HEAD_CHIP) : ""}
+        <button data-act="reviewReject" data-arg="${attr(it.id)}" class="cnpy-rejectbtn" style="${HEAD_BTN};background:transparent;border:1px solid var(--border-strong);padding:0 14px;font-weight:500;color:var(--fg-70);transition:all .12s ease">Reject</button>
+        <button data-act="reviewAccept" data-arg="${attr(it.id)}" class="cnpy-accentbtn" style="${HEAD_BTN};background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:0 17px;font-weight:600">${acceptLabel}</button>
       </div>
     </div>
     ${it.stale && it.staleNote ? staleBaseWarning(it.staleNote) : ""}
