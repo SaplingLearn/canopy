@@ -1525,7 +1525,10 @@ const mcpEndpoint = (): string =>
  *  known here — the server keeps a hash — so a row is `canopy_mcp_ab12…`, when it was
  *  minted and last used, and a two-click Revoke (an agent stops working the moment it lands). */
 export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): string {
-  const note = (text: string) => `<div style="padding:12px 0;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-40)">${text}</div>`;
+  // Every state renders inside the same fixed-height scroller (canopy.css), so the
+  // number of tokens never changes the tile's height, or the row's beside it.
+  const box = (inner: string) => `<div class="cnpy-scroll cnpy-set-tokens">${inner}</div>`;
+  const note = (text: string) => box(`<div style="padding:12px 0;border-top:1px solid var(--border);font-size:12.5px;color:var(--fg-40)">${text}</div>`);
   const t = s.tokens;
   if (t.status === "error") return note(`Couldn't load your tokens${t.error ? ` &mdash; ${esc(t.error)}` : ""}.`);
   if (t.status !== "ok" && !t.data.length) return note("Loading tokens&hellip;");
@@ -1545,7 +1548,7 @@ export function tokenListBody(s: Pick<AppState, "tokens" | "tokenRevokeArm">): s
       ${actions}
     </div>`;
   }).join("");
-  return `<div class="cnpy-scroll cnpy-set-tokens">${rows}</div>`;
+  return box(rows);
 }
 
 /** Settings › Connected apps: one hairline row per OAuth connection — the app's
@@ -1556,7 +1559,8 @@ export function grantListBody(s: Pick<AppState, "grants" | "grantRevokeArm">): s
   if (g.status === "error") return note(`Couldn't load connected apps${g.error ? ` &mdash; ${esc(g.error)}` : ""}.`);
   if (g.status !== "ok" && !g.data.length) return note("Loading connected apps&hellip;");
   if (!g.data.length) return note("No apps connected. Run the command above, then sign in from the app.");
-  return g.data.map((gr) => {
+  // Capped at two rows, then it scrolls — like the token list, it must not grow the tile.
+  return `<div class="cnpy-scroll cnpy-set-grants">${g.data.map((gr) => {
     const armed = s.grantRevokeArm === gr.id;
     const btn = "flex:none;padding:4px 10px;border-radius:6px;font-size:12px";
     const actions = armed
@@ -1570,7 +1574,7 @@ export function grantListBody(s: Pick<AppState, "grants" | "grantRevokeArm">): s
       </div>
       ${actions}
     </div>`;
-  }).join("");
+  }).join("")}</div>`;
 }
 
 /** The browser sign-in setup: the server with no header — Claude Code opens the
@@ -1704,8 +1708,9 @@ function settingsView(s: AppState): string {
   const tokenList = tokenListBody(s);
 
   // Bento on three columns: Profile / Account / tokens across the top — the three tiles
-  // whose natural heights match, so none is stretched hollow — then the Appearance
-  // strip and Email at full width. Nothing sits BESIDE the tall tile: whatever does
+  // whose natural heights match, so none is stretched hollow; the token and app lists
+  // are fixed-height scrollers, so how many you have never changes that height — then
+  // the Appearance strip and Email at full width. Nothing sits BESIDE the tall tile: whatever does
   // gets stretched to its height (canopy.css has the folds).
   return `<div class="cnpy-set-wrap"><div class="cnpy-set">
     ${profileSection(s)}

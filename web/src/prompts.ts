@@ -169,7 +169,9 @@ export function tagOptions(current: string[], known: string[], draftRaw: string)
 }
 
 export function promptDetailView(p: PromptDetailProps): string {
-  const shell = (inner: string) => `<div data-screen-label="Prompt detail" style="width:100%;max-width:1260px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 100px">${inner}</div>`;
+  // The page is at least the viewport tall and the body row takes what is left, so the
+  // prompt box runs to the bottom of the screen instead of stopping at the rail's height.
+  const shell = (inner: string) => `<div data-screen-label="Prompt detail" class="cnpy-pdetail-page" style="width:100%;max-width:1260px;margin:0 auto;padding:26px clamp(20px,2.6vw,46px) 28px">${inner}</div>`;
   const x = p.prompt;
   if (!x) {
     if (p.status === "idle" || p.status === "loading") return shell(notice("Loading…"));
@@ -234,13 +236,13 @@ export function promptDetailView(p: PromptDetailProps): string {
       </div>
     </div>
 
-    <div style="display:flex;flex-wrap:wrap;gap:32px 40px;margin-top:28px;align-items:stretch">
-      <div style="flex:1 1 480px;min-width:0;display:flex;flex-direction:column">
+    <div class="cnpy-pdetail">
+      <div class="cnpy-pdetail-main">
         ${x.description ? `<div style="${MONO_EYEBROW};margin-bottom:8px">Description</div><div style="font-size:14px;line-height:1.65;color:var(--fg-70);margin-bottom:30px;max-width:760px;text-wrap:pretty">${esc(x.description)}</div>` : ""}
         ${main}
       </div>
 
-      <div style="flex:1 0 240px;max-width:300px;min-width:0;border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
+      <div class="cnpy-pdetail-rail" style="min-width:0;border-left:1px solid var(--border);padding-left:26px;display:flex;flex-direction:column;gap:26px">
         <div>
           ${railHead("Properties")}
           <div style="${PROP_ROW}"><div style="${PROP_KEY}">STATUS</div><div>${promptBadge(x.status)}</div></div>

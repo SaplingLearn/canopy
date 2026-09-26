@@ -252,6 +252,19 @@ input, select { font-family: inherit; }
    width. At two columns Appearance drops beside the tokens (dense flow); then one
    column. These are CONTAINER queries, not viewport ones: the sidebar collapses, so
    the viewport says little about the room the page actually has. */
+/* Prompt detail: the page fills the scroll area (min-height:100% of #cnpy-main) and the
+   body row flexes into the rest, so the prompt box reaches the bottom of the screen.
+   Side by side the rail sits right; once they no longer fit (content < 760px) the rail
+   drops below and the box keeps most of a screen for itself. */
+.cnpy-pdetail-page { container:cnpy-pdetail / inline-size; min-height:100%; box-sizing:border-box; display:flex; flex-direction:column; }
+.cnpy-pdetail { flex:1 0 auto; display:flex; gap:32px 40px; margin-top:28px; align-items:stretch; }
+.cnpy-pdetail-main { flex:1 1 480px; min-width:0; display:flex; flex-direction:column; }
+.cnpy-pdetail-rail { flex:1 0 240px; max-width:300px; }
+@container cnpy-pdetail (max-width:759px) {
+  .cnpy-pdetail { flex-direction:column; }
+  .cnpy-pdetail-main { flex:none; min-height:70vh; }
+  .cnpy-pdetail-rail { flex:none; max-width:none; }
+}
 .cnpy-set-wrap { container:cnpy-set / inline-size; }
 .cnpy-set { max-width:1180px; margin:0 auto; padding:24px 32px 32px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-auto-flow:dense; gap:14px; align-items:stretch; }
 .cnpy-tile { min-width:0; border:1px solid var(--border); border-radius:16px; padding:20px 22px; background:color-mix(in srgb,var(--fg) 2.5%,transparent); }
@@ -261,7 +274,13 @@ input, select { font-family: inherit; }
 .cnpy-set .cnpy-sw.compact { padding:6px 0; }
 /* The token list takes whatever height its row leaves and scrolls inside it, so a long
    list never stretches the bento; stacked in one column it caps itself instead. */
-.cnpy-set-tokens { flex:1 1 0; min-height:0; overflow-y:auto; }
+/* The MCP tile's lists never set its height: tokens get a fixed two-row box (every
+   state renders inside it, so 0, 1 or 50 tokens is the same tile) that scrolls and
+   takes any spare height; connected apps cap at two rows. An explicit height, not
+   flex-basis 0 — a basis-0 scroller either collapses to nothing (Chrome) or still
+   counts its rows toward the grid row (other engines). */
+.cnpy-set-tokens { flex:1 0 auto; height:114px; overflow-y:auto; }
+.cnpy-set-grants { flex:none; max-height:114px; overflow-y:auto; }
 @container cnpy-set (max-width:999px) {
   .cnpy-set { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .cnpy-set-appear { grid-column:auto; }
@@ -271,7 +290,7 @@ input, select { font-family: inherit; }
 @container cnpy-set (max-width:759px) {
   .cnpy-set { grid-template-columns:minmax(0,1fr); padding:24px 16px 64px; }
   .cnpy-set-appear .cnpy-set-themes { grid-template-columns:repeat(4,minmax(0,1fr)); }
-  .cnpy-set-tokens { flex:none; max-height:236px; }
+  .cnpy-set-tokens { flex:none; height:auto; max-height:236px; }
 }
 @container cnpy-set (max-width:419px) { .cnpy-set-appear .cnpy-set-themes { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 /* Tickets: the queue's table rows, and the two-column form/detail layouts that

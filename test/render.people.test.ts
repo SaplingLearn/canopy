@@ -117,6 +117,16 @@ describe("tokenListBody", () => {
     expect(tokenListBody({ tokens: { status: "error", data: [], error: "boom" }, tokenRevokeArm: null })).toContain("boom");
     expect(tokenListBody({ tokens: { status: "ok", data: [tk(1, "<b>x")] }, tokenRevokeArm: null })).not.toContain("<b>x");
   });
+
+  it("every state renders inside the one fixed-height scroller, so the tile never changes height", () => {
+    const states = [
+      tokenListBody({ tokens: { status: "loading", data: [] }, tokenRevokeArm: null }),
+      tokenListBody({ tokens: { status: "ok", data: [] }, tokenRevokeArm: null }),
+      tokenListBody({ tokens: { status: "error", data: [], error: "boom" }, tokenRevokeArm: null }),
+      tokenListBody({ tokens: { status: "ok", data: [tk(1, "ab12"), tk(2, "cd34"), tk(3, "ef56")] }, tokenRevokeArm: null }),
+    ];
+    for (const html of states) expect(html).toMatch(/^<div class="cnpy-scroll cnpy-set-tokens">[\s\S]*<\/div>$/);
+  });
 });
 
 describe("handleTag", () => {
